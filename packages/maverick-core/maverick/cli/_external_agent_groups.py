@@ -121,7 +121,7 @@ def xa_enroll_cmd(agent_id, platform, description, owner, department,
 
 @external_agents_group.command("mint")
 @click.argument("agent_id")
-@click.option("--surface", type=click.Choice(["rest", "a2a", "grpc", "mcp"]),
+@click.option("--surface", type=click.Choice(["rest", "grpc", "mcp"]),
               default="rest", show_default=True,
               help="Which credential surface the bearer authenticates.")
 @click.option("--approval-id", type=int, default=None,

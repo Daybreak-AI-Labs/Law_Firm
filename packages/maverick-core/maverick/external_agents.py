@@ -57,7 +57,7 @@ PLATFORMS: dict[str, str] = {
 #: the external-agents HTTP API itself; the rest are the existing per-surface
 #: tokens on the trust entry (distinct so a leak on one surface cannot
 #: authenticate another).
-TOKEN_SURFACES = ("rest", "a2a", "grpc", "mcp")
+TOKEN_SURFACES = ("rest", "grpc", "mcp")
 
 _MAX_TEXT = 4000
 _MAX_STEPS = 50
@@ -560,7 +560,6 @@ def _entry_from_agent(agent) -> dict:
         "max_wall_seconds": agent.max_wall_seconds,
         "data_scopes": sorted(agent.data_scopes),
         "rest_token": agent.rest_token,
-        "a2a_token": agent.a2a_token,
         "grpc_token": agent.grpc_token,
         "mcp_token": agent.mcp_token,
         "jwt_issuer": agent.jwt_issuer,

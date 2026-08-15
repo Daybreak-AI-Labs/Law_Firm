@@ -670,12 +670,6 @@ async def _install_queue_dispatcher() -> None:
 _AUTH_EXEMPT = {
     "/healthz", "/livez", "/readyz",
     "/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect",
-    "/.well-known/agent-card.json", "/.well-known/agent.json",
-    # The A2A task endpoint enforces its own shared/per-agent bearer and trust
-    # plane. Requiring the unrelated dashboard bearer here would either block
-    # valid A2A identities or pressure operators to reuse one credential across
-    # two trust domains.
-    "/a2a/v1",
     # /webhook/start authenticates with its own HMAC signature instead of
     # the dashboard bearer / same-origin checks (external senders have
     # neither), so it must bypass the centralized middleware.

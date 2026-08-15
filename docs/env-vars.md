@@ -315,9 +315,7 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_GRPC_MAX_CONCURRENT` | config `[grpc] max_concurrent_rpcs` (worker count) | Max in-flight gRPC RPCs (RESOURCE_EXHAUSTED backpressure past the cap). |
 | `MAVERICK_GRPC_MAX_DEPTH` | config `[grpc] max_depth` (runner default, hard max 64) | Worker-owned recursion ceiling for remote `RunGoal` calls. |
 | `MAVERICK_GRPC_STREAM_MAX_SECONDS` | config `[grpc] stream_max_seconds` (300, hard max 3600) | Per-call episode-stream deadline; clients resume with `since_id`. |
-| `MAVERICK_ALLOW_INSECURE_GRPC` | unset (off) | Explicitly permit non-loopback plaintext gRPC binds and client dials. Keep unset in production; configure `[grpc]` / `[federation]` TLS instead. |
-| `MAVERICK_FEDERATION_MAX_WORKERS` | config `[federation] max_workers` (8) | Federation server thread-pool size. |
-| `MAVERICK_FEDERATION_MAX_CONCURRENT` | config `[federation] max_concurrent_rpcs` (worker count) | Max in-flight federation RPCs. |
+| `MAVERICK_ALLOW_INSECURE_GRPC` | unset (off) | Explicitly permit non-loopback plaintext gRPC binds and client dials. Keep unset in production; configure `[grpc]` TLS instead. |
 | `MAVERICK_GH_APP_WEBHOOK_SECRET` | unset | Webhook secret for the GitHub App; requests are rejected if unset. |
 | `MAVERICK_TRIGGER_LABELS` / `MAVERICK_GH_TRIGGER_LABELS` | built-in default | Comma-separated issue labels that trigger a GitHub-App run. |
 | `MAVERICK_BOT_LINEAR_ID` | unset | Linear user id identifying "the bot" for issue webhooks. |
@@ -339,19 +337,6 @@ system-specific shapes (e.g. `SERVICENOW_INSTANCE_URL`, `SNOWFLAKE_ACCOUNT`,
 | `MAVERICK_ENABLE_CRED_TOOLS` | unset (off) | `1`/`true` registers connectors that can use ambient host credentials (AWS Lambda/DynamoDB, Google Drive, Airtable, Asana, ClickUp, Vercel). Off by default. |
 | `MAVERICK_WORKFORCE_DATA_GROUNDING` | config `[workforce] data_grounding` (on) | Kill-switch for primary-source data grounding. When on, each analyst pack is auto-granted its suite's 37 read-only public-data connectors (SEC EDGAR, FRED, openFDA, USAspending, NWS/NOAA weather, ...) — GET-only, low-risk, deferred. Set `off`/`0` to withhold them. See [connectors.md](connectors.md). |
 | `MAVERICK_WORKFORCE_LEVELS` | config `[workforce] levels` (off) | Enable per-agent autonomy levels (observe/suggest/request/auto). Off = every agent stages actions for human execution. |
-
-## Agent-to-agent (A2A)
-
-| Env var | Default | Description |
-| --- | --- | --- |
-| `MAVERICK_A2A_ENABLED` | config `[a2a] enabled` (off) | Enable the outward-facing A2A surface. |
-| `MAVERICK_A2A_BASE_URL` | code default | Base URL advertised for A2A. |
-| `MAVERICK_A2A_TOKEN` | unset | Bearer token required from A2A clients. |
-| `MAVERICK_A2A_ALLOW_UNAUTHENTICATED` | unset (off) | `1` allows unauthenticated A2A requests (trusted networks only). |
-| `MAVERICK_A2A_MAX_DOLLARS` | `5.0` | Dollar ceiling for an A2A-initiated task. |
-| `MAVERICK_A2A_MAX_WALL_SECONDS` | `3600` | Wall-clock ceiling (seconds) for an A2A task. |
-| `MAVERICK_A2A_MAX_DEPTH` | `3` | Max recursion depth for an A2A task. |
-| `MAVERICK_A2A_MAX_TASKS` | `1000` (min 16) | Max concurrently-tracked A2A tasks. |
 
 ## Durable execution
 

@@ -19,8 +19,8 @@ request envelope, webhook-format HMAC, or platform JWT; see
 ``maverick.external_identity``) — NOT the dashboard session/bearer. The
 ``/api/v1/external/`` prefix is
 therefore registered as self-authenticating (see ``auth.py`` and the
-dashboard-token middleware in ``app.py``), same pattern as ``/a2a/v1`` and
-the HMAC webhooks: an external platform has no dashboard credential, and
+dashboard-token middleware in ``app.py``), same pattern as the HMAC
+webhooks: an external platform has no dashboard credential, and
 pressuring operators to share one across two trust domains would be worse.
 Every route self-gates on ``[external_agents] enable`` (404 when off) and the
 Gold entitlement (403), so including the router unconditionally is inert.

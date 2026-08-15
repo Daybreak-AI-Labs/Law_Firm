@@ -156,7 +156,7 @@ maverick serve         # starts every configured channel; each message becomes a
 Discord, Telegram, SMS/Twilio, Email, Matrix, and more ship the same way — one
 `[channels.<name>]` block each. See `docs/configuration.md` for the full list.
 
-## Any language, or another agent (MCP / A2A)
+## Driving it from an editor (MCP)
 
 - **MCP** — the surface for outside callers. Run `maverick mcp` (stdio) or
   `maverick mcp --http` and drive it from any MCP-speaking editor client:

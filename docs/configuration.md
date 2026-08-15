@@ -7,9 +7,9 @@ Lightwork reads `~/.maverick/config.toml`. The installer wizard writes it; you c
 ```toml
 [deployment]
 type = "desktop"       # desktop | docker | vps | phone
-# Break-glass only. Exactly one control plane may write a data root: flows,
-# A2A claims, and the audit, budget-receipt, fleet-memory and learning ledgers
-# are hash-chained and assume a single author. Two writers do not tear a
+# Break-glass only. Exactly one control plane may write a data root: flows and
+# the audit, budget-receipt, fleet-memory and learning ledgers are hash-chained
+# and assume a single author. Two writers do not tear a
 # record -- they interleave valid ones, so the result verifies clean and is
 # unreconstructable. Startup takes an exclusive lock on the data root and a
 # second process refuses to serve. Set this only if you have guaranteed
@@ -520,8 +520,8 @@ For desktop installs the dashboard binds to `127.0.0.1:8765` and bearer
 auth is optional. For VPS deploys (reachable from the open internet)
 set `MAVERICK_DASHBOARD_TOKEN` — every request to `/api/v1/*` and every
 HTML page is then gated. The probe/discovery paths `/healthz`, `/livez`,
-`/readyz`, `/openapi.json`, `/docs`, `/redoc`, and the agent-card
-well-knowns are exempt (so monitoring + API discovery still works). The
+`/readyz`, `/openapi.json`, `/docs` and `/redoc` are exempt (so monitoring
+and API discovery still work). The
 inbound webhook routes (`/webhook/start`, `/webhook/run`, issue webhooks)
 and the `/share/`, `/scim/`, `/saml/` prefixes authenticate by their own
 mechanism (HMAC signature / share token / SSO) rather than the bearer.

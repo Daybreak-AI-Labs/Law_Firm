@@ -444,8 +444,7 @@ issuer / audience / jwks_uri and writes the `[auth.oidc]` table).
 **Exempt paths** (answer without a bearer even when OIDC is on, for load
 balancers / k8s probes / OpenAPI docs):
 `/healthz`, `/livez`, `/readyz`, `/openapi.json`, `/docs`, `/redoc`,
-`/docs/oauth2-redirect`, `/.well-known/agent-card.json`,
-`/.well-known/agent.json`. **HMAC-signed webhooks** (`/webhook/...`) are also
+`/docs/oauth2-redirect`. **HMAC-signed webhooks** (`/webhook/...`) are also
 exempt — they carry their own shared-secret signature and are gated separately,
 so OIDC does not 401 inbound webhooks.
 

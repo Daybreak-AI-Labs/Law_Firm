@@ -37,7 +37,7 @@ contain it (§3) and the tests that exercise it (§4).
 | 5 | **MCP supply chain** | MCP server command / tool descriptions | `pin_sha256` command hash-pinning; tool-description scan at registration |
 | 6 | **Channel webhook spoofing / double-spend** | SMS/WhatsApp/Telegram/Bluesky inbound | HMAC verification (fail-closed 401); atomic dedup; per-channel sender allowlist |
 | 7 | **Audit-log tampering / repudiation** | `~/.maverick/audit/*.ndjson` | Ed25519 hash-chain (opt-in `[audit] sign`), cross-file anchors, fsync durability |
-| 8 | **AuthN/AuthZ bypass** | dashboard, MCP HTTP, A2A | Fail-closed bearer tokens (`MAVERICK_DASHBOARD_TOKEN`, `MAVERICK_MCP_TOKEN`, `MAVERICK_A2A_TOKEN`) |
+| 8 | **AuthN/AuthZ bypass** | dashboard, MCP HTTP | Fail-closed bearer tokens (`MAVERICK_DASHBOARD_TOKEN`, `MAVERICK_MCP_TOKEN`) |
 | 9 | **Plugin / skill code execution** | pip entry-points, installed skills | Default-deny plugin allowlist (`MAVERICK_PLUGINS_ALLOW`); skill-body scan + hash-pin at install |
 | 10 | **Resource exhaustion / DoS** | long inputs, runaway loops, fork bombs | `Budget` caps; ReDoS-hardened regexes; sandbox `pids_limit`/timeouts; killswitch `~/.maverick/HALT` |
 
@@ -72,7 +72,7 @@ Each control, where it lives, and how to confirm it's active.
 | Env scrubbing for child shells | `sandbox/local.py` `scrub_env()` | `test_tool_subprocess_hardening.py` |
 | Shield injection detection | `maverick-shield/` | `test_builtin_rules.py`, `test_cascade.py`, `test_deobfuscation.py`, `test_injection_corpus.py` |
 | Audit Ed25519 hash-chain + anchors | `maverick/audit/` | `test_audit_anchor.py`, `test_audit_reanchor.py`, `test_audit_durability.py` |
-| Fail-closed auth (dashboard/MCP/A2A) | dashboard `app.py`, `mcp/http_transport.py`, `a2a_tasks.py` | `test_tier0_security.py`, MCP/A2A test suites |
+| Fail-closed auth (dashboard/MCP) | dashboard `app.py`, `mcp/http_transport.py` | `test_tier0_security.py`, MCP test suites |
 | Webhook HMAC + atomic dedup | `maverick/webhooks.py`, `maverick_channels/` | `test_security_invariants.py`, channel test suites |
 | Plugin default-deny | `maverick/plugins.py` | `test_tier0_security.py` |
 | Budget caps | `maverick/budget.py` | budget test suites |

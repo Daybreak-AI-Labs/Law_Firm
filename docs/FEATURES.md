@@ -1517,8 +1517,8 @@ here.
   tombstones), `consent_ergonomics` (minimal plain-language consent prompt +
   risk badge), `skill_distill_v2` (extract a reusable skill spec from a
   successful trace), `observation_channel` (merge multi-agent observations into
-  a time-ordered feed), `marketplace_moderation` (APPROVE/REVIEW/REJECT listing
-  scan), `channel_autoroute` (pick the best channel for a message by rules),
+  a time-ordered feed), `channel_autoroute` (pick the best channel for a
+  message by rules),
   `jwt_inspect` (decode + validate a JWT offline — claims, exp/nbf, and
   HS256/384/512 HMAC signature verification; flags alg=none), `rbac_check`
   (evaluate an RBAC authorization decision — role inheritance + '*'/'prefix:*'
@@ -1916,32 +1916,11 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   Cursor) drives Lightwork through it; the editor-specific packages
   (`apps/vscode-extension`, `apps/emacs`, `apps/nvim`) are thin CLI fronts,
   not parallel protocols.
-- **A2A** (`a2a.py`, `a2a_tasks.py`) — Agent Card discovery + delegation, with
-  the **interop consuming half** (`validate_agent_card` spec-shape lint,
-  `parse_remote_card` normalization that refuses a non-conformant card before
-  anything delegates against it) proven both ways by interop tests: Lightwork's
-  own card passes its own validator, and third-party-shaped fixture cards
-  (rich + minimal) parse correctly. The mounted task engine claims every
-  `messageId` in a tenant-and-principal-scoped SQLite ledger before execution,
-  replays terminal results across workers/restarts, and refuses crash-left
-  indeterminate claims rather than risking duplicate side effects.
-- **Swarm federation** (`federation.py` + `grpc_api/federation.proto`,
-  protocol `maverick-federation/1`, opt-in `[federation] enabled` + `peers`):
-  delegate goals across *sovereign* swarms (each with its own world DB —
-  distinct from `RunGoal`'s shared-DB offload). `Hello` exchanges A2A agent
-  cards (non-conformant peers refused), `DelegateGoal` carries a correlation
-  id + required tools resolved **narrow-only** via capability boot negotiation
-  (an ungrantable requirement refuses the delegation), auth is a constant-time
-  shared token that *identifies* the caller from local config (wire names
-  never trusted; fail-closed), and **both halves record reciprocal audit rows**
-  in exactly the convention `audit/federation.py` cross-verifies — a dropped
-  half is detectable. The protocol layer runs over any `call(method, payload)`
-  transport; the gRPC binding is a thin `[grpc]` adapter (live-smoked).
 - **Agent Trust Plane** (`agent_trust.py`, engaged by enterprise mode or
   `[agent_trust] enforce = true` / `MAVERICK_AGENT_TRUST=1`) — the *single*
   registry + decision point for talking to **external** agents, unifying what
-  was scattered across `[federation] peers`, `[a2a]`, the fleet-memory roster,
-  and the channel/marketplace pinned-key lists. One `[agent_trust] agents` list
+  was scattered across the fleet-memory roster and the per-surface shared
+  bearers. One `[agent_trust] agents` list
   names each trusted outside agent by its **pinned Ed25519 public key** (reusing
   `federation_envelope`'s asymmetric identity), with a **direction**
   (inbound/outbound/both), a tool/risk **capability ceiling**, a dollar+wall
@@ -1951,11 +1930,10 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   engaged (an unregistered agent is refused even with a valid shared token), a
   strict **no-op when disengaged** (kernel rule 1 preserved). Entries carry a
   **key lifecycle** (`not_before` / `expires_at` / `revoked`, propagated onto
-  the issued capability). Wired into federation (inbound + outbound + `hello` /
-  `status`, registry ceiling intersected into capability boot, **wall-clock AND
-  dollar budget clamped down**, and goal text **secret-redacted + shield-screened
-  in BOTH directions**, fail-toward-gate); A2A (**default-deny admission** when
-  engaged, plus ceiling tightening); and fleet memory (**both recall AND ingest**
+  the issued capability). Wired into the gRPC and MCP surfaces (registry ceiling
+  intersected into capability boot, **wall-clock AND dollar budget clamped
+  down**, and goal text **secret-redacted + shield-screened in BOTH
+  directions**, fail-toward-gate); and fleet memory (**both recall AND ingest**
   gated by `data_scopes`, with recall **hard-filtering** returned content to the
   declared scope — unscoped reads denied). Engagement + registry are read from a
   **single config snapshot** per operation; `maverick doctor` warns when the
@@ -1968,20 +1946,19 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   longer impersonate a peer that has a pinned key. Freshness + a replay-nonce
   cache reject captured signatures; `[agent_trust] require_signed = true` refuses
   even shared-token-only peers (peers without a pinned key remain a documented
-  migration path). **Per-caller A2A identity**: an `[agent_trust] a2a_token`
-  resolves an A2A caller to principal `agent:<id>`, so the registry governs
-  individual A2A callers (admission + per-caller tool ceiling) rather than one
-  shared surface. **Channel and marketplace federation** are gated by the
-  registered (signature-verified) origin. **Org governance**: accepting a
-  federation delegation routes through `governance.evaluate` when engaged —
+  migration path). **Per-caller identity**: an `[agent_trust] grpc_token` /
+  `mcp_token` resolves a caller to principal `agent:<id>`, so the registry
+  governs individual callers (admission + per-caller tool ceiling) rather than
+  one shared surface. **Org governance**: an accepted delegation routes through
+  `governance.evaluate` when engaged —
   `DENY` refuses and `REQUIRE_HUMAN` refuses fail-closed (no silent
   auto-accept), a no-op without a `[governance]` policy. The **gRPC goal API**
   and **MCP server** are likewise gated: each accepts a per-caller
   `[agent_trust] grpc_token` / `mcp_token` (distinct per surface) resolving to
   `agent:<id>`, and when engaged a caller must be a permitted inbound agent
   (per-caller entry, or the surface-wide `"grpc"` / `"mcp"` entry for a
-  shared-bearer caller) — so every external ingress (federation, A2A, fleet,
-  channel, marketplace, gRPC, MCP) is default-denied at the boundary.
+  shared-bearer caller) — so every external ingress (fleet, gRPC, MCP) is
+  default-denied at the boundary.
 - **Bring-your-own-agent gateway** (`external_agents.py`, opt-in
   `[external_agents] enable` / `MAVERICK_EXTERNAL_AGENTS=1`, gold-tier
   `external_agents` entitlement) — agents built on *other* runtimes
@@ -1990,7 +1967,7 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   governed on ours. Four verbs: **enroll** (one call writes the inbound Agent
   Trust entry — tool/risk/budget ceilings, expiry — plus the fleet-memory
   roster and platform/ownership provenance), **credential** (per-surface
-  bearer tokens, rest/a2a/grpc/mcp, shown exactly once; rotate = re-mint,
+  bearer tokens, rest/grpc/mcp, shown exactly once; rotate = re-mint,
   revoke everywhere at once), **screen** (pre-action admission: trust
   ceilings, cumulative budget cutoff, Shield input scan — a scanner error
   **denies** — and the `[actions] require_approval_at` floor, which parks a
@@ -2147,12 +2124,7 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   forwards only to its single configured upstream host plus model-inference
   routes by default (override with `[model_proxy] allowed_routes` or
   `MAVERICK_PROXY_ALLOWED_ROUTES`).
-- **Audit & compliance** — signed append-only audit log (`maverick audit verify`), **federated
-  audit-log verification** (`audit/federation.py`) — over a set of nodes/tenants
-  whose signed logs reference each other (delegation, A2A handoff), confirms
-  every cross-node reference is *reciprocated* (a node can't drop its half to
-  hide an action) on top of each node's own chain/anchor check; an
-  unreciprocated or forged link is reported with the missing counterpart,
+- **Audit & compliance** — signed append-only audit log (`maverick audit verify`),
   date-windowed **SIEM export**, **WORM export** (`audit/worm.py`, `maverick audit
   worm push`) — ships closed day-files to S3 Object-Lock (COMPLIANCE/GOVERNANCE)
   or a local read-only mirror with a retention lock, so the historical trail is
@@ -2662,12 +2634,7 @@ the snapshot store is an atomic JSON keyed by release tag.
 pinned conditions (seed, model id, prompt-template hash, tool-set hash) and
 emits an HMAC-signed `{suite, seed, env_fingerprint, results, aggregate}`
 manifest; `--verify baseline current` diffs two runs and names the exact
-diverged task on non-determinism. **Marketplace moderation**
-(`marketplace_moderation.py`, `python -m maverick.marketplace_moderation
-<path>`): static pre-publication checks over a submitted skill/plugin —
-manifest completeness, permission-escalation (declared vs used), secret scan
-(reuses the secret detector), prohibited patterns, license — with a
-strictest-wins approve/flag/reject verdict. **Skill search engine**
+diverged task on non-determinism. **Skill search engine**
 (`skill_search.py`, `python -m maverick.skill_search`): zero-dep BM25-lite
 ranked search over the local skill library with HF-dataset export/import
 (`skills.jsonl`, network via an injected fetcher; pulled skills re-validated

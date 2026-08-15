@@ -78,11 +78,22 @@ def _delegate(svc, **over):
 def test_token_surface_isolation():
     # A token configured for one surface must not authenticate another.
     reg = {"vega": TrustedAgent(id="vega", grpc_token="g", mcp_token="m",
-                                a2a_token="a")}
+                                rest_token="r")}
     assert agent_trust.agent_for_token("g", "grpc", registry=reg).id == "vega"
     assert agent_trust.agent_for_token("g", "mcp", registry=reg) is None
-    assert agent_trust.agent_for_token("g", "a2a", registry=reg) is None
+    assert agent_trust.agent_for_token("g", "rest", registry=reg) is None
     assert agent_trust.agent_for_token("m", "mcp", registry=reg).id == "vega"
+    assert agent_trust.agent_for_token("r", "rest", registry=reg).id == "vega"
+
+
+def test_a_retired_surface_authenticates_nothing():
+    # The a2a surface is gone. A bearer presented for it must not resolve --
+    # and an unknown surface name must not fall back to some other surface's
+    # token, which is how a retired surface turns into a bypass.
+    reg = {"vega": TrustedAgent(id="vega", grpc_token="g", mcp_token="m")}
+    assert agent_trust.agent_for_token("g", "a2a", registry=reg) is None
+    assert agent_trust.agent_for_token("m", "a2a", registry=reg) is None
+    assert "a2a" not in agent_trust._TOKEN_ATTRS
 
 
 def test_duplicate_active_surface_token_is_not_an_identity():

@@ -4,10 +4,8 @@
 Lightwork grew several independent cross-agent pathways, each with its own
 enable flag, its own auth model, and its own "who's allowed" list:
 
-  * federation (``[federation] peers``)        — shared-secret tokens;
-  * A2A tasks (``[a2a]``)                       — a single bearer token;
   * fleet memory (``agents.ndjson`` roster)     — a registration list;
-  * channel/marketplace federation             — Ed25519 pinned keys.
+  * the gRPC goal API and MCP                   — single shared bearers.
 
 So the one question a company actually asks — *"which outside agents may our
 agents talk to, and what may they do or see?"* — had no single answer; it was
@@ -212,12 +210,11 @@ class TrustedAgent:
     max_dollars: float | None = None
     max_wall_seconds: float | None = None
     data_scopes: frozenset[str] = frozenset()
-    # Per-caller bearers for the single-shared-bearer surfaces (A2A / gRPC goal
+    # Per-caller bearers for the single-shared-bearer surfaces (the gRPC goal
     # API / MCP), which carry no per-caller identity in-protocol. A request
     # presenting one resolves to principal "agent:<id>" and is governed by THIS
     # entry. Distinct per surface so a token leaked on one surface can't
     # authenticate another. "" = this agent has no bearer for that surface.
-    a2a_token: str = ""
     grpc_token: str = ""
     mcp_token: str = ""
     # The external-agents HTTP gateway (run ingest / action screening) is its
@@ -484,7 +481,7 @@ def _agent_from_entry(entry: dict) -> TrustedAgent | None:
                     "dropping entry (fail-closed)", agent_id)
         return None
     tokens: dict[str, str] = {}
-    for field in ("a2a_token", "grpc_token", "mcp_token", "rest_token",
+    for field in ("grpc_token", "mcp_token", "rest_token",
                   "jwt_issuer", "jwt_audience", "jwks_file",
                   "hmac_secret_ref"):
         value = entry.get(field, "")
@@ -515,7 +512,6 @@ def _agent_from_entry(entry: dict) -> TrustedAgent | None:
         max_dollars=max_dollars,  # type: ignore[arg-type]  # float|None
         max_wall_seconds=max_wall_seconds,  # type: ignore[arg-type]
         data_scopes=data_scopes,  # type: ignore[arg-type]
-        a2a_token=tokens["a2a_token"],
         grpc_token=tokens["grpc_token"],
         mcp_token=tokens["mcp_token"],
         rest_token=tokens["rest_token"],
@@ -723,7 +719,7 @@ def lookup(agent_id: str, *, registry: dict[str, TrustedAgent] | None = None) ->
     return reg.get(agent_id)
 
 
-_TOKEN_ATTRS = {"a2a": "a2a_token", "grpc": "grpc_token", "mcp": "mcp_token",
+_TOKEN_ATTRS = {"grpc": "grpc_token", "mcp": "mcp_token",
                 "rest": "rest_token"}
 
 #: Tokens minted from the app are stored hashed; hand-edited config-file
@@ -756,7 +752,7 @@ def _token_matches(configured: str, presented: bytes) -> bool:
 def agent_for_token(
     token: str, surface: str, *, registry: dict[str, TrustedAgent] | None = None,
 ) -> TrustedAgent | None:
-    """Resolve a valid presented per-caller bearer for ``surface`` (a2a/grpc/mcp)
+    """Resolve a valid presented per-caller bearer for ``surface`` (grpc/mcp/rest)
     to its registered agent, or ``None``.
 
     Constant-time compares against every entry's surface token (scanning all so
@@ -786,14 +782,6 @@ def agent_for_token(
     # authenticated caller, so reject it instead of silently picking whichever
     # registry entry happened to be iterated first.
     return matched if active_matches == 1 else None
-
-
-def agent_for_a2a_token(
-    token: str, *, registry: dict[str, TrustedAgent] | None = None,
-) -> TrustedAgent | None:
-    """Back-compat wrapper: resolve a per-caller A2A bearer (see
-    :func:`agent_for_token`)."""
-    return agent_for_token(token, "a2a", registry=registry)
 
 
 # -- decision point --------------------------------------------------------
@@ -1077,7 +1065,6 @@ __all__ = [
     "local_pubkey",
     "lookup",
     "agent_for_token",
-    "agent_for_a2a_token",
     "decide_inbound",
     "decide_outbound",
     "decide_memory_access",
