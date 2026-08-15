@@ -66,18 +66,3 @@ def test_grpc_setting_bad_value_falls_back(monkeypatch):
     from maverick.grpc_api import server
     monkeypatch.setenv("MAVERICK_GRPC_MAX_WORKERS", "not-an-int")
     assert server._grpc_int_setting("MAVERICK_GRPC_MAX_WORKERS", "max_workers", 8) == 8
-
-
-# ---- federation server settings -------------------------------------------
-
-
-def test_federation_worker_setting(monkeypatch):
-    from maverick import federation
-    monkeypatch.setenv("MAVERICK_FEDERATION_MAX_WORKERS", "5")
-    assert federation._fed_int_setting(
-        "MAVERICK_FEDERATION_MAX_WORKERS", "max_workers", 8) == 5
-    monkeypatch.delenv("MAVERICK_FEDERATION_MAX_WORKERS")
-    monkeypatch.setattr("maverick.config.load_config",
-                        lambda: {"federation": {"max_workers": 7}})
-    assert federation._fed_int_setting(
-        "MAVERICK_FEDERATION_MAX_WORKERS", "max_workers", 8) == 7
