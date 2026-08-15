@@ -199,15 +199,3 @@ def test_channel_credentials_built(tmp_path):
     assert grpc_tls.channel_credentials("federation", {}) is None
 
 
-# ---- federation client refuses plaintext when required --------------------
-
-
-def test_federation_client_refuses_insecure_when_required(monkeypatch):
-    pytest.importorskip("grpc")
-    from maverick import client
-    from maverick.federation import FederationError, Peer, _GrpcTransport
-    monkeypatch.setattr(client, "client_binding_enforced", lambda: True)
-    monkeypatch.setattr(grpc_tls, "_section", lambda name: {})  # TLS not configured
-    t = _GrpcTransport(Peer("vega", "vega:50061", "tok"))
-    with pytest.raises(FederationError):
-        t._bind()

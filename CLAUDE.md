@@ -5,10 +5,13 @@
 
 ## Project
 
-- **Stack:** Python 3.10-3.12 uv-workspace monorepo (8 pip packages under
-  `packages/` + `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps,
-  one TypeScript SDK (`sdks/plugin-ts`, Node 22). pip editable installs; npm
-  only for the TS SDK.
+- **Stack:** Python uv-workspace monorepo (8 pip packages under `packages/` +
+  `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps, one TypeScript
+  plugin SDK (`sdks/plugin-ts`, Node 22). pip editable installs; npm only for
+  that SDK. CI runs **3.12 only** — the 3.10/3.11/3.12 matrix was for
+  strangers' interpreters. Manifests still say `requires-python = ">=3.10"`
+  (an installability floor, not a tested promise), so the tomllib try/except
+  shim and its lint gate stay.
 - **Entry points:** `maverick` CLI (`packages/maverick-core/maverick/cli.py`),
   dashboard app (`maverick_dashboard.app:app`), MCP server (`maverick mcp`).
 
@@ -181,12 +184,18 @@ What changed from upstream, and why:
   are malpractice-defense artifacts, not enterprise ceremony.
 - **Theme default is `graphite`** (neutral grey), with `dove` as the light
   grey. The upstream liquid-glass system renders against them unchanged.
-- **Deleted:** `benchmarks/`, `demo/`, and their CI jobs (eval-smoke,
-  governance-frontier-offline, harness-overhead) and docs-publishing steps.
-- **Retained deliberately:** `agent-shield`, all 14 client apps, and the
-  multi-tenant/`tenant` layer — the last is load-bearing (227 source
-  references, 163 test files) and single-tenant is already its default path,
-  so removing it would be a large refactor for no user-visible gain.
+- **Deleted:** `benchmarks/`, `demo/`, their CI jobs and docs-publishing
+  steps; the enterprise sales + SOC2/ISO certification docs; the five
+  third-party language SDKs (TypeScript, Go, Rust, C#, Java) and their five CI
+  jobs; `a2a`/`federation`/`channel_federation` (cross-organization agent
+  interop) and the marketplace ecosystem backend.
+- **Retained deliberately:** `agent-shield`; the multi-tenant/`tenant` layer
+  (load-bearing — 227 source references, 163 test files, single-tenant is its
+  default path); `federation_envelope.py` (the Ed25519 primitive `agent_trust`
+  and the external-agent path share); `marketplace/storefront.py` +
+  `ratings.py` + `stats.py` (the pack/connector browser and YOUR OWN star
+  ratings on goal templates — despite the package name, these are local, not
+  ecosystem); the Rust audit verifier and native scanner; the Go model proxy.
 
 ## Kernel rules (pre-existing, still enforced)
 
@@ -236,6 +245,8 @@ and never mark the PR work done until the body has been verified clean.
 | Fix lint issue | n/a | nothing to fix: gates clean; 127 bugbear findings intentionally out of scope |
 | Fork + prune to a law firm | success-with-tail | Deleting 1,895 packs broke 16 tests immediately and ~50 files in total: **pack names are fixture data all over the suite** (`finance_sox` alone in 27 files, `finance_cash13w` in 12). Roster-shape assertions (`>1000 non-builders`, `>=55 itgrc packs`) encode the enterprise product and must be retargeted, not deleted — the invariants inside them (read-only envelope, self-edit floor, effort tiers) are the safety contract. |
 | Bulk-rename pack references | caught in review | A blanket `\bfinance_anomaly\b` rewrite also hit `maverick/tools/finance_anomaly.py` — several pack names are ALSO tool/module names. Check for a `packages/**/<name>.py` collision before any roster-wide rename. |
+| Prune a subsystem by name | caught twice | `marketplace/` is NOT all ecosystem: `storefront.py` backs the dashboard's pack/connector browser and `ratings.py` is the operator's OWN star ratings on goal templates. Deleting the package wholesale broke both. Read each module's docstring before deleting a package whose *name* sounds like product surface. |
+| Bulk-rebrand prose | caught in review | A regex swapping `Lightwork` -> `the platform` produced "The the platform Handbook" and `cd the platform` in shell blocks. Sentence position and code fences both matter; a name-swap in prose is a hand edit, not a regex. |
 
 ## Pack-reference gotchas
 

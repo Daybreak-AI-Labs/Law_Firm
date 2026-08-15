@@ -158,14 +158,9 @@ Discord, Telegram, SMS/Twilio, Email, Matrix, and more ship the same way — one
 
 ## Any language, or another agent (MCP / A2A)
 
-- **MCP** — Lightwork's official cross-language surface. Run `maverick mcp` (stdio)
-  or `maverick mcp --http` and drive it from TypeScript / Go / Rust / .NET / JVM,
-  or any MCP-speaking IDE client. See [`docs/clients/`](./clients/) for ~20-line
-  quickstarts.
-- **A2A** — to let *other agents* discover and delegate goals to this instance,
-  enable A2A (`MAVERICK_A2A_ENABLED=1`); it serves an Agent Card at
-  `/.well-known/agent-card.json` and a task endpoint at `/a2a/v1`. See
-  [`docs/a2a.md`](./a2a.md).
+- **MCP** — the surface for outside callers. Run `maverick mcp` (stdio) or
+  `maverick mcp --http` and drive it from any MCP-speaking editor client:
+  Claude Code, Cursor, Continue, Zed.
 
 ## REST (the dashboard API)
 

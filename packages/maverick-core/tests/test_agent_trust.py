@@ -311,91 +311,7 @@ def _fed_service(monkeypatch, *, registry, enforced=True):
     return svc, rows, federation
 
 
-def test_federation_inbound_denied_for_unregistered_peer(monkeypatch):
-    # Authenticated by shared token, but absent from the trust registry ->
-    # refused once the plane is engaged (the shared token is no longer enough).
-    svc, rows, _ = _fed_service(monkeypatch, registry={})
-    reply = svc.delegate_goal({"auth_token": "tok", "correlation_id": "c1",
-                               "goal_title": "x"})
-    assert reply["accepted"] is False
-    assert "trust registry" in reply["reason"]
-    # The federation seam records its "received" refusal half with the reason.
-    assert any("trust registry" in str(r.get("reason", "")) for r in rows)
-
-
-def test_federation_inbound_allowed_for_registered_peer(monkeypatch):
-    reg = _reg(TrustedAgent(id="A", direction="both",
-                            allow_tools=frozenset({"read_file"})))
-    svc, _rows, _ = _fed_service(monkeypatch, registry=reg)
-    reply = svc.delegate_goal({"auth_token": "tok", "correlation_id": "c2",
-                               "goal_title": "do it",
-                               "requested_tools": ["read_file"]})
-    assert reply["accepted"] is True
-    assert reply["goal_id"] >= 1
-
-
-def test_federation_inbound_tool_outside_ceiling_refused(monkeypatch):
-    reg = _reg(TrustedAgent(id="A", allow_tools=frozenset({"read_file"})))
-    svc, _rows, _ = _fed_service(monkeypatch, registry=reg)
-    reply = svc.delegate_goal({"auth_token": "tok", "correlation_id": "c3",
-                               "goal_title": "do it", "requested_tools": ["shell"]})
-    assert reply["accepted"] is False
-
-
-def test_federation_outbound_blocked_for_unregistered_peer(monkeypatch):
-    from maverick.federation import FederationNode, Peer
-
-    _patch_trust(monkeypatch, registry={}, enforced=True)
-
-    class _Boom:
-        def call(self, *a, **k):  # must never be reached
-            raise AssertionError("dialed a peer the trust plane forbade")
-
-    node = FederationNode(node="A", peers=[Peer("B", "b:1", "tok")],
-                          transport_factory=lambda peer: _Boom(),
-                          record=lambda *a, **k: None)
-    out = node.delegate("B", "title")
-    assert out.accepted is False and "trust registry" in out.reason
-
-
-def test_federation_disengaged_unchanged(monkeypatch):
-    # The default posture: plane disengaged -> shared-token auth alone admits a
-    # peer with no registry entry, exactly as before this feature.
-    reg: dict = {}
-    svc, _rows, _ = _fed_service(monkeypatch, registry=reg, enforced=False)
-    reply = svc.delegate_goal({"auth_token": "tok", "correlation_id": "c4",
-                               "goal_title": "legacy"})
-    assert reply["accepted"] is True
-
-
 # ---- A2A wiring -----------------------------------------------------------
-
-
-def test_a2a_capability_tightened_by_registry(monkeypatch):
-    from maverick.a2a_tasks import _a2a_capability
-
-    registry = {
-        "a2a": TrustedAgent(
-            id="a2a", allow_tools=frozenset({"read_file"}),
-        ),
-    }
-    monkeypatch.setattr(
-        agent_trust, "load_trust_state", lambda: (True, registry),
-    )
-    cap = _a2a_capability()
-    assert cap.allow_tools == frozenset({"read_file"})
-
-
-def test_a2a_capability_unchanged_when_disengaged(monkeypatch):
-    from maverick.a2a_tasks import _a2a_capability
-
-    monkeypatch.setattr(
-        agent_trust, "load_trust_state", lambda: (False, {}),
-    )
-    # Disengaged -> no [agent_trust] tightening; default ceiling (all tools,
-    # medium risk) is preserved.
-    cap = _a2a_capability()
-    assert cap.allow_tools == frozenset()  # empty == all
 
 
 # ---- fleet-memory data-scope gating ---------------------------------------
@@ -618,21 +534,3 @@ def test_verify_identity_rejects_revoked():
 # ---- A2A hard-deny --------------------------------------------------------
 
 
-def test_a2a_trust_block_denies_when_engaged_and_no_entry(monkeypatch):
-    from maverick.a2a_tasks import _a2a_trust_block
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, {}))
-    reason = _a2a_trust_block()
-    assert reason and "trust registry" in reason
-
-
-def test_a2a_trust_block_admits_with_entry(monkeypatch):
-    from maverick.a2a_tasks import _a2a_trust_block
-    reg = _reg(TrustedAgent(id="a2a", direction="both"))
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, reg))
-    assert _a2a_trust_block() is None
-
-
-def test_a2a_trust_block_noop_when_disengaged(monkeypatch):
-    from maverick.a2a_tasks import _a2a_trust_block
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (False, {}))
-    assert _a2a_trust_block() is None

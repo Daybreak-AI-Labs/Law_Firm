@@ -325,11 +325,10 @@ screened by the same shield/budget/sandbox machinery:
   client (stdio + Streamable HTTP); `[mcp_servers]` makes Lightwork
   *consume* external MCP servers as tools, which still pass through the
   shield. `maverick mcp-registry browse / add` manages sources.
-- **APIs & language clients** — the dashboard's REST API
+- **APIs** — the dashboard's REST API
   ([`api.md`](./api.md)), the contract-gated gRPC v1 surface
-  ([`grpc.md`](./grpc.md)), A2A Agent Card interop ([`a2a.md`](./a2a.md)),
-  LangChain/AutoGen/CrewAI adapters, and quickstarts for TypeScript, Go,
-  Rust, C#, and Java (`docs/clients/`). Deliberately *not* a port: other
+  ([`grpc.md`](./grpc.md)), and LangChain/AutoGen/CrewAI adapters.
+  Deliberately *not* a port: other
   languages drive Lightwork over the wire; the kernel stays Python (the
   council decision in the roadmap in `README.md`).
 - **Sandbox backends** — the entry-point contract from primitive #5;
@@ -358,7 +357,7 @@ haven't installed yet.
 | Safety & security | [`safety.md`](./safety.md), [`security-hardening.md`](./security-hardening.md), [`security/`](./security/), [`SECURITY.md`](SECURITY.md), [`threat-hunting.md`](./threat-hunting.md) |
 | Harden a deployment | [`regulated-deployment.md`](./regulated-deployment.md), [`compliance/deployment/`](./compliance/deployment/), [`encryption.md`](./encryption.md) |
 | Extend it | [`plugins.md`](./plugins.md), [`plugin-api-v2.md`](./plugin-api-v2.md), [`self-learning.md`](./self-learning.md), [`embedding.md`](./embedding.md), [`connectors.md`](./connectors.md) |
-| Drive it from outside | [`api.md`](./api.md), [`grpc.md`](./grpc.md), [`a2a.md`](./a2a.md), [`clients/`](./clients/), [`integrations/`](./integrations/) |
+| Drive it from outside | [`api.md`](./api.md), [`grpc.md`](./grpc.md), [`clients/external-agent-quickstart.md`](./clients/external-agent-quickstart.md), [`integrations/`](./integrations/) |
 | Task recipes | [`cookbook/`](./cookbook/) (30 recipes), [`starter-goals.md`](./starter-goals.md) |
 | Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Licensing | [`LICENSE`](../LICENSE) |

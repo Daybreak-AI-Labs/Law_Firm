@@ -6,7 +6,6 @@
     "packages/maverick-core/maverick/dreaming.py::_audit_cycle",
     "packages/maverick-core/maverick/earned_autonomy.py::_default_audit_fn",
     "packages/maverick-core/maverick/evaluator_evolution.py::_audit",
-    "packages/maverick-core/maverick/federation.py::_default_record",
     "packages/maverick-core/maverick/fleet_memory.py::_audit",
     "packages/maverick-core/maverick/hindsight.py::write_ledger",
     "packages/maverick-core/maverick/intake.py::ingest_docs",

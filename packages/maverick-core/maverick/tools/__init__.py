@@ -846,7 +846,6 @@ def base_registry(
     from .latency_slo import latency_slo
     from .linear import linear
     from .local_embeddings_cache import local_embeddings_cache
-    from .marketplace_moderation import marketplace_moderation
     from .marketplace_ratings import marketplace_ratings
     from .memleak_quarantine import memleak_quarantine
     from .memory import memory
@@ -1049,7 +1048,6 @@ def base_registry(
     reg.register(consent_ergonomics())
     reg.register(skill_distill_v2())
     reg.register(observation_channel())
-    reg.register(marketplace_moderation())
     reg.register(channel_autoroute())
     reg.register(capability_delegation_graph())
     reg.register(honeytoken())

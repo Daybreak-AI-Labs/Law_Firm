@@ -13,11 +13,10 @@ sub-task to another, how does the receiver know the request is authentic, scoped
 and not replayed -- and run under exactly the delegated authority, no more? This
 module is that frame (see ``docs/proposals/agent-to-agent-protocol.md`` §7, §9).
 
-Not to be confused with :mod:`maverick.a2a`, which implements the *external*
-Linux-Foundation A2A standard (Agent-Card discovery + the inbound task API,
-bearer-auth). That is cross-vendor interop; this is the internal fleet's own
-delegation trust. They compose: an external A2A call lands as a principal, then
-internal work is delegated between agents via *these* signed handoffs.
+This is the internal fleet's own delegation trust. (The fork dropped the
+external cross-vendor A2A surface; an outside caller now arrives through the
+external-agent path, then internal work is delegated between agents via
+*these* signed handoffs.)
 
 The verifier is **pure and offline** (like :mod:`maverick.governance`) so the
 trust decision is exhaustively unit-testable; wiring it onto the bus is a

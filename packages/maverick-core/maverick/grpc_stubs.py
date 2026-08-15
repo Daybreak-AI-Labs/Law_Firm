@@ -43,10 +43,6 @@ def generate_all() -> list[str]:
     from .grpc_api import server as goal_server
     goal_server._generate_stubs()
     done.append("maverick.proto")
-    # federation.proto
-    from . import federation
-    federation._generate_stubs()
-    done.append("federation.proto")
     # plugin_host.proto (external tool plugins), if its generator is present
     try:
         from . import grpc_plugin_host

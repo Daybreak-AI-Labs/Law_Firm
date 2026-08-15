@@ -734,16 +734,13 @@ def build_app(server) -> FastAPI:
         )
 
     app = FastAPI(
-        title="Lightwork MCP HTTP",
+        title="Bjerken and Day MCP HTTP",
         description=(
             "MCP 2025-11-25 streamable HTTP transport. POST a JSON-RPC "
             "request; receive a JSON-RPC response or an SSE stream."
         ),
         version="0.2.0",
     )
-
-    from maverick import a2a
-    a2a.mount(app)
 
     # Offer async tasks over HTTP when opted in (MAVERICK_MCP_HTTP_TASKS). The
     # store lives on this server instance, so task records are bound to the
