@@ -171,8 +171,9 @@ def test_killswitch_default_path_follows_current_home(tmp_path, monkeypatch):
     ("google_api_key",     "AIzaSyB6CdEf1234567890abcdefghijklmnopq"),
     # Split so the file carries no literal that matches a live Stripe key --
     # GitHub push protection blocks the whole push on the assembled form, and
-    # this is a synthetic detector vector, not a credential.
-    ("stripe_live_key",    "sk_" "live_" "1234567890abcdefghijklmnop"),
+    # this is a synthetic detector vector, not a credential. The split changes
+    # what detect-secrets hashes, so it also needs the allowlist pragma.
+    ("stripe_live_key",    "sk_" "live_" "1234567890abcdefghijklmnop"),  # pragma: allowlist secret
     ("jwt",                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.signature"),
 ])
 def test_secret_detector_finds(secret_name, secret_value):
