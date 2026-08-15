@@ -413,17 +413,10 @@ async def _lifespan(app: FastAPI):
         await run_in_threadpool(start_finance_scheduler)
     except Exception:  # pragma: no cover - never block startup
         log.exception("finance operations scheduler not started")
-    # Connected-entitlement auto-refresh: a deployment with [license] api_url
-    # configured polls the vendor console so an upgrade/downgrade issued there
-    # lands within ~a minute — no redeploy, no manual refresh. No-op (returns
-    # None) without an API URL or with refresh_interval_seconds = 0, so tests
-    # and offline/air-gapped boxes are untouched. Fail-open by construction:
-    # the loop never raises and a failed poll leaves the license file in charge.
-    try:
-        from maverick.entitlements import start_refresher
-        await run_in_threadpool(start_refresher)
-    except Exception:  # pragma: no cover - never block startup
-        log.exception("license auto-refresh not started")
+    # The connected-entitlement auto-refresh loop is not started. Upstream it
+    # polled the vendor console for tier upgrades; that console is deleted and
+    # nothing is gated here (see maverick.entitlements.GATED_FEATURES), so the
+    # firm's own deployment has no license to refresh and no one to ask.
     # Voice warm-up: fetch/load the local STT model in the background so the
     # first mic click transcribes instead of 503ing into browser fallback.
     # A plain daemon thread, NOT run_in_threadpool: the first-run model

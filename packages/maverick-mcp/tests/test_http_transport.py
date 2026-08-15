@@ -28,7 +28,7 @@ class TestHTTPTransport:
         resp = client.get("/.well-known/agent-card.json")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["name"] == "Lightwork"
+        assert body["name"] == "Bjerken and Day"
         assert body["protocolVersion"] == "1.0"
 
     def test_initialize_returns_capabilities(self, monkeypatch):

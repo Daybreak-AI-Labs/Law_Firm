@@ -360,11 +360,8 @@ haven't installed yet.
 | Extend it | [`plugins.md`](./plugins.md), [`plugin-api-v2.md`](./plugin-api-v2.md), [`self-learning.md`](./self-learning.md), [`embedding.md`](./embedding.md), [`connectors.md`](./connectors.md) |
 | Drive it from outside | [`api.md`](./api.md), [`grpc.md`](./grpc.md), [`a2a.md`](./a2a.md), [`clients/`](./clients/), [`integrations/`](./integrations/) |
 | Task recipes | [`cookbook/`](./cookbook/) (30 recipes), [`starter-goals.md`](./starter-goals.md) |
-| How it compares | [`comparison.md`](./comparison.md), [`benchmarks/`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/) (`EVAL.md`, `RESULTS.md`) |
-| Community & programs | [`showcase.md`](./showcase.md), [`programs/`](./programs/) (summit, office hours, grants, awards, partnerships…) |
-| Press & naming | [`press-kit.md`](./press-kit.md), [`TRADEMARK.md`](TRADEMARK.md) |
-| Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CLA.md`](CLA.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), [`MAINTAINERS.md`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/MAINTAINERS.md) |
-| Licensing | [`LICENSE`](../LICENSE), [`enterprise/editions.md`](./enterprise/editions.md) |
+| Contribute | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Licensing | [`LICENSE`](../LICENSE) |
 
 ### The honest closing note
 

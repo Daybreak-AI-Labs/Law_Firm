@@ -50,7 +50,7 @@ def test_own_card_passes_own_validator():
     card = a2a.build_agent_card(base_url="https://mvk.example")
     assert a2a.validate_agent_card(card) == []
     parsed = a2a.parse_remote_card(card)
-    assert parsed["name"] == "Lightwork" and parsed["streaming"] is True
+    assert parsed["name"] == "Bjerken and Day" and parsed["streaming"] is True
 
 
 def test_parse_remote_card_normalizes():

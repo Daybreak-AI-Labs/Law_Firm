@@ -28,7 +28,6 @@ DOCS_STATING_THE_COUNT = (
     "docs/FEATURES.md",
     "docs/handbook.md",
     "docs/index.md",
-    "docs/enterprise/diligence.md",
 )
 
 # Matches "2,877 write-capable" and "**2,877 write-capable" alike, with or

@@ -2,8 +2,9 @@
 
 The firm's internal practice platform: a governed AI workforce that drafts, researches,
 and keeps the file straight — VA disability claims and appeals, pleadings and motions,
-wills and trusts, corporate redlines, discovery, research memos — with a licensed
-attorney reviewing everything before it leaves the office.
+wills and trusts, corporate redlines, discovery, research memos — with an attorney
+reviewing everything before it leaves the office. Nothing it produces is
+self-approving; every legal seat routes its work product to a human.
 
 Private software for one firm. Not a product, not for distribution.
 
@@ -197,8 +198,14 @@ Not built yet, in rough priority order:
 
 ## People
 
-Single-attorney by default, with local accounts for a paralegal or associate: owner,
-associate, and paralegal roles with matter-level access control.
+Two of us, with local accounts and matter-level access control: owner, associate,
+and paralegal roles. The invite flow works today.
+
+**Admission status matters for how this gets used.** Until we are admitted, the
+platform is for building and testing — not for producing work product a client
+relies on, which would be practicing law without a licence regardless of who or
+what drafted it. The confidentiality gate and the VA packs are the things worth
+building in the meantime, so the platform is ready the day the licences are.
 
 ## License
 

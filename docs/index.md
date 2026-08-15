@@ -1,14 +1,15 @@
-# Lightwork
+# Bjerken and Day
 
-> Enterprise recursive multi-agent swarm. One kernel, every model.
+> The firm's practice platform. One kernel, every model.
 
-Lightwork is an **agentic enterprise platform**: a governed AI workforce of
-2,020 prebuilt specialists across 53 business suites that provably improves
-with use — deployed in your own environment. It drives any
-LLM (Claude, GPT, Kimi, Grok, Gemini, DeepSeek, Ollama, OpenRouter), and
-ships a governed, auditable safety surface built for regulated teams.
-Lightwork is proprietary, commercially licensed software (see
-[`LICENSE`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/LICENSE)).
+A governed AI workforce of 125 specialist packs — 77 of them legal — that
+drafts, researches and keeps the file straight, running in the firm's own
+environment with an attorney reviewing everything before it leaves the
+office. It drives any LLM (Claude, GPT, Kimi, Grok, Gemini, DeepSeek, Ollama,
+OpenRouter) behind one governed, auditable safety surface.
+
+Private software for one firm, proprietary and not for distribution (see
+[`LICENSE`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/LICENSE)).
 
 ## What you can do with it
 
@@ -37,7 +38,7 @@ Lightwork is proprietary, commercially licensed software (see
 - **Proven governance**: a roster-wide invariant test suite checks six
   governance invariants (tool-reachability, autonomy dial, capability
   attenuation, compartment isolation, unstrippable hard refusals, budget
-  caps) across all 2,020 packs with a non-vacuous fault-injection control
+  caps) across all 125 packs with a non-vacuous fault-injection control
   (property-fuzzed up to 5,000 iterations),
   plus hostile-argument fuzzing of every connector and tool.
   Email, Matrix, WhatsApp, SMS, iMessage — one config, all channels.
@@ -95,10 +96,8 @@ platform remain proprietary.
 - [Safety](safety.md) — shield, audit log, kill switches, consent
 - [Threat model](security/threat-model.md) — trust boundaries, capabilities, tenancy, and security controls
 - [Security & compliance overview](enterprise/security-overview.md) — application egress controls, deployment boundaries, identity, audit/evidence
-- [Editions](enterprise/editions.md) — Community vs Enterprise
 - [Plugins](plugins.md) — extending the tool / channel / skill surface
 - [Governed model improvement](MODEL_IMPROVEMENT_PLATFORM.md) — the learning lifecycle, regression detection, and promotion controls
 - [Starter goals](starter-goals.md) — ready-to-run examples for common workflows
-- [How Lightwork compares](comparison.md) — shipped capabilities and platform positioning
 - Roadmap details are available during enterprise evaluation.
 - [Contributing](CONTRIBUTING.md) — how to send PRs

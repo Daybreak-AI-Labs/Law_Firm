@@ -40,7 +40,7 @@ def _page(title: str, body: str, status: int = 200) -> HTMLResponse:
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>{html.escape(title)} · Lightwork</title>
+<title>{html.escape(title)} · Bjerken and Day</title>
 <style>
   body{{font:15px/1.5 system-ui,sans-serif;display:flex;min-height:100vh;margin:0;
        align-items:center;justify-content:center;background:#0d1117;color:#e6edf3}}
@@ -95,7 +95,7 @@ async def invite_confirm(request: Request, token: str):
     email = html.escape(inv.email)
     if invites.local_login_mode():
         return _page("You're invited",
-                     f"<p>This invitation signs you in to this Lightwork "
+                     f"<p>This invitation signs you in to this Bjerken and Day "
                      f"dashboard as <code>{email}</code> with the "
                      f"<code>{html.escape(inv.role)}</code> role.</p>"
                      f"<form method='post'><button type='submit'>"
@@ -107,7 +107,7 @@ async def invite_confirm(request: Request, token: str):
         return _page("You're invited",
                      f"<p>This invitation (for <code>{email}</code>) grants the "
                      f"<code>{html.escape(inv.role)}</code> role on this "
-                     f"Lightwork dashboard.</p>"
+                     f"Bjerken and Day dashboard.</p>"
                      f"<p><a href='/auth/login?return_to={target}'>Sign in with "
                      f"your company account to accept</a></p>")
     return _page("Accept invitation",

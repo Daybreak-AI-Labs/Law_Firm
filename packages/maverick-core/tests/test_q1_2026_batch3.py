@@ -218,11 +218,6 @@ def test_wizard_run_default_still_interactive(tmp_path, monkeypatch):
 
 # ---------- CI workflows present ----------
 
-def test_publish_workflow_exists():
-    repo_root = Path(__file__).resolve().parents[3]
-    assert (repo_root / ".github" / "workflows" / "publish.yml").is_file()
-
-
 def test_conventional_commits_workflow_exists():
     repo_root = Path(__file__).resolve().parents[3]
     assert (repo_root / ".github" / "workflows" / "conventional-commits.yml").is_file()

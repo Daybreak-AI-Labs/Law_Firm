@@ -83,7 +83,7 @@ gemini-session  = ["httpx>=0.27"]
 capture         = ["playwright>=1.40"]
 browser         = ["playwright>=1.40", "lxml>=5.0"]
 computer-use    = ["pillow>=12.3.0", "mss>=9.0", "pyautogui>=0.9.54"]
-pdf             = ["pdfplumber>=0.10", "pypdf>=6.14.2"]
+pdf             = ["pdfplumber>=0.10", "pypdf>=6.15.0"]
 clipboard       = ["pyperclip>=1.8"]
 voice           = ["faster-whisper>=1.0"]
 # CLAP zero-shot audio understanding (tools/audio_understanding.py,

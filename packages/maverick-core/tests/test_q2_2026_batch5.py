@@ -413,13 +413,3 @@ def test_q2b5_tools_registered():
 
 # ---------- cosign workflow ----------
 
-def test_cosign_signing_in_publish_workflow():
-    p = REPO_ROOT / ".github" / "workflows" / "publish.yml"
-    body = p.read_text()
-    assert "sigstore/cosign-installer" in body
-    assert "cosign sign-blob" in body
-    assert "id-token: write" in body
-    # The sign job is gated on the successful upstream Release tag run.
-    assert 'workflows: ["Release"]' in body
-    assert "github.event.workflow_run.conclusion == 'success'" in body
-    assert "startsWith(github.event.workflow_run.head_branch, 'v')" in body

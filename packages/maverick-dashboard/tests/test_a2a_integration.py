@@ -28,7 +28,7 @@ def test_dashboard_serves_a2a_agent_card_when_enabled(monkeypatch, path):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["name"] == "Lightwork"
+    assert body["name"] == "Bjerken and Day"
     assert body["protocolVersion"] == "1.0"
 
 
