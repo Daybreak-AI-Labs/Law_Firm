@@ -128,36 +128,6 @@ def test_rate_limit_global_ceiling(monkeypatch, tmp_path):
     assert exc.value.status_code == 429
 
 
-# ---------- task 3: A2A JSON-RPC body-size cap ----------
-
-def test_a2a_oversized_body_rejected(monkeypatch):
-    pytest.importorskip("fastapi")
-    import maverick.a2a as a2a
-    from fastapi import FastAPI
-
-    monkeypatch.setenv("MAVERICK_A2A_ENABLED", "1")
-    monkeypatch.setenv("MAVERICK_A2A_ALLOW_UNAUTHENTICATED", "1")
-    monkeypatch.delenv("MAVERICK_A2A_TOKEN", raising=False)
-
-    app = FastAPI()
-    a2a.mount(app)
-    client = TestClient(app)
-
-    # >256 KiB body must be rejected before parsing/auth.
-    big = "x" * (300 * 1024)
-    rpc = {"jsonrpc": "2.0", "id": 1, "method": "message/send",
-           "params": {"pad": big}}
-    r = client.post("/a2a/v1", json=rpc)
-    assert r.status_code == 413
-    assert r.json()["error"]["message"] == "request body too large"
-
-    # A small body still works.
-    small = {"jsonrpc": "2.0", "id": 2, "method": "tasks/get",
-             "params": {"id": "nope"}}
-    r = client.post("/a2a/v1", json=small)
-    assert r.status_code == 200
-
-
 def test_finance_body_cap_rejects_declared_length_before_parsing(monkeypatch):
     from maverick_dashboard import app as dash_app
 

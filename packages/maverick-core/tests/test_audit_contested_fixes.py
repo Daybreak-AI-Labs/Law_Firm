@@ -35,19 +35,6 @@ def test_scrub_env_strips_passphrase_netrc_cookie_auth():
     assert out["PATH"] == "/usr/bin" and out["HOME"] == "/home/u"
 
 
-def test_a2a_task_failure_scrubs_exception_text():
-    from maverick import a2a_tasks
-    from maverick.secrets import scrub
-    task = a2a_tasks._Task(
-        "ctx", {"role": "user", "parts": [], "messageId": "m", "kind": "message"})
-    # Mirror the fixed failure path: a connection error carrying a DSN secret.
-    e = RuntimeError("connect failed: postgres://user:supersecretpw@db/app")
-    detail = scrub(f"{type(e).__name__}: {e}")
-    task.add_artifact(f"task failed: {detail}", "error")
-    # The task dict is what reaches the caller and the push webhook.
-    assert "supersecretpw" not in str(task.to_dict())
-
-
 def _fake_parent(depth=0):
     ctx = SimpleNamespace(
         budget=Budget(max_dollars=10.0), blackboard=Blackboard(), max_depth=3,

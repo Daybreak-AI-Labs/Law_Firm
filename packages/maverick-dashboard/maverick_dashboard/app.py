@@ -43,7 +43,6 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
-from maverick import a2a
 from maverick.oidc import VerifiedPrincipal
 from maverick.runtime_overrides import RuntimeOverridesSecurityError
 from starlette.concurrency import run_in_threadpool
@@ -549,11 +548,10 @@ app.include_router(saml_router)
 # platforms report runs and ask for action screening with their per-agent
 # rest bearer. Self-gates on [external_agents] enable (404 off) and the Gold
 # entitlement, so including it unconditionally is inert. The prefix is
-# self-authenticating (see _AUTH_EXEMPT rationale for /a2a/v1).
+# self-authenticating (see the _AUTH_EXEMPT rationale).
 from .external_gateway import router as external_gateway_router  # noqa: E402
 
 app.include_router(external_gateway_router)
-a2a.mount(app)
 
 _DOCS_CSP = (
     "default-src 'self'; "

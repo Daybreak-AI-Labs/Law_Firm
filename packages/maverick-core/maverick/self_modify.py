@@ -75,8 +75,8 @@ _PROTECTED_FILES = frozenset({
     "erasure_verify.py",
     # Agent/fleet identity, routing, and authenticated handoff control plane.
     "agent_bus.py", "bus_handoff.py", "agent_trust.py", "handoff.py",
-    "swarm.py", "federation.py", "federation_envelope.py",
-    "channel_federation.py", "emergent_protocol.py", "grpc_tls.py",
+    "swarm.py", "federation_envelope.py",
+    "emergent_protocol.py", "grpc_tls.py",
     "grpc_dispatcher.py", "grpc_plugin_host.py", "proxy_auth.py",
     "oauth_vault.py", "browser_auth_vault.py", "mcp_oauth.py",
     "workflow.py",
@@ -85,7 +85,7 @@ _PROTECTED_FILES = frozenset({
     # itself; otherwise a candidate can first weaken the detector or identity
     # plane and then submit an apparently clean follow-up patch.
     "secrets.py", "provable_redaction.py", "security_defaults.py",
-    "access_policy.py", "containment.py", "a2a.py", "a2a_tasks.py",
+    "access_policy.py", "containment.py",
     "agent.py", "agent_autonomy.py", "agent_framework_adapters.py",
     "fleet.py", "fleet_memory.py", "self_learning.py",
     "server.py", "catalog_trust.py", "shield_policy.py", "web_session.py",

@@ -483,13 +483,6 @@ def test_write_config_emits_personas(tmp_path: Path, monkeypatch):
     assert parsed["personas"]["default"] == ["fpa_analyst", "treasurer"]
 
 
-def test_write_config_emits_a2a(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, a2a={"enabled": True},
-    )
-    assert parsed["a2a"]["enabled"] is True
-
-
 def test_write_config_emits_web_search_capability(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch, web_search_enabled=True,
@@ -501,7 +494,7 @@ def test_write_config_omits_empty_optional_sections(tmp_path: Path, monkeypatch)
     """Unspecified optionals should not emit empty sections."""
     parsed = _write_full_config(tmp_path, monkeypatch)
     for sec in ("mcp_servers", "plugins", "security", "rate_limits",
-                "retention", "persona", "notifications", "webhooks", "a2a",
+                "retention", "persona", "notifications", "webhooks",
                 "self_learning"):
         assert sec not in parsed, f"{sec} should be absent"
 
@@ -573,12 +566,6 @@ def test_pick_persona_skipped(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_persona
     assert pick_persona() == {}
-
-
-def test_pick_a2a_skipped(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_a2a
-    assert pick_a2a() == ({}, [])
 
 
 def test_pick_notifications_skipped(monkeypatch):
