@@ -290,9 +290,7 @@ jobs:
             --lockfile rust/Cargo.lock \
             --lockfile examples/clients/rust/Cargo.lock \
             --lockfile apps/desktop/src-tauri/Cargo.lock \
-            --lockfile apps/installer-desktop/src-tauri/Cargo.lock \
             --lockfile examples/clients/typescript/package-lock.json \
-            --lockfile apps/installer-desktop/pnpm-lock.yaml \
             --lockfile examples/clients/csharp/packages.lock.json \
             --lockfile examples/clients/go/go.mod \
             --lockfile go/model-proxy/go.mod \

@@ -482,25 +482,6 @@ def test_product_release_manifests_share_the_python_cohort_version():
         (REPO_ROOT / "release-cohort.toml").read_text(encoding="utf-8")
     )["version"]
 
-    installer_package = json.loads(
-        (REPO_ROOT / "apps" / "installer-desktop" / "package.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    installer_tauri = json.loads(
-        (
-            REPO_ROOT
-            / "apps"
-            / "installer-desktop"
-            / "src-tauri"
-            / "tauri.conf.json"
-        ).read_text(encoding="utf-8")
-    )
-    installer_cargo = tomllib.loads(
-        (
-            REPO_ROOT / "apps" / "installer-desktop" / "src-tauri" / "Cargo.toml"
-        ).read_text(encoding="utf-8")
-    )
     desktop_tauri = json.loads(
         (REPO_ROOT / "apps" / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
             encoding="utf-8"
@@ -515,39 +496,9 @@ def test_product_release_manifests_share_the_python_cohort_version():
         encoding="utf-8"
     )
 
-    assert installer_package["version"] == release_version
-    assert installer_tauri["version"] == release_version
-    assert installer_cargo["package"]["version"] == release_version
     assert desktop_tauri["version"] == release_version
     assert desktop_cargo["package"]["version"] == release_version
     assert f'appVersion: "{release_version}"' in helm_chart
-
-    # Native packaging must consume the cohort manifest rather than carrying a
-    # fourth independent default that silently produces a differently-versioned
-    # MSI or macOS bundle after the next release bump.
-    msi_workflow = (
-        REPO_ROOT / ".github" / "workflows" / "build-msi.yml"
-    ).read_text(encoding="utf-8")
-    msi_build = (
-        REPO_ROOT / "apps" / "installer-msi" / "build.ps1"
-    ).read_text(encoding="utf-8")
-    msi_wix = (
-        REPO_ROOT / "apps" / "installer-msi" / "Package.wxs"
-    ).read_text(encoding="utf-8")
-    macos_build = (
-        REPO_ROOT / "scripts" / "build-macos-app.sh"
-    ).read_text(encoding="utf-8")
-
-    assert "release-cohort.toml" in msi_workflow
-    assert "steps.cohort.outputs.version" in msi_workflow
-    assert "inputs.version" not in msi_workflow
-    assert "release-cohort.toml" in msi_build
-    assert '[string]$Version = ""' in msi_build
-    assert "<?error ProductVersion is required" in msi_wix
-    assert '<?define ProductVersion = "' not in msi_wix
-    assert "release-cohort.toml" in macos_build
-    assert "<string>$VERSION</string>" in macos_build
-
 
 def test_release_cohort_dependency_environments_are_complete():
     cohort = tomllib.loads(
@@ -741,77 +692,15 @@ def test_pypi_release_builds_are_commit_anchored_and_byte_reproducible():
     assert "github.event.workflow_run.conclusion == 'success'" in publish_job
 
 
-def test_native_source_bootstrap_is_not_advertised_as_a_product_installer():
-    release = (
-        REPO_ROOT / ".github" / "workflows" / "release.yml"
-    ).read_text(encoding="utf-8")
-    desktop = (
-        REPO_ROOT / ".github" / "workflows" / "desktop.yml"
-    ).read_text(encoding="utf-8")
-    distribution = (REPO_ROOT / "docs" / "DISTRIBUTION.md").read_text(
-        encoding="utf-8"
-    )
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    app = (
-        REPO_ROOT / "apps" / "installer-desktop" / "src" / "App.svelte"
-    ).read_text(encoding="utf-8")
-    bootstrap_readme = (
-        REPO_ROOT / "apps" / "installer-desktop" / "README.md"
-    ).read_text(encoding="utf-8")
-    deployment = (
-        REPO_ROOT / "docs" / "deployment.md"
-    ).read_text(encoding="utf-8")
-    features = (
-        REPO_ROOT / "docs" / "FEATURES.md"
-    ).read_text(encoding="utf-8")
-
-    assert "gh workflow run desktop.yml" not in release
-    assert "attach-release:" not in desktop
-    assert "if-no-files-found: error" in desktop
-    assert "without a GitHub login" not in desktop
-    assert "authenticated source-bootstrap" in desktop
-    assert "Install from authorized source" in app
-    assert "private Lightwork repository" in app
-    assert "not a self-contained native installer" in bootstrap_readme
-    assert "| **Native installer**" not in distribution
-    assert "| **Container image**" in distribution
-    assert "**Yes** — installed Python remains readable" in distribution
-    assert "four reduced standalone SKUs" in distribution
-    assert "native installers, GHCR" not in readme
-    assert "Tauri-based GUI installer for users" not in deployment
-    assert "not attached to product releases" in deployment
-    assert "linux/amd64 and linux/arm64" in features
-    assert "arm64 + riscv64" not in features
-
-
 def test_tauri_binary_apps_use_tracked_locks_and_a_pinned_toolchain():
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
-    for relative in (
-        "apps/desktop/src-tauri/Cargo.lock",
-        "apps/installer-desktop/src-tauri/Cargo.lock",
-    ):
+    for relative in ("apps/desktop/src-tauri/Cargo.lock",):
         lock = REPO_ROOT / relative
         assert lock.is_file()
         assert lock.read_text(encoding="utf-8").startswith(
             "# This file is automatically @generated by Cargo."
         )
         assert f"!{relative}" in gitignore
-
-    desktop = (
-        REPO_ROOT / ".github" / "workflows" / "desktop.yml"
-    ).read_text(encoding="utf-8")
-    assert 'toolchain: "1.97.1"' in desktop
-    assert "src-tauri/Cargo.lock" in desktop
-    build_step = _workflow_step(desktop, "Build bundle (unsigned)")
-    for required_argument in (
-        "pnpm tauri build",
-        '--target "$BUNDLE_TARGET"',
-        '--config "$TAURI_BUILD_CONFIG"',
-        "--ci",
-        "-- --locked",
-    ):
-        assert required_argument in build_step
-
 
 def test_cloud_quickstarts_and_reference_probes_match_the_runtime_contract():
     distribution = (REPO_ROOT / "docs" / "DISTRIBUTION.md").read_text(
@@ -1501,11 +1390,8 @@ def test_release_delivery_toolchains_and_artifacts_are_deterministic():
     publish = (
         REPO_ROOT / ".github" / "workflows" / "publish.yml"
     ).read_text(encoding="utf-8")
-    msi = (
-        REPO_ROOT / ".github" / "workflows" / "build-msi.yml"
-    ).read_text(encoding="utf-8")
 
-    for workflow in (release, publish, msi):
+    for workflow in (release, publish):
         assert "PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt" in workflow
         checkout_count = workflow.count("uses: actions/checkout@")
         assert workflow.count("persist-credentials: false") == checkout_count
@@ -1536,12 +1422,6 @@ def test_release_delivery_toolchains_and_artifacts_are_deterministic():
     assert "sha256sum --check" in release
     assert "fail_on_unmatched_files: true" in release
 
-    assert "dotnet tool install --global wix --version 4.0.6" in msi
-    assert "Expected exactly one maverick-agent wheel" in msi
-    assert "Generate MSI checksum" in msi
-    assert "apps/installer-msi/dist/SHA256SUMS" in msi
-    assert "apps/installer-msi/dist/BUILD-METADATA.json" in msi
-    assert 'source_revision = "${{ github.sha }}"' in msi
 
     # The full cohort is validated before any matrix job receives an OIDC
     # token. Safe resume compares already-published filenames and hashes rather

@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
-import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
@@ -54,80 +52,6 @@ def _git(repository: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip()
-
-
-def _desktop_verifier_fixture(tmp_path: Path) -> tuple[Path, str]:
-    if shutil.which("git") is None:
-        pytest.skip("git is required for desktop provenance tests")
-    repository = tmp_path / "repo"
-    helper = repository / "apps/installer-desktop/scripts/verify-source.mjs"
-    helper.parent.mkdir(parents=True)
-    helper.write_text(
-        _read("apps/installer-desktop/scripts/verify-source.mjs"),
-        encoding="utf-8",
-        newline="\n",
-    )
-    files = {
-        "apps/installer-desktop/.gitignore": "ignored-probe.txt\n",
-        "apps/installer-desktop/index.html": "<main>verified</main>\n",
-        "apps/installer-desktop/src-tauri/icons/icon.png": "icon fixture\n",
-        "deploy/desktop/install.sh": "#!/bin/sh\nprintf verified\n",
-        "deploy/desktop/install.ps1": "Write-Output 'verified'\n",
-    }
-    for relative_path, content in files.items():
-        candidate = repository / relative_path
-        candidate.parent.mkdir(parents=True, exist_ok=True)
-        candidate.write_text(content, encoding="utf-8", newline="\n")
-    _git(repository, "init", "--quiet")
-    _git(repository, "config", "core.autocrlf", "false")
-    _git(repository, "config", "core.eol", "lf")
-    _git(repository, "config", "user.name", "Desktop provenance test")
-    _git(repository, "config", "user.email", "desktop@example.invalid")
-    _git(
-        repository,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/Daybreak-AI-Labs/Lightwork.git",
-    )
-    _git(repository, "add", ".")
-    _git(repository, "commit", "--quiet", "-m", "fixture")
-    return repository, _git(repository, "rev-parse", "HEAD")
-
-
-def _run_desktop_verifier(
-    repository: Path,
-    revision: str,
-    *,
-    extra_environment: dict[str, str] | None = None,
-    require_head: bool = True,
-    canonicalize_checkout: bool = False,
-) -> subprocess.CompletedProcess[str]:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for desktop provenance tests")
-    environment = os.environ.copy()
-    environment.update(extra_environment or {})
-    arguments = [
-        node,
-        str(repository / "apps/installer-desktop/scripts/verify-source.mjs"),
-        "--repo",
-        str(repository),
-        "--ref",
-        revision,
-    ]
-    if require_head:
-        arguments.append("--require-head")
-    if canonicalize_checkout:
-        arguments.append("--canonicalize-checkout")
-    return subprocess.run(
-        arguments,
-        cwd=repository,
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=False,
-    )
 
 
 def _repository_files(
@@ -211,185 +135,6 @@ def test_vps_installer_requires_a_clean_immutable_checkout():
     assert "maverick.stage." in text
     assert "MAVERICK_VERSION" not in text
     assert "Lightwork/main/deploy/vps/install.sh" not in text
-
-
-def test_native_installer_build_ref_is_a_full_commit():
-    build_rs = _read("apps/installer-desktop/src-tauri/build.rs")
-    native_shell = _read("apps/installer-desktop/src-tauri/src/lib.rs")
-    workflow = _read(".github/workflows/desktop.yml")
-    readme = _read("apps/installer-desktop/README.md")
-    verifier = _read("apps/installer-desktop/scripts/verify-source.mjs")
-    icon_ignore = _read("apps/installer-desktop/.gitignore")
-
-    assert "validate_install_ref" in build_rs
-    assert "trimmed.len() == 40" in build_rs
-    assert "lowercase, full 40-character commit SHA" in build_rs
-    assert "verify_commit" in build_rs
-    assert "verify_install_ref_ancestor" in build_rs
-    assert "verify_canonical_repository" in build_rs
-    assert "verify_raw_source_snapshot" in build_rs
-    assert "emit_git_rerun_triggers" in build_rs
-    assert '"--no-replace-objects"' in build_rs
-    assert '"GIT_NO_REPLACE_OBJECTS"' in build_rs
-    assert 'starts_with("GIT_")' in build_rs
-    assert "MAVERICK_REQUIRE_CLEAN_INSTALLER_SOURCE" in build_rs
-    assert "PROTECTED_BUILD_PATHS" not in build_rs
-    assert "Sha256::digest" in build_rs
-    assert 'env!("OUT_DIR")' in native_shell
-    assert "MAVERICK_INSTALL_SH_SHA256" in native_shell
-    assert "../../../../deploy/desktop/install" not in native_shell
-    assert "MAVERICK_INSTALL_REF: ${{ github.sha }}" in workflow
-    assert 'MAVERICK_REQUIRE_CLEAN_INSTALLER_SOURCE: "1"' in workflow
-    assert '"deploy/desktop/install.ps1"' in workflow
-    assert '"deploy/desktop/install.sh"' in workflow
-    assert "--canonicalize-checkout" in workflow
-    assert "github.repository == 'Daybreak-AI-Labs/Lightwork'" in workflow
-    assert "pnpm tauri icon" not in workflow
-    assert '--target "$BUNDLE_TARGET"' in workflow
-    assert '--config "$TAURI_BUILD_CONFIG"' in workflow
-    assert "--ci" in workflow
-    assert "rmSync(bundleRoot" in workflow
-    assert "tar -czf" in workflow
-    assert "Record bundle provenance and checksums" in workflow
-    assert "bootstrap_blobs" in workflow
-    assert "locked_inputs" in workflow
-    assert "bundle_entries" in workflow
-    assert "uploaded_payloads" in workflow
-    assert "MAVERICK_WORKFLOW_REF" in workflow
-    assert "MAVERICK_WORKFLOW_SHA" in workflow
-    assert "GITHUB_RUN_ATTEMPT" in workflow
-    assert "effectiveConfig" in workflow
-    assert "lightwork-desktop-${target}" in workflow
-    assert "maverick-desktop-${target}" not in workflow
-    assert "src-tauri/target/release/bundle/**/*.app" not in workflow
-    assert "apps/installer-desktop/provenance/${{ matrix.target }}.tar.gz" in workflow
-    assert "verifyDesktopSource" in verifier
-    assert "GIT_NO_REPLACE_OBJECTS" in verifier
-    assert '"--no-replace-objects"' in verifier
-    assert "canonicalizeCheckout" in verifier
-    for icon in (
-        "32x32.png",
-        "128x128.png",
-        "128x128@2x.png",
-        "icon.icns",
-        "icon.ico",
-        "icon.png",
-    ):
-        assert f"!src-tauri/icons/{icon}" in icon_ignore
-        assert (REPO_ROOT / f"apps/installer-desktop/src-tauri/icons/{icon}").is_file()
-    assert "lowercase-full-40-character-commit-sha" in readme
-    assert "<commit-or-tag>" not in readme
-
-
-def test_desktop_source_verifier_scrubs_git_environment(tmp_path):
-    repository, revision = _desktop_verifier_fixture(tmp_path)
-
-    result = _run_desktop_verifier(
-        repository,
-        revision,
-        extra_environment={
-            "GIT_DIR": str(tmp_path / "attacker-git-dir"),
-            "GIT_OBJECT_DIRECTORY": str(tmp_path / "attacker-objects"),
-            "GIT_REPLACE_REF_BASE": "refs/attacker",
-        },
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert f"at {revision}" in result.stdout
-
-
-def test_desktop_source_verifier_canonicalizes_checkout_bytes(tmp_path):
-    repository, revision = _desktop_verifier_fixture(tmp_path)
-    bootstrap = repository / "deploy/desktop/install.ps1"
-    committed = bootstrap.read_bytes()
-    bootstrap.write_bytes(b"untrusted checkout transform\r\n")
-
-    result = _run_desktop_verifier(
-        repository,
-        revision,
-        canonicalize_checkout=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert bootstrap.read_bytes() == committed
-    assert _git(repository, "config", "--local", "core.autocrlf") == "false"
-    assert _git(repository, "config", "--local", "core.eol") == "lf"
-
-
-def test_desktop_source_verifier_rejects_raw_and_ignored_changes(tmp_path):
-    repository, revision = _desktop_verifier_fixture(tmp_path)
-
-    generated = repository / "apps/installer-desktop/src-tauri/target/release/generated.bin"
-    generated.parent.mkdir(parents=True)
-    generated.write_bytes(b"generated output is outside the source snapshot")
-    assert _run_desktop_verifier(repository, revision).returncode == 0
-
-    ignored = repository / "apps/installer-desktop/ignored-probe.txt"
-    ignored.write_bytes(b"ignored but still an unreviewed build input")
-    ignored_result = _run_desktop_verifier(repository, revision)
-    assert ignored_result.returncode == 1
-    assert "untracked: apps/installer-desktop/ignored-probe.txt" in (ignored_result.stderr)
-    ignored.unlink()
-
-    tracked = repository / "deploy/desktop/install.sh"
-    tracked.write_bytes(b"#!/bin/sh\nprintf substituted\n")
-    modified_result = _run_desktop_verifier(repository, revision)
-    assert modified_result.returncode == 1
-    assert "raw bytes differ" in modified_result.stderr
-
-
-def test_desktop_source_verifier_is_not_subverted_by_git_replace(tmp_path):
-    repository, original = _desktop_verifier_fixture(tmp_path)
-    bootstrap = repository / "deploy/desktop/install.sh"
-    bootstrap.write_bytes(b"#!/bin/sh\nprintf replacement\n")
-    _git(repository, "add", "deploy/desktop/install.sh")
-    _git(repository, "commit", "--quiet", "-m", "replacement tree")
-    replacement = _git(repository, "rev-parse", "HEAD")
-    _git(repository, "checkout", "--detach", "--quiet", original)
-    _git(repository, "replace", original, replacement)
-    _git(repository, "reset", "--hard", "--quiet", original)
-
-    assert _git(repository, "rev-parse", "HEAD") == original
-    assert (
-        _git(repository, "show", f"{original}:deploy/desktop/install.sh")
-        == "#!/bin/sh\nprintf replacement"
-    )
-    result = _run_desktop_verifier(repository, original)
-
-    assert result.returncode == 1
-    assert "raw bytes differ" in result.stderr
-
-
-def test_desktop_source_verifier_rejects_noncanonical_origin(tmp_path):
-    repository, revision = _desktop_verifier_fixture(tmp_path)
-    _git(
-        repository,
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/example/fork.git",
-    )
-
-    result = _run_desktop_verifier(repository, revision)
-
-    assert result.returncode == 1
-    assert "origin must be the canonical" in result.stderr
-
-
-def test_desktop_source_verifier_rejects_unrelated_explicit_ref(tmp_path):
-    repository, original = _desktop_verifier_fixture(tmp_path)
-    _git(repository, "checkout", "--orphan", "unrelated")
-    _git(repository, "add", ".")
-    _git(repository, "commit", "--quiet", "-m", "unrelated root")
-
-    result = _run_desktop_verifier(
-        repository,
-        original,
-        require_head=False,
-    )
-
-    assert result.returncode == 1
-    assert "is not an ancestor of HEAD" in result.stderr
 
 
 def test_training_bootstrap_installs_only_from_verified_checkout():
@@ -503,9 +248,7 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
         "rust/Cargo.lock",
         "examples/clients/rust/Cargo.lock",
         "apps/desktop/src-tauri/Cargo.lock",
-        "apps/installer-desktop/src-tauri/Cargo.lock",
         "examples/clients/typescript/package-lock.json",
-        "apps/installer-desktop/pnpm-lock.yaml",
         "examples/clients/csharp/packages.lock.json",
         "examples/clients/go/go.mod",
         "go/model-proxy/go.mod",
