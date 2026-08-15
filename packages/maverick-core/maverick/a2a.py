@@ -72,7 +72,7 @@ _SKILLS: list[dict[str, Any]] = [
         "id": "execute-goal",
         "name": "Execute a long-horizon goal",
         "description": (
-            "Give Lightwork a goal; a swarm of specialist sub-agents plans, "
+            "Give Bjerken and Day a goal; a swarm of specialist sub-agents plans, "
             "runs in parallel, and verifies the result -- under a hard "
             "budget cap, with every step screened by a safety layer."
         ),
@@ -102,7 +102,7 @@ def build_agent_card(base_url: str | None = None) -> dict[str, Any]:
     url = _base_url(base_url)
     return {
         "protocolVersion": A2A_PROTOCOL_VERSION,
-        "name": "Lightwork",
+        "name": "Bjerken and Day",
         "description": (
             "An open-source recursive multi-agent swarm that runs long-horizon "
             "work locally -- your models, a hard budget cap, safety baked in."

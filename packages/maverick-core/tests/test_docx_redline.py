@@ -114,7 +114,7 @@ def test_redline_marks_a_real_tracked_revision():
     assert CLAUSE in del_text and FIXED in ins_text
     assert "<w:t" not in xml.split("<w:del")[1].split("</w:del>")[0]
     # Authored and dated so Word's review pane attributes the change.
-    assert 'w:author="Lightwork Privacy Review"' in xml and DATE in xml
+    assert 'w:author="Bjerken and Day Privacy Review"' in xml and DATE in xml
     assert dr.revision_count(res.content) == (1, 1)
     # Editing their package must leave it a conformant package.
     assert_valid_opc(res.content)

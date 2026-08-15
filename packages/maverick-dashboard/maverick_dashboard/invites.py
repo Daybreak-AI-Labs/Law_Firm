@@ -327,14 +327,14 @@ def send_invite_email(invite: Invite, link: str, *, invited_by: str) -> tuple[bo
         return False, "no sending account configured ([email] / EMAIL_USER)"
     days = max(1, int((invite.expires_at - invite.created_at) / 86400))
     body = (
-        f"You've been invited to a Lightwork dashboard as {invite.role} "
+        f"You've been invited to the Bjerken and Day dashboard as {invite.role} "
         f"(invited by {invited_by}).\n\n"
         f"Open this link to accept:\n\n    {link}\n\n"
         f"The link works once and expires in {days} day{'s' if days != 1 else ''}. "
         f"If you weren't expecting this invitation, ignore this email.\n"
     )
     try:
-        mailer.send(invite.email, "You're invited to Lightwork", body)
+        mailer.send(invite.email, "You're invited to Bjerken and Day", body)
     except mailer.MailerError as e:
         return False, str(e)
     return True, "sent"

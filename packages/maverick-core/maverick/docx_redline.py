@@ -231,7 +231,7 @@ def _apply_edits_to_document_xml(
 
     if insertions:
         block = [_heading_paragraph(
-            "Proposed additional clauses (Lightwork privacy review)")]
+            "Proposed additional clauses (Bjerken and Day privacy review)")]
         block += [_inserted_paragraph(e.replace, ids, author, date)
                   for e in insertions if e.replace]
         out = _BODY_CLOSE_RE.sub("".join(block) + "</w:body>", out, count=1)
@@ -257,7 +257,7 @@ def _safe_docx_entries(data: bytes) -> zipfile.ZipFile:
 
 def redline_docx(
     original: bytes, edits: list[ClauseEdit], *,
-    author: str = "Lightwork Privacy Review", date: str,
+    author: str = "Bjerken and Day Privacy Review", date: str,
 ) -> RedlineResult:
     """Apply ``edits`` to an uploaded ``.docx`` as tracked revisions.
 
@@ -352,7 +352,7 @@ _SECT_PR = ('<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
 
 def build_redlined_docx(
     paragraphs: list[str], edits: list[ClauseEdit], *,
-    author: str = "Lightwork Privacy Review", date: str, title: str = "",
+    author: str = "Bjerken and Day Privacy Review", date: str, title: str = "",
 ) -> RedlineResult:
     """Synthesize a redlined ``.docx`` from extracted ``paragraphs``.
 
@@ -400,7 +400,7 @@ def build_redlined_docx(
     insertions = [e for e in edits if e.is_insertion and e.replace]
     if insertions:
         body.append(_heading_paragraph(
-            "Proposed additional clauses (Lightwork privacy review)"))
+            "Proposed additional clauses (Bjerken and Day privacy review)"))
         body += [_inserted_paragraph(e.replace, ids, author, date)
                  for e in insertions]
 
@@ -548,7 +548,7 @@ _REPORT_HEADER = (
     '<w:p><w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr>'
     f'<w:r><w:rPr><w:sz w:val="15"/><w:color w:val="{_MUTED}"/>'
     '<w:spacing w:val="30"/><w:caps/></w:rPr>'
-    '<w:t xml:space="preserve">Lightwork \u00b7 Daybreak Labs</w:t>'
+    '<w:t xml:space="preserve">Bjerken and Day</w:t>'
     "</w:r></w:p></w:hdr>"
 )
 

@@ -98,6 +98,5 @@ platform remain proprietary.
 - [Plugins](plugins.md) — extending the tool / channel / skill surface
 - [Governed model improvement](MODEL_IMPROVEMENT_PLATFORM.md) — the learning lifecycle, regression detection, and promotion controls
 - [Starter goals](starter-goals.md) — ready-to-run examples for common workflows
-- [How Lightwork compares](comparison.md) — shipped capabilities and platform positioning
 - Roadmap details are available during enterprise evaluation.
 - [Contributing](CONTRIBUTING.md) — how to send PRs
