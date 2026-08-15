@@ -1,10 +1,10 @@
 # Oversight experience — audit & plan
 
-> The strategic UX bet: the **supervisor / oversight experience** is both
-> Lightwork's biggest experience gap and its competitive moat (see
-> [`strategy/competitive-landscape.md`](../strategy/competitive-landscape.md)).
-> This note audits what exists and lays out the plan to make one experience
-> excellent rather than thirty pages adequate.
+> The **supervisor / oversight experience** is the platform's biggest
+> experience gap, and the one that matters most here: it is where an attorney
+> reviews and signs off on work product. This note audits what exists and lays
+> out the plan to make one experience excellent rather than thirty pages
+> adequate.
 
 ## Four users, four experiences
 

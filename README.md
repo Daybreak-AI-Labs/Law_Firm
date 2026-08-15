@@ -146,15 +146,13 @@ apps/
 docs/                  Architecture, configuration, deployment, safety, API
 ```
 
-## Driving it from other languages
+## Driving it from an editor
 
-The kernel is Python, but its wire surface is the Model Context Protocol, so anything
-that speaks MCP can drive it — spawn `maverick mcp`, list tools, call one:
-[TypeScript](docs/clients/typescript-quickstart.md) ·
-[Go](docs/clients/go-quickstart.md) ·
-[Rust](docs/clients/rust-quickstart.md) ·
-[C#](docs/clients/csharp-quickstart.md) ·
-[Java](docs/clients/java-quickstart.md).
+The wire surface is the Model Context Protocol, so any MCP client can drive the
+platform: run `maverick mcp` and point Claude Code, Cursor, Continue, or Zed at
+it. The five third-party language SDKs upstream shipped (TypeScript, Go, Rust,
+C#, Java) are gone — they existed so strangers could integrate, and they cost
+five CI jobs on every push to prove something nobody here was going to use.
 
 ## Confidentiality
 

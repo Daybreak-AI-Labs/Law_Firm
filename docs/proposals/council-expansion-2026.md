@@ -6,8 +6,8 @@
 > a backlog of net-new agents and skills, each grep-verified absent and written to
 > the real `DomainProfile` / `SKILL.md` schemas. Nothing here is built yet; it is
 > the menu to green-light from. Companion to
-> [`agent-skills-catalog.md`](agent-skills-catalog.md) and
-> [`agent-suites-overview.md`](agent-suites-overview.md).
+> the agent-skills catalogue and
+> the agent-suites overview.
 
 ## The headline finding
 

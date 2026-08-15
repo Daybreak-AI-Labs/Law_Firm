@@ -6,9 +6,9 @@
 
 
 **Status:** implemented (see the banner above) — was design / roadmap; a load-bearing differentiator. Companion to the eight
-agent suites ([`agent-suites-overview.md`](agent-suites-overview.md)) and the
+agent suites (the agent-suites overview) and the
 [agent-to-agent protocol](agent-to-agent-protocol.md). Builds on
-[`../enterprise/architecture.md`](../enterprise/architecture.md).
+`../enterprise/architecture.md` (`docs/architecture.md`).
 
 > **The thesis, from first principles.** Every other "agent platform" ships a *fixed*
 > roster — a human writes each agent by hand, forever. That doesn't scale to "every

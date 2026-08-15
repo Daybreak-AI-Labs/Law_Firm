@@ -27,15 +27,12 @@ This is an MVP (v0.1):
 | `maverick.cliPath`    | `maverick`  | Path to the `maverick` CLI executable.           |
 | `maverick.workspaceCwd` | `true`    | Use the current workspace as cwd when running.   |
 
-## Roadmap
+## Not built yet
 
-Next iterations of the extension (from `docs/ROADMAP.md`):
-
-- Live run streaming via `maverick serve` REST API
-  (Q1 2026 ecosystem).
-- Plan-tree visualization (Q2 2026 UX).
-- Approve-tool-call inline in the editor (Q4 2027 UX).
-- Right-click context: "Send selection to Lightwork" (Q2 2027 ecosystem).
+- Live run streaming via the `maverick serve` REST API.
+- Plan-tree visualization.
+- Approve-tool-call inline in the editor.
+- Right-click context: send the selection to the platform.
 
 ## License
 

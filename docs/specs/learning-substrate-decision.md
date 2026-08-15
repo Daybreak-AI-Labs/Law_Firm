@@ -7,7 +7,7 @@
 > qualification, receipt, and backend-export plumbing while keeping real GPU
 > training demand-driven.
 
-**Status:** Decided — park, don't close, don't prune · **Roadmap ref:** [`ROADMAP.md`](../ROADMAP.md) → "Current state & gap analysis" (C2) · **Date:** June 2026
+**Status:** Decided — park, don't close, don't prune· **Date:** June 2026
 
 ## The question
 

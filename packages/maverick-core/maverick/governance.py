@@ -1,7 +1,6 @@
 """Oversight control plane: the policy decision point for agent actions.
 
-The keystone of Lightwork's enterprise governance (see
-``docs/enterprise/architecture.md``, Layer A). Every consequential agent action
+The keystone of the platform's governance layer. Every consequential agent action
 is evaluated here against the principal's capability and org policy, yielding a
 single decision:
 

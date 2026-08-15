@@ -1,6 +1,6 @@
 # Decision: adopt A2A's Agent Card; cut the homegrown ACD
 
-**Status:** Decided — adopt A2A, retire ACD · **Roadmap ref:** [`ROADMAP.md`](../ROADMAP.md) → "Current state & gap analysis" (B3) · **Date:** June 2026
+**Status:** Decided — adopt A2A, retire ACD· **Date:** June 2026
 
 ## The question
 

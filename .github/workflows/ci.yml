@@ -288,13 +288,8 @@ jobs:
             --config osv-scanner.toml \
             --lockfile "$python_lock" \
             --lockfile rust/Cargo.lock \
-            --lockfile examples/clients/rust/Cargo.lock \
             --lockfile apps/desktop/src-tauri/Cargo.lock \
-            --lockfile examples/clients/typescript/package-lock.json \
-            --lockfile examples/clients/csharp/packages.lock.json \
-            --lockfile examples/clients/go/go.mod \
             --lockfile go/model-proxy/go.mod \
-            --lockfile examples/clients/java/pom.xml \
             --format json \
             --output-file "$report"
       - name: Upload cross-ecosystem vulnerability report
@@ -480,22 +475,20 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    # The complete deterministic suite is intentionally broad and currently
-    # takes about 46 minutes on a Windows validation host before dependency
-    # installation.  Keep enough job headroom that a healthy Linux matrix run
-    # cannot be killed by runner variance or setup time.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+    # One interpreter, not a matrix. Upstream tested 3.10/3.11/3.12 because it
+    # shipped a library to strangers on unknown interpreters; this fork runs on
+    # machines the firm controls, so the other two rows cost 2x the wall clock
+    # to answer a question nobody asks. The suite runs under pytest-xdist
+    # instead: ~4x faster on the runner's cores, and the tests are parallel-safe
+    # (verified against the full suite).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12.13"
       - name: Install packages
         run: |
           set -x
@@ -517,7 +510,7 @@ jobs:
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
             -e ./apps/installer-cli \
-            pytest pytest-asyncio pytest-timeout 'pyjwt[crypto]'
+            pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]'
           python -m pip check
           python scripts/verify_constraint_closure.py
       - name: Show installed packages
@@ -533,38 +526,41 @@ jobs:
           # bounds interpreter shutdown/non-daemon-thread leaks after the last
           # test and SIGABRT gives faulthandler a chance to print stacks.
           timeout --verbose --signal=ABRT --kill-after=30s 35m \
-            python -m pytest -q --tb=short --durations=50 \
+            python -m pytest -q --tb=short --durations=50 -n auto \
               --timeout=180 --timeout-method=signal \
-              --junitxml="test-results-${{ matrix.python-version }}.xml" \
-            2>&1 | tee "pytest-${{ matrix.python-version }}.log"
+              --junitxml="test-results.xml" \
+            2>&1 | tee "pytest.log"
       - name: Upload test diagnostics
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: pytest-${{ matrix.python-version }}
+          name: pytest
           path: |
-            test-results-${{ matrix.python-version }}.xml
-            pytest-${{ matrix.python-version }}.log
+            test-results.xml
+            pytest.log
           if-no-files-found: warn
           retention-days: 14
 
   windows-process-containment:
-    name: Windows process containment (Python ${{ matrix.python-version }})
+    name: Windows process containment
+    # Windows stays in CI because the firm's own machines are Windows, even
+    # though the platform is hosted on Linux -- Job Object process-tree reaping
+    # is the one sandbox behaviour that differs by OS rather than by version.
     runs-on: windows-2022
     timeout-minutes: 10
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          # Minor version, not the exact patch the Linux jobs pin: setup-python
+          # does not publish every patch for every runner image, and 3.12.13
+          # does not exist for windows-2022. This job tests OS behaviour, so
+          # whichever 3.12 patch the image carries is the right one.
+          python-version: "3.12"
       - name: Install the focused test dependency
         run: python -m pip install "pytest==9.1.1"
       - name: Test Windows Job Object process-tree containment
