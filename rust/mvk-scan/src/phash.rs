@@ -2,9 +2,10 @@
 //!
 //! A byte-for-byte port of `maverick.perceptual_hash`: it answers "are these
 //! two screenshots the same screen?" without a vision model. The algorithm is
-//! specified in **integer arithmetic only** so this Rust path and the
-//! pure-Python fallback produce bit-identical hashes — no float rounding can
-//! diverge across languages.
+//! specified in **integer arithmetic only** so this Rust path, the pure-Python
+//! fallback, and the JavaScript twin (`extensions/webgpu-vision/ahash.js`) all
+//! produce bit-identical hashes — no float rounding can diverge across
+//! languages.
 //!
 //!   1. gray(p) = r*299 + g*587 + b*114                (luma x1000, exact int)
 //!   2. cells   = 8x8 grid; cell (cx, cy) covers x in [cx*w/8, (cx+1)*w/8)

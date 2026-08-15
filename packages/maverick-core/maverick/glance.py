@@ -1,9 +1,10 @@
-"""Compact status payload for the dashboard API.
+"""Watch-glance payload (roadmap: 2027 H1 UX — "Apple Watch glance").
 
 The data half of a watch complication/glance: one **tiny, fixed-shape**
 payload sized for a watch face — active/today counts, today's spend, and the
-last terminal result — computed in one cheap pass and served from
-``GET /api/v1/glance``.
+last terminal result — computed in one cheap pass. The watchOS client
+(``apps/watch-glance/``, SwiftUI scaffold) renders exactly this shape from
+``GET /api/v1/glance``; anything fancier belongs on the phone/dashboard.
 
 Pure over an injected world (+ the usage ledger for spend); every field is
 bounded so the payload stays glance-sized no matter the history.

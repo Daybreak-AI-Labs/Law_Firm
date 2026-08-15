@@ -2739,8 +2739,11 @@ def dashboard(host: str, port: int, token) -> None:
 def mcp(use_http: bool, host: str, port: int) -> None:
     """Start the MCP server on stdio (or --http).
 
-    Trusted MCP-speaking clients can drive the swarm from outside Python via
-    this command. The firm does not ship public language SDKs or sample clients.
+    This is Lightwork's official cross-language surface. Any MCP-speaking
+    client (TypeScript, Go, Rust, .NET, JVM, plus every IDE-side MCP
+    client like Claude Code / Cursor / Continue / Zed) can drive the
+    swarm from outside Python via this command. See
+    docs/clients/typescript-quickstart.md for a 20-line example.
     """
     try:
         from maverick_mcp.server import MCPServer

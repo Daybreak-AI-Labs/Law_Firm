@@ -146,12 +146,15 @@ apps/
 docs/                  Architecture, configuration, deployment, safety, API
 ```
 
-## Internal integration surface
+## Driving it from other languages
 
-The application is Python-first. Its MCP server remains available for trusted local
-automation, but the former public language SDKs, sample clients, editor plugins, mobile
-companions, and embeddable widgets are intentionally not part of the firm's supported
-product. New integration surfaces should be added only for a concrete firm workflow.
+The kernel is Python, but its wire surface is the Model Context Protocol, so anything
+that speaks MCP can drive it — spawn `maverick mcp`, list tools, call one:
+[TypeScript](docs/clients/typescript-quickstart.md) ·
+[Go](docs/clients/go-quickstart.md) ·
+[Rust](docs/clients/rust-quickstart.md) ·
+[C#](docs/clients/csharp-quickstart.md) ·
+[Java](docs/clients/java-quickstart.md).
 
 ## Confidentiality
 

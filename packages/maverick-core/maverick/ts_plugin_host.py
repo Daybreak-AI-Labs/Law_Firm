@@ -1,9 +1,9 @@
-"""Subprocess plugin host: tools served by an external process over NDJSON stdio.
+"""TypeScript plugin host: tools served by an external process over NDJSON stdio.
 
 Lightwork's native plugins are Python entry points (see ``plugins``). The
-subprocess protocol lets an author ship tools in another runtime; this module
-is the Python side of that seam. The wire protocol is NDJSON, one JSON object
-per line:
+TypeScript plugin SDK (``sdks/plugin-ts``, npm ``@maverick/plugin-sdk``) lets an
+author ship tools as a Node script instead; this module is the Python side of
+that seam. The wire protocol is NDJSON, one JSON object per line:
 
   - ``<command> --describe`` prints a one-line manifest and exits::
 

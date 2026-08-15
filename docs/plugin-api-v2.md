@@ -26,10 +26,10 @@ api_version = "2"
 - **Isolation modes.** `[plugins] isolation = "subprocess" | "subinterpreter"`
   runs plugin tool *calls* outside the host interpreter (scrubbed env, fault
   isolation) while their schemas stay in-process.
-- **Subprocess plugins.** A program in any language may implement the
-  `maverick-plugin/1` NDJSON stdio protocol; `[plugins] ts =
-  [["node", "/path/plugin.js"]]` loads a Node implementation like any other
-  tool (no-shadowing rule included). The firm does not ship a language SDK.
+- **TypeScript plugins.** `sdks/plugin-ts` (`@maverick/plugin-sdk`) authors a
+  tool in TypeScript over the `maverick-plugin/1` NDJSON stdio protocol;
+  `[plugins] ts = [["node", "/path/plugin.js"]]` loads it like any other tool
+  (no-shadowing rule included).
 
 ## Compatibility
 

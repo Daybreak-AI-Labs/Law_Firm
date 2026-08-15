@@ -23,7 +23,7 @@ pub fn has_dangerous_unicode(text: &str) -> bool {
 /// `averageHashFromPixels(rgb, width, height): string` — 16 hex chars.
 ///
 /// `rgb` is a flat row-major `[r, g, b, r, g, b, ...]` array (length
-/// `width * height * 3`). Throws
+/// `width * height * 3`), matching `extensions/webgpu-vision/ahash.js`. Throws
 /// on a length/dimension mismatch.
 #[wasm_bindgen(js_name = averageHashFromPixels)]
 pub fn average_hash_from_pixels(

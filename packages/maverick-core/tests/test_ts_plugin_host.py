@@ -1,7 +1,7 @@
 """NDJSON plugin host tests (ts_plugin_host).
 
-The child is a tiny Python script speaking the language-neutral NDJSON wire
-protocol, so CI needs no external runtime. It embeds the value
+The child is a tiny Python script speaking the same NDJSON wire protocol as
+the TypeScript SDK (sdks/plugin-ts), so CI needs no Node. It embeds the value
 of a canary secret env var into the manifest and an `env` tool, which is how
 the scrubbed-env tests observe what reached the child.
 """
