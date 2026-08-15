@@ -95,7 +95,6 @@ platform remain proprietary.
 - [Safety](safety.md) — shield, audit log, kill switches, consent
 - [Threat model](security/threat-model.md) — trust boundaries, capabilities, tenancy, and security controls
 - [Security & compliance overview](enterprise/security-overview.md) — application egress controls, deployment boundaries, identity, audit/evidence
-- [Editions](enterprise/editions.md) — Community vs Enterprise
 - [Plugins](plugins.md) — extending the tool / channel / skill surface
 - [Governed model improvement](MODEL_IMPROVEMENT_PLATFORM.md) — the learning lifecycle, regression detection, and promotion controls
 - [Starter goals](starter-goals.md) — ready-to-run examples for common workflows

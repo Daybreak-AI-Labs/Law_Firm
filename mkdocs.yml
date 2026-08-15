@@ -109,7 +109,6 @@ nav:
       - A2A (Agent2Agent): a2a.md
       - External agents (BYOA): external-agents.md
       - External agent quickstart: clients/external-agent-quickstart.md
-      - How Lightwork compares: comparison.md
   - Performance:
       - Streaming parity: performance/streaming-parity.md
   - Security:
