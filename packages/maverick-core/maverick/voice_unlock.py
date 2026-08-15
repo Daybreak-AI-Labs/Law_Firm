@@ -1,0 +1,188 @@
+"""Voice biometric unlock — companion factor ONLY (roadmap: 2028 H2 UX).
+
+Speaker verification for voice channels: enroll a speaker's voice profile,
+then score later utterances against it and gate *convenience* actions on a
+match. Three hard stances, stated up front because biometrics invite
+overreach:
+
+1. **Never a sole factor.** A voice match may *unlock convenience* (skip
+   re-typing a PIN for low-risk actions); it must never be the only gate on a
+   sensitive action — replay/synthesis attacks are practical, and the
+   docstring-level contract is that callers combine it with an existing
+   factor (allowlist + consent). ``VoiceGate.decide`` therefore returns
+   ``companion_ok``, never "authenticated".
+2. **Local only, deletable.** Profiles are embeddings (never raw audio) in a
+   local 0600 store; ``delete_profile`` is first-class (biometric data is
+   erasable by design).
+3. **Opt-in.** ``[voice] biometric_unlock = true`` required; default off.
+
+The embedding comes from an INJECTED ``embedder(audio_bytes) -> vector``
+(e.g. a speaker-embedding model the operator provides); this module is the
+pure enrollment/scoring/policy layer — cosine similarity against the
+enrolled centroid with a configurable threshold.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+DEFAULT_THRESHOLD = 0.80
+_MIN_ENROLL_SAMPLES = 3
+
+
+def enabled() -> bool:
+    if os.environ.get("MAVERICK_VOICE_UNLOCK", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+    try:
+        from .config import load_config
+        return bool(((load_config() or {}).get("voice") or {})
+                    .get("biometric_unlock", False))
+    except Exception:  # pragma: no cover
+        return False
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _centroid(vecs: list[list[float]]) -> list[float]:
+    n = len(vecs)
+    return [sum(v[i] for v in vecs) / n for i in range(len(vecs[0]))]
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    companion_ok: bool        # the voice factor passed (NEVER sole auth)
+    score: float
+    reason: str
+
+
+class VoiceGate:
+    """Enrollment + scoring + policy over an injected speaker embedder."""
+
+    def __init__(self, embedder, *, store_path: Path | None = None,
+                 threshold: float = DEFAULT_THRESHOLD):
+        self._embed = embedder
+        self._threshold = float(threshold)
+        self._owns_parent = store_path is None
+        if self._owns_parent:
+            from .paths import data_dir
+            store_path = data_dir("voice_profiles.json")
+        self._path = Path(store_path)
+        # Serializes the profile-store load-modify-save in-process; the
+        # cross_process_lock in _locked() extends it across processes.
+        self._lock = threading.Lock()
+
+    def _ensure_parent(self) -> None:
+        # The profile dir holds biometric data: it must be 0700. Create it here
+        # so it exists at 0700 BEFORE the lock sidecar / temp land in it -- the
+        # lock's own mkdir would otherwise create it at the default 0755.
+        from .file_lock import ensure_private_directory, require_private_directory
+
+        if self._owns_parent or not self._path.parent.exists():
+            ensure_private_directory(self._path.parent)
+        else:
+            require_private_directory(self._path.parent)
+
+    def _locked(self):
+        from contextlib import ExitStack
+
+        from .file_lock import cross_process_lock
+        self._ensure_parent()
+        stack = ExitStack()
+        stack.enter_context(self._lock)
+        stack.enter_context(cross_process_lock(self._path, strict=True))
+        return stack
+
+    # -- store --------------------------------------------------------------
+
+    def _load(self) -> dict:
+        try:
+            from .file_lock import atomic_read_text, ensure_private_file
+
+            ensure_private_file(self._path)
+            return json.loads(atomic_read_text(self._path))
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self, data: dict) -> None:
+        self._ensure_parent()
+        from .file_lock import atomic_write_text
+
+        atomic_write_text(self._path, json.dumps(data))
+
+    # -- enrollment ----------------------------------------------------------
+
+    def enroll(self, speaker: str, samples: list[bytes]) -> int:
+        """Enroll from >= 3 utterances (a single sample over-fits noise).
+        Stores ONLY the embedding centroid, never audio."""
+        if len(samples) < _MIN_ENROLL_SAMPLES:
+            raise ValueError(
+                f"enrollment needs >= {_MIN_ENROLL_SAMPLES} samples, "
+                f"got {len(samples)}")
+        vecs = [list(map(float, self._embed(s))) for s in samples]
+        if len({len(v) for v in vecs}) != 1:
+            raise ValueError("embedder returned inconsistent dimensions")
+        # Whole load-modify-save under the lock so a concurrent enroll/delete of
+        # another speaker can't clobber this one (last-writer-wins on the dict).
+        with self._locked():
+            data = self._load()
+            data[speaker] = {"centroid": _centroid(vecs), "enrolled_at": time.time(),
+                             "samples": len(samples)}
+            self._save(data)
+        return len(vecs[0])
+
+    def delete_profile(self, speaker: str) -> bool:
+        """Erase a speaker's biometric profile (first-class by design)."""
+        with self._locked():
+            data = self._load()
+            if speaker not in data:
+                return False
+            del data[speaker]
+            self._save(data)
+        return True
+
+    def profiles(self) -> list[str]:
+        return sorted(self._load())
+
+    # -- verification ----------------------------------------------------------
+
+    def score(self, speaker: str, audio: bytes) -> float | None:
+        """Cosine similarity vs the enrolled centroid; None if unenrolled."""
+        entry = self._load().get(speaker)
+        if not entry:
+            return None
+        vec = list(map(float, self._embed(audio)))
+        return _cosine(vec, entry["centroid"])
+
+    def decide(self, speaker: str, audio: bytes) -> GateDecision:
+        """The companion-factor decision. ``companion_ok`` is True only when
+        the feature is enabled, the speaker is enrolled, and the score clears
+        the threshold — and it NEVER means "authenticated" on its own."""
+        if not enabled():
+            return GateDecision(False, 0.0,
+                                "voice unlock disabled ([voice] biometric_unlock)")
+        s = self.score(speaker, audio)
+        if s is None:
+            return GateDecision(False, 0.0, f"{speaker!r} not enrolled")
+        if s >= self._threshold:
+            return GateDecision(True, round(s, 4),
+                                "voice factor matched (companion factor only — "
+                                "combine with an existing factor)")
+        return GateDecision(False, round(s, 4),
+                            f"score {s:.3f} below threshold {self._threshold}")
+
+
+__all__ = ["VoiceGate", "GateDecision", "enabled", "DEFAULT_THRESHOLD"]

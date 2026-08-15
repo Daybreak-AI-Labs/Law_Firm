@@ -1,0 +1,1861 @@
+"""SWE-bench Verified harness for Lightwork + baselines.
+
+Karpathy SOTA-review item: real SWE-bench numbers with three baselines.
+Without these the "swarm" column is undefendable.
+
+This script DOES NOT execute the test suites by itself -- SWE-bench's
+evaluation harness needs Docker + the dataset. It DOES:
+
+1. Iterate over a manifest of SWE-bench instance IDs
+2. Run four pipelines per instance: maverick / sonnet_single /
+   sonnet_tools / sonnet_self_consistency_n8
+3. Capture (model, wall_seconds, cost_dollars, tokens, predicted_patch)
+4. Write one CSV row per (instance, pipeline) into RESULTS_SWE.csv
+
+Then the user runs the upstream SWE-bench evaluator on the
+predicted_patch column to score. The harness is a producer; scoring is
+out-of-process so we don't pretend to grade ourselves.
+
+Dry-run:
+    MAVERICK_BENCH_DRY_RUN=1 python benchmarks/swe_bench.py \\
+        --instances benchmarks/swe_bench_instances_smoke.txt \\
+        --pipelines maverick,sonnet_single
+
+Real run (requires ANTHROPIC_API_KEY + the SWE-bench Verified manifest):
+    python benchmarks/swe_bench.py \\
+        --instances benchmarks/swe_bench_verified.txt \\
+        --pipelines maverick,sonnet_single,sonnet_tools,sonnet_self_consistency_n8
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import re
+import shutil
+import sys
+import threading
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+PIPELINES = (
+    "maverick",
+    "sonnet_single",       # single-shot Anthropic call, no tools
+    "sonnet_tools",        # Anthropic call with read_file/write_file/shell tools
+    "sonnet_self_consistency_n8",  # 8 single-shots, majority-vote on patch
+)
+
+
+@dataclass
+class Row:
+    instance_id: str
+    pipeline: str
+    model_id: str
+    wall_seconds: float = 0.0
+    cost_dollars: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    predicted_patch: str = ""
+    verifier_confidence: float = 0.0
+    disagreement_entropy: float = 0.0
+    outcome: str = ""        # success / failure / budget / error
+    # Contamination guard flags (';'-joined kinds, "" = clean). Surfaced
+    # as a CSV column so a headline number always carries its caveat --
+    # contamination_guard's whole point is that flagged numbers must be
+    # reported with a caveat or excluded.
+    contamination: str = ""
+    extra: dict = field(default_factory=dict)
+
+
+def _dry_run_row(instance_id: str, pipeline: str) -> Row:
+    """Synthesize a representative row so the harness machinery can be
+    tested without burning credits."""
+    return Row(
+        instance_id=instance_id,
+        pipeline=pipeline,
+        model_id="dry-run",
+        wall_seconds=0.1,
+        cost_dollars=0.0,
+        tokens_in=0,
+        tokens_out=0,
+        predicted_patch="--- a/dummy\n+++ b/dummy\n",
+        outcome="dry-run",
+    )
+
+
+# Wave 12: sanitize patches before they reach the CSV. Three failures
+# in one place: (a) NUL bytes break csv.DictReader on resume → silent
+# re-runs that double-charge; (b) Excel auto-executes cells starting
+# with `=+-@\t\r` and patch lines literally start with `+`/`-` → CSV
+# formula injection when anyone opens RESULTS_SWE.csv in Excel for
+# analysis; (c) other C0 control characters can confuse downstream
+# tooling. Truncation is REMOVED — SWE-bench Pro has no patch-size cap
+# and the prior 50_000-byte slice cut mid-hunk on multi-file refactors.
+def _sanitize_patch_for_csv(diff: str) -> str:
+    if not diff:
+        return ""
+    # Wave 12 hardening: normalize CRLF to LF before C0 strip so Windows-
+    # origin patches don't leave bare \r that csv.DictReader misinterprets
+    # as embedded newlines. Also strip BOM (U+FEFF) and C1 controls
+    # (U+0080-U+009F + zero-width / bidi U+200B-U+200F, U+202A-U+202E),
+    # all of which break various downstream parsers (Excel, pandas
+    # strict-encoding, SWE-bench grader).
+    diff = diff.replace("\r\n", "\n").replace("\r", "")
+    cleaned_chars = []
+    for c in diff:
+        cp = ord(c)
+        if c in "\t\n":
+            cleaned_chars.append(c)
+            continue
+        if cp < 0x20:               # C0 controls (excluding \t\n above)
+            continue
+        if 0x7F <= cp <= 0x9F:      # DEL + C1 controls
+            continue
+        if cp == 0xFEFF:            # BOM
+            continue
+        if 0x200B <= cp <= 0x200F:  # zero-width / RTL marks
+            continue
+        if 0x202A <= cp <= 0x202E:  # bidi override
+            continue
+        cleaned_chars.append(c)
+    cleaned = "".join(cleaned_chars)
+    if not cleaned:
+        return ""
+    # Excel formula-injection: if the first non-whitespace char is one
+    # of the dangerous prefixes, prepend a leading apostrophe. `\t` and
+    # `\r` no longer appear after the strip above; keep `=+-@` only.
+    leader = cleaned.lstrip()[:1]
+    if leader in ("=", "+", "-", "@"):
+        cleaned = "'" + cleaned
+    return cleaned
+
+
+_CONTAM_MOD = None
+
+
+def _contamination_guard():
+    """Lazy-load _common/contamination_guard.py by path (no sys.path
+    assumptions; mirrors how the benchmark tests import it). Cached."""
+    global _CONTAM_MOD
+    if _CONTAM_MOD is None:
+        import importlib.util
+        from pathlib import Path as _P
+        path = _P(__file__).parent / "_common" / "contamination_guard.py"
+        spec = importlib.util.spec_from_file_location("benchmarks_contam", path)
+        mod = importlib.util.module_from_spec(spec)
+        # @dataclass resolves its module via sys.modules[cls.__module__];
+        # register before exec_module or ContaminationFlag construction
+        # raises "'NoneType' object has no attribute '__dict__'".
+        sys.modules["benchmarks_contam"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        _CONTAM_MOD = mod
+    return _CONTAM_MOD
+
+
+def _contamination_summary(
+    *,
+    instance_id: str,
+    brief: str,
+    predicted_patch: str,
+    gold_patch: str,
+    model_id: str,
+    publication_date: str = "",
+) -> str:
+    """Run the contamination guard and return a ';'-joined list of flag
+    kinds ("" = clean). Never raises -- a guard failure must not fail the
+    benchmark row."""
+    try:
+        flags = _contamination_guard().check(
+            task_id=instance_id,
+            brief=brief,
+            predicted_patch=predicted_patch,
+            gold_patch=gold_patch,
+            model_id=model_id,
+            benchmark_publication_date=publication_date,
+        )
+        return ";".join(f.kind for f in flags)
+    except Exception as e:  # pragma: no cover - guard is best-effort
+        print(f"warning: contamination guard failed for {instance_id}: {e}",
+              file=sys.stderr)
+        return ""
+
+
+def _redact_url_userinfo(text: str) -> str:
+    # redact credentials in URLs like https://user:pass@example/repo.git
+    return re.sub(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@", r"\1REDACTED@", text)
+
+
+def _scrub_pip_freeze(text: str) -> str:
+    return _redact_url_userinfo(text or "")
+
+
+def _is_secret_env_key(key: str) -> bool:
+    key_u = (key or "").upper()
+    markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASS", "AUTH", "CREDENTIAL")
+    return any(m in key_u for m in markers)
+
+
+def _scrub_env_value(key: str, value: str) -> str:
+    if not value:
+        return ""
+    if _is_secret_env_key(key):
+        return "REDACTED"
+    return _redact_url_userinfo(value)
+
+
+# Wave 11: hoist LLM() across instances. anthropic.Client holds an
+# httpx connection pool; constructing a fresh LLM per instance leaked
+# ~5-10 MB of RSS per instance and OOM-killed the run around #800-1200
+# on a 1865-instance Pro sweep. One LLM per process, threadsafe per
+# the Anthropic SDK's documented invariants.
+_SHARED_LLM = None
+# Wave 12 (council F12a): lock around lazy init so two pipeline calls
+# starting near-simultaneously don't double-construct the LLM (which
+# would leak a second httpx pool and stomp on the first's connections).
+_SHARED_LLM_LOCK = threading.Lock()
+
+
+def _get_shared_llm():
+    global _SHARED_LLM
+    if _SHARED_LLM is not None:
+        return _SHARED_LLM
+    with _SHARED_LLM_LOCK:
+        if _SHARED_LLM is None:
+            from maverick.llm import LLM
+            _SHARED_LLM = LLM()
+        return _SHARED_LLM
+
+
+class _ResetWorkdirError(RuntimeError):
+    """Raised when the workdir can't be reset to the requested commit.
+
+    May 26 council fix (harness audit #1): the prior best-effort silent-
+    swallow allowed instances to run against whatever tip the previous
+    instance left, producing patches against the wrong tree and silently
+    scoring 0 with outcome="failure". We now raise so the harness can
+    mark the instance error:base_commit_missing and skip the pipeline.
+    """
+
+
+def _reset_workdir(workdir, base_commit: str = "") -> None:
+    """Reset workdir to a known clean state between instances.
+
+    Raises _ResetWorkdirError if the requested base_commit is missing
+    from the local clone — the agent MUST NOT run against a tree at a
+    different commit.
+
+    Returns silently (no-op) only when the workdir doesn't exist or
+    isn't a git repo at all (synthetic dry-run paths).
+    """
+    import subprocess
+    from pathlib import Path
+    workdir_path = Path(workdir)
+    if not workdir_path.exists() or not (workdir_path / ".git").exists():
+        return
+    try:
+        if base_commit:
+            proc = subprocess.run(
+                ["git", "-C", str(workdir_path), "reset", "--hard", base_commit],
+                capture_output=True, timeout=30,
+            )
+            if proc.returncode != 0:
+                raise _ResetWorkdirError(
+                    f"git reset --hard {base_commit[:12]} failed: "
+                    f"{proc.stderr.decode('utf-8', 'replace')[:300]}"
+                )
+        else:
+            subprocess.run(
+                ["git", "-C", str(workdir_path), "reset", "--hard", "HEAD"],
+                capture_output=True, timeout=30,
+            )
+        subprocess.run(
+            ["git", "-C", str(workdir_path), "clean", "-fdx"],
+            capture_output=True, timeout=30,
+        )
+        # May 26 council fix (long-tail audit #3): always run reflog
+        # expire + gc, not just in opaque mode. In non-opaque dev runs,
+        # the reflog accumulates a new entry per `reset --hard` (one per
+        # instance). Across 1865 Verified instances on a shared workdir
+        # the orphaned-objects pile observed >5GB. Cheap to run (sub-
+        # second on a clean tree) and not security-sensitive.
+        # Timeout bumped to 120s for large repos (sympy can exceed 30s).
+        subprocess.run(
+            ["git", "-C", str(workdir_path), "reflog", "expire",
+             "--expire=all", "--all"],
+            capture_output=True, timeout=30,
+        )
+        subprocess.run(
+            ["git", "-C", str(workdir_path), "gc", "--prune=now", "--quiet"],
+            capture_output=True, timeout=120,
+        )
+    except _ResetWorkdirError:
+        raise
+    except (subprocess.SubprocessError, OSError) as e:
+        raise _ResetWorkdirError(f"workdir reset failed: {e}") from e
+
+
+def _maverick_snapshot_and_set_env(kwargs: dict) -> dict:
+    """Snapshot all MAVERICK_* env vars (for later restore) and set the
+    per-instance test-env vars from the manifest. Returns the snapshot."""
+    # Wave 10 council fix: capture ALL MAVERICK_* env vars so any var the
+    # agent loop mutated is restored, not just a five-key whitelist.
+    _prior_env = {
+        k: v for k, v in os.environ.items()
+        if k.startswith("MAVERICK_")
+    }
+    # Pop the gold patch BEFORE assignment so empty manifests don't
+    # leak a stale value from the prior instance.
+    os.environ.pop("MAVERICK_GOLD_PATCH", None)
+    os.environ["MAVERICK_FAIL_TO_PASS"] = "||".join(kwargs.get("fail_to_pass") or [])
+    os.environ["MAVERICK_PASS_TO_PASS"] = "||".join(kwargs.get("pass_to_pass") or [])
+    os.environ["MAVERICK_LANGUAGE"] = str(kwargs.get("language") or "")
+    base_commit = str(kwargs.get("base_commit") or "")
+    if base_commit:
+        os.environ["MAVERICK_BASE_COMMIT"] = base_commit
+    gold_patch = str(kwargs.get("gold_patch") or "")
+    if gold_patch:
+        os.environ["MAVERICK_GOLD_PATCH"] = gold_patch
+    try:
+        from maverick.coding_mode import reset_gold_patch_cache
+        reset_gold_patch_cache()
+    except Exception:
+        pass
+    return _prior_env
+
+
+def _maverick_restore_env(_prior_env: dict) -> None:
+    """Restore the MAVERICK_* env to its exact pre-instance state, dropping
+    any var the agent loop added that wasn't in the prior snapshot."""
+    for k in [k for k in os.environ if k.startswith("MAVERICK_")]:
+        if k not in _prior_env:
+            os.environ.pop(k, None)
+    for k, v in _prior_env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def _maverick_reset_workdir() -> None:
+    """Reset the sandbox workdir to a clean state before the run so state
+    from instance N-1 doesn't pollute. Best-effort."""
+    try:
+        from maverick.sandbox import build_sandbox
+        sandbox_pre = build_sandbox()
+        _reset_workdir(sandbox_pre.workdir, base_commit=os.environ.get("MAVERICK_BASE_COMMIT", ""))
+    except Exception:
+        pass
+
+
+def _maverick_failing_test_context(fail_ids: list) -> str:
+    """Pre-read failing-test source as initial context so the agent
+    localises against the actual assertions rather than guessing."""
+    if not fail_ids:
+        return ""
+    try:
+        from maverick.sandbox import build_sandbox
+        sandbox = build_sandbox()
+        sandbox_workdir = Path(sandbox.workdir).resolve()
+        from maverick.tools.fs import _is_opaque_blocked_resolved, _safe_resolve
+        seen: set[str] = set()
+        chunks: list[str] = []
+        for tid in fail_ids[:5]:  # at most 5 distinct files
+            # `tests/foo.py::TestX::test_y` -> tests/foo.py
+            path_part = tid.split("::", 1)[0] if "::" in tid else tid
+            if not path_part or path_part in seen:
+                continue
+            seen.add(path_part)
+            if _is_opaque_blocked_resolved(sandbox, path_part):
+                continue
+            try:
+                tp = _safe_resolve(sandbox, path_part)
+            except ValueError:
+                continue
+            try:
+                rel = tp.relative_to(sandbox_workdir).as_posix()
+            except ValueError:
+                continue
+            if tp.exists() and tp.is_file():
+                try:
+                    txt = tp.read_text(encoding="utf-8", errors="replace")
+                    chunks.append(
+                        f"--- failing test file: {rel} ---\n"
+                        f"{txt[:6000]}\n"
+                    )
+                except (OSError, PermissionError):
+                    pass
+        if chunks:
+            return (
+                "\n\nFailing-test context (ground truth for the fix; "
+                "do NOT hardcode to these expected values, derive the fix "
+                "from the production code):\n\n"
+                + "\n".join(chunks)
+            )
+    except Exception:
+        return ""
+    return ""
+
+
+# Round 4 lever 3: a localization pre-pass. Before the agent starts, mine the
+# brief for candidate symbols, ripgrep them over the source tree, and hand the
+# agent a compact skeleton of the files most likely to hold the bug. This turns
+# the first few turns (which the agent otherwise spends blindly grepping) into
+# free context. Gate: MAVERICK_LOCALIZE (default ON; "0" disables).
+_LOCALIZE_STOPWORDS = frozenset({
+    # English filler that survives the identifier regexes.
+    "the", "this", "that", "with", "from", "have", "when", "then", "else",
+    "true", "false", "none", "null", "return", "import", "class", "self",
+    "test", "tests", "value", "values", "error", "errors", "issue", "should",
+    "would", "could", "which", "there", "their", "about", "into", "your",
+    "will", "must", "does", "done", "code", "line", "lines", "file", "files",
+    "case", "cases", "example", "expected", "actual", "result", "results",
+    "function", "method", "object", "string", "number", "output", "input",
+    "above", "below", "using", "used", "call", "called", "calls", "name",
+    "names", "type", "types", "data", "list", "dict", "args", "kwargs",
+    "raise", "raised", "assert", "print", "python", "github", "https", "http",
+})
+
+
+def _localize_extract_terms(brief: str, cap: int = 12) -> list[str]:
+    """Mine candidate symbols from a brief for the localization pre-pass.
+
+    Pulls code-fenced tokens, dotted paths, CamelCase / snake_case identifiers
+    (>=4 chars), and quoted strings; dedupes preserving first-seen order, drops
+    stopwords / short / non-identifier junk, and caps the list. Never raises."""
+    if not brief:
+        return []
+    try:
+        candidates: list[str] = []
+        # `code-fenced` tokens (inline backticks) -- highest signal.
+        candidates += re.findall(r"`([^`\n]{2,60})`", brief)
+        # "quoted" / 'quoted' strings.
+        candidates += re.findall(r"\"([^\"\n]{2,60})\"", brief)
+        candidates += re.findall(r"'([^'\n]{2,60})'", brief)
+        # dotted.attribute.paths (module.Class.method, pkg.mod).
+        candidates += re.findall(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b", brief)
+        # CamelCase identifiers.
+        candidates += re.findall(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\b", brief)
+        # snake_case identifiers.
+        candidates += re.findall(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b", brief)
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in candidates:
+            term = raw.strip().strip(".,:;()[]{}").strip()
+            if not term:
+                continue
+            # A dotted path -> keep the most specific leaf too, but search the
+            # whole token (rg -F treats it literally).
+            low = term.lower()
+            if low in seen:
+                continue
+            # Drop pure stopwords and too-short bare words. Keep dotted /
+            # mixed-case tokens even if a component is a stopword.
+            bare = term.replace("_", "").replace(".", "")
+            if len(bare) < 4:
+                continue
+            if "." not in term and "_" not in term and not any(c.isupper() for c in term):
+                if low in _LOCALIZE_STOPWORDS or not term.isidentifier():
+                    continue
+            seen.add(low)
+            out.append(term)
+            if len(out) >= cap:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _localize_run(cmd: list[str], timeout: float = 30.0) -> str:
+    """Run a read-only search command with a hardened env; "" on any failure.
+
+    Mirrors :func:`_git_diff`'s env discipline: no inherited config / secrets,
+    PATH only. Used for the `rg`/`grep` localization probes."""
+    import subprocess
+    env = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_OPTIONAL_LOCKS": "0",
+        "PATH": os.environ.get("PATH", ""),
+        "LC_ALL": "C",
+    }
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, env=env,
+        )
+        return out.stdout or ""
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
+def _localize_files_for_term(term: str, workdir: Path, use_rg: bool) -> list[str]:
+    """Files under ``workdir`` (excl. tests/docs/.git) that contain ``term``."""
+    if use_rg:
+        # Glob order matters: later globs win in ripgrep, so the `*.py`
+        # inclusion MUST precede the exclusions or it re-includes tests/.
+        cmd = [
+            "rg", "-l", "--max-count", "5", "-F", "--no-messages",
+            "-g", "*.py",
+            "-g", "!**/tests/**", "-g", "!**/test/**",
+            "-g", "!**/docs/**", "-g", "!**/.git/**",
+            term, str(workdir),
+        ]
+        raw = _localize_run(cmd)
+        return [ln for ln in raw.splitlines() if ln.strip()]
+
+    # Windows does not provide POSIX grep. Keep the no-ripgrep fallback
+    # dependency-free, bounded, and constrained to regular Python files under
+    # the supplied worktree.
+    found: list[str] = []
+    excluded = {"tests", "test", "docs", ".git"}
+    for path in workdir.rglob("*.py"):
+        try:
+            rel = path.relative_to(workdir)
+            if excluded.intersection(rel.parts) or not path.is_file():
+                continue
+            if path.stat().st_size > 1_000_000:
+                continue
+            if term in path.read_text(encoding="utf-8", errors="replace"):
+                found.append(str(path))
+                if len(found) >= 5:
+                    break
+        except OSError:
+            continue
+    return found
+
+
+def _localize_skeleton(path: Path, workdir: Path, max_lines: int = 40) -> str:
+    """A compact `def`/`class` outline of one file (grep -n style), capped."""
+    try:
+        root = workdir.resolve(strict=True)
+        candidate = path if path.is_absolute() else root / path
+        candidate = candidate.resolve(strict=True)
+        candidate.relative_to(root)
+        if not candidate.is_file() or candidate.stat().st_size > 1_000_000:
+            return ""
+        pattern = re.compile(r"^\s*(?:async\s+def\s+|def\s+|class\s+)")
+        lines = [
+            f"{line_no}:{line}"
+            for line_no, line in enumerate(
+                candidate.read_text(encoding="utf-8", errors="replace").splitlines(),
+                1,
+            )
+            if pattern.match(line)
+        ][:max_lines]
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    if not lines:
+        return ""
+    try:
+        rel = candidate.relative_to(root).as_posix()
+    except ValueError:
+        rel = path.name
+    return f"### {rel}\n" + "\n".join(lines) + "\n"
+
+
+def _maverick_localization_context(brief: str, workdir: Path) -> str:
+    """Localization pre-pass: point the agent at the source files most likely
+    to hold the bug, with a compact def/class skeleton of each.
+
+    Extracts candidate symbols from ``brief``, ripgreps each over the source
+    tree (excluding tests/docs/.git), scores files by the number of DISTINCT
+    terms they match, and emits a def/class outline for the top few. Best-effort
+    and side-effect free: returns "" on any failure and never raises. Gated by
+    MAVERICK_LOCALIZE (default ON; set "0" to disable)."""
+    if os.environ.get("MAVERICK_LOCALIZE", "1") == "0":
+        return ""
+    try:
+        if workdir is None:
+            return ""
+        wd = Path(workdir)
+        if not wd.exists() or not wd.is_dir():
+            return ""
+        terms = _localize_extract_terms(brief)
+        if not terms:
+            return ""
+        use_rg = shutil.which("rg") is not None
+        scores: dict[str, int] = {}
+        for term in terms:
+            for f in _localize_files_for_term(term, wd, use_rg):
+                scores[f] = scores.get(f, 0) + 1
+        if not scores:
+            return ""
+        # Top 5 files by distinct-term hits; stable tiebreak by path.
+        top = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        chunks: list[str] = []
+        total = 0
+        budget = 6000
+        for fpath, _hits in top:
+            skel = _localize_skeleton(Path(fpath), wd)
+            if not skel:
+                continue
+            if total + len(skel) > budget:
+                skel = skel[: max(0, budget - total)]
+            chunks.append(skel)
+            total += len(skel)
+            if total >= budget:
+                break
+        if not chunks:
+            return ""
+        return (
+            "LIKELY-RELEVANT SOURCE FILES (localization pre-pass; the bug is "
+            "probably in one of these -- start here, verify against the code):\n\n"
+            + "\n".join(chunks)
+            + "\n"
+        )
+    except Exception:
+        return ""
+
+
+def _maverick_pro_block(kwargs: dict) -> str:
+    """Surface Pro `requirements` + `interface` fields into the brief."""
+    requirements = (kwargs.get("requirements") or "").strip()
+    interface = (kwargs.get("interface") or "").strip()
+    if not (requirements or interface):
+        return ""
+    parts = []
+    if requirements:
+        parts.append(f"REQUIREMENTS (from Pro spec):\n{requirements}")
+    if interface:
+        parts.append(f"INTERFACE (expected class/function signatures):\n{interface}")
+    return "\n\n" + "\n\n".join(parts)
+
+
+def _maverick_episode_accounting(all_eps: list):
+    """Sum cost/tokens across all episodes and pick the reported outcome.
+
+    Returns (total_cost, total_in, total_out, last_outcome). Prefers a
+    successful episode's outcome; falls back to the most recent."""
+    if not all_eps:
+        return 0.0, 0, 0, ""
+    total_cost = sum(getattr(e, "cost_dollars", 0.0) or 0.0 for e in all_eps)
+    total_in = sum(getattr(e, "input_tokens", 0) or 0 for e in all_eps)
+    total_out = sum(getattr(e, "output_tokens", 0) or 0 for e in all_eps)
+    _successes = [
+        e for e in all_eps
+        if (getattr(e, "outcome", "") or "").lower().startswith("success")
+    ]
+    last_outcome = (
+        _successes[0].outcome if _successes else all_eps[0].outcome
+    )
+    return total_cost, total_in, total_out, last_outcome
+
+
+def _maverick_tool_signals(events: list):
+    """Extract tool-use signals from goal_events.
+
+    Returns (str_replace_used, verifier_event_count, tool_names, num_turns)."""
+    str_replace_used = any(
+        "search_replace_used=1" in (e.content or "")
+        for e in events
+    )
+    verifier_events = [
+        e.content for e in events
+        if e.kind == "verify"
+    ]
+    tool_invocations = [
+        e.content for e in events
+        if e.kind == "observation" and (e.content or "").startswith("tool=")
+    ]
+    tool_names = set()
+    for tinv in tool_invocations:
+        if tinv.startswith("tool="):
+            name = tinv.split("=", 1)[1].split(" ", 1)[0].rstrip(",")
+            tool_names.add(name)
+    return str_replace_used, len(verifier_events), tool_names, len(tool_invocations)
+
+
+def _maverick_write_trace(instance_id: str, events: list) -> None:
+    """Optional per-instance JSON sidecar for forensics."""
+    trace_dir = os.environ.get("MAVERICK_TRACE_DIR")
+    if not trace_dir:
+        return
+    try:
+        from dataclasses import asdict as _asdict
+        from pathlib import Path as _Path
+        tp = _Path(trace_dir)
+        tp.mkdir(parents=True, exist_ok=True)
+        safe_id = instance_id.replace("/", "_")
+        sidecar = tp / f"{safe_id}.jsonl"
+        with sidecar.open("w", encoding="utf-8") as f:
+            for e in events:
+                f.write(json.dumps(_asdict(e), default=str) + "\n")
+    except Exception as e:
+        print(f"warning: trace write failed for {instance_id}: {e}",
+              file=sys.stderr)
+
+
+def _maverick_reported_model(llm) -> str:
+    """Report the orchestrator role's actual model, not the shared LLM's
+    default (which is hardcoded to Sonnet and breaks cost attribution)."""
+    try:
+        from maverick.llm import model_for_role
+        return model_for_role("orchestrator") or getattr(llm, "model", "")
+    except Exception:
+        return getattr(llm, "model", "")
+
+
+def _maverick_run_goal(llm, world, budget, gid, sandbox, best_of_n: int):
+    """Run the goal (best-of-N or single-shot) and read back episode/goal/
+    event state from the WorldModel BEFORE its connection is closed.
+
+    Returns (result, all_eps, goal_obj, world_events). All world.* reads
+    happen here, ahead of the caller's world.close(), so a closed-DB
+    ProgrammingError can't blank out the row.
+    """
+    import asyncio
+
+    from maverick.orchestrator import run_goal_best_of_n, run_goal_sync
+
+    if best_of_n > 1:
+        result = asyncio.run(run_goal_best_of_n(
+            llm, world, budget, gid,
+            sandbox=sandbox, max_depth=3, n=best_of_n,
+        ))
+    else:
+        result = run_goal_sync(
+            llm, world, budget, gid, sandbox=sandbox, max_depth=3,
+        )
+    all_eps = world.list_episodes(goal_id=gid)
+    goal_obj = world.get_goal(gid)
+    try:
+        world_events = world.goal_events(gid, limit=2000)
+    except Exception:
+        world_events = []
+    return result, all_eps, goal_obj, world_events
+
+
+def _maverick_build_row(
+    *,
+    instance_id: str,
+    brief: str,
+    kwargs: dict,
+    llm,
+    gid: int,
+    start: float,
+    instance_cap: float,
+    result: str,
+    all_eps: list,
+    goal_obj,
+    world_events: list,
+) -> Row:
+    """Assemble the final maverick Row from the post-run goal state:
+    episode accounting, budget-overrun annotation, diff extraction, tool
+    signals, contamination guard, and outcome selection."""
+    from maverick.coding_mode import extract_unified_diff
+
+    total_cost, total_in, total_out, last_outcome = _maverick_episode_accounting(all_eps)
+
+    # May 26 council fix (harness audit #3): Budget.check() is post-hoc
+    # — a single fat API call (cache write surcharge or 100k-token tool
+    # result) can blow the cap by 30-50% AFTER the record completes.
+    # Surface that as a distinct outcome so the operator sees overruns
+    # instead of them blending into "success". The 1.1× headroom
+    # accounts for normal cache-write surcharge variance.
+    if total_cost > instance_cap * 1.1 and last_outcome:
+        last_outcome = (
+            f"budget-overrun(${total_cost:.2f}>${instance_cap:.2f}):"
+            f" {last_outcome}"
+        )
+
+    # Wave 10 (C1): predicted_patch must be the EXTRACTED diff, not the
+    # orchestrator's prose. The orchestrator's return value starts with
+    # `DONE.\n\n<patch>` in coding mode; extract_unified_diff pulls the
+    # actual unified diff. Fallback chain: orchestrator return -> goal.result.
+    goal = goal_obj  # pre-read before close (Wave 12 hotfix)
+    diff = extract_unified_diff(result or "") or extract_unified_diff(
+        (goal.result or "") if goal else ""
+    ) or ""
+
+    # Wave 11: surface tool-use signals + verifier confidence + trace
+    # data for adoption tripwire + forensics. The agent posts these
+    # to the blackboard which mirrors into goal_events.
+    events = world_events  # pre-read before close (Wave 12 hotfix)
+    str_replace_used, verify_event_count, tool_names, num_turns = (
+        _maverick_tool_signals(events)
+    )
+
+    extra_payload: dict = {
+        "goal_id": gid,
+        "run_text": (result or "")[:500],
+        "str_replace_editor_used": bool(str_replace_used),
+        "tool_names": sorted(tool_names),
+        "verify_event_count": verify_event_count,
+        "num_turns": num_turns,
+    }
+    # Optional per-instance JSON sidecar for forensics.
+    _maverick_write_trace(instance_id, events)
+
+    # Wave 12 hotfix: report the orchestrator role's actual model
+    # (resolved via the same role-dispatch the agent loop uses), not
+    # the shared LLM's default. The default is hardcoded to Sonnet,
+    # which makes Opus-brain runs misleadingly show "claude-sonnet-4-6"
+    # in the CSV and breaks downstream cost-per-model attribution.
+    reported_model = _maverick_reported_model(llm)
+
+    # Run the guard on the RAW diff (the sanitizer may prepend a `'` to
+    # neutralize CSV formula-injection, which would mask a byte-for-byte
+    # match against the raw gold patch).
+    contamination = _contamination_summary(
+        instance_id=instance_id,
+        brief=brief,
+        predicted_patch=diff,
+        gold_patch=str(kwargs.get("gold_patch") or ""),
+        model_id=reported_model,
+        publication_date=str(kwargs.get("publication_date", "") or ""),
+    )
+
+    return Row(
+        instance_id=instance_id,
+        pipeline="maverick",
+        model_id=reported_model,
+        wall_seconds=time.monotonic() - start,
+        cost_dollars=total_cost,
+        tokens_in=total_in,
+        tokens_out=total_out,
+        # Wave 12 fix: SWE-bench Pro grader has no patch-size cap; the
+        # previous [:50_000] silently truncated mid-hunk on multi-file
+        # refactors (Django/pandas instances ~60-100KB). Sanitize NUL
+        # bytes (csv.DictReader fails on them, breaking resume) and
+        # neutralize CSV-formula-injection prefixes (Excel auto-executes
+        # cells starting with =+-@\t\r — patch lines naturally start
+        # with `+`/`-`).
+        predicted_patch=_sanitize_patch_for_csv(diff),
+        # Wave 12 hotfix: don't override "no-diff" with the episode's
+        # `last_outcome` when the actual extracted diff is empty.
+        # Otherwise we report "success" on instances where the agent's
+        # SR block was never applied/extracted — the score reads "X
+        # successes" but predicted_patch is empty so grading scores 0.
+        # If we have a diff, prefer the episode outcome ("success" or
+        # "failure"); if not, force "no-diff" so the operator sees the
+        # real story.
+        outcome=(last_outcome if diff else "no-diff") or (
+            "success" if diff else "no-diff"
+        ),
+        contamination=contamination,
+        extra=extra_payload,
+    )
+
+
+def run_maverick(instance_id: str, brief: str, **kwargs) -> Row:
+    """Spin up a Lightwork swarm against the instance brief.
+
+    Wave 8: coding-mode + best-of-N support. The harness sets
+    MAVERICK_CODING_MODE=1 + MAVERICK_BEST_OF_N + MAVERICK_FAIL_TO_PASS /
+    MAVERICK_PASS_TO_PASS so coding_mode.from_env() picks up the
+    benchmark context. The agent then uses the strict diff-only
+    template, self-validates patches via `git apply --check`, runs
+    the test-driven verifier when ground-truth tests are present,
+    and (when n > 1) returns the best-of-N candidate.
+
+    Wave 10: predicted_patch is now the EXTRACTED unified diff (not
+    the orchestrator's prose). Failing-test files are pre-read and
+    prepended to the brief. Cost is summed across all episodes
+    in this goal, not just the last one. Test envs are cleared after
+    the run so they don't leak into adjacent processes.
+
+    Wave 11: LLM is hoisted to a process-wide singleton (no RSS leak),
+    workdir is reset before the run (no state bleed), per-instance
+    cost is hard-capped, Pro `requirements`/`interface` fields are
+    surfaced into the brief, and the 30-turn productivity ceiling is
+    honored (most successful Pro solutions resolve in ~25 turns per
+    Scale Labs' empirical study).
+    """
+    if os.environ.get("MAVERICK_BENCH_DRY_RUN") == "1":
+        return _dry_run_row(instance_id, "maverick")
+
+    from maverick.budget import Budget
+    from maverick.sandbox import build_sandbox
+    from maverick.world_model import WorldModel
+
+    # Default: turn coding mode ON for any SWE-bench-shaped task. Caller
+    # can disable by setting MAVERICK_CODING_MODE=0 explicitly.
+    os.environ.setdefault("MAVERICK_CODING_MODE", "1")
+    # Best-of-N defaults to 1 (single-shot); SWE-bench Pro headline run
+    # sets MAVERICK_BEST_OF_N=4 explicitly. Anything > 1 changes the
+    # cost profile materially, so don't default it on.
+    best_of_n = int(os.environ.get("MAVERICK_BEST_OF_N", "1"))
+
+    # Wave 10: snapshot prior env so we can restore on exit and not leak
+    # one instance's test sets into the next instance (or into a
+    # follow-on non-bench process sharing the same shell).
+    _prior_env = _maverick_snapshot_and_set_env(kwargs)
+
+    # Wave 11 (D8): reset workdir to a clean state before the run so
+    # state from instance N-1 doesn't pollute. Also strips reflog/tags
+    # that could leak gold (Princeton issue #465).
+    _maverick_reset_workdir()
+
+    # Wave 10 (B2): pre-read failing-test source as initial context so the
+    # agent localises against the actual assertions rather than guessing.
+    failing_test_context = _maverick_failing_test_context(kwargs.get("fail_to_pass") or [])
+
+    # Wave 11: surface Pro `requirements` + `interface` fields. SWE-bench
+    # Pro adds these as part of issue augmentation; harnesses that drop
+    # them lose easy points because the agent has to infer the spec.
+    pro_block = _maverick_pro_block(kwargs)
+
+    # Round 4 (lever 3): localization pre-pass. Resolve the sandbox workdir the
+    # same way the failing-test pre-read does, then prepend a skeleton of the
+    # files most likely to hold the bug. Best-effort; "" on any failure.
+    localization_context = ""
+    try:
+        from maverick.sandbox import build_sandbox as _build_sandbox_for_loc
+        _loc_workdir = Path(_build_sandbox_for_loc().workdir)
+        localization_context = _maverick_localization_context(brief, _loc_workdir)
+    except Exception:
+        localization_context = ""
+
+    enriched_brief = localization_context + brief + pro_block + failing_test_context
+
+    start = time.monotonic()
+    world = WorldModel()
+    llm = _get_shared_llm()
+    gid = world.create_goal(f"swe-bench:{instance_id}", enriched_brief)
+    # Wave 11: per-instance hard cost cap honors operator's
+    # --instance-hard-cap; defaults to $3 to align with Scale's published
+    # Pro budget. Wall is capped at 25 turns x 60s = 25 min effective.
+    instance_cap = float(os.environ.get("MAVERICK_INSTANCE_HARD_CAP", "3.0"))
+    instance_wall = float(os.environ.get("MAVERICK_INSTANCE_WALL_SEC", "1500"))
+    # Dollars and wall are the OPERATOR's caps; raise the token/tool caps far
+    # above what the dollar cap can buy so they never bind first. The Budget
+    # defaults (1M input tokens) tripped BEFORE a $2.50 cap on large repos --
+    # observed live in round 3 as a universal "no-diff" on sphinx/seaborn
+    # while cost sat at ~$1.8 of $2.50 and wall at 369s of 1500s.
+    budget = Budget(max_dollars=instance_cap, max_wall_seconds=instance_wall,
+                    max_input_tokens=50_000_000, max_output_tokens=2_000_000,
+                    max_tool_calls=2_000)
+    sandbox = build_sandbox()
+    # Pre-initialize so the post-finally row construction always has
+    # values, even if the agent raises before episode bookkeeping.
+    all_eps: list = []
+    goal_obj = None
+    world_events: list = []
+    result = ""
+
+    try:
+        # Wave 10 (C6): sum cost across ALL episodes for this goal, not
+        # just the most recent one. Best-of-N runs N episodes; prior
+        # code reported only eps[0] (one attempt) and lost the other
+        # N-1. Wave 12 hotfix: all THREE world.* reads (list_episodes,
+        # get_goal, goal_events) MUST happen BEFORE the finally block
+        # closes the WorldModel SQLite connection — otherwise the
+        # harness raises ProgrammingError("Cannot operate on a closed
+        # database") and every instance silently errors with $0 cost.
+        result, all_eps, goal_obj, world_events = _maverick_run_goal(
+            llm, world, budget, gid, sandbox, best_of_n,
+        )
+    finally:
+        # Wave 10 (D11) + May 26 council fix (harness audit #2): restore
+        # env to the EXACT pre-instance state. Drop any MAVERICK_* var
+        # the agent loop added that wasn't in the prior snapshot — that
+        # was the leak channel for BoN temperature / model overrides
+        # bleeding across instances.
+        _maverick_restore_env(_prior_env)
+        # Wave 11 (D18): release the per-instance WorldModel SQLite
+        # connection. Without this, 1865 instances leak 1865 open file
+        # descriptors and SQLite WAL handles.
+        try:
+            world.close()
+        except Exception:
+            pass
+    # May 26 council fix (harness audit #4): on best-of-N runs,
+    # `all_eps[0]` is the LAST-started episode (list_episodes orders
+    # started_at DESC). Prefer a successful episode's outcome; fall back
+    # to most recent if none succeeded.
+    return _maverick_build_row(
+        instance_id=instance_id,
+        brief=brief,
+        kwargs=kwargs,
+        llm=llm,
+        gid=gid,
+        start=start,
+        instance_cap=instance_cap,
+        result=result,
+        all_eps=all_eps,
+        goal_obj=goal_obj,
+        world_events=world_events,
+    )
+
+
+def run_sonnet_single(instance_id: str, brief: str, **_kwargs) -> Row:
+    """Baseline #1: single Anthropic call, no tools.
+
+    The simplest possible baseline. If Lightwork can't beat this on
+    cost/wall and match-or-exceed on accuracy, the swarm isn't
+    earning its complexity.
+    """
+    if os.environ.get("MAVERICK_BENCH_DRY_RUN") == "1":
+        return _dry_run_row(instance_id, "sonnet_single")
+
+    import anthropic
+    from maverick.budget import Budget
+    from maverick.llm import MODEL_SONNET
+
+    start = time.monotonic()
+    client = anthropic.Anthropic()
+    budget = Budget(max_dollars=3.0)
+    resp = client.messages.create(
+        model=MODEL_SONNET,
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"You are solving SWE-bench instance {instance_id}.\n\n"
+                f"{brief}\n\n"
+                "Respond ONLY with a unified diff (git-format patch) that fixes "
+                "the issue. No prose, no explanation, just the patch starting "
+                "with `--- a/...`."
+            ),
+        }],
+    )
+    text = "\n".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    budget.record_tokens(
+        resp.usage.input_tokens, resp.usage.output_tokens, model=MODEL_SONNET,
+    )
+    return Row(
+        instance_id=instance_id,
+        pipeline="sonnet_single",
+        model_id=MODEL_SONNET,
+        wall_seconds=time.monotonic() - start,
+        cost_dollars=budget.dollars,
+        tokens_in=budget.input_tokens,
+        tokens_out=budget.output_tokens,
+        # No [:50_000] truncation: the SWE-bench Pro grader has no patch-size
+        # cap, and the slice cut mid-hunk on large multi-file patches. Match
+        # the maverick pipeline (which dropped it); _sanitize_patch_for_csv
+        # already handles CSV safety with no length cap.
+        predicted_patch=_sanitize_patch_for_csv(text),
+        outcome="success" if text else "empty",
+    )
+
+
+def _git_diff(workdir) -> str:
+    """The agent's edits to the working tree, as a unified diff. Empty on
+    any failure (no repo, git missing) -- the row's outcome reflects that."""
+    import os
+    import subprocess
+
+    # The repository was just modified by model-controlled shell commands. Do
+    # not let untrusted repo/global Git configuration turn patch extraction into
+    # host command execution via diff.external, textconv filters, or inherited
+    # secret-bearing environment variables.
+    env = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_OPTIONAL_LOCKS": "0",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(workdir), "diff", "--no-ext-diff", "--no-textconv"],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
+        return out.stdout or ""
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
+def run_sonnet_tools(instance_id: str, brief: str, **kwargs) -> Row:
+    """Baseline #2: Sonnet with a bash tool, no swarm.
+
+    Closer to Devin / Cursor: one flat agent loop -- the model explores and
+    edits the checked-out repo via bash, and its edits to the working tree
+    (captured as ``git diff``) are the predicted patch. Same worker model as
+    Lightwork but flat: no orchestrator, no spawn, no verifier, no skills.
+
+    Turn ceiling is MAVERICK_BENCH_TOOLS_MAX_TURNS (default 20); the run also
+    stops if the per-instance dollar cap is hit.
+    """
+    if os.environ.get("MAVERICK_BENCH_DRY_RUN") == "1":
+        return _dry_run_row(instance_id, "sonnet_tools")
+
+    import anthropic
+    from maverick.budget import Budget, BudgetExceeded
+    from maverick.llm import MODEL_SONNET
+    from maverick.sandbox import build_sandbox
+
+    start = time.monotonic()
+    sandbox = build_sandbox()
+    # Reset to the instance's base commit so we never edit a dirty tree or
+    # one left over from a prior instance (mirrors run_maverick).
+    _reset_workdir(sandbox.workdir, base_commit=str(kwargs.get("base_commit") or ""))
+
+    client = anthropic.Anthropic()
+    budget = Budget(max_dollars=3.0)
+    tools = [{
+        "name": "bash",
+        "description": (
+            "Run a shell command in the repository working directory and get "
+            "its combined stdout/stderr back. Use it to read files, search, "
+            "edit in place (sed/python/patch/tee), and run tests."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to run."},
+            },
+            "required": ["command"],
+        },
+    }]
+    system = (
+        "You are a software engineer fixing a bug in a git repository already "
+        "checked out in your working directory. Use the bash tool to explore, "
+        "edit files in place, and verify. Your edits to the working tree are the "
+        "deliverable -- they're captured as a git diff, so you do NOT need to "
+        "print a patch. Reply with DONE when the fix is complete."
+    )
+    messages: list[dict] = [
+        {"role": "user", "content": f"SWE-bench instance {instance_id}.\n\n{brief}"},
+    ]
+    try:
+        max_turns = max(1, int(os.environ.get("MAVERICK_BENCH_TOOLS_MAX_TURNS", "20") or "20"))
+    except ValueError:
+        max_turns = 20
+
+    for _turn in range(max_turns):
+        if budget.dollars >= budget.max_dollars:
+            break
+        resp = client.messages.create(
+            model=MODEL_SONNET, max_tokens=4096, system=system,
+            tools=tools, messages=messages,
+        )
+        try:
+            budget.record_tokens(
+                resp.usage.input_tokens, resp.usage.output_tokens, model=MODEL_SONNET,
+            )
+        except BudgetExceeded:
+            # A single turn can push spend over the cap (e.g. a large tool
+            # result fed back as input). Stop the loop but keep the work done
+            # so far: fall through to _git_diff + Row instead of aborting the
+            # whole instance with no recorded patch.
+            break
+        messages.append({"role": "assistant", "content": resp.content})
+        tool_uses = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
+        if not tool_uses:
+            break  # model gave a final answer -- stop
+        results = []
+        for tu in tool_uses:
+            cmd = tu.input.get("command", "") if isinstance(getattr(tu, "input", None), dict) else ""
+            if cmd:
+                res = sandbox.exec(cmd)
+                content = (res.stdout or "")
+                if res.stderr:
+                    content += f"\n[stderr]\n{res.stderr}"
+            else:
+                content = "error: bash tool called without a command"
+            results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": content[:8000] or "(no output)",
+            })
+        messages.append({"role": "user", "content": results})
+
+    diff = _git_diff(sandbox.workdir)
+    return Row(
+        instance_id=instance_id,
+        pipeline="sonnet_tools",
+        model_id=MODEL_SONNET,
+        wall_seconds=time.monotonic() - start,
+        cost_dollars=budget.dollars,
+        tokens_in=budget.input_tokens,
+        tokens_out=budget.output_tokens,
+        predicted_patch=_sanitize_patch_for_csv(diff),
+        outcome="success" if diff.strip() else "empty",
+    )
+
+
+def _majority_patch(patches: list[str]) -> str:
+    """Self-consistency vote: return the most common patch among samples.
+
+    Buckets by a whitespace-normalized key so cosmetically-identical
+    diffs collapse together, then returns the verbatim text of the
+    largest bucket (first sample seen in it). Ties go to the bucket whose
+    first sample appeared earliest. Empty input -> "".
+    """
+    buckets: dict[str, list[str]] = {}
+    order: list[str] = []
+    for p in patches:
+        key = "\n".join(line.rstrip() for line in p.strip().splitlines())
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(p)
+    if not buckets:
+        return ""
+    best = max(order, key=lambda k: len(buckets[k]))
+    return buckets[best][0]
+
+
+def run_sonnet_self_consistency_n8(instance_id: str, brief: str, **_kwargs) -> Row:
+    """Baseline #3: N single-shot calls; pick the most common patch.
+
+    Tests test-time compute (the cheap version) without any agent
+    structure. If self-consistency-N=8 beats Lightwork at the same
+    dollar budget, the swarm machinery is pure overhead. N is overridable
+    via MAVERICK_BENCH_SC_N (default 8); samples use temperature 1.0 for
+    diversity.
+    """
+    if os.environ.get("MAVERICK_BENCH_DRY_RUN") == "1":
+        return _dry_run_row(instance_id, "sonnet_self_consistency_n8")
+
+    import anthropic
+    from maverick.budget import Budget
+    from maverick.llm import MODEL_SONNET
+
+    try:
+        n = max(1, int(os.environ.get("MAVERICK_BENCH_SC_N", "8") or "8"))
+    except ValueError:
+        n = 8
+    start = time.monotonic()
+    client = anthropic.Anthropic()
+    budget = Budget(max_dollars=8.0)
+    prompt = (
+        f"You are solving SWE-bench instance {instance_id}.\n\n"
+        f"{brief}\n\n"
+        "Respond ONLY with a unified diff (git-format patch) that fixes "
+        "the issue. No prose, no explanation, just the patch starting "
+        "with `--- a/...`."
+    )
+    patches: list[str] = []
+    for _ in range(n):
+        resp = client.messages.create(
+            model=MODEL_SONNET,
+            max_tokens=4096,
+            temperature=1.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "\n".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        )
+        budget.record_tokens(
+            resp.usage.input_tokens, resp.usage.output_tokens, model=MODEL_SONNET,
+        )
+        if text.strip():
+            patches.append(text)
+    chosen = _majority_patch(patches)
+    return Row(
+        instance_id=instance_id,
+        pipeline="sonnet_self_consistency_n8",
+        model_id=MODEL_SONNET,
+        wall_seconds=time.monotonic() - start,
+        cost_dollars=budget.dollars,
+        tokens_in=budget.input_tokens,
+        tokens_out=budget.output_tokens,
+        predicted_patch=_sanitize_patch_for_csv(chosen),
+        outcome="success" if chosen else "empty",
+    )
+
+
+_PIPELINE_FNS = {
+    "maverick": run_maverick,
+    "sonnet_single": run_sonnet_single,
+    "sonnet_tools": run_sonnet_tools,
+    "sonnet_self_consistency_n8": run_sonnet_self_consistency_n8,
+}
+
+
+def load_instances(manifest: Path) -> list[dict]:
+    """Parse the manifest, yielding one dict per instance.
+
+    Supported formats:
+      - one JSON object per line with at minimum `instance_id` + `brief`;
+        optional `fail_to_pass`, `pass_to_pass`, `gold_patch`, `language`
+      - one bare ID per line (brief loaded from same-name .txt file)
+
+    Wave 9 fix: previously returned `(id, brief)` tuples and dropped the
+    test sets entirely — the test-driven verifier never fired.
+
+    Wave 10 (D7): single malformed JSON line no longer aborts the whole
+    harness; the bad line is logged + skipped so the run continues.
+    """
+    out: list[dict] = []
+    for lineno, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(
+                    f"warning: skipping malformed JSON at {manifest}:{lineno}: {e}",
+                    file=sys.stderr,
+                )
+                continue
+            if "instance_id" not in obj:
+                print(
+                    f"warning: skipping {manifest}:{lineno}: missing instance_id",
+                    file=sys.stderr,
+                )
+                continue
+            out.append(obj)
+        else:
+            brief_path = manifest.parent / f"{line}.txt"
+            brief = brief_path.read_text(encoding="utf-8") if brief_path.exists() else ""
+            out.append({"instance_id": line, "brief": brief})
+    return out
+
+
+def _ensure_csv_header(f, cols: list[str]) -> bool:
+    """Ensure an existing results CSV uses the current column schema.
+
+    Returns True when the file is empty and the caller still needs to emit
+    the header. Older results files may be missing columns that were appended
+    to the schema (for example ``contamination``); migrate those headers and
+    pad existing rows so new rows cannot hide values under DictReader's None
+    overflow key. Incompatible headers are refused instead of silently
+    corrupting benchmark provenance.
+    """
+    f.seek(0, os.SEEK_END)
+    if f.tell() == 0:
+        return True
+
+    f.seek(0)
+    reader = csv.reader(f)
+    try:
+        header = next(reader)
+    except StopIteration:
+        return True
+
+    if header == cols:
+        f.seek(0, os.SEEK_END)
+        return False
+
+    existing_rows = [header, *reader]
+
+    if header != cols[:len(header)]:
+        raise ValueError(
+            "existing results CSV header does not match the current schema: "
+            f"expected {cols!r} or a prefix, got {header!r}"
+        )
+
+    missing = len(cols) - len(header)
+    if missing <= 0:
+        raise ValueError(
+            "existing results CSV header has unexpected extra columns: "
+            f"expected {cols!r}, got {header!r}"
+        )
+
+    migrated_rows = [cols]
+    for row in existing_rows[1:]:
+        if len(row) > len(header):
+            raise ValueError(
+                "existing results CSV row has more fields than its header; "
+                "refusing to append with an ambiguous schema"
+            )
+        migrated_rows.append(row + ([""] * (len(cols) - len(row))))
+
+    f.seek(0)
+    f.truncate()
+    writer = csv.writer(f)
+    writer.writerows(migrated_rows)
+    f.seek(0, os.SEEK_END)
+    return False
+
+
+def write_csv(rows: list[Row], out_path: Path) -> None:
+    """Append (or create) a CSV at out_path. One row per (instance, pipeline).
+
+    Wave 9 fix: dropped the manual `\\n` escape — csv.DictWriter quotes
+    newlines correctly; the runbook's `replace('\\\\n', chr(10))` was a
+    no-op on the unescaped data anyway, and would corrupt patches that
+    contained the literal two-character sequence `\\n` (Python source,
+    docstrings).
+
+    Wave 10 (D8): hold an advisory `flock(LOCK_EX)` for the duration of
+    the header-check + append so concurrent harness shards don't double-
+    write rows or interleave a header in the middle of the file. Falls
+    back to no-lock on platforms without fcntl (e.g. Windows runners).
+    """
+    cols = list(asdict(Row("", "", "")).keys())
+    cols.remove("extra")
+    fd = os.open(out_path, os.O_RDWR | os.O_CREAT, 0o666)
+    with os.fdopen(fd, "r+", newline="", encoding="utf-8") as f:
+        try:
+            import fcntl as _fcntl
+            _fcntl.flock(f.fileno(), _fcntl.LOCK_EX)
+            _locked = True
+        except (ImportError, OSError):
+            _locked = False
+        try:
+            new_file = _ensure_csv_header(f, cols)
+            w = csv.DictWriter(f, fieldnames=cols)
+            if new_file:
+                w.writeheader()
+            for row in rows:
+                d = asdict(row)
+                d.pop("extra", None)
+                w.writerow(d)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            if _locked:
+                try:
+                    import fcntl as _fcntl
+                    _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
+                except (ImportError, OSError):
+                    pass
+
+
+def _write_run_meta(out_dir: Path, args, manifest_path: Path) -> Path:
+    """Wave 12 (council F16): emit run_meta.json next to the results CSV.
+
+    Captures everything needed to reproduce or audit a run:
+      - Lightwork git rev (HEAD sha)
+      - manifest SHA-256
+      - pip freeze
+      - Anthropic API client version
+      - relevant env vars (MAVERICK_*, ANTHROPIC_*)
+      - CLI args
+      - host info (python version, platform)
+    """
+    import hashlib
+    import platform
+    import subprocess as _sp
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = out_dir / "run_meta.json"
+
+    # Lightwork git rev — best-effort.
+    try:
+        rev = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=5,
+        )
+        git_sha = rev.stdout.strip() if rev.returncode == 0 else "unknown"
+    except (OSError, _sp.SubprocessError):
+        git_sha = "unknown"
+
+    # Manifest SHA — pins the exact instance set evaluated.
+    manifest_sha = "unknown"
+    try:
+        if manifest_path.exists():
+            h = hashlib.sha256()
+            h.update(manifest_path.read_bytes())
+            manifest_sha = h.hexdigest()
+    except OSError:
+        pass
+
+    # pip freeze — pinned dep snapshot.
+    # Wave 12 hardening: 120s timeout (was 30s) because pip freeze on a
+    # fresh venv with many packages on a slow CI worker can take 60+s.
+    # 30s silently returned empty pip_freeze, defeating the audit purpose.
+    try:
+        freeze = _sp.run(
+            [sys.executable, "-m", "pip", "freeze"],
+            capture_output=True, text=True, timeout=120,
+        )
+        pip_freeze = _scrub_pip_freeze(freeze.stdout) if freeze.returncode == 0 else ""
+        if not pip_freeze:
+            print(
+                "warning: pip freeze returned empty output for run_meta.json",
+                file=sys.stderr,
+            )
+    except (OSError, _sp.SubprocessError) as e:
+        pip_freeze = ""
+        print(f"warning: pip freeze failed for run_meta.json: {e}",
+              file=sys.stderr)
+
+    # Anthropic SDK version.
+    try:
+        import anthropic as _a
+        anthropic_version = getattr(_a, "__version__", "unknown")
+    except Exception:
+        anthropic_version = "not-installed"
+
+    # Env vars that affect behavior — capture but redact API keys.
+    env_snapshot = {}
+    for k, v in os.environ.items():
+        if not (k.startswith("MAVERICK_") or k.startswith("ANTHROPIC_")
+                or k in ("OPENAI_API_KEY",)):
+            continue
+        env_snapshot[k] = _scrub_env_value(k, v)
+
+    meta = {
+        "started_at": time.time(),
+        "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "maverick_git_sha": git_sha,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha,
+        "pip_freeze": pip_freeze,
+        "anthropic_sdk_version": anthropic_version,
+        "anthropic_version_header": "2023-06-01",
+        "env_snapshot": env_snapshot,
+        "cli_args": {
+            k: (str(v) if isinstance(v, Path) else v)
+            for k, v in vars(args).items()
+        },
+        "host": {
+            "python_version": sys.version,
+            "python_executable": sys.executable,
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "node": platform.node(),
+        },
+    }
+    meta_path.write_text(
+        json.dumps(meta, indent=2, default=str), encoding="utf-8",
+    )
+    return meta_path
+
+
+def already_done(out_path: Path) -> set[tuple[str, str]]:
+    """Read out_path and return the set of (instance_id, pipeline) pairs
+    already written AND that succeeded. Used by main() to skip on resume.
+
+    Wave 10 (D12): csv.Error during read no longer silently empties the
+    set; instead we log a visible warning so a partial-write race or
+    corrupt CSV doesn't trigger a SILENT re-run that double-charges.
+
+    Wave 12 (council F11b): rows whose `outcome` starts with "error:"
+    are NOT marked done. The agent errored (sandbox crash, API
+    outage, etc) without producing a real patch — resuming should
+    retry these, not skip them.
+    """
+    if not out_path.exists():
+        return set()
+    done: set[tuple[str, str]] = set()
+    error_rows = 0
+    try:
+        with out_path.open(encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                outcome = (row.get("outcome") or "").strip()
+                if outcome.startswith("error:"):
+                    error_rows += 1
+                    continue
+                done.add((row["instance_id"], row["pipeline"]))
+    except (OSError, KeyError) as e:
+        print(f"warning: could not read resume state from {out_path}: {e}",
+              file=sys.stderr)
+    except csv.Error as e:
+        print(
+            f"warning: CSV parse error in {out_path} ({e}); "
+            f"recovered {len(done)} done rows. "
+            f"Concurrent harness shards or a corrupt file may "
+            f"trigger re-runs of partially-written instances.",
+            file=sys.stderr,
+        )
+    if error_rows:
+        print(
+            f"info: {error_rows} error row(s) found in {out_path} — "
+            "they will be retried (Wave 12: errors no longer mark a "
+            "row as done)",
+            file=sys.stderr,
+        )
+    return done
+
+
+# Wave 12 (council F11a): clean-exit flag shared with signal handler.
+# Set on SIGTERM; the main loop checks it after each row write and
+# exits gracefully (last row flushed, partial accounting reported).
+_TERMINATE_REQUESTED: bool = False
+
+
+def _on_sigterm(_signum, _frame) -> None:  # pragma: no cover (signal)
+    global _TERMINATE_REQUESTED
+    _TERMINATE_REQUESTED = True
+    # Single line, no stdlib calls beyond stdio — signal handlers are
+    # async-signal-safe restricted.
+    try:
+        sys.stderr.write(
+            "\nSIGTERM received; finishing current row + exiting...\n"
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Construct the CLI argument parser for the harness."""
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--instances", type=Path, required=True,
+                    help="manifest of instance IDs (one per line or JSON-per-line)")
+    ap.add_argument("--pipelines", default=",".join(PIPELINES),
+                    help="comma-separated subset of: " + ",".join(PIPELINES))
+    ap.add_argument("--out", type=Path,
+                    default=Path(__file__).parent / "RESULTS_SWE.csv")
+    ap.add_argument("--abort-at-total-dollars", type=float, default=None,
+                    help="Stop the run when accumulated $ spend exceeds N.")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="Don't skip rows already in the output CSV.")
+    ap.add_argument("--instance-hard-cap", type=float, default=None,
+                    help="Hard per-instance $ cap (sets MAVERICK_INSTANCE_HARD_CAP).")
+    ap.add_argument("--worker-index", type=int, default=0,
+                    help="Shard index (0..num-workers-1). Wave 11 (D8 shard).")
+    ap.add_argument("--num-workers", type=int, default=1,
+                    help="Total number of parallel shards.")
+    ap.add_argument("--adoption-tripwire", type=float, default=None,
+                    help="Abort if SEARCH/REPLACE adoption rate < N (0.0-1.0) "
+                    "after the first 25 instances. Sentinel for prompt drift.")
+    ap.add_argument("--max-consecutive-failures", type=int, default=10,
+                    help="Wave 12 (F11e): abort if N consecutive instances "
+                    "error out (likely API outage / quota exhaustion / "
+                    "sandbox crash). 0 to disable.")
+    return ap
+
+
+def _shard_instances(instances: list, args) -> list | int:
+    """Apply hash-sharding for parallel workers. Returns the filtered
+    instance list, or an int exit code when resume must be refused.
+
+    Wave 11 (D8): shard by hash(instance_id) % num_workers so two
+    parallel harness processes don't redo each other's work even
+    though both started with the same manifest.
+    """
+    if args.num_workers <= 1:
+        return instances
+    # May 26 council fix (harness audit #5): refuse to resume if
+    # num_workers changed since the last run. The sharding hash
+    # would re-bucket every instance, silently orphaning the ones
+    # that prior workers already processed.
+    prior_meta_path = args.out.parent / "run_meta.json"
+    if prior_meta_path.exists() and not args.no_resume:
+        try:
+            prior_meta = json.loads(prior_meta_path.read_text(encoding="utf-8"))
+            prior_nw = (prior_meta.get("cli_args") or {}).get("num_workers")
+            if prior_nw is not None and int(prior_nw) != args.num_workers:
+                print(
+                    f"REFUSING RESUME: prior run used num_workers="
+                    f"{prior_nw}, this run uses {args.num_workers}. "
+                    f"Re-sharding would orphan instances completed by "
+                    f"the prior shard. Either match num_workers, "
+                    f"pass --no-resume, or delete {prior_meta_path}.",
+                    file=sys.stderr,
+                )
+                return 6
+        except (OSError, ValueError, KeyError):
+            pass
+    import hashlib
+    sharded = [
+        inst for inst in instances
+        if (int(hashlib.sha256(inst["instance_id"].encode()).hexdigest(), 16)
+            % args.num_workers) == args.worker_index
+    ]
+    print(f"shard {args.worker_index}/{args.num_workers}: "
+          f"{len(sharded)} instances assigned", file=sys.stderr)
+    return sharded
+
+
+def _instance_extra(inst: dict) -> dict:
+    """Build the per-instance kwargs passed to each pipeline fn."""
+    return {
+        "fail_to_pass": inst.get("fail_to_pass", []) or [],
+        "pass_to_pass": inst.get("pass_to_pass", []) or [],
+        "gold_patch": inst.get("gold_patch", "") or "",
+        "language": inst.get("language", "") or "",
+        # Wave 11: Pro-specific manifest fields.
+        "base_commit": inst.get("base_commit", "") or "",
+        "requirements": inst.get("requirements", "") or "",
+        "interface": inst.get("interface", "") or "",
+        # Lets the contamination guard fire its train-cutoff-vs-
+        # publication check when the manifest carries the date.
+        "publication_date": inst.get("publication_date", "") or "",
+    }
+
+
+@dataclass
+class _RunState:
+    """Mutable accounting carried across the per-row loop in main()."""
+    total_spend: float = 0.0
+    skipped: int = 0
+    written: int = 0
+    str_replace_uses: int = 0
+    instances_with_str_replace_signal: int = 0
+    consecutive_failures: int = 0
+
+
+def _process_row_outcome(row: Row, pipeline: str, args, state: _RunState) -> int | None:
+    """Update circuit-breaker + adoption-tripwire accounting for a freshly
+    written row. Returns an int exit code when a tripwire fires, else None.
+    """
+    # Wave 12 (F11e) + hardening + smoke-day-2 fix:
+    # consecutive-failure circuit breaker. ANY outcome that
+    # isn't an explicit success/dry-run resets the breaker
+    # AND counts toward the failure budget. The May 26
+    # smoke showed 3/6 instances coming back as "no-diff"
+    # — a state where the agent ran (real spend) but
+    # didn't produce a patch. Earlier logic excluded
+    # "no-diff" from the breaker, letting the harness
+    # burn full budget on a degenerate run. Now: only
+    # `success` (or dry-run) resets; everything else
+    # (error/failure/budget/no-diff/empty) counts.
+    outcome_clean = row.outcome.strip().lower()
+    is_good_outcome = (
+        outcome_clean == "success"
+        or outcome_clean == "dry-run"
+    )
+    if is_good_outcome:
+        state.consecutive_failures = 0
+    else:
+        state.consecutive_failures += 1
+    if (args.max_consecutive_failures > 0
+            and state.consecutive_failures >= args.max_consecutive_failures):
+        print(
+            f"ABORT: {state.consecutive_failures} consecutive errors "
+            f"(>={args.max_consecutive_failures}). Likely API "
+            "outage / quota / sandbox issue — bail before "
+            "burning through the manifest. Last error: "
+            f"{row.outcome}",
+            file=sys.stderr,
+        )
+        return 5
+    # Wave 11: track SEARCH/REPLACE adoption via extra signal.
+    if pipeline == "maverick":
+        if row.extra.get("str_replace_editor_used"):
+            state.str_replace_uses += 1
+        if "str_replace_editor_used" in row.extra:
+            state.instances_with_str_replace_signal += 1
+    print(f"{row.instance_id}\t{pipeline}\t{row.outcome}\t"
+          f"${row.cost_dollars:.3f}\t{row.wall_seconds:.1f}s"
+          f"\ttotal=${state.total_spend:.2f}")
+    # Wave 11: adoption tripwire. After 25 instances, if
+    # SEARCH/REPLACE adoption is below the threshold, abort
+    # so we don't burn $4k on a degenerate run.
+    if (args.adoption_tripwire is not None
+            and state.instances_with_str_replace_signal >= 25):
+        rate = state.str_replace_uses / state.instances_with_str_replace_signal
+        if rate < args.adoption_tripwire:
+            print(
+                f"ABORT: SEARCH/REPLACE adoption {rate:.1%} < "
+                f"{args.adoption_tripwire:.1%} after "
+                f"{state.instances_with_str_replace_signal} instances. "
+                f"Spent: ${state.total_spend:.2f}. Prompt likely "
+                "regressed; check tool-use template before "
+                "scaling up.", file=sys.stderr,
+            )
+            return 4
+    return None
+
+
+def _install_sigterm_handler() -> None:
+    """Install the SIGTERM handler for clean shutdown.
+
+    Wave 12 (F11a): cloud schedulers (kubelet, systemd, AWS Batch) get a
+    clean shutdown instead of an unflushed CSV. SIGINT (Ctrl-C) is already
+    caught by the KeyboardInterrupt block.
+
+    Wave 12 hardening: reset the global flag so reentry (tests calling
+    main() twice in one process, harness wrappers, etc.) doesn't
+    immediately short-circuit because a prior call set the flag.
+    """
+    global _TERMINATE_REQUESTED
+    _TERMINATE_REQUESTED = False
+    import signal as _signal
+    try:
+        _signal.signal(_signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError, AttributeError):
+        # Some environments (Windows w/o SIGTERM symbol, embedded threads)
+        # reject signal registration; harness still works, just less
+        # graceful on TERM.
+        pass
+
+
+def _write_run_meta_best_effort(args) -> None:
+    """Write run_meta.json before the first instance so a crash mid-run
+    still leaves provenance for replay/audit. Sibling to the results CSV.
+    Best-effort: a write failure must not stop the run."""
+    try:
+        meta_path = _write_run_meta(args.out.parent, args, args.instances)
+        print(f"run_meta: {meta_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"warning: run_meta.json write failed: {e}", file=sys.stderr)
+
+
+def main() -> int:
+    _install_sigterm_handler()
+
+    ap = _build_arg_parser()
+    args = ap.parse_args()
+
+    if not args.instances.exists():
+        print(f"manifest not found: {args.instances}", file=sys.stderr)
+        return 2
+
+    if args.instance_hard_cap is not None:
+        os.environ["MAVERICK_INSTANCE_HARD_CAP"] = str(args.instance_hard_cap)
+
+    # Wave 12 (F16): provenance snapshot next to the results CSV.
+    _write_run_meta_best_effort(args)
+
+    pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
+    for p in pipelines:
+        if p not in _PIPELINE_FNS:
+            print(f"unknown pipeline: {p}", file=sys.stderr)
+            return 2
+
+    instances = load_instances(args.instances)
+    sharded = _shard_instances(instances, args)
+    if isinstance(sharded, int):
+        return sharded
+    instances = sharded
+
+    done = set() if args.no_resume else already_done(args.out)
+    if done:
+        print(f"resuming: {len(done)} (instance,pipeline) pairs already in {args.out}",
+              file=sys.stderr)
+
+    state = _RunState()
+
+    try:
+        for inst in instances:
+            if _TERMINATE_REQUESTED:
+                print("SIGTERM exit: stopping instance iteration",
+                      file=sys.stderr)
+                break
+            iid = inst["instance_id"]
+            brief = inst.get("brief", "")
+            extra = _instance_extra(inst)
+            for pipeline in pipelines:
+                if _TERMINATE_REQUESTED:
+                    break
+                if (iid, pipeline) in done:
+                    state.skipped += 1
+                    continue
+                if (args.abort_at_total_dollars is not None
+                        and state.total_spend >= args.abort_at_total_dollars):
+                    print(f"aborting: total spend ${state.total_spend:.2f} >= "
+                          f"${args.abort_at_total_dollars:.2f} cap",
+                          file=sys.stderr)
+                    return 0
+                try:
+                    row = _PIPELINE_FNS[pipeline](iid, brief, **extra)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    row = Row(
+                        instance_id=iid, pipeline=pipeline, model_id="",
+                        outcome=f"error: {type(e).__name__}: {e}",
+                    )
+                # Append THIS row immediately so a crash on instance N+1
+                # doesn't lose rows 0..N. fsync via write_csv.
+                write_csv([row], args.out)
+                state.written += 1
+                state.total_spend += row.cost_dollars
+                exit_code = _process_row_outcome(row, pipeline, args, state)
+                if exit_code is not None:
+                    return exit_code
+    except KeyboardInterrupt:
+        print(f"\nSIGINT caught; {state.written} row(s) flushed to {args.out}",
+              file=sys.stderr)
+        return 130
+
+    if _TERMINATE_REQUESTED:
+        print(f"\nSIGTERM exit: {state.written} row(s) flushed to {args.out}; "
+              f"total ${state.total_spend:.2f}", file=sys.stderr)
+        return 143  # 128 + SIGTERM(15)
+
+    print(f"\n{state.written} row(s) appended to {args.out}; "
+          f"{state.skipped} skipped (already done); total ${state.total_spend:.2f}")
+    if state.instances_with_str_replace_signal > 0:
+        rate = state.str_replace_uses / state.instances_with_str_replace_signal
+        print(f"SEARCH/REPLACE adoption: {rate:.1%} "
+              f"({state.str_replace_uses}/{state.instances_with_str_replace_signal})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

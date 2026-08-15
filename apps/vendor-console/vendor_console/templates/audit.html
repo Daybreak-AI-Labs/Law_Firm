@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Audit log · Daybreak Console{% endblock %}
+{% block main %}
+<h1>Vendor audit log</h1>
+<p class="sub">Every console action, SHA-256 hash-chained — tamper-evident, like the
+  product's own audit trail.
+  {% if chain_ok %}<span class="badge b-active">chain intact</span>
+  {% else %}<span class="badge b-expired">BROKEN at #{{ broken }}</span>{% endif %}
+</p>
+<div class="card">
+  <table>
+    <tr><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+    {% for e in events %}
+    <tr>
+      <td class="mono muted">{{ e.ts|ts }}</td>
+      <td class="mono">{{ e.actor }}</td>
+      <td><strong>{{ e.action }}</strong></td>
+      <td>{{ e.target }}</td>
+      <td class="mono muted" style="font-size:11px">{{ e.detail }}</td>
+    </tr>
+    {% endfor %}
+    {% if not events %}<tr><td colspan="5" class="muted">No events yet.</td></tr>{% endif %}
+  </table>
+</div>
+{% endblock %}

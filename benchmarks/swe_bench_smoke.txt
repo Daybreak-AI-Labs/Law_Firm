@@ -1,0 +1,7 @@
+# Smoke manifest for SWE-bench harness (DRY-RUN ONLY).
+# Real evaluation requires the SWE-bench Verified dataset; see
+# https://www.swebench.com/SWE-bench/guides/evaluation/ for the
+# instance manifest. Drop those IDs (one per line) into a real
+# manifest file when running production benchmarks.
+django__django-12345
+sympy__sympy-67890

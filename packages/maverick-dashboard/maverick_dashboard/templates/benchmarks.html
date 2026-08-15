@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Benchmarks · Lightwork{% endblock %}
+{% block content %}
+<h1 class="page-title">Benchmarks</h1>
+<p class="page-subtitle">How this deployment's recorded scores are trending — each latest run compared with its own baseline, with any drops flagged.</p>
+<div class="panel{% if not suites %} empty{% endif %}">
+  {% if suites %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">suite</th>
+          <th scope="col">runs</th>
+          <th scope="col">latest</th>
+          <th scope="col">baseline (mean of prior runs)</th>
+          <th scope="col">Δ</th>
+          <th scope="col">trend</th>
+          <th scope="col">verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in suites %}
+        <tr>
+          <td><code>{{ s.name }}</code></td>
+          <td>{{ s.runs }}</td>
+          <td>{{ '%.4f'|format(s.latest) }}</td>
+          <td class="muted">{{ '%.4f'|format(s.baseline_mean) if s.baseline_mean is not none else '—' }}</td>
+          <td class="muted">{{ '%+.4f'|format(s.delta) if s.baseline_mean is not none else '—' }}</td>
+          <td>
+            <svg width="160" height="36" role="img"
+                 aria-label="score trend for {{ s.name }}: {{ s.runs }} runs, latest {{ '%.4f'|format(s.latest) }}">
+              <polyline points="{{ s.spark }}" fill="none"
+                        stroke="{{ 'var(--danger)' if s.regressed else 'var(--accent)' }}"
+                        stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td>
+            {% if s.regressed %}
+              <span class="badge failure">regression −{{ '%.1f'|format(s.drop_pct * 100) }}%</span>
+            {% else %}
+              <span class="badge success">ok</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" style="font-size: 0.8rem;">
+      A suite regresses when its latest score drops more than 5% below the
+      mean of the preceding runs (up to 5).
+    </p>
+    <details>
+      <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: how regressions are detected</summary>
+      <p class="muted" style="font-size: 0.8rem; margin-top: var(--space-2);">
+        The check is <code>maverick.continuous_benchmark.detect_regression</code>.
+      </p>
+    </details>
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No benchmark runs recorded</p>
+      <p class="mv-empty__body">
+        Scores appear here once your runs start recording them with the
+        <code>bench_track</code> tool.
+      </p>
+      <details style="margin-top: var(--space-2);">
+        <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: recording a score</summary>
+        <pre style="background: var(--surface-sunken); color: var(--text); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); display: inline-block; text-align: start; margin: var(--space-2) 0 0;">bench_track op=record name=swe_bench score=0.42 commit=abc123</pre>
+        <p class="muted" style="margin-top: var(--space-3); font-size: var(--text-sm);">
+          or from Python:
+          <code>maverick.continuous_benchmark.record_result(...)</code> +
+          <code>save_history(...)</code>. History persists at
+          <code>{{ history_path }}</code>.
+        </p>
+      </details>
+    </div>
+  {% endif %}
+</div>
+<p class="muted" style="font-size: 0.8rem;">
+  This page shows <strong>this deployment's recorded runs only</strong> — no
+  competitor numbers are shown or invented here. For the qualitative
+  comparison with other agents, see <code>docs/comparison.md</code> in the
+  Lightwork repository.
+</p>
+{% endblock %}

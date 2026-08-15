@@ -1,0 +1,89 @@
+# Narrow, expiring exceptions for Tauri 2's Linux WebKit/GTK3 dependency
+# chain. No application or service dependency may be added here. Recheck these
+# when Tauri/wry can move off GTK3; every exception expires rather than silently
+# becoming permanent policy.
+
+[[IgnoredVulns]]
+id = "GHSA-wrw7-89jp-8q8g"
+ignoreUntil = 2026-10-31
+reason = "Tauri 2 Linux transitively pins glib 0.18; migrate when wry supports the fixed glib line."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained build-time proc-macro-error is transitive through the current Tauri 2 desktop stack."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0411"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0412"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0413"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0414"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0415"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0416"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0417"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0418"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0419"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0420"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained GTK3 binding is an unavoidable Tauri 2 Linux desktop transitive dependency."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained unic crate is transitive through urlpattern in the current Tauri 2 stack."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained unic crate is transitive through urlpattern in the current Tauri 2 stack."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained unic crate is transitive through urlpattern in the current Tauri 2 stack."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained unic crate is transitive through urlpattern in the current Tauri 2 stack."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+ignoreUntil = 2026-10-31
+reason = "Unmaintained unic crate is transitive through urlpattern in the current Tauri 2 stack."

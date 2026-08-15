@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% set active = 'mail' %}
+{% block title %}Requester inbox{% endblock %}
+{% block tab_title %}Inbox — Privacy Office{% endblock %}
+{% block favicon %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%230F6CBD'/%3E%3Ctext x='16' y='21' font-size='13' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3E%E2%9C%89%3C/text%3E%3C/svg%3E">{% endblock %}
+
+{% block body %}
+<style>
+  /* An Outlook-style mail client rendered as an app window. Evokes the real
+     thing (blue chrome, folder rail, list + reading pane) without any
+     trademarked artwork — the wordmark is plain text. */
+  .olk { border-radius: 12px; overflow: hidden; border: 1px solid #1b3a5c;
+         box-shadow: 0 18px 60px rgba(0,0,0,.5); background: #ffffff; color: #252423;
+         font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+  .olk a { color: #0f6cbd; }
+  .olk__top { display: flex; align-items: center; gap: 14px; background: #0f6cbd;
+              color: #fff; padding: 8px 16px; }
+  .olk__grid { width: 24px; height: 24px; display: grid; grid-template-columns: repeat(3,1fr);
+               gap: 2px; }
+  .olk__grid span { background: rgba(255,255,255,.85); border-radius: 1px; }
+  .olk__word { font-weight: 600; font-size: 16px; letter-spacing: .01em; }
+  .olk__search { flex: 1; max-width: 480px; background: rgba(255,255,255,.9);
+                 border-radius: 4px; padding: 5px 12px; color: #5f5e5c; font-size: 13px; }
+  .olk__me { width: 28px; height: 28px; border-radius: 50%; background: #e8d9f5;
+             color: #6b2fa0; font-size: 12px; font-weight: 700; display: flex;
+             align-items: center; justify-content: center; margin-left: auto; }
+  .olk__ribbon { display: flex; gap: 18px; padding: 7px 16px; border-bottom: 1px solid #e1dfdd;
+                 font-size: 13px; color: #444; background: #faf9f8; }
+  .olk__ribbon b { color: #0f6cbd; font-weight: 600; }
+  .olk__main { display: grid; grid-template-columns: 168px 1fr; min-height: 420px; }
+  .olk__rail { border-right: 1px solid #e1dfdd; background: #faf9f8; padding: 12px 0; font-size: 13.5px; }
+  .olk__rail .f { padding: 6px 16px; color: #424242; display: flex; justify-content: space-between; }
+  .olk__rail .f.on { background: #cfe4fa; border-left: 3px solid #0f6cbd; font-weight: 600; padding-left: 13px; }
+  .olk__rail .cnt { color: #0f6cbd; font-weight: 600; }
+  .olk__list { padding: 4px 0; }
+  .olk__hdr { padding: 10px 16px 6px; font-size: 13px; font-weight: 600; color: #616161; }
+  .olk__msg { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #f3f2f1;
+              cursor: pointer; align-items: flex-start; }
+  .olk__msg:hover { background: #f3f9fd; }
+  .olk__msg.unread .s, .olk__msg.unread .subj { font-weight: 700; color: #0f6cbd; }
+  .olk__av { width: 34px; height: 34px; border-radius: 50%; flex: none; background: #d5e7d3;
+             color: #256029; font-size: 13px; font-weight: 700; display: flex;
+             align-items: center; justify-content: center; }
+  .olk__msg .cols { flex: 1; min-width: 0; }
+  .olk__msg .s { font-size: 13.5px; }
+  .olk__msg .subj { font-size: 13.5px; color: #323130; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .olk__msg .prev { font-size: 12.5px; color: #8a8886; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .olk__msg .when { font-size: 12px; color: #8a8886; flex: none; }
+  .olk__go { flex: none; align-self: center; font-size: 12.5px; font-weight: 600;
+             color: #0f6cbd; white-space: nowrap; }
+  .olk__peek { flex: none; align-self: center; background: transparent; border: 1px solid #d8dfe1;
+               border-radius: 4px; color: #616161; font-size: 12px; padding: 3px 9px; cursor: pointer; }
+  .olk__peek:hover { background: #f3f2f1; }
+  .olk__empty { padding: 60px 20px; text-align: center; color: #8a8886; font-size: 14px; }
+
+  /* Reading pane pop-out */
+  dialog.olk-read { border: none; border-radius: 10px; padding: 0; margin: auto;
+                    width: min(680px, calc(100vw - 2rem)); box-shadow: 0 24px 80px rgba(0,0,0,.55);
+                    max-height: calc(100vh - 3rem); overflow: auto;
+                    font-family: "Segoe UI", -apple-system, sans-serif; color: #252423; }
+  dialog.olk-read::backdrop { background: rgba(15, 25, 40, .55); }
+  .olkr__bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+               background: #0f6cbd; color: #fff; font-size: 14px; font-weight: 600; }
+  .olkr__bar button { margin-left: auto; background: transparent; border: none; color: #fff;
+                      font-size: 16px; cursor: pointer; padding: 2px 8px; border-radius: 4px; }
+  .olkr__bar button:hover { background: rgba(255,255,255,.18); }
+  .olkr__subject { padding: 14px 20px 0; font-size: 20px; font-weight: 700; color: #242424;
+                   line-height: 1.3; }
+  .olkr__head { display: flex; gap: 12px; padding: 12px 20px 6px; align-items: center; }
+  .olkr__av { width: 40px; height: 40px; border-radius: 50%; flex: none; background: #21426F;
+              color: #fff; font-size: 16px; font-weight: 700; display: flex;
+              align-items: center; justify-content: center; }
+  .olkr__head .who { font-weight: 600; font-size: 14.5px; color: #1A2433; }
+  .olkr__meta { color: #5B6575; font-size: 12px; margin-top: 1px; }
+  .olkr__frame { display: block; width: 100%; height: 60vh; border: 0; background: #fff;
+                 margin-top: 8px; border-top: 1px solid #D9DEE8; }
+  .olkr__body { padding: 14px 20px 20px; font-size: 14px; line-height: 1.6;
+                white-space: pre-wrap; color: #3b3a39; }
+  .olkr__cta { display: inline-block; background: #0f6cbd; color: #fff !important;
+               border-radius: 4px; padding: 9px 18px; font-weight: 600; font-size: 13.5px;
+               text-decoration: none; margin: 6px 20px 20px; }
+  .olkr__cta:hover { background: #0b5394; text-decoration: none; }
+</style>
+
+<div class="sim-banner"><span class="sim-chip">Simulated</span>
+  <span>The <b>requester's mailbox</b>. Every message here was a real SMTP delivery from the
+  platform's email tool, captured locally — point it at real mail infrastructure and nothing changes.</span></div>
+
+<div class="olk">
+  <div class="olk__top">
+    <div class="olk__grid" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span></span>
+    </div>
+    <span class="olk__word">Outlook</span>
+    <div class="olk__search">🔍&nbsp; Search mail</div>
+    <div class="olk__me" title="Requester">{{ (inbox[-1].to if inbox else 'R')[:1]|upper }}</div>
+  </div>
+  <div class="olk__ribbon"><b>Home</b><span>View</span><span>Help</span></div>
+  <div class="olk__main">
+    <div class="olk__rail">
+      <div class="f on"><span>Inbox</span><span class="cnt">{{ inbox|length }}</span></div>
+      <div class="f">Drafts</div>
+      <div class="f">Sent Items</div>
+      <div class="f">Deleted Items</div>
+      <div class="f">Junk Email</div>
+    </div>
+    <div class="olk__list">
+      <div class="olk__hdr">Today</div>
+      {% if inbox %}
+        {# inbox|reverse and mail_json are BOTH newest-first: same index.
+           Clicking a message goes STRAIGHT to its action link (the next demo
+           step); the Preview button opens the reading pane for the curious. #}
+        {% for m in inbox|reverse %}
+        <div class="olk__msg unread" data-i="{{ loop.index0 }}" role="button" tabindex="0"
+             aria-label="Open: {{ m.subject }}">
+          <div class="olk__av">PO</div>
+          <div class="cols">
+            <div class="s">Privacy Office (automated)</div>
+            <div class="subj">{{ m.subject }}</div>
+            <div class="prev">{{ (m.body.split('\n') | select | first or '')[:120] }}</div>
+          </div>
+          <button class="olk__peek" type="button" aria-label="Preview message">Preview</button>
+          <span class="olk__go">Open →</span>
+          <div class="when">{{ m.at | timestamp_hm }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="olk__empty">Nothing yet. Submit a request in the ServiceNow view to
+          trigger the intake email.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<dialog class="olk-read" id="reader" aria-labelledby="r-subject">
+  <div class="olkr__bar"><span>Message</span><button id="r-close" aria-label="Close message">✕</button></div>
+  <div class="olkr__subject" id="r-subject"></div>
+  <div class="olkr__head">
+    <div class="olkr__av" id="r-av" aria-hidden="true">P</div>
+    <div>
+      <div class="who">Privacy Office (automated)</div>
+      <div class="olkr__meta" id="r-meta"></div>
+    </div>
+  </div>
+  {# Branded messages render in a sandboxed iframe; sandbox has NO tokens, so
+     scripts/forms inside the mail are inert. Plain-only mail falls back to
+     the pre-wrap text body below. #}
+  <iframe class="olkr__frame" id="r-html" sandbox="" title="Message body"
+          style="display:none;"></iframe>
+  <div class="olkr__body" id="r-body"></div>
+  <a class="olkr__cta" id="r-cta" href="#" style="display:none;">Open the questionnaire →</a>
+</dialog>
+
+<script>
+const MAIL = {{ mail_json | tojson }};
+{# app.py's mail_json predates the HTML part; the branded body and the real
+   sender ride beside it on the same server-rendered, same-order path
+   (inbox|reverse), so indexes line up with data-i. #}
+const MAIL_HTML = {{ inbox | reverse | map(attribute='html') | list | tojson }};
+const MAIL_FROM = {{ inbox | reverse | map(attribute='sender') | list | tojson }};
+const reader = document.getElementById('reader');
+document.querySelectorAll('.olk__msg').forEach(function (row) {
+  const i = Number(row.dataset.i);
+  const m = MAIL[i];
+  if (!m) return;
+  // Primary click = go do the thing the email asks for (one click, no
+  // pop-up detour). A message with no action link falls back to preview.
+  function go() {
+    row.classList.remove('unread');
+    if (m.link) { window.location.href = m.link; } else { peek(); }
+  }
+  function peek() {
+    const from = MAIL_FROM[i] || 'privacy-office@company.com';
+    document.getElementById('r-av').textContent = (from.trim()[0] || 'P').toUpperCase();
+    document.getElementById('r-subject').textContent = m.subject;
+    document.getElementById('r-meta').textContent =
+      'From: ' + from + ' · To: ' + m.to + ' · ' + m.when;
+    const frame = document.getElementById('r-html');
+    const plain = document.getElementById('r-body');
+    const branded = MAIL_HTML[i] || '';
+    if (branded) {
+      // srcdoc via the DOM property; the sandbox attribute (no tokens)
+      // keeps any script/form in the message inert.
+      frame.srcdoc = branded;
+      frame.style.display = 'block';
+      plain.textContent = '';
+      plain.style.display = 'none';
+    } else {
+      frame.removeAttribute('srcdoc');
+      frame.style.display = 'none';
+      plain.textContent = m.body;
+      plain.style.display = 'block';
+    }
+    const cta = document.getElementById('r-cta');
+    if (m.link) { cta.href = m.link; cta.style.display = 'inline-block'; }
+    else { cta.style.display = 'none'; }
+    row.classList.remove('unread');
+    reader.showModal();
+  }
+  row.addEventListener('click', go);
+  row.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+  });
+  const pk = row.querySelector('.olk__peek');
+  pk.addEventListener('click', function (e) { e.stopPropagation(); peek(); });
+  if (!m.link) pk.nextElementSibling.style.display = 'none';  // hide "Open →"
+});
+document.getElementById('r-close').onclick = () => reader.close();
+</script>
+{% endblock %}

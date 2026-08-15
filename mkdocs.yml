@@ -1,0 +1,164 @@
+site_name: Lightwork
+site_description: Recursive multi-agent swarm. Drives Claude / GPT / Kimi / Grok / Gemini / Ollama from one kernel.
+site_url: https://daybreak-ai-labs.github.io/Lightwork/
+repo_url: https://github.com/Daybreak-AI-Labs/Lightwork
+repo_name: Daybreak-AI-Labs/Lightwork
+edit_uri: edit/main/docs/
+copyright: Proprietary, commercially licensed (see LICENSE). Built for everyone, not just the technical few.
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+plugins:
+  - search:
+      lang: en
+
+# Many engineering and assurance pages intentionally cite versioned source,
+# workflow, and benchmark artifacts outside MkDocs' docs_dir. MkDocs cannot
+# validate those repository-relative targets, so retain the diagnostics as
+# build information while keeping strict mode for every other warning class.
+validation:
+  links:
+    not_found: info
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      # Resolve includes only inside the active docs_dir. The public overlay
+      # changes docs_dir to .public-docs, so an allowlisted page cannot inline
+      # internal repository documents with an --8<-- directive.
+      base_path:
+        - !relative $docs_dir
+      restrict_base_path: true
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+nav:
+  - Home:
+      - Welcome: index.md
+      - Getting started: getting-started.md
+      - Operator first run: operator-first-run.md
+  - Guides:
+      - Configuration: configuration.md
+      - Pricing governance: pricing-governance.md
+      - Environment variables: env-vars.md
+      - Deployment: deployment.md
+      - Reference architectures: reference-architectures.md
+      - Operations: operations.md
+      - Safety: safety.md
+      - Governed execution: governed-execution.md
+      - Plugins: plugins.md
+      - Connectors: connectors.md
+      - Starter goals: starter-goals.md
+  - Reference:
+      - API: api.md
+      - gRPC API: grpc.md
+      - A2A (Agent2Agent): a2a.md
+      - External agents (BYOA): external-agents.md
+      - External agent quickstart: clients/external-agent-quickstart.md
+      - How Lightwork compares: comparison.md
+  - Performance:
+      - Streaming parity: performance/streaming-parity.md
+  - Security:
+      - Security & GRC suite: SECURITY_GRC.md
+      - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
+      - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
+      - Governance Frontier benchmark: https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md
+      - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
+      - Threat model: security/threat-model.md
+      - DGM evaluator evidence: security/dgm-evaluator-evidence.md
+      - Capability attenuation (verified): security/capability-attenuation.md
+      - Shield benchmark: security/shield-benchmark.md
+      - Encryption at rest: encryption.md
+      - Regulated deployment: regulated-deployment.md
+      - Compliance assessments: compliance-assessments.md
+      - Agent threat hunting: threat-hunting.md
+  - Enterprise:
+      - Editions: enterprise/editions.md
+      - Security & compliance overview: enterprise/security-overview.md
+      - Architecture: enterprise/architecture.md
+      - Diligence data room: enterprise/diligence.md
+  - Strategy:
+      - Lightwork vs the field: comparison.md
+      - Competitive landscape: strategy/competitive-landscape.md
+      - Moat & acquisition: strategy/moat-and-acquisition.md
+      - Design-partner scorecard: strategy/design-partner-scorecard.md
+      - Oversight experience: ux/oversight-experience.md
+  - Roadmap:
+      - 36-month plan: ROADMAP.md
+      - "RFC 0001: Lightwork 2.0": rfcs/0001-maverick-2.0.md
+      - "RFC 0002: Plugin API v2": rfcs/0002-plugin-api-v2.md
+  - Community:
+      - Showcase: showcase.md
+      - Press kit: press-kit.md
+      - Observability integrations: integrations/observability-partners.md
+      - Contributing: CONTRIBUTING.md
+      - Code of Conduct: CODE_OF_CONDUCT.md
+      - Security policy: SECURITY.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Daybreak-AI-Labs/Lightwork
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/maverick-agent/
+  generator: false
+
+# How to preview locally:
+#   pip install 'mkdocs-material'
+#   mkdocs serve
+# Production build (gh-pages):
+#   mkdocs gh-deploy --force

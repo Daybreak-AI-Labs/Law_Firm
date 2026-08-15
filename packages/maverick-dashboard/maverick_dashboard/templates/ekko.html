@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+{% block title %}Ekko Work Discovery · Lightwork{% endblock %}
+
+{% block content %}
+{% from "_hero.html" import hero %}
+<style>
+  /* The hero itself is the shared .hero component (lightwork.css); EKKO
+     keeps only its page-specific styles below. */
+  .ekko-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .55fr);
+    gap: var(--space-5); align-items: start; }
+  .ekko-stack { display: grid; gap: var(--space-4); }
+  .ekko-panel { padding: var(--space-5); }
+  .ekko-panel h2, .ekko-panel h3 { text-transform: none; letter-spacing: 0; color: var(--text); }
+  .ekko-controls { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+  .ekko-device { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2);
+    margin: var(--space-3) 0; }
+  .ekko-device input { width: 100%; }
+  .ekko-consent { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-sunken);
+    font-size: var(--text-sm); margin: var(--space-3) 0; }
+  .ekko-consent input { margin-top: .18rem; }
+  .ekko-policy-list { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; padding: 0; list-style: none; }
+  .ekko-policy-list li { display: flex; gap: var(--space-2); align-items: flex-start; color: var(--muted);
+    font-size: var(--text-sm); }
+  .ekko-policy-list strong { color: var(--text); }
+  .ekko-check { color: var(--success); font-weight: 800; }
+  .ekko-never { color: var(--danger); font-weight: 800; }
+  .ekko-apps { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+  .ekko-app { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: .24rem .62rem;
+    background: var(--surface-sunken); font-size: var(--text-xs); }
+  .ekko-opportunity { align-items: flex-start; }
+  .ekko-opportunity__steps { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: var(--space-2); }
+  .ekko-step { font-size: var(--text-xs); color: var(--muted); background: var(--surface-sunken);
+    border: 1px solid var(--hairline); border-radius: var(--radius-pill); padding: .2rem .5rem; }
+  .ekko-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+    margin-top: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
+  .ekko-note { color: var(--muted); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+  .ekko-policy-warning { border-inline-start: 3px solid var(--warn); padding-inline-start: var(--space-3); }
+  @media (max-width: 920px) {
+    .ekko-layout { grid-template-columns: 1fr; }
+  }
+</style>
+
+{% call hero('Digital workforce intelligence', 'EKKO',
+             subtitle='Work Discovery',
+             lede='Listens only to client-approved work activity and maps '
+                  'recurring processes into evidence-backed opportunities '
+                  'Lightwork can improve or replace.',
+             title_id='ekko-title') %}
+  <div class="hero-statebox" aria-live="polite">
+    <div class="hero-statebox__label">Current state</div>
+    <div class="hero-statebox__row">
+      <strong id="ekko-state-name">Loading…</strong>
+      <span class="badge idle" id="ekko-state-badge">checking</span>
+    </div>
+    <p class="hero-statebox__copy" id="ekko-state-copy">Reading the local, owner-bound discovery state.</p>
+  </div>
+{% endcall %}
+
+<div class="card-grid" aria-label="Ekko summary" style="margin-bottom: var(--space-5);">
+  <div class="stat"><div class="num" id="ekko-stat-events">0</div><div class="label">Approved observations</div></div>
+  <div class="stat"><div class="num" id="ekko-stat-opportunities">0</div><div class="label">Opportunities</div></div>
+  <div class="stat"><div class="num" id="ekko-stat-collector">waiting</div><div class="label">Endpoint collector</div></div>
+  <div class="stat"><div class="num" id="ekko-stat-apps">0</div><div class="label">Allowed apps</div></div>
+  <div class="stat"><div class="num" id="ekko-stat-retention">14d</div><div class="label">Raw-data retention</div></div>
+</div>
+
+<div class="ekko-layout">
+  <main class="ekko-stack">
+    <section class="card ekko-panel" aria-labelledby="ekko-observation-heading">
+      <div class="section-head">
+        <h2 id="ekko-observation-heading" tabindex="-1">Approved observation window</h2>
+        <span class="badge idle" id="ekko-enrollment-badge">not enrolled</span>
+      </div>
+      <p class="ekko-note">Ekko is off by default. Enabling the deployment-wide policy does not enroll a
+        device, grant OS permissions, or begin observing. Enrollment and each observation window remain
+        separate, visible client decisions.</p>
+
+      <label for="ekko-device"><strong>Local device ID</strong></label>
+      <div class="ekko-device">
+        <input class="input" id="ekko-device" type="text" maxlength="64" autocomplete="off"
+               spellcheck="false" value="{{ ekko.device_id }}" aria-describedby="ekko-device-help">
+        <button class="btn" type="button" id="ekko-device-open">Open device</button>
+      </div>
+      <div class="muted" id="ekko-device-help">Use the exact bounded device ID approved during local enrollment.</div>
+
+      <label class="ekko-consent" for="ekko-consent">
+        <input id="ekko-consent" type="checkbox">
+        <span>I have reviewed the application allowlist below and understand that an always-visible local
+          indicator must remain available while this observation window is running.</span>
+      </label>
+
+      <div class="ekko-controls">
+        <button class="btn btn--primary" type="button" id="ekko-start" hidden>Authorize observation window</button>
+        <button class="btn" type="button" id="ekko-pause" hidden>Pause observation</button>
+        <button class="btn btn--primary" type="button" id="ekko-resume" hidden>Resume observation</button>
+        <button class="btn" type="button" id="ekko-stop" hidden>Stop observation</button>
+        <span id="ekko-session-msg" class="muted" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="card ekko-panel" aria-labelledby="ekko-opportunities-heading">
+      <div class="section-head">
+        <h2 id="ekko-opportunities-heading" tabindex="-1">Automation opportunities</h2>
+        <button class="btn" type="button" id="ekko-mine">Analyze approved evidence</button>
+      </div>
+      <p class="ekko-note">Ranked by repeated process evidence and confidence—not employee productivity,
+        speed, attendance, or performance. Estimates are projections until a client validates them.</p>
+      <div id="ekko-opportunities" class="ekko-stack" style="margin-top: var(--space-3);" aria-live="polite">
+        <div class="mv-empty">
+          <div class="mv-empty__title">No reviewed opportunities yet</div>
+          <p class="mv-empty__body">Repeated evidence across distinct days is required before Ekko recommends a first pass.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="ekko-stack">
+    <section class="card ekko-panel" aria-labelledby="ekko-policy-heading">
+      <div class="section-head">
+        <h2 id="ekko-policy-heading">Client policy</h2>
+        <span class="badge idle" id="ekko-policy-badge">off</span>
+      </div>
+      <p class="ekko-policy-warning ekko-note" id="ekko-control-note">This deployment-wide switch is
+        independent of governed learning and DGM.</p>
+      <button class="btn" type="button" id="ekko-control"{% if not ekko.can_control %} hidden{% endif %}>
+        Enable Ekko policy
+      </button>
+      {% if not ekko.can_control %}
+      <p class="ekko-note">Only a deployment-wide administrator can change observation authority.</p>
+      {% endif %}
+      <dl style="margin: var(--space-3) 0 0;">
+        <div class="mv-row"><dt class="mv-row__main">Capture level</dt><dd id="ekko-capture-level">application metadata</dd></div>
+        <div class="mv-row"><dt class="mv-row__main">Provider egress</dt><dd id="ekko-provider-egress">off</dd></div>
+        <div class="mv-row"><dt class="mv-row__main">Retention</dt><dd id="ekko-retention">14 days</dd></div>
+      </dl>
+      <h3 style="margin-bottom: 0;">Allowed applications</h3>
+      <div class="ekko-apps" id="ekko-allowed-apps"></div>
+    </section>
+
+    <section class="card ekko-panel" aria-labelledby="ekko-boundary-heading">
+      <h2 id="ekko-boundary-heading">Capture boundary</h2>
+      <ul class="ekko-policy-list">
+        <li><span class="ekko-check">✓</span><span><strong>May capture:</strong> normalized app
+          transitions, timestamp, sequence, and duration. Guided mode can add reviewed semantic action
+          and object labels.</span></li>
+        <li><span class="ekko-never">×</span><span><strong>Never captures:</strong> screenshots, keystrokes,
+          clipboard, window titles, URLs, filenames, document or message contents, passwords, or form values.
+          Guided capture also rejects email, message, and system-record labels.</span></li>
+        <li><span class="ekko-check">✓</span><span><strong>User control:</strong> visible observing state,
+          pause, stop, bounded retention, and permanent erase.</span></li>
+      </ul>
+    </section>
+
+    <section class="card ekko-panel" aria-labelledby="ekko-data-heading">
+      <h2 id="ekko-data-heading">Your discovery data</h2>
+      <p class="ekko-note">Erase this device's sessions and observations from the current owner and tenant scope.
+        This cannot touch another user's device records.</p>
+      <button class="btn btn--danger" type="button" id="ekko-erase">Erase this device's data</button>
+      <button class="btn" type="button" id="ekko-forget">Forget device and revoke consent</button>
+    </section>
+  </aside>
+</div>
+
+<script id="ekko-initial" type="application/json">{{ ekko | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var initial = JSON.parse(document.getElementById('ekko-initial').textContent || '{}');
+  var current = initial;
+  var candidates = [];
+  var deviceInput = document.getElementById('ekko-device');
+
+  function device() {
+    return (deviceInput.value || '').trim();
+  }
+
+  async function request(path, options) {
+    var response = await fetch(path, options || {});
+    var data = {};
+    try { data = await response.json(); } catch (e) {}
+    if (!response.ok) throw new Error(data.detail || ('Request failed (' + response.status + ')'));
+    return data;
+  }
+
+  function setText(id, value) {
+    document.getElementById(id).textContent = String(value);
+  }
+
+  function stateLabel(status) {
+    if (!status.enabled) return 'Off';
+    if (!status.enrollment || !status.enrollment.active) return 'Waiting for enrollment';
+    if (!status.session) return 'Ready';
+    if (status.session.state === 'running' && status.collector_state === 'live') return 'Observing approved activity';
+    if (status.session.state === 'running' && status.collector_state === 'stale') return 'Collector heartbeat stale';
+    if (status.session.state === 'running') return 'Window approved; waiting for collector';
+    return status.session.state.charAt(0).toUpperCase() + status.session.state.slice(1);
+  }
+
+  function renderApps(status) {
+    var target = document.getElementById('ekko-allowed-apps');
+    target.textContent = '';
+    if (!status.allowed_apps.length) {
+      target.appendChild(mvEl('span', 'muted', 'None — deny all'));
+      return;
+    }
+    status.allowed_apps.forEach(function (name) {
+      target.appendChild(mvEl('span', 'ekko-app', name));
+    });
+  }
+
+  function renderStatus(status) {
+    current = status;
+    var session = status.session;
+    var collectorState = status.collector_state || 'waiting';
+    var state = (!status.enabled) ? 'idle'
+      : (session && session.state === 'running' && collectorState === 'live') ? 'active'
+        : (collectorState === 'stale') ? 'warn'
+          : (session ? session.state : 'active');
+    setText('ekko-state-name', stateLabel(status));
+    var badge = document.getElementById('ekko-state-badge');
+    badge.className = 'badge ' + state;
+    badge.textContent = !status.enabled ? 'off'
+      : (session && session.state === 'running') ? collectorState
+        : (session ? session.state : 'ready');
+    var copy = !status.enabled
+      ? 'No observation can start. Enabling policy still does not enroll or start a device.'
+      : (!status.enrollment || !status.enrollment.active)
+        ? 'Policy is on, but this owner and local device have not been enrolled.'
+        : session && session.state === 'running' && collectorState === 'live'
+          ? 'The endpoint lease is live and the approved window is open. Accepted observations increase the evidence count; the local indicator must remain visible.'
+          : session && session.state === 'running' && collectorState === 'stale'
+            ? 'The approved window remains open, but the endpoint heartbeat expired. No new observation is accepted until a collector wins a fresh exclusive lease.'
+          : session && session.state === 'running'
+            ? 'The window is authorized, but no endpoint collector has attached. No work activity is being accepted.'
+          : session && session.state === 'paused'
+            ? 'Observation is paused. No new activity is accepted until you resume.'
+            : session && session.state === 'stopped'
+              ? 'Observation stopped. Existing evidence remains reviewable until erased or expired.'
+              : 'Enrolled and ready for an explicitly approved observation window.';
+    setText('ekko-state-copy', copy);
+
+    setText('ekko-stat-events', status.event_count);
+    setText('ekko-stat-collector', collectorState);
+    setText('ekko-stat-apps', status.allowed_apps.length);
+    setText('ekko-stat-retention', status.retention_days + 'd');
+    setText('ekko-capture-level', String(status.capture_level).replaceAll('_', ' '));
+    setText('ekko-provider-egress', status.provider_egress ? 'client enabled' : 'off');
+    setText('ekko-retention', status.retention_days + ' days');
+    renderApps(status);
+
+    var policyBadge = document.getElementById('ekko-policy-badge');
+    policyBadge.className = 'badge ' + (status.enabled ? 'active' : 'idle');
+    policyBadge.textContent = status.enabled ? 'enabled' : 'off';
+    var enrollmentBadge = document.getElementById('ekko-enrollment-badge');
+    var enrolled = !!(status.enrollment && status.enrollment.active);
+    enrollmentBadge.className = 'badge ' + (enrolled ? 'active' : 'idle');
+    enrollmentBadge.textContent = enrolled ? 'enrolled' : 'not enrolled';
+
+    var control = document.getElementById('ekko-control');
+    if (control) {
+      control.textContent = status.enabled ? 'Disable Ekko policy' : 'Enable Ekko policy';
+      control.disabled = !!status.control_managed;
+      if (status.control_managed) setText('ekko-control-note', 'MAVERICK_EKKO owns this deployment-wide switch; the dashboard cannot override it.');
+    }
+
+    var activeState = session ? session.state : '';
+    document.getElementById('ekko-start').hidden = !(status.enabled && enrolled && !['running', 'paused'].includes(activeState));
+    document.getElementById('ekko-pause').hidden = activeState !== 'running';
+    document.getElementById('ekko-resume').hidden = activeState !== 'paused';
+    document.getElementById('ekko-stop').hidden = !['running', 'paused'].includes(activeState);
+  }
+
+  function renderCandidates(items) {
+    candidates = items || [];
+    setText('ekko-stat-opportunities', candidates.length);
+    var target = document.getElementById('ekko-opportunities');
+    target.textContent = '';
+    if (!candidates.length) {
+      var empty = mvEl('div', 'mv-empty');
+      empty.appendChild(mvEl('div', 'mv-empty__title', 'No evidence-backed opportunity yet'));
+      empty.appendChild(mvEl('p', 'mv-empty__body', 'Ekko requires repeated sequences across distinct days before it recommends an automation.'));
+      target.appendChild(empty);
+      return;
+    }
+    candidates.forEach(function (item) {
+      var row = mvEl('article', 'mv-row ekko-opportunity');
+      var main = mvEl('div', 'mv-row__main');
+      main.appendChild(mvEl('div', 'mv-row__title', item.title));
+      var meta = mvEl('div', 'ekko-meta');
+      meta.appendChild(mvEl('span', 'badge ' + item.risk, item.risk + ' risk'));
+      meta.appendChild(mvEl('span', null, Math.round(item.confidence * 100) + '% confidence'));
+      meta.appendChild(mvEl('span', null, item.occurrences + ' observations / ' + item.distinct_days + ' days'));
+      meta.appendChild(mvEl('span', null, item.estimated_minutes_per_run.toFixed(1) + ' projected min/run'));
+      main.appendChild(meta);
+      var steps = mvEl('div', 'ekko-opportunity__steps');
+      (item.pattern || []).forEach(function (step, index) {
+        steps.appendChild(mvEl('span', 'ekko-step', (index + 1) + '. ' + step.action + ' ' + step.object_type + ' · ' + step.app));
+      });
+      main.appendChild(steps);
+      var actions = mvEl('div', 'mv-row__actions');
+      var flow = mvEl('button', 'btn btn--primary', 'Draft flow');
+      flow.type = 'button'; flow.dataset.id = item.opportunity_id; flow.dataset.kind = 'flow';
+      var agent = mvEl('button', 'btn', 'Draft agent');
+      agent.type = 'button'; agent.dataset.id = item.opportunity_id; agent.dataset.kind = 'agent';
+      actions.appendChild(flow); actions.appendChild(agent);
+      row.appendChild(main); row.appendChild(actions); target.appendChild(row);
+    });
+  }
+
+  async function refresh() {
+    var id = device();
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(id)) {
+      mvToast('Device ID must use letters, numbers, dot, underscore, colon, or dash.', {error: true});
+      return;
+    }
+    try {
+      localStorage.setItem('lightwork.ekko.device', id);
+      var status = await request('/api/v1/ekko/status?device_id=' + encodeURIComponent(id));
+      renderStatus(status);
+      var found = await request('/api/v1/ekko/candidates?device_id=' + encodeURIComponent(id));
+      renderCandidates(found.candidates);
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function controlPolicy() {
+    var enabling = !current.enabled;
+    var message = enabling
+      ? 'Enable the deployment-wide Ekko policy? This does not enroll a device or start observation.'
+      : 'Disable the deployment-wide Ekko policy? Running collectors must stop accepting new observations.';
+    if (!(await mvConfirm(message, {okText: enabling ? 'Enable policy' : 'Disable policy'}))) return;
+    try {
+      await request('/api/v1/ekko/control', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: enabling})
+      });
+      mvToast(enabling ? 'Ekko policy enabled' : 'Ekko policy disabled');
+      await refresh();
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function startSession() {
+    if (!document.getElementById('ekko-consent').checked) {
+      mvToast('Review and confirm the capture scope before starting.', {error: true}); return;
+    }
+    try {
+      await request('/api/v1/ekko/sessions', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: device(), acknowledge_capture_scope: true})
+      });
+       mvToast('Observation window authorized; waiting for the endpoint collector'); await refresh();
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function transition(action) {
+    if (!current.session) return;
+    try {
+      await request('/api/v1/ekko/sessions/' + encodeURIComponent(current.session.session_id) + '/' + action, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: device()})
+      });
+      var completed = {pause: 'paused', resume: 'resumed', stop: 'stopped'}[action] || action;
+      mvToast('Observation ' + completed); await refresh();
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function mine() {
+    var btn = document.getElementById('ekko-mine'); btn.disabled = true;
+    try {
+      var result = await request('/api/v1/ekko/candidates/mine', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: device()})
+      });
+      renderCandidates(result.candidates); mvToast(result.count ? 'Evidence-backed opportunities refreshed' : 'More repeated evidence is needed');
+    } catch (e) { mvToast(e.message, {error: true}); }
+    finally { btn.disabled = false; }
+  }
+
+  async function handoff(id, kind) {
+    try {
+      var result = await request('/api/v1/ekko/candidates/' + encodeURIComponent(id) + '/handoff', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_id: device(), kind: kind})
+      });
+      sessionStorage.setItem('lightwork.authoring-handoff', JSON.stringify({
+        kind: result.kind, brief: result.brief, created_at: Date.now()
+      }));
+      window.location.href = result.redirect;
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function eraseData() {
+    if (!(await mvConfirm("Permanently erase this device's Ekko sessions and observations for your account?", {okText: 'Erase data'}))) return;
+    try {
+      var result = await request('/api/v1/ekko/data?device_id=' + encodeURIComponent(device()), {method: 'DELETE'});
+      mvToast('Erased ' + result.erased.sessions + ' sessions and ' + result.erased.events + ' observations');
+      renderCandidates([]); await refresh();
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  async function forgetDevice() {
+    if (!(await mvConfirm("Revoke consent and permanently forget this device and all of its Ekko data?", {okText: 'Forget device'}))) return;
+    try {
+      var result = await request('/api/v1/ekko/device?device_id=' + encodeURIComponent(device()), {method: 'DELETE'});
+      mvToast('Device forgotten; consent revoked and ' + result.forgotten.events + ' observations erased');
+      renderCandidates([]); await refresh();
+    } catch (e) { mvToast(e.message, {error: true}); }
+  }
+
+  document.getElementById('ekko-device-open').addEventListener('click', refresh);
+  document.getElementById('ekko-control').addEventListener('click', controlPolicy);
+  document.getElementById('ekko-start').addEventListener('click', startSession);
+  document.getElementById('ekko-pause').addEventListener('click', function () { transition('pause'); });
+  document.getElementById('ekko-resume').addEventListener('click', function () { transition('resume'); });
+  document.getElementById('ekko-stop').addEventListener('click', function () { transition('stop'); });
+  document.getElementById('ekko-mine').addEventListener('click', mine);
+  document.getElementById('ekko-erase').addEventListener('click', eraseData);
+  document.getElementById('ekko-forget').addEventListener('click', forgetDevice);
+  document.getElementById('ekko-opportunities').addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-id][data-kind]');
+    if (button) handoff(button.dataset.id, button.dataset.kind);
+  });
+
+  try {
+    var remembered = localStorage.getItem('lightwork.ekko.device');
+    if (remembered) deviceInput.value = remembered;
+  } catch (e) {}
+  renderStatus(initial);
+  refresh();
+}());
+</script>
+{% endblock %}

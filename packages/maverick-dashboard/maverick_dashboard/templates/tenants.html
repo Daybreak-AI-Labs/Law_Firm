@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Tenants · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set active_tenants = tenants | selectattr('status', 'equalto', 'active') | list | length %}
+  {% call hero('Administration', 'Tenants',
+               subtitle='Isolated client workspaces',
+               lede='Each tenant is an isolated workspace with its own records
+                     and daily spend limit. This roster shows every tenant on
+                     this deployment — status, plan, and spend limit. The
+                     per-workspace rollup lives on
+                     <a href="/tenants/overview">Tenant overview</a>.') %}
+    {{ state('Current state',
+             tenants | length ~ ' workspace' ~ ('' if tenants | length == 1 else 's') ~ ' provisioned',
+             badge=(active_tenants ~ ' active') if tenants else 'single-tenant',
+             badge_class='ok' if active_tenants else 'idle',
+             copy='One client per workspace: separate records, knowledge,
+                   budget, and access — any one can be suspended without
+                   touching the rest.') }}
+  {% endcall %}
+
+  <div class="section-head"><h2>Why create a workspace?</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      A workspace walls off one client or team. Everything it produces lives
+      in its own home — so one client's evidence can never mix with
+      another's:
+    </p>
+    <ul class="muted" style="margin: 0 0 var(--space-2);">
+      <li><strong>Its own records</strong> — a separate operating record and
+        run history; work done for one workspace is invisible to the rest.</li>
+      <li><strong>Its own knowledge</strong> — uploaded documents and
+        customized agents stay inside the workspace that owns them.</li>
+      <li><strong>Its own budget</strong> — a daily spend limit and usage
+        ledger per workspace, so one client can never burn another's
+        budget (and usage rolls up cleanly for billing).</li>
+      <li><strong>Its own access</strong> — people can hold a different role
+        per workspace, and a workspace can be suspended without touching
+        the others.</li>
+    </ul>
+    <p class="muted" style="margin: 0;">
+      One client per workspace is the rule of thumb: separate books, separate
+      evidence, one roster to run it all from.
+    </p>
+  </div>
+
+  {% if is_admin %}
+  <div class="section-head"><h2>Create a workspace</h2></div>
+  <div class="panel">
+    <form id="tenant-add" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); align-items: end;">
+      <label>Workspace ID <span class="muted">(letters, numbers, dashes)</span>
+        <input class="input" name="id" required maxlength="128" placeholder="acme-finance">
+      </label>
+      <label>Display name
+        <input class="input" name="display_name" maxlength="200" placeholder="Acme Finance">
+      </label>
+      <label>Plan
+        <select class="select" name="plan">
+          <option value="free" selected>Free</option>
+          <option value="pro">Pro</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+      </label>
+      <label>Daily spend limit ($, 0 = none)
+        <input class="input" name="max_daily_dollars" type="number" min="0" step="0.01" value="0">
+      </label>
+      <div><button type="submit" class="btn btn--primary">Create workspace</button></div>
+    </form>
+    <p id="tenant-add-msg" role="status" aria-live="polite" class="muted" style="font-size: var(--text-sm); margin: var(--space-2) 0 0;"></p>
+  </div>
+  <script>
+  (function () {
+    var form = document.getElementById('tenant-add');
+    var msg = document.getElementById('tenant-add-msg');
+    if (!form) return;
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var f = new FormData(form);
+      msg.textContent = 'Creating\u2026';
+      try {
+        var r = await fetch('/api/v1/admin/tenants', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: String(f.get('id') || '').trim(),
+            display_name: String(f.get('display_name') || '').trim(),
+            plan: String(f.get('plan') || 'free'),
+            max_daily_dollars: Number(f.get('max_daily_dollars') || 0),
+          }),
+        });
+        if (!r.ok) {
+          var j = await r.json().catch(function () { return {}; });
+          msg.textContent = j.detail || ('That did not work (error ' + r.status + ').');
+          return;
+        }
+        msg.textContent = 'Workspace created.';
+        setTimeout(function () { window.location.reload(); }, 350);
+      } catch (e) { msg.textContent = 'Connection lost \u2014 is the dashboard still running?'; }
+    });
+  })();
+  </script>
+  {% endif %}
+
+  {% if not is_admin %}
+    <div class="panel">
+      <p class="muted">Operator (admin) access is required to view the tenant
+      roster. You're seeing this scoped view because your identity maps to a
+      single tenant.</p>
+    </div>
+  {% elif not tenants %}
+    <div class="panel">
+      <p class="muted" style="margin: 0;">No tenants provisioned. Single-tenant and
+      unprovisioned deployments run without a registry — create your first
+      workspace above when you take on a second client or team.</p>
+    </div>
+  {% else %}
+    <div class="section-head"><h2>Workspace roster</h2></div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">tenant</th><th scope="col">status</th>
+            <th scope="col">plan</th><th scope="col">quota</th>
+            <th scope="col">name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tenants %}
+            <tr>
+              <td><code>{{ t.id }}</code></td>
+              <td>
+                {% if t.status == 'active' %}
+                  <span style="color: var(--accent);">active</span>
+                {% else %}
+                  <span style="color: var(--warn);">{{ t.status }}</span>
+                {% endif %}
+              </td>
+              <td>{{ t.plan }}</td>
+              <td class="muted">
+                {% if t.max_daily_dollars %}${{ '%g' % t.max_daily_dollars }}/day{% else %}unlimited{% endif %}
+              </td>
+              <td class="muted">{{ t.display_name or '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

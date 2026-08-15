@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Ticket #{{ ticket.id }} · Daybreak Console{% endblock %}
+{% block main %}
+<div class="pagehead">
+  <div>
+    <h1>#{{ ticket.id }} · {{ ticket.subject or '(no subject)' }}</h1>
+    <p class="sub">
+      <span class="badge b-{% if ticket.status in ('resolved','closed') %}active{% elif ticket.status=='waiting' %}grace{% else %}none{% endif %}">{{ ticket.status.replace('_',' ') }}</span>
+      &nbsp;{{ ticket.priority }} priority
+      {% if customer %}&nbsp;·&nbsp; <a href="/customers/{{ customer.id }}">{{ customer.name }}</a>{% endif %}
+      &nbsp;·&nbsp; <span class="mono">{{ ticket.correlation_id or 'no correlation id' }}</span>
+    </p>
+  </div>
+  <a class="btn ghost small" href="/support">← All tickets</a>
+</div>
+
+<div class="row">
+  <div class="grow">
+    <h2>Diagnostics summary</h2>
+    <div class="card">
+      <table>
+        <tr><td class="muted" style="width:180px">Customer / tier</td>
+          <td>{{ ticket.summary.get('customer') or '—' }} · <span class="tier tier-{{ ticket.tier or 'basic' }}">{{ ticket.tier or '—' }}</span></td></tr>
+        <tr><td class="muted">Agent version</td><td class="mono">{{ ticket.agent_version or 'unknown' }}</td></tr>
+        <tr><td class="muted">Entitlement status</td><td>{{ ticket.summary.get('entitlement_status') or '—' }}</td></tr>
+        <tr><td class="muted">Readiness failing</td>
+          <td>{% if ticket.summary.get('readiness_failing') %}<span class="badge b-expired">{{ ticket.summary.get('readiness_failing')|join(', ') }}</span>{% else %}<span class="badge b-active">healthy</span>{% endif %}</td></tr>
+        <tr><td class="muted">Failure modes</td><td class="mono muted" style="font-size:12px">{{ ticket.summary.get('failure_modes') or '—' }}</td></tr>
+        <tr><td class="muted">Failed jobs</td><td>{{ ticket.summary.get('failed_job_count') if ticket.summary.get('failed_job_count') is not none else '—' }}</td></tr>
+      </table>
+    </div>
+
+    <h2>Timeline</h2>
+    <div class="card">
+      {% for c in comments %}
+      <div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <div class="muted mono" style="font-size:11px">{{ c.created_at|ts }} · {{ c.author }}
+          {% if c.kind=='status' %}<span class="badge b-grace">status</span>{% endif %}</div>
+        <div>{{ c.body }}</div>
+      </div>
+      {% endfor %}
+      {% if not comments %}<p class="muted" style="margin:0">No activity yet.</p>{% endif %}
+      {% if staff.can_support %}
+      <form method="post" action="/support/{{ ticket.id }}/comment" style="margin-top:12px">
+        <textarea name="body" rows="2" placeholder="Add an internal note…" required></textarea>
+        <button class="btn small" type="submit" style="margin-top:8px">Add note</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if staff.can_support %}
+  <div style="flex:0 0 260px">
+    <h2>Triage</h2>
+    <div class="card">
+      <form method="post" action="/support/{{ ticket.id }}/status">
+        <label>Set status</label>
+        <select name="status">
+          {% for s in ["open","in_progress","waiting","resolved","closed"] %}
+          <option value="{{ s }}" {% if s==ticket.status %}selected{% endif %}>{{ s.replace('_',' ') }}</option>
+          {% endfor %}
+        </select>
+        <label>Note <span class="muted">(optional)</span></label>
+        <input name="note">
+        <button class="btn small" type="submit" style="margin-top:10px">Update status</button>
+      </form>
+      <form method="post" action="/support/{{ ticket.id }}/assign" style="margin-top:16px">
+        <label>Assignee</label>
+        <input name="assignee" value="{{ ticket.assignee }}" placeholder="you@daybreak.co">
+        <label>Priority</label>
+        <select name="priority">
+          {% for p in ["low","normal","high","urgent"] %}
+          <option value="{{ p }}" {% if p==ticket.priority %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn ghost small" type="submit" style="margin-top:10px">Save</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

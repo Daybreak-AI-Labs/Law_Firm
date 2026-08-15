@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Facts · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">Facts</h1>
+  <p class="page-subtitle">Key–value facts Lightwork remembers across runs.</p>
+  <div class="panel">
+    {% if facts %}
+    <table>
+      <thead><tr><th scope="col">key</th><th scope="col">value</th></tr></thead>
+      <tbody>
+      {% for k, v in facts.items() %}
+        <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="muted">No facts yet. Lightwork remembers useful details here as it works on your goals.</p>
+      <details>
+        <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: set a fact from the command line</summary>
+        <p class="muted" style="margin: var(--space-2) 0 0;">Set one with <code>maverick fact &lt;key&gt; &lt;value&gt;</code>.</p>
+      </details>
+    {% endif %}
+  </div>
+{% endblock %}

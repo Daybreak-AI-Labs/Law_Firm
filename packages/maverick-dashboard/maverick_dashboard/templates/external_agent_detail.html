@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ a.id }} · External Agents · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ a.id }}</h1>
+  <p class="page-subtitle">{{ a.platform_label }}{% if a.description %} — {{ a.description }}{% endif %} · <a href="/external-agents">back to the roster</a></p>
+
+  <div class="panel">
+    <p style="margin: 0;">
+      {% if a.contained %}<span class="badge failure">contained — release from the roster</span>
+      {% elif a.active %}<span class="badge active">{{ a.lifecycle }}</span>
+      {% else %}<span class="badge failure">{{ a.lifecycle }}</span>{% endif %}
+      {% if a.owner %}<span class="badge">owner {{ a.owner }}</span>{% endif %}
+      {% if a.department %}<span class="badge">{{ a.department }}</span>{% endif %}
+      {% if a.max_risk %}<span class="badge">max risk {{ a.max_risk }}</span>{% endif %}
+      {% for s in a.credentials %}<span class="badge">{{ s }} credential</span>{% endfor %}
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Spend and budget</h2>
+    <table>
+      <thead><tr><th>Meter</th><th>Amount</th></tr></thead>
+      <tbody>
+        <tr><td>{{ 'This month' if a.period == 'monthly' else 'Lifetime meter' }}</td>
+            <td>${{ '%.2f' | format(a.period_spent) }}{% if a.max_dollars is not none %} of ${{ '%.2f' | format(a.max_dollars) }}{% endif %}
+                {% if a.over_budget %}<span class="badge failure">over budget</span>{% endif %}</td></tr>
+        <tr><td>Lifetime reported</td><td>${{ '%.2f' | format(a.spent_dollars) }}</td></tr>
+        <tr><td>Operating Record</td>
+            <td>{{ a.record.get('runs', 0) }} run(s) · ${{ '%.2f' | format(a.record.get('dollars', 0)) }} · {{ a.record.get('input_tokens', 0) + a.record.get('output_tokens', 0) }} tokens</td></tr>
+        <tr><td>Runs over the time ceiling</td><td>{{ a.wall_violations }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  {% if a.tool_risks %}
+  <div class="panel">
+    <h2 style="margin-top:0">Operator tool ratings</h2>
+    <p class="muted" style="font-size: var(--text-sm)">These floor whatever risk the agent declares.</p>
+    <table>
+      <thead><tr><th>Tool</th><th>Rated risk</th></tr></thead>
+      <tbody>
+        {% for tool, risk in a.tool_risks.items() | sort %}
+        <tr><td><code>{{ tool }}</code></td><td><span class="badge {{ 'failure' if risk == 'high' else '' }}">{{ risk }}</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if a.memory %}
+  <div class="panel">
+    <h2 style="margin-top:0">Learning contributions</h2>
+    <p class="muted" style="font-size: var(--text-sm)">Experience this agent deposited into the governed fleet memory (consumed by the dream cycle; provable via <code>maverick proof --fleet</code>).</p>
+    <p style="margin:0">
+      {% for kind, n in a.memory.items() | sort %}
+      <span class="badge">{{ n }} {{ kind }}</span>
+      {% endfor %}
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2 style="margin-top:0">Recent runs</h2>
+    {% if a.episodes %}
+    <table>
+      <thead><tr><th>Goal</th><th>Outcome</th><th>Cost</th><th>When</th></tr></thead>
+      <tbody>
+        {% for e in a.episodes %}
+        <tr>
+          <td><a href="/goals/{{ e.goal_id }}">#{{ e.goal_id }}</a></td>
+          <td>{% if e.outcome == 'success' %}<span class="badge active">success</span>
+              {% elif e.outcome %}<span class="badge failure">{{ e.outcome }}</span>
+              {% else %}<span class="badge">running</span>{% endif %}</td>
+          <td>${{ '%.2f' | format(e.cost_dollars or 0) }}</td>
+          <td>{{ e.ended_at | datetime if e.ended_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No runs yet</p>
+      <p class="mv-empty__body">Once the agent reports work (or opens a live run), its Operating Record history appears here.</p>
+    </div>
+    {% endif %}
+  </div>
+{% endblock %}

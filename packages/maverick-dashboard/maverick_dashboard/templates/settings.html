@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Settings · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set configured_providers = providers | selectattr('configured') | list %}
+  {% call hero('Control plane', 'Settings',
+               subtitle='Everything, managed in-app',
+               lede='Appearance, models, spend, providers, and platform
+                     capabilities — each section saves on its own and applies
+                     on the next run.') %}
+    {{ state('Current state',
+             configured_providers | length ~ ' of ' ~ providers | length ~ ' providers configured',
+             badge='ready' if configured_providers else 'add a provider key',
+             badge_class='ok' if configured_providers else 'warn',
+             copy='Provider keys are sealed on this server and never shown
+                   again. Set at least one to run goals.') }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel" role="status"
+       style="border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4);">
+    <strong>Saved.</strong> {{ saved }}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Appearance</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Theme, density, font and language for this browser. Applies when you save.
+    </p>
+    <form method="get" action="/settings"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end;">
+      <input type="hidden" name="saved" value="appearance" />
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Theme</span>
+        <select class="ctl" name="theme">
+          <option value="dark" {% if theme == 'dark' %}selected{% endif %}>Dark</option>
+          <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
+          <option value="solarized" {% if theme == 'solarized' %}selected{% endif %}>Solarized</option>
+          <option value="hicontrast" {% if theme == 'hicontrast' %}selected{% endif %}>High contrast</option>
+          {% for name in custom_theme_names %}
+          <option value="{{ name }}" {% if theme == name %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Density</span>
+        <select class="ctl" name="density">
+          <option value="comfortable" {% if density == 'comfortable' %}selected{% endif %}>Comfortable</option>
+          <option value="compact" {% if density == 'compact' %}selected{% endif %}>Compact</option>
+        </select>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Font</span>
+        <select class="ctl" name="font">
+          <option value="default" {% if font == 'default' %}selected{% endif %}>{{ t('font.default') }}</option>
+          <option value="dyslexic" {% if font == 'dyslexic' %}selected{% endif %}>{{ t('font.dyslexic') }}</option>
+        </select>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Language</span>
+        <select class="ctl" name="lang">
+          <option value="en" {% if lang == 'en' %}selected{% endif %}>English</option>
+          <option value="fr" {% if lang == 'fr' %}selected{% endif %}>Français</option>
+          <option value="de" {% if lang == 'de' %}selected{% endif %}>Deutsch</option>
+          <option value="ja" {% if lang == 'ja' %}selected{% endif %}>日本語</option>
+          <option value="zh" {% if lang == 'zh' %}selected{% endif %}>中文</option>
+          <option value="ar" {% if lang == 'ar' %}selected{% endif %}>العربية</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Apply</button>
+    </form>
+  </div>
+
+  <div class="section-head"><h2>Models</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Pick any configured provider's model (see Provider keys below) or type any model
+      id — e.g. <code>openai:gpt-5.4</code>, <code>gemini:gemini-3.5-pro</code>,
+      <code>ollama:llama-4-maverick</code>. Changes apply on the next run; a
+      model pinned for a specific role below still wins for that role.
+    </p>
+    <datalist id="model-catalog">
+      {% for spec, plabel in picker_options %}
+      <option value="{{ spec }}">{{ plabel }}</option>
+      {% endfor %}
+    </datalist>
+    {% if allowed_models %}
+    <p class="muted" style="margin-top: 0;">
+      An admin allow-list is active — pickers are limited to the
+      {{ allowed_models|length }} model(s) approved below.
+    </p>
+    {% endif %}
+    <form method="post" action="/settings/models"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end;">
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); min-width: 20rem;">
+        <span>Default model</span>
+        <input class="ctl" type="text" name="model" list="model-catalog"
+               value="{{ pinned_model or '' }}"
+               placeholder="Use server default — type or pick"
+               aria-label="Default model" />
+      </label>
+      <button type="submit" class="btn btn--primary">Save model</button>
+    </form>
+    {% if pinned_model %}
+    <p class="muted" style="margin-bottom: 0;">Currently pinned: <code>{{ pinned_model }}</code></p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Per-role models</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Override the model for a specific agent role — the platform's strength is
+      role-specialised models. "Use default" falls back to the default model
+      above, then the platform default. The Effective column is what each role
+      will actually use.
+    </p>
+    <form method="post" action="/settings/models/roles">
+      <table>
+        <thead><tr>
+          <th scope="col">Role</th>
+          <th scope="col">Model override</th>
+          <th scope="col">Effective</th>
+        </tr></thead>
+        <tbody>
+          {% for label, role, effective, override in role_models %}
+          <tr>
+            <td>{{ label }}</td>
+            <td>
+              <input class="ctl" type="text" name="{{ role }}" list="model-catalog"
+                     value="{{ override or '' }}" placeholder="Use default"
+                     aria-label="Model for {{ label }}" style="min-width: 13rem;" />
+            </td>
+            <td><code>{{ effective }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" class="btn btn--primary" style="margin-top: var(--space-3);">Save per-role models</button>
+    </form>
+  </div>
+
+  <div class="section-head"><h2>Allowed models</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Restrict which models anyone may use. Check the ones you approve and save;
+      the default and per-role pickers above are then limited to your selection,
+      and <strong>every agent is hard-capped to it</strong> — a model pinned
+      anywhere else cannot run outside this list. Leave every box unchecked to
+      allow all models. Changes apply on the next run.
+    </p>
+    <form method="post" action="/settings/models/allowed">
+      {% for spec, plabel in model_options %}
+      <label style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--hairline);">
+        <span><code>{{ spec }}</code> <span class="muted">· {{ plabel }}</span></span>
+        <input type="checkbox" name="models" value="{{ spec }}"{% if spec in allowed_models %} checked{% endif %} style="width: 18px; height: 18px; accent-color: var(--brand);" />
+      </label>
+      {% endfor %}
+      <p style="margin-bottom: 0; margin-top: var(--space-3);">
+        <button type="submit" class="btn btn--primary">Save allowed models</button>
+        {% if allowed_models %}<span class="muted" style="margin-left: var(--space-3);">{{ allowed_models|length }} model(s) allowed. Uncheck all and save to allow every model.</span>{% endif %}
+      </p>
+    </form>
+  </div>
+
+  <div class="section-head"><h2>Spend cap</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      The most a single goal may spend before Lightwork stops it. Changes
+      apply on the next run. Default is ${{ '%.2f'|format(default_budget) }}
+      per goal.
+    </p>
+    <form method="post" action="/settings/budget"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end;">
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); min-width: 14rem;">
+        <span>Max spend per goal (USD)</span>
+        <input class="ctl" type="number" name="max_dollars" min="0.01" step="0.5"
+               value="{% if budget is not none %}{{ '%.2f'|format(budget) }}{% endif %}"
+               placeholder="{{ '%.2f'|format(default_budget) }}" />
+      </label>
+      <button type="submit" class="btn btn--primary">Save cap</button>
+    </form>
+    {% if budget is not none %}
+    <p class="muted" style="margin-bottom: 0;">
+      Current cap: <code>${{ '%.2f'|format(budget) }}</code> per goal. Clear the field and save to use the default.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Provider keys</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Set an API key for at least one provider to run goals. Keys are sealed
+      on this server and never shown again; a key saved here is the one
+      Lightwork uses. Leave a field blank to keep the current value.
+    </p>
+    {% for p in providers %}
+    <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; padding: var(--space-3) 0; border-top: 1px solid var(--hairline);">
+      <div style="min-width: 13rem; flex: 1 1 13rem;">
+        <div style="font-weight: var(--font-medium);">{{ p.label }}</div>
+        <div class="muted" style="font-size: var(--text-sm);">
+          {% if p.configured %}<span class="badge active">configured</span> via {{ p.via }}{% if p.key_hint %} · {{ p.key_hint }}{% endif %}
+          {% else %}not set — paste a key to enable this provider{% endif %}
+        </div>
+      </div>
+      <form method="post" action="/settings/providers" style="display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-end;">
+        <input type="hidden" name="provider" value="{{ p.name }}" />
+        {% if p.base_url_field %}
+        <input class="ctl" type="text" name="base_url" value="{{ p.base_url }}"
+               placeholder="Base URL" aria-label="{{ p.label }} base URL" autocomplete="off" />
+        {% endif %}
+        <input class="ctl" type="password" name="api_key"
+               placeholder="Paste API key" aria-label="{{ p.label }} API key" autocomplete="off" />
+        <button type="submit" class="btn btn--primary">Save</button>
+      </form>
+      {% if p.dashboard_set %}
+      <form method="post" action="/settings/providers/clear">
+        <input type="hidden" name="provider" value="{{ p.name }}" />
+        <button type="submit" class="btn">Clear</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="section-head"><h2>Automation webhooks</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      The signing secret that lets other systems securely start your workflows
+      (used by webhook triggers on the <a href="/automations">Automations</a>
+      page). Status:
+      {% if webhook_configured %}<span class="badge active">configured</span>
+      {% else %}<span class="badge blocked">not set — webhook triggers won't fire</span>{% endif %}
+    </p>
+    <form method="post" action="/settings/webhooks" style="display: flex; gap: var(--space-2); align-items: end; flex-wrap: wrap;">
+      <label style="flex: 1 1 18rem;">New signing secret <span class="muted">(leave blank and save to clear)</span>
+        <input class="input" type="password" name="secret" autocomplete="new-password" placeholder="paste a long random value">
+      </label>
+      <button type="submit" class="btn btn--primary">Save secret</button>
+    </form>
+    <p class="muted" style="font-size: var(--text-sm); margin: var(--space-3) 0 0;">
+      The secret is sealed once saved and never displayed again — rotate it by
+      saving a new value here.
+    </p>
+  </div>
+
+  <div class="section-head"><h2>Capabilities</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">High-impact tools, off by default. Changes apply on the next run.</p>
+    <form method="post" action="/settings/capabilities">
+      {% for c in capabilities %}
+      <label style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline);">
+        <span style="flex: 1;">{{ c.name|replace('_', ' ')|capitalize }}
+          {% if c.info %}<br><span class="muted" style="font-size: var(--text-sm); font-weight: normal;">{{ c.info }}</span>{% endif %}</span>
+        <input type="checkbox" name="{{ c.name }}"{% if c.enabled %} checked{% endif %} style="width: 18px; height: 18px; accent-color: var(--brand); flex-shrink: 0;" />
+      </label>
+      {% endfor %}
+      <p style="margin-bottom: 0;"><button type="submit" class="btn btn--primary">Save capabilities</button></p>
+    </form>
+  </div>
+
+  <div class="section-head"><h2>Features</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Agent behaviours that are otherwise on by default.</p>
+    <form method="post" action="/settings/features">
+      {% for f in features %}
+      <label style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline);">
+        <span style="flex: 1;">{{ f.name|replace('_', ' ')|capitalize }}
+          {% if f.info %}<br><span class="muted" style="font-size: var(--text-sm); font-weight: normal;">{{ f.info }}</span>{% endif %}</span>
+        <input type="checkbox" name="{{ f.name }}"{% if f.enabled %} checked{% endif %} style="width: 18px; height: 18px; accent-color: var(--brand);" />
+      </label>
+      {% endfor %}
+      <p style="margin-bottom: 0;"><button type="submit" class="btn btn--primary">Save features</button></p>
+    </form>
+  </div>
+
+  <div class="section-head"><h2 id="ui-visibility">Page visibility by role</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Choose which pages each role sees. Unchecking a box removes the page from
+      that role's navigation <em>and</em> blocks direct access to it. A dash
+      means the role's permissions can't reach that page at all (visibility can
+      never grant more than a role's permissions allow — change the user's role
+      on the <a href="/users">Users</a> page instead). Admins always keep
+      Settings and Users, so you can't lock yourself out. Roles only apply when
+      sign-in is configured; in local single-user mode everyone sees everything.
+    </p>
+    <form method="post" action="/settings/ui-visibility">
+      <table>
+        <thead><tr>
+          <th scope="col">Page</th>
+          {% for r in visibility_roles %}<th scope="col">{{ r|capitalize }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for grp in visibility_matrix %}
+          <tr><th colspan="{{ 1 + visibility_roles|length }}" scope="colgroup"
+                  style="padding-top: var(--space-4);">{{ grp.label }}</th></tr>
+          {% for pg in grp.pages %}
+          <tr>
+            <td>{{ pg.label }} <span class="muted mono" style="font-size: var(--text-xs);">{{ pg.path }}</span>{% if not pg.in_nav %} <span class="muted" style="font-size: var(--text-xs);">· linked from other pages, not in the sidebar</span>{% endif %}</td>
+            {% for cell in pg.cells %}
+            <td>
+              {% if cell.locked %}
+              <input type="checkbox" checked disabled
+                     aria-label="{{ pg.label }} is always visible to admins"
+                     title="Always available to admins (lockout protection)"
+                     style="width: 18px; height: 18px; accent-color: var(--brand);" />
+              {% elif not cell.eligible %}
+              <span class="muted" title="Not available to this role (needs the {{ pg.floor }} permission)" aria-label="{{ pg.label }} is not available to the {{ cell.role }} role">—</span>
+              {% else %}
+              <input type="checkbox" name="cell" value="{{ cell.role }}:{{ pg.path }}"
+                     {% if cell.visible %}checked{% endif %}
+                     aria-label="Show {{ pg.label }} to the {{ cell.role }} role"
+                     style="width: 18px; height: 18px; accent-color: var(--brand);" />
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+      <p style="margin-bottom: 0; margin-top: var(--space-3);">
+        <button type="submit" class="btn btn--primary">Save page visibility</button>
+      </p>
+    </form>
+    <form method="post" action="/settings/ui-visibility/reset" style="margin-top: var(--space-2);">
+      <button type="submit" class="btn">Reset to defaults</button>
+    </form>
+    <p class="muted" style="font-size: var(--text-sm); margin: var(--space-3) 0 0;">
+      This controls what each role <em>sees</em>; the permission checks on
+      every page still apply regardless.
+    </p>
+  </div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Providers · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">Providers</h1>
+  <p class="page-subtitle">Live provider health — calls, error rates, latency, and spend (in-memory, resets on restart).</p>
+<section class="panel">
+  {% if not rows %}
+    <p class="muted">No provider calls recorded yet. Stats are in-memory and reset on restart.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">provider</th>
+          <th scope="col">model</th>
+          <th scope="col">calls</th>
+          <th scope="col">errors</th>
+          <th scope="col">err %</th>
+          <th scope="col">p50 ms</th>
+          <th scope="col">p95 ms</th>
+          <th scope="col">$ total</th>
+          <th scope="col">last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><code>{{ r.provider }}</code></td>
+          <td><code>{{ r.model }}</code></td>
+          <td>{{ r.calls }}</td>
+          <td>{{ r.errors }}</td>
+          <td>
+            {% if r.error_rate >= 0.1 %}
+              <span class="badge failure">{{ '%.1f' % (r.error_rate * 100) }}%</span>
+            {% elif r.error_rate > 0 %}
+              <span class="badge blocked">{{ '%.1f' % (r.error_rate * 100) }}%</span>
+            {% else %}
+              <span class="badge success">0%</span>
+            {% endif %}
+          </td>
+          <td>{{ '%.0f' % r.p50_ms if r.p50_ms is not none else '—' }}</td>
+          <td>{{ '%.0f' % r.p95_ms if r.p95_ms is not none else '—' }}</td>
+          <td>${{ '%.4f' % r.total_dollars }}</td>
+          <td class="muted">{{ r.last_seen | datetime }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</section>
+<section class="panel">
+  <div class="section-head"><h2>Monitoring export</h2></div>
+  <details>
+    <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: fetch these stats as JSON</summary>
+    <p class="muted" style="margin-top: var(--space-2);">JSON snapshot: <code>GET /api/v1/providers</code></p>
+  </details>
+</section>
+{% endblock %}

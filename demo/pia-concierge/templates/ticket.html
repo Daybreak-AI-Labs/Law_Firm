@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% set active = 'servicenow' %}
+{% block title %}{{ ticket.number }}{% endblock %}
+{% block tab_title %}{{ ticket.number }} · ServiceNow{% endblock %}
+{% block favicon %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%231B9E57'/%3E%3Ctext x='16' y='21' font-size='13' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3ESN%3C/text%3E%3C/svg%3E">{% endblock %}
+
+{% block body %}
+<div class="sim-banner"><span class="sim-chip">Simulated</span>
+  <span>ServiceNow ticket record. Lightwork writes work notes and state changes back here through the governed connector.</span></div>
+
+<div class="page-head">
+  <div class="flow">
+    <h1 style="font-size:22px;">{{ ticket.number }}</h1>
+    <span class="pill state-{{ ticket.state|replace(' ','') }}">{{ ticket.state }}</span>
+    {% if case %}<span class="faint mono">→ {{ case.id }}</span>{% endif %}
+  </div>
+  <p>{{ ticket.short_description }}</p>
+</div>
+
+{# One obvious forward action per stage — the demo walks itself. #}
+{% if case and case.stage in ('intake_sent', 'followup') %}
+<div class="nextstep">
+  <span class="k">Next</span>
+  <span class="t">Lightwork emailed {{ ticket.requester.split(' ')[0] }} the questionnaire link.
+    Play the requester and answer it.</span>
+  <a class="btn" href="/mail">Open the requester's inbox →</a>
+</div>
+{% elif case and case.stage in ('pending_review', 'in_onetrust_review') %}
+<div class="nextstep">
+  <span class="k">Next</span>
+  <span class="t">The agent scored it and filed it to OneTrust as Under Review — a human decides there.</span>
+  <a class="btn" href="/onetrust">Review &amp; approve in OneTrust →</a>
+</div>
+{% elif case and case.stage == 'addendum_filed' %}
+<div class="nextstep">
+  <span class="k">Done</span>
+  <span class="t">Append-only request: the document(s) were analyzed and attached to the
+    vendor's existing assessment — ticket resolved.</span>
+  <a class="btn" href="/onetrust">See the addendum in OneTrust →</a>
+</div>
+{% elif case and case.onetrust_id %}
+<div class="nextstep">
+  <span class="k">Done</span>
+  <span class="t">Approved in OneTrust as {{ case.onetrust_id }} — ticket resolved,
+    requester notified.</span>
+  <a class="btn" href="/onetrust">See it in OneTrust →</a>
+</div>
+{% endif %}
+
+<div class="grid two">
+  <div class="card">
+    <h2>Details</h2>
+    <dl class="kv">
+      <dt>Requested by</dt><dd>{{ ticket.requester }}</dd>
+      <dt>Email</dt><dd class="mono">{{ ticket.requester_email }}</dd>
+      <dt>System / vendor</dt><dd>{{ ticket.system_name }}</dd>
+      <dt>Data types</dt><dd>{{ ticket.data_types }}</dd>
+      <dt>Lightwork case</dt><dd class="mono">{{ case.id if case else '—' }}</dd>
+    </dl>
+    {% if case and case.stage in ('intake_sent',) %}
+    <hr>
+    <p class="muted">Waiting on the requester to complete the intake questionnaire.</p>
+    <a class="btn ghost sm" href="/mail">Open requester inbox →</a>
+    {% endif %}
+    {% if case and case.stage in ('pending_review', 'in_onetrust_review') %}
+    <hr>
+    <p class="muted">Scored by the agent — awaiting the privacy team's decision in OneTrust.</p>
+    <a class="btn ghost sm" href="/onetrust">Open OneTrust review →</a>
+    {% endif %}
+    {% if case %}
+    <hr>
+    <div class="flow">
+      <a class="btn ghost sm" href="{{ dashboard_url }}/chat/goal/{{ case.goal_id }}" target="lightwork">Lightwork goal timeline ↗</a>
+      {% if case.onetrust_id %}<a class="btn ghost sm" href="/onetrust">Filed assessment {{ case.onetrust_id }} →</a>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Activity / work notes</h2>
+    {% for n in ticket.work_notes|reverse %}
+    <div style="padding:8px 0; border-bottom:1px solid var(--line-soft);">
+      <div class="faint mono" style="font-size:12px;">{{ n.by }}</div>
+      <div>{{ n.text }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

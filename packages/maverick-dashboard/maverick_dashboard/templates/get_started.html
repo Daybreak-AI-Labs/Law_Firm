@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}get started · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .gs { max-width: 760px; margin-inline: auto; }
+  .gs__head { margin-bottom: var(--space-5); }
+  .gs__head h1 { margin: 0 0 var(--space-1); }
+  .gs__sub { color: var(--muted); margin: 0; }
+  .gs__progress { margin: var(--space-4) 0 var(--space-5); }
+  .gs__bar { height: 6px; border-radius: var(--radius-pill); background: var(--surface-2); overflow: hidden; }
+  .gs__bar > i { display: block; height: 100%; background: var(--brand); border-radius: inherit; transition: width .3s ease; }
+  .gs__steps { display: flex; flex-direction: column; gap: var(--space-3); list-style: none; margin: 0; padding: 0; }
+  .gs__step { display: flex; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); align-items: center; }
+  .gs__step--done { border-color: var(--brand-border); background: var(--brand-subtle); }
+  .gs__mark { flex: none; width: 1.9rem; height: 1.9rem; border-radius: var(--radius-pill); display: inline-flex; align-items: center; justify-content: center; font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+  .gs__step--done .gs__mark { background: var(--brand); color: var(--brand-fg); border-color: var(--brand); }
+  .gs__body { flex: 1 1 auto; min-width: 0; }
+  .gs__title { font-weight: var(--font-semibold); margin: 0 0 2px; }
+  .gs__desc { color: var(--muted); font-size: var(--text-sm); margin: 0; }
+  .gs__cta { flex: none; align-self: center; }
+  .gs__preflight { margin-bottom: var(--space-5); }
+  .gs__preflight-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .gs__preflight-head h2 { margin: 0; }
+  .gs__status { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: .2rem .6rem; font-size: var(--text-xs); font-weight: var(--font-semibold); }
+  .gs__status--ready { color: var(--success); border-color: var(--success); }
+  .gs__status--blocked { color: var(--danger); border-color: var(--danger); }
+  .gs__checks { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); }
+  .gs__check { padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+  .gs__check:last-child { border-bottom: 0; }
+  .gs__check-state { display: inline-block; min-width: 4.5rem; font-size: var(--text-xs); font-weight: var(--font-semibold); text-transform: uppercase; }
+  .gs__check--blocked .gs__check-state { color: var(--danger); }
+  .gs__check--attention .gs__check-state { color: var(--warn); }
+  .gs__check--ready .gs__check-state { color: var(--success); }
+  .gs__command { display: block; margin-top: var(--space-1); overflow-wrap: anywhere; }
+  .gs__demo { margin-top: var(--space-5); border-left: 4px solid var(--warn); }
+  .gs__demo-label { display: inline-block; color: var(--warn); font-size: var(--text-xs); font-weight: var(--font-semibold); letter-spacing: .06em; }
+  @media (max-width: 560px) {
+    .gs__step { flex-wrap: wrap; }
+    .gs__cta { width: 100%; }
+    .gs__preflight-head { align-items: flex-start; flex-direction: column; }
+  }
+</style>
+
+<div class="gs">
+  <div class="gs__head">
+    <h1 class="page-title">Get started</h1>
+    <p class="gs__sub">Three steps from zero to a governed AI workforce — this checklist updates itself as you go.</p>
+    <div class="gs__progress">
+      <div class="gs__bar" role="progressbar" aria-label="Setup progress"
+           aria-valuenow="{{ done_count }}" aria-valuemin="0" aria-valuemax="{{ total }}">
+        <i style="width: {{ (100 * done_count // total) }}%;"></i>
+      </div>
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">{{ done_count }} of {{ total }} done</p>
+    </div>
+  </div>
+
+  {% if runtime_all_set %}
+  <div class="mv-empty" style="margin-bottom: var(--space-5);">
+    <p class="mv-empty__title">🎉 You’re runtime-ready</p>
+    <p class="mv-empty__body">Your workspace is configured and running.
+      Assurance deployment readiness is reported separately below. Manage
+      runtime work from <a href="/workflows">Workflows</a> and
+      <a href="/automations">Automations</a>.</p>
+  </div>
+  {% endif %}
+
+  <section class="panel gs__preflight" aria-labelledby="install-preflight-title">
+    <div class="gs__preflight-head">
+      <h2 id="install-preflight-title">Offline install preflight: runtime</h2>
+      <span class="gs__status gs__status--{{ 'ready' if preflight.ready else 'blocked' }}">
+        {{ "ready to run" if preflight.ready else "blocked" }}
+      </span>
+    </div>
+    <p class="muted">This deterministic check reads configuration only. It makes no
+      network request and creates no runtime state. Use <code>maverick doctor</code>
+      afterward for live provider and database connectivity.</p>
+    {% if not preflight.ready %}
+      <p role="alert"><strong>Next fix:</strong>
+        <code>{{ preflight.next_action }}</code>
+      </p>
+    {% else %}
+      <p role="status"><strong>Next action:</strong>
+        <code>{{ preflight.next_action }}</code>
+      </p>
+    {% endif %}
+    <p><code>maverick preflight --json</code>
+      <span class="muted">— copyable output for deployment automation</span></p>
+    <details>
+      <summary>View {{ preflight.checks|length }} readiness checks</summary>
+      <ul class="gs__checks">
+        {% for check in preflight.checks %}
+        <li class="gs__check gs__check--{{ check.status }}">
+          <span class="gs__check-state">{{ check.status }}</span>
+          <strong>{{ check.label }}</strong> — {{ check.detail }}
+          {% if check.remediation %}
+            <code class="gs__command">{{ check.remediation }}</code>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+  </section>
+
+  <section class="panel gs__preflight"
+           aria-labelledby="assurance-preflight-title">
+    <div class="gs__preflight-head">
+      <h2 id="assurance-preflight-title">Assurance deployment readiness</h2>
+      <span class="gs__status gs__status--{{ 'ready' if assurance_preflight.ready else 'blocked' }}">
+        {{ "assurance ready" if assurance_preflight.ready else "assurance blocked" }}
+      </span>
+    </div>
+    <p class="muted">This stricter, separate posture requires an explicit
+      tenant, dashboard, evidence graph, AI Evidence-Ready Gateway, and Model
+      Risk Officer. Runtime readiness does not imply assurance readiness.</p>
+    {% if not assurance_preflight.ready %}
+      <p role="alert"><strong>Next assurance fix:</strong>
+        <code>{{ assurance_preflight.next_action }}</code>
+      </p>
+    {% else %}
+      <p role="status"><strong>Next assurance action:</strong>
+        <code>{{ assurance_preflight.next_action }}</code>
+      </p>
+    {% endif %}
+    <p><code>maverick preflight --profile cockpit --json</code></p>
+    <details>
+      <summary>View {{ assurance_preflight.checks|length }} assurance checks</summary>
+      <ul class="gs__checks">
+        {% for check in assurance_preflight.checks %}
+        <li class="gs__check gs__check--{{ check.status }}">
+          <span class="gs__check-state">{{ check.status }}</span>
+          <strong>{{ check.label }}</strong> — {{ check.detail }}
+          {% if check.remediation %}
+            <code class="gs__command">{{ check.remediation }}</code>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+  </section>
+
+  <ol class="gs__steps">
+    {% for s in steps %}
+    <li class="gs__step{% if s.done %} gs__step--done{% endif %}">
+      <span class="gs__mark" aria-hidden="true">{% if s.done %}✓{% else %}{{ loop.index }}{% endif %}</span>
+      <div class="gs__body">
+        <p class="gs__title">{{ s.title }}{% if s.done %} <span class="muted">· done</span>{% endif %}</p>
+        <p class="gs__desc">{{ s.body }}</p>
+        {% if s.command and not s.done %}
+          <code class="gs__command">{{ s.command }}</code>
+        {% endif %}
+      </div>
+      <a class="btn {% if s.done %}btn--ghost{% else %}btn--primary{% endif %} gs__cta" href="{{ s.cta }}">{{ s.cta_label }}</a>
+    </li>
+    {% endfor %}
+  </ol>
+
+  <section class="panel gs__demo" aria-labelledby="synthetic-demo-title">
+    <span class="gs__demo-label">SYNTHETIC DEMO DATA</span>
+    <h2 id="synthetic-demo-title">See an evidence-ready interaction before integration</h2>
+    <p>Use the Assurance Cockpit’s no-network demo only in an empty or dedicated
+      demo tenant. Every generated record stays labeled synthetic and does not
+      count as production assurance evidence.</p>
+    <a class="btn btn--ghost" href="/security/assurance">Open Assurance Cockpit</a>
+  </section>
+</div>
+{% endblock %}

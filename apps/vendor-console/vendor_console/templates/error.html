@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} · Daybreak Console{% endblock %}
+{% block auth %}
+<div class="auth-card">
+  <div class="brand">◐ Daybreak<span>control plane</span></div>
+  <h1>{{ code }}</h1>
+  <p class="sub">{{ detail }}</p>
+  <a class="btn ghost" href="/">Back to console</a>
+</div>
+{% endblock %}

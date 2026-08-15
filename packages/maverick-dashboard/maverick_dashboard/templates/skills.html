@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}Skills · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Skills — the two-column "guided builder + installed roster" composition,
+     same glass family as the Agent Factory and Flows. Every id the create /
+     install scripts read is preserved; the layout only repositions them. */
+  :where(body){
+    --glass: color-mix(in srgb, var(--panel) 68%, transparent);
+    --glass-soft: color-mix(in srgb, var(--panel) 54%, transparent);
+    --glass-border: color-mix(in srgb, var(--text) 13%, transparent);
+    --glass-edge: inset 0 1px 0 0 color-mix(in srgb, #ffffff 8%, transparent);
+  }
+  .sk-grid{ display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: var(--space-5); align-items: start; }
+  @media (max-width: 900px){ .sk-grid{ grid-template-columns: 1fr; } }
+  .sk-card{ border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
+    background: var(--glass-soft); box-shadow: var(--shadow-sm), var(--glass-edge);
+    -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%);
+    padding: var(--space-5); }
+  .sk-card__title{ font-weight: var(--font-semibold); font-size: var(--text-lg); margin: 0 0 var(--space-4); }
+  .skill-field{ display: block; margin-bottom: var(--space-4); }
+  .skill-field > span{ display: block; margin-bottom: var(--space-2); font-weight: var(--font-semibold); }
+  .skill-field .sub{ font-weight: 400; color: var(--muted); }
+  .sk-card input[type="text"], .sk-card textarea{
+    width: 100%; background: var(--surface-sunken); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: 0.55rem 0.7rem; font: inherit;
+    transition: border-color .13s ease, box-shadow .13s ease; }
+  .sk-card input:focus, .sk-card textarea:focus{
+    outline: none; border-color: var(--brand-border); box-shadow: 0 0 0 3px var(--brand-subtle); }
+  .sk-card textarea{ resize: vertical; line-height: 1.5; }
+
+  .advanced{ border: 1px solid var(--glass-border); border-radius: var(--radius-md);
+    background: var(--glass); margin: 0 0 var(--space-4); overflow: hidden; }
+  .advanced > summary{ cursor: pointer; list-style: none; padding: 0.6rem var(--space-4);
+    display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-sm); }
+  .advanced > summary::-webkit-details-marker{ display: none; }
+  .advanced > summary::before{ content: "⚙"; }
+  .advanced__caret{ margin-inline-start: auto; transition: transform .18s ease; }
+  .advanced[open] .advanced__caret{ transform: rotate(180deg); }
+  .advanced__body{ padding: 0 var(--space-4) var(--space-4); }
+  .sk-actions{ display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+    padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+  .sk-note{ color: var(--muted); font-size: var(--text-sm); margin: var(--space-3) 0 0; }
+
+  /* installed roster */
+  .roster__head{ display: flex; align-items: center; justify-content: space-between; margin: 0 0 var(--space-3); }
+  .roster__head h2{ margin: 0; font-size: var(--text-lg); font-weight: var(--font-semibold);
+    text-transform: none; letter-spacing: 0; color: var(--text); }
+  .skill-card{ border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-soft);
+    box-shadow: var(--shadow-sm), var(--glass-edge); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    padding: var(--space-4); margin-bottom: var(--space-3); }
+  .skill-card__head{ display: flex; align-items: center; gap: var(--space-3); }
+  .skill-card__ic{ width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center;
+    background: var(--brand-subtle); color: var(--brand-hi); font-size: 18px; }
+  .skill-card__name{ font-weight: var(--font-semibold); }
+  .skill-card__meta{ color: var(--muted); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+  .skill-tags{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--space-2); }
+  .skill-tag{ font-size: var(--text-xs); padding: 2px 9px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border); background: var(--surface-sunken); color: var(--muted); }
+  .sk-empty{ text-align: center; color: var(--muted); padding: var(--space-6) var(--space-4);
+    border: 1px dashed var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-soft); }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Workforce capability', 'Skills',
+               subtitle='Teach it once, reuse it everywhere',
+               lede='A skill is a reusable playbook you teach your agents in
+                     plain English — a name, the phrases that trigger it, and
+                     the steps to follow. Matching agents pick it up on their
+                     next run. Every skill is secret- and safety-scanned
+                     before it\'s saved.') %}
+    {{ state('Current state', (skills | length) ~ ' skill(s) installed',
+             badge='ready' if skills else 'none yet',
+             badge_class='ok' if skills else 'idle',
+             copy='Create one right here, or install from a trusted source —
+                   active on the next agent run.') }}
+  {% endcall %}
+
+  <div class="sk-grid">
+    <!-- ============ LEFT: build a skill ============ -->
+    <div class="sk-card">
+      <div class="sk-card__title">Create a skill</div>
+      <form id="skill-create-form">
+        <label class="skill-field">
+          <span>Name <span class="sub">— short and memorable</span></span>
+          <input type="text" id="sc-name" required maxlength="80" placeholder="e.g. weekly-status-rollup" />
+        </label>
+        <label class="skill-field">
+          <span>When should it kick in? <span class="sub">— one trigger phrase per line</span></span>
+          <textarea id="sc-triggers" rows="3" required placeholder="weekly status&#10;status rollup&#10;summarize the week"></textarea>
+        </label>
+        <label class="skill-field">
+          <span>What should it do? <span class="sub">— the steps, in markdown</span></span>
+          <textarea id="sc-body" rows="9" required placeholder="# What this skill does&#10;...&#10;&#10;# Steps&#10;1. ...&#10;2. ..."></textarea>
+        </label>
+
+        <details class="advanced">
+          <summary>Advanced — tools &amp; installing from a source
+            <svg class="advanced__caret" width="12" height="12" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </summary>
+          <div class="advanced__body">
+            <label class="skill-field">
+              <span>Tools needed <span class="sub">— comma or space separated; optional</span></span>
+              <input type="text" id="sc-tools" placeholder="read_file, knowledge_search" />
+            </label>
+            <p class="sk-note" style="margin-top:0;">
+              Prefer to bring one in from elsewhere? Paste a trusted GitHub repo or URL:
+            </p>
+            <div id="skill-install-form" style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-top:var(--space-2);">
+              <input type="text" id="skill-source"
+                     aria-label="Skill source: a GitHub repo or URL"
+                     placeholder="gh:org/repo  or  https://example.com/skill.md"
+                     style="flex:1 1 260px;" />
+              <button type="button" class="btn" id="skill-install-btn">Install</button>
+            </div>
+            <p id="skill-install-msg" role="status" aria-live="polite" class="sk-note"></p>
+            <p class="sk-note">
+              <strong>Installed skills run untrusted code</strong> the next time an agent uses
+              them — only install from sources you trust. In-app authoring and
+              install are an opt-in your administrator manages for this
+              platform.
+            </p>
+          </div>
+        </details>
+
+        <div class="sk-actions">
+          <button type="submit" class="btn btn--primary">Create skill</button>
+          <span id="skill-create-msg" role="status" aria-live="polite" class="sk-note" style="margin:0;"></span>
+        </div>
+      </form>
+    </div>
+
+    <!-- ============ RIGHT: installed skills ============ -->
+    <div>
+      <div class="roster__head"><h2>Installed skills</h2></div>
+      <div id="installed-skills">
+        {% if skills %}
+          {% for s in skills %}
+          <div class="skill-card">
+            <div class="skill-card__head">
+              <span class="skill-card__ic">✦</span>
+              <span class="skill-card__name"><code>{{ s.name }}</code></span>
+            </div>
+            {% if s.triggers %}
+            <div class="skill-tags">{% for t in s.triggers %}<span class="skill-tag">{{ t }}</span>{% endfor %}</div>
+            {% endif %}
+            {% if s.tools_needed %}
+            <p class="skill-card__meta">tools: {{ s.tools_needed | join(', ') }}</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="sk-empty" id="no-skills">No skills yet. Teach your first one on the left — a name,
+            a few trigger phrases, and the steps.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const installedEl = document.getElementById('installed-skills');
+
+      // Append a newly created/installed skill as a card, in place (keeps scroll
+      // position). Shared on window so both the create and install flows reuse it.
+      window.__mvAppendSkill = function appendSkill(s) {
+        const empty = document.getElementById('no-skills');
+        if (empty) empty.remove();
+        const card = document.createElement('div');
+        card.className = 'skill-card';
+        const head = document.createElement('div');
+        head.className = 'skill-card__head';
+        const ic = document.createElement('span');
+        ic.className = 'skill-card__ic'; ic.textContent = '✦';
+        const nm = document.createElement('span');
+        nm.className = 'skill-card__name';
+        const code = document.createElement('code');
+        code.textContent = s.name; nm.appendChild(code);
+        head.appendChild(ic); head.appendChild(nm); card.appendChild(head);
+        if (s.triggers && s.triggers.length) {
+          const tags = document.createElement('div');
+          tags.className = 'skill-tags';
+          s.triggers.forEach(function(t) {
+            const tag = document.createElement('span');
+            tag.className = 'skill-tag'; tag.textContent = t; tags.appendChild(tag);
+          });
+          card.appendChild(tags);
+        }
+        if (s.tools_needed && s.tools_needed.length) {
+          const p = document.createElement('p');
+          p.className = 'skill-card__meta';
+          p.textContent = 'tools: ' + s.tools_needed.join(', ');
+          card.appendChild(p);
+        }
+        installedEl.appendChild(card);
+      };
+
+      // ---- install from a trusted source (button in the Advanced fold) ----
+      const installBtn = document.getElementById('skill-install-btn');
+      const src = document.getElementById('skill-source');
+      const imsg = document.getElementById('skill-install-msg');
+      if (installBtn && src) installBtn.addEventListener('click', async function() {
+        const source = src.value.trim();
+        if (!source) return;
+        installBtn.disabled = true;
+        imsg.style.color = 'var(--muted)'; imsg.textContent = 'Installing…';
+        try {
+          const r = await fetch('/api/v1/skills', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({source}),
+          });
+          if (r.ok) {
+            const s = await r.json().catch(function() { return null; });
+            imsg.style.color = 'var(--accent)';
+            if (s && s.name) { window.__mvAppendSkill(s); imsg.textContent = 'Installed ' + s.name + '. Active on the next agent run.'; src.value = ''; }
+            else imsg.textContent = 'Installed.';
+          } else {
+            const j = await r.json().catch(function() { return {}; });
+            imsg.style.color = 'var(--danger)'; imsg.textContent = (j.detail || ('HTTP ' + r.status));
+          }
+        } catch (e) { imsg.style.color = 'var(--danger)'; imsg.textContent = String(e); }
+        finally { installBtn.disabled = false; }
+      });
+    })();
+  </script>
+
+  <script>
+    // Author a skill -> POST /api/v1/skills/create -> render it in the roster.
+    (function() {
+      const form = document.getElementById('skill-create-form');
+      if (!form) return;
+      const name = document.getElementById('sc-name');
+      const triggers = document.getElementById('sc-triggers');
+      const tools = document.getElementById('sc-tools');
+      const body = document.getElementById('sc-body');
+      const msg = document.getElementById('skill-create-msg');
+      const btn = form.querySelector('button[type="submit"]');
+      const splitLines = (s) => s.split('\n').map((x) => x.trim()).filter(Boolean);
+      const splitTools = (s) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+
+      form.addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        const payload = {
+          name: name.value.trim(),
+          triggers: splitLines(triggers.value),
+          tools_needed: splitTools(tools.value),
+          instructions: body.value,
+        };
+        if (btn) btn.disabled = true;
+        msg.style.color = 'var(--muted)'; msg.textContent = 'Creating…';
+        try {
+          const r = await fetch('/api/v1/skills/create', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+          });
+          if (r.ok) {
+            const s = await r.json().catch(function() { return null; });
+            msg.style.color = 'var(--accent)';
+            if (s && s.name) { window.__mvAppendSkill(s); msg.textContent = 'Created ' + s.name + '. Active on the next agent run.'; form.reset(); }
+            else msg.textContent = 'Created.';
+          } else {
+            const j = await r.json().catch(function() { return {}; });
+            msg.style.color = 'var(--danger)'; msg.textContent = (j.detail || ('HTTP ' + r.status));
+          }
+        } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = String(e); }
+        finally { if (btn) btn.disabled = false; }
+      });
+    })();
+  </script>
+{% endblock %}

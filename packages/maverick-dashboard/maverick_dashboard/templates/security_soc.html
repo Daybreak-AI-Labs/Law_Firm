@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Environment Threat Hunter - Lightwork{% endblock %}
+{% block content %}
+<style>
+  .soc-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); }
+  .soc-wide { grid-column:1 / -1; }
+  .soc-input { width:100%; min-height:11rem; font-family:var(--font-mono,monospace); }
+  @media(max-width:900px){.soc-grid{grid-template-columns:1fr}.soc-wide{grid-column:auto}}
+</style>
+{% from "_hero.html" import hero, state %}
+{% call hero('Defensive operations', 'Environment Threat Hunter',
+             subtitle='Governed SOC analysis',
+             lede='A governed defensive SOC analyst for the telemetry you own:
+                   vendor-neutral read-only connectors, Sigma and deterministic
+                   correlations, cited events, investigation timelines, and
+                   response playbooks that wait for human approval.') %}
+  {% if enabled %}
+  {{ state('Current state', 'Monitoring connected telemetry',
+           badge='response execution ' ~ ('opt-in' if response_execution else 'off'),
+           badge_class='warn' if response_execution else 'ok',
+           copy='Connectors are read-only. ' ~ ('Approved responses can execute
+                 under signed, one-shot approvals.' if response_execution else
+                 'Responses are proposed only; execution stays switched
+                 off.')) }}
+  {% else %}
+  {{ state('Current state', 'Hunter is switched off',
+           badge='opt-in', badge_class='idle',
+           copy='No customer telemetry is being read. An administrator can
+                 switch this hunter on from Security &amp; GRC.') }}
+  {% endif %}
+{% endcall %}
+<div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-bottom:var(--space-4);">
+  <a class="btn" href="/security">Security &amp; GRC</a><a class="btn" href="/security/threats">Platform hunter</a>
+</div>
+{% if not enabled %}
+<div class="panel"><h2>Environment hunting is off</h2>
+  <p>No telemetry sources are being read. An administrator can switch this
+    hunter on under <a href="/security">Security &amp; GRC &rarr; Defensive
+    hunters</a>, then connect least-privilege, read-only telemetry sources.
+    Executing an approved response is a separate control that stays off by
+    default.</p></div>
+{% else %}
+<div class="soc-grid">
+  <div class="stat"><div class="num" id="soc-open">-</div><div class="label">open findings</div></div>
+  <div class="stat"><div class="num" id="soc-investigations">-</div><div class="label">investigations</div></div>
+  <div class="stat"><div class="num">{{ 'opt-in' if response_execution else 'disabled' }}</div><div class="label">approved response execution</div></div>
+  <div class="stat"><div class="num" id="soc-shield">-</div><div class="label">Shield autonomy posture</div></div>
+  <section class="panel soc-wide">
+    <h2>Ingest a bounded telemetry batch</h2>
+    <p class="muted">Paste a JSON array only for connectors where an
+      administrator has allowed manual submission. Scheduled analysis uses
+      trusted, read-only pull connections. Raw events are evaluated in memory;
+      durable stores retain the derived cited findings and investigations, not
+      the raw telemetry batch.</p>
+    <label>Connector
+      <select id="soc-connector"><option>cloudtrail</option><option>guardduty</option><option>syslog</option><option>edr</option><option>splunk</option><option>elastic</option><option>sentinel</option><option>kubernetes_audit</option><option>okta</option><option>entra</option></select>
+    </label>
+    <label for="soc-events">JSON telemetry events</label>
+    <textarea id="soc-events" class="soc-input" placeholder='[{"eventTime":"2026-07-19T12:00:00Z","eventName":"ConsoleLogin","sourceIPAddress":"203.0.113.8"}]'></textarea>
+    <label for="soc-sigma-rules">Customer Sigma rules (optional YAML; separate documents with <code>---</code>)</label>
+    <textarea id="soc-sigma-rules" class="soc-input" placeholder="title: Customer detection&#10;id: customer-detection-1&#10;logsource: {}&#10;detection:&#10;  selection:&#10;    action: ConsoleLogin&#10;  condition: selection&#10;tags: [attack.t1078]"></textarea>
+    <div style="display:flex;gap:var(--space-2);align-items:center;margin-top:var(--space-2);"><button class="btn btn--primary" id="soc-run" type="button">Detect and correlate</button><span class="muted" id="soc-status" role="status"></span></div>
+  </section>
+  <section class="panel soc-wide"><h2>MITRE ATT&amp;CK heatmap</h2><div style="overflow-x:auto"><table><thead><tr><th>technique</th><th>finding count</th><th>severity mix</th></tr></thead><tbody id="soc-attack-heatmap"></tbody></table></div></section>
+  <section class="panel soc-wide"><h2>Findings and ATT&amp;CK coverage</h2><div style="overflow-x:auto"><table><thead><tr><th>severity</th><th>finding</th><th>ATT&amp;CK</th><th>confidence</th><th>evidence</th></tr></thead><tbody id="soc-findings"></tbody></table></div></section>
+  <section class="panel soc-wide"><h2>Investigation and playbook queue</h2><p class="muted">Automatic pivots, enrichment, and proposals stop in reduced-autonomy mode when Shield is absent. A response remains inert until its exact executor, queue approval ID, queue decider, proposal digest, and offline Ed25519 signature all match. A durable one-shot claim prevents an ambiguous external action from being retried automatically.</p><div style="overflow-x:auto"><table><thead><tr><th>investigation</th><th>status</th><th>timeline</th><th>playbook</th></tr></thead><tbody id="soc-investigation-rows"></tbody></table></div></section>
+</div>
+<script>
+(function(){
+  'use strict';
+  function cell(row,value){var td=document.createElement('td');td.textContent=value===undefined||value===null?'':String(value);row.appendChild(td);}
+  function render(body){document.getElementById('soc-open').textContent=body.open_findings||0;document.getElementById('soc-investigations').textContent=(body.investigations||[]).length;document.getElementById('soc-shield').textContent=body.reduced_autonomy?'reduced':'full';var heatmap=document.getElementById('soc-attack-heatmap');heatmap.innerHTML='';(body.attack_heatmap||[]).forEach(function(item){var tr=document.createElement('tr'),mix=Object.keys(item.severities||{}).sort().map(function(level){return level+': '+item.severities[level];}).join(', ');cell(tr,item.technique);cell(tr,item.count);cell(tr,mix);heatmap.appendChild(tr);});if(!(body.attack_heatmap||[]).length){var emptyHeat=document.createElement('tr'),emptyHeatCell=document.createElement('td');emptyHeatCell.colSpan=3;emptyHeatCell.className='muted';emptyHeatCell.textContent='No ATT&CK techniques observed.';emptyHeat.appendChild(emptyHeatCell);heatmap.appendChild(emptyHeat);}var findings=document.getElementById('soc-findings');findings.innerHTML='';(body.findings||[]).forEach(function(f){var tr=document.createElement('tr');cell(tr,f.severity);cell(tr,f.title);cell(tr,(f.mitre_techniques||[]).join(', '));cell(tr,f.confidence===undefined?f.score:f.confidence);cell(tr,(f.evidence||[]).map(function(e){return e.source+':'+e.event_id;}).join(', '));findings.appendChild(tr);});if(!(body.findings||[]).length){var tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.className='muted';td.textContent='No findings stored.';tr.appendChild(td);findings.appendChild(tr);}var rows=document.getElementById('soc-investigation-rows');rows.innerHTML='';(body.investigations||[]).forEach(function(i){var tr=document.createElement('tr');cell(tr,i.title||i.investigation_id);cell(tr,i.status);cell(tr,(i.timeline||[]).length+' events');cell(tr,i.response_proposal?i.response_proposal.action:'not proposed');rows.appendChild(tr);});}
+  async function load(){try{var response=await fetch('/api/v1/security/soc/summary'),body=await response.json();if(!response.ok)throw new Error(body.detail||('HTTP '+response.status));render(body);}catch(error){document.getElementById('soc-status').textContent=error.message;}}
+  document.getElementById('soc-run').addEventListener('click',async function(){var button=this,status=document.getElementById('soc-status'),events,sigmaText=document.getElementById('soc-sigma-rules').value.trim(),sigmaRules=sigmaText?sigmaText.split(/\n---+\s*\n/).map(function(rule){return rule.trim();}).filter(Boolean):[];try{events=JSON.parse(document.getElementById('soc-events').value||'[]');if(!Array.isArray(events))throw new Error('Telemetry must be a JSON array.');}catch(error){status.textContent=error.message;return;}button.disabled=true;status.textContent='Detecting...';try{var response=await fetch('/api/v1/security/soc/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({connector:document.getElementById('soc-connector').value,events:events,sigma_rules:sigmaRules})}),body=await response.json();if(!response.ok)throw new Error(body.detail||('HTTP '+response.status));status.textContent='Batch analyzed.';await load();}catch(error){status.textContent=error.message;}finally{button.disabled=false;}});
+  load();
+})();
+</script>
+{% endif %}
+{% endblock %}

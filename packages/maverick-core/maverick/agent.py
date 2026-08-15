@@ -1,0 +1,4186 @@
+"""Recursive async agent.
+
+v0.1.4: appends ``persona.render_persona_prompt()`` to the system
+prompt of every agent so users can give the swarm a name and voice
+without patching the kernel.
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hashlib
+import json
+import logging
+import os
+import secrets as _secrets
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+from urllib.parse import urlsplit
+
+from . import killswitch
+from ._envparse import env_float, env_int
+from .budget import BudgetExceeded
+from .llm import model_for_role
+from .swarm import SwarmContext
+from .tools import ToolRegistry, base_registry
+from .tools.agent_bus_tool import delegate_to_agent, recv_from_agent, send_to_agent
+from .tools.spawn import (
+    list_specialists_tool,
+    spawn_specialist_tool,
+    spawn_subagent_tool,
+    spawn_swarm_tool,
+)
+
+log = logging.getLogger(__name__)
+
+WORKER_SYSTEM_TEMPLATE = """You are a specialist agent in Lightwork, a long-horizon multi-agent swarm.
+
+Your role: {role}
+Your depth in the swarm: {depth} (root = 0, max = {max_depth})
+
+You have a single sub-goal. Plan briefly, then act.
+
+Tools you can call include:
+  - File / shell / read / write for the sandbox.
+  - `ask_user` to queue a question for the user (async). Use sparingly, batch.
+  - `spawn_subagent` to delegate a focused sub-task to a child specialist.
+  - `spawn_swarm` to fan out INDEPENDENT sub-tasks in PARALLEL.
+  - `memory` for durable, cross-session notes: consult it for long-horizon work and record lasting learnings (conventions, decisions, dead ends) — not scratch.
+  - `mcp_<server>__<tool>` for any external MCP servers wired into config.
+
+Rules:
+1. Do the work YOURSELF by default. Only `spawn_swarm` when a sub-task is genuinely heavy AND independent AND needs its own context window — not merely because your task "has several aspects". Over-decomposing front-loads the whole budget on fan-out so nobody is left to synthesize the answer. The deeper you are, the more you should be a leaf: at depth ≥ 1, prefer doing the research yourself over spawning more children.
+2. If a sub-task needs its own context window or a different specialty, use `spawn_subagent`.
+3. When done, respond in plain text starting with `FINAL:` followed by your answer. No tool call.
+4. Be precise. Cite exact paths, commands, results, and findings from your children.
+5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research."""
+
+
+ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
+
+You own a top-level goal. You do not execute work yourself; you decompose, delegate, and verify.
+
+Standard playbook:
+1. Plan: think through the goal. Identify which sub-tasks are independent (parallelizable) vs. sequential.
+2. Spawn: use `spawn_swarm` to fan out independent sub-tasks in parallel. Use `spawn_subagent` for sequential dependencies.
+3. Synthesize: aggregate findings from your children into a coherent answer.
+4. Verify: before finalizing, check that the answer satisfies the original goal.
+5. If you are blocked on info only the user can give, use `ask_user` (batched).
+6. End with `FINAL:` followed by your synthesized answer.
+
+Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
+
+You have a maximum spawn depth of {max_depth}. Use it wisely.
+
+Available roles for children: researcher, coder, writer, analyst, summarizer, revisor.
+
+External MCP tools (if any) appear as `mcp_<server>__<tool>`."""
+
+
+def select_base_template(
+    *, role: str, depth: int, max_depth: int, coding_enabled: bool,
+) -> str:
+    """Pick the base system template for an agent. Pure: no env/config reads.
+
+    Coding mode, when enabled, overrides role: the orchestrator emits the FINAL
+    and must speak unified diffs, not prose, or the patch validator and
+    test-driven verifier operate on prose and reject every output (Wave 9). With
+    coding mode off it is the orchestrator template for the planner and the
+    worker template for every other role. First side-effect-free seam extracted
+    from ``Agent._build_system`` (god-module decomposition: PromptBuilder).
+    """
+    if coding_enabled:
+        from .coding_mode import CODER_CODING_MODE_TEMPLATE
+        return CODER_CODING_MODE_TEMPLATE.format(
+            role=role, depth=depth, max_depth=max_depth,
+        )
+    if role == "orchestrator":
+        return ORCHESTRATOR_SYSTEM_TEMPLATE.format(max_depth=max_depth)
+    return WORKER_SYSTEM_TEMPLATE.format(role=role, depth=depth, max_depth=max_depth)
+
+
+def apply_global_overlays(base: str) -> str:
+    """Append the swarm-wide additive prompt overlays to ``base``.
+
+    Persona, output style, and the learned-habits prior are global (config /
+    data-engine state, not agent-specific), each optional and fail-open. Order
+    is preserved from the original inline assembly. Second PromptBuilder
+    collaborator extracted from ``Agent._build_system``; self-independent, so it
+    is a free function rather than a method.
+    """
+    # Persona (optional, additive).
+    try:
+        from .persona import render_persona_prompt
+        persona = render_persona_prompt()
+        if persona:
+            base = base + persona
+    except Exception:
+        pass
+
+    # Output style (optional, additive): the user-selected response style
+    # (dashboard runtime overlay). Tone/format only, like the persona block.
+    try:
+        from .styles import render_active_style_prompt
+        style = render_active_style_prompt()
+        if style:
+            base = base + style
+    except Exception:
+        pass
+
+    # Learned-habits prior (the Hippocampus, additive): when the data engine
+    # is on, surface the strongest causally-beneficial habits it has
+    # consolidated so the agent prefers what has worked. No-op unless
+    # [data_engine] is enabled and procedural memory exists; fail-open.
+    try:
+        from . import data_engine
+        if data_engine.enabled():
+            from .procedural_memory import recall_prompt
+            base = base + recall_prompt()
+    except Exception:
+        pass
+
+    return base
+
+
+def apply_role_overlays(base: str, *, role: str, domain_persona: str | None) -> str:
+    """Append the per-agent role overlays to ``base``.
+
+    The tenant's per-role client addendum (dashboard roles editor; empty unless
+    customized, fail-open) and the domain-pack persona (factory spawn-from-
+    profile). Both are additive and blank-line separated, matching the original
+    inline assembly. Third PromptBuilder collaborator extracted from
+    ``Agent._build_system``; depends only on the role name and the resolved
+    domain persona, so it is a free function.
+    """
+    # Per-role client addendum (optional, additive): a tenant's custom
+    # instructions for this role, edited via the dashboard roles editor.
+    # Empty for any role the client hasn't customized, so behavior is
+    # unchanged by default. Specialist roles (domain-pack names) never
+    # match a known role, so this is a no-op for them.
+    try:
+        from .role_edit import role_addendum
+        addendum = role_addendum(role)
+        if addendum:
+            base = base + "\n\n" + addendum
+    except Exception:
+        pass
+
+    # Domain-pack persona (factory spawn-from-profile): specialist
+    # instructions for this agent's domain, additive to the base template.
+    if domain_persona:
+        base = base + "\n\n" + domain_persona
+
+    return base
+
+
+def apply_skill_overlays(
+    base: str, *, brief: str, use_skills: bool, depth: int = 0,
+) -> tuple[str, list]:
+    """Append relevant prior-run skills to ``base``; return ``(base, skills)``.
+
+    Returns the recalled skill objects so the caller can record their use and
+    attribute this run's outcome to them — the stats + ``skills_used``
+    bookkeeping stays in the caller to preserve the original all-or-nothing
+    semantics (names are read inside the caller's fail-safe block). No-op when
+    skills are disabled or none are relevant; fail-open on a missing/invalid
+    skill store. Fourth PromptBuilder collaborator from ``Agent._build_system``.
+    """
+    if not use_skills:
+        return base, []
+    try:
+        from .skills import available_skills, relevant_skills, render_for_prompt
+        # Deep workers get the single most relevant skill: overlays ride every
+        # node's system prompt, so a swarm re-pays the full render per child.
+        # The root keeps the standard top-3 recall.
+        skills = relevant_skills(brief, available_skills(),
+                                 max_n=3 if depth == 0 else 1)
+        if skills:
+            base = base + "\n\n" + render_for_prompt(skills)
+            return base, list(skills)
+    except (ImportError, FileNotFoundError, ValueError):
+        pass
+    return base, []
+
+
+def apply_memory_brief(base: str, *, depth: int) -> str:
+    """Append the cross-session memory presence hint (root agent only).
+
+    Depth-gated to the root agent (``depth == 0``) so deep workers keep lean,
+    focused context (they can still use the ``memory`` tool directly). Surfaces
+    only a safe presence hint — memory filenames/contents are model-writable and
+    re-enter through the tool's scanned, redacted path, never directly here.
+    Empty memory -> no change; fail-open. Fifth PromptBuilder collaborator from
+    ``Agent._build_system``.
+    """
+    if depth != 0:
+        return base
+    try:
+        from .tools.memory import memory_brief
+        brief = memory_brief()
+        if brief:
+            base = base + "\n\n" + brief
+    except Exception:  # pragma: no cover -- never block a run
+        pass
+    return base
+
+
+# #611: fraction of the budget reserved for the TOP-level goal's synthesis /
+# write step. A deeper worker (depth > 0) stops once cumulative spend crosses
+# (1 - this) of the cap, so a recursive research swarm can't burn the budget
+# the orchestrator needs to actually produce the answer (the dogfooded failure:
+# 35 agents, $7.85 spent, zero report). 0 disables it.
+_SYNTHESIS_RESERVE = env_float("MAVERICK_SYNTHESIS_RESERVE", 0.25)
+
+# #614: how often (seconds) the root agent mirrors running spend onto its
+# open episode row so `maverick runs` / `maverick budget` show mid-run spend.
+# Throttled so we don't write the row on every step of a fast loop.
+_SPEND_MIRROR_INTERVAL = env_float("MAVERICK_SPEND_MIRROR_INTERVAL", 5.0)
+
+# Loop guard: a long-horizon failure mode is the model re-issuing the SAME
+# tool call that keeps failing the same way, silently burning budget/steps. We
+# track a per-(tool,args) consecutive-failure streak and, once it hits the
+# threshold, append a one-line nudge to the tool result so the model breaks the
+# loop (change args, switch tools, rethink). Pure advice -- it never blocks a
+# call. Default on; MAVERICK_LOOP_GUARD=0 disables it.
+_LOOP_GUARD_ENABLED = os.environ.get("MAVERICK_LOOP_GUARD", "1").strip().lower() not in {"0", "false", "no", "off"}
+_LOOP_GUARD_THRESHOLD = max(2, env_int("MAVERICK_LOOP_GUARD_THRESHOLD", 3))
+
+# Step-budget awareness: when only this many tool-using turns remain before
+# max_steps force-stops the run, the loop nudges the agent to synthesize a
+# FINAL now -- otherwise a long run can get cut off mid-work with no answer.
+# 0 disables the nudge. Tune via MAVERICK_STEP_BUDGET_WARNING.
+_STEP_BUDGET_WARNING = max(0, env_int("MAVERICK_STEP_BUDGET_WARNING", 3))
+
+# P0 filesystem-resource layer. In-process tools run in the Lightwork process,
+# outside Docker's read-only bind mounts, so every workspace path they read or
+# write is described here and enforced at the common dispatch chokepoint.
+#
+# Path-level access matters: image_edit reads input_path but writes output_path;
+# wasm_run reads its module but grants write-capable preopens in dirs. A
+# tool-level "mutates" flag cannot express either safely. Conditional tools
+# declare their operation selector and complete known operation set. A new or
+# misspelled operation is treated as write-capable for every supplied path,
+# forcing this registry to be updated before a new write mode can bypass the
+# policy.
+@dataclass(frozen=True)
+class _WorkspacePathRule:
+    argument: str
+    operations: frozenset[Any] | None = None
+    mutates: bool = False
+    mutates_subtree: bool = False
+    many: bool = False
+    default: str | None = None
+    fixed_default: bool = False
+    skip_remote_references: bool = False
+
+
+@dataclass(frozen=True)
+class _FileToolPolicy:
+    paths: tuple[_WorkspacePathRule, ...]
+    operation_argument: str | None = None
+    known_operations: frozenset[Any] = frozenset()
+    unknown_operation_mutates: bool = True
+
+
+@dataclass(frozen=True)
+class _ResolvedWorkspacePath:
+    path: str
+    mutates_subtree: bool = False
+
+
+def _rule(
+    argument: str,
+    *,
+    operations: set[Any] | frozenset[Any] | None = None,
+    mutates: bool = False,
+    mutates_subtree: bool = False,
+    many: bool = False,
+    default: str | None = None,
+    fixed_default: bool = False,
+    skip_remote_references: bool = False,
+) -> _WorkspacePathRule:
+    return _WorkspacePathRule(
+        argument=argument,
+        operations=None if operations is None else frozenset(operations),
+        mutates=mutates,
+        mutates_subtree=mutates_subtree,
+        many=many,
+        default=default,
+        fixed_default=fixed_default,
+        skip_remote_references=skip_remote_references,
+    )
+
+
+_FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
+    "read_file": _FileToolPolicy((_rule("path"),)),
+    "write_file": _FileToolPolicy((_rule("path", mutates=True),)),
+    "list_dir": _FileToolPolicy((_rule("path", default="."),)),
+    "str_replace_editor": _FileToolPolicy(
+        (
+            _rule("path", operations={"view"}),
+            _rule(
+                "path",
+                operations={"create", "str_replace", "insert"},
+                mutates=True,
+            ),
+        ),
+        operation_argument="command",
+        known_operations=frozenset({"view", "create", "str_replace", "insert"}),
+    ),
+    "ast_edit": _FileToolPolicy((_rule("path", mutates=True),)),
+    "spreadsheet": _FileToolPolicy(
+        (
+            _rule("path", operations={"info", "read"}),
+            _rule("path", operations={"write", "set_cell"}, mutates=True),
+        ),
+        operation_argument="op",
+        known_operations=frozenset({"info", "read", "write", "set_cell"}),
+    ),
+    "sql_query": _FileToolPolicy(
+        (
+            # The runtime defaults None to read-only, then applies bool(value).
+            # Schema-valid booleans are represented precisely here; malformed
+            # direct calls are handled by the custom extractor below.
+            _rule("database", operations={None, True}),
+            _rule("database", operations={False}, mutates=True),
+        ),
+        operation_argument="read_only",
+        known_operations=frozenset({None, True, False}),
+    ),
+    "image_content_classifier": _FileToolPolicy((_rule("file"),)),
+    "ocr": _FileToolPolicy(
+        (
+            _rule("path", operations={"extract"}),
+            # extract_url materialises a bounded temporary file directly in the
+            # workspace root before sandboxed OCR, then removes it. Mutating the
+            # root directory entry must still honor a root read-only overlay.
+            _rule(
+                ".",
+                operations={"extract_url"},
+                mutates=True,
+                default=".",
+                fixed_default=True,
+            ),
+        ),
+        operation_argument="op",
+        known_operations=frozenset({"extract", "extract_url"}),
+    ),
+    "transcribe_audio": _FileToolPolicy((_rule("source"),)),
+    "wasm_run": _FileToolPolicy(
+        (
+            _rule("module", operations={"run"}),
+            _rule(
+                "dirs",
+                operations={"run"},
+                mutates=True,
+                mutates_subtree=True,
+                many=True,
+            ),
+        ),
+        operation_argument="op",
+        known_operations=frozenset({"run", "version"}),
+    ),
+    "diagram": _FileToolPolicy((_rule("out", mutates=True),)),
+    "latex": _FileToolPolicy(
+        (_rule("out", operations={"render"}, mutates=True, default="doc.pdf"),),
+        operation_argument="op",
+        known_operations=frozenset({"mathml", "render"}),
+    ),
+    "image_edit": _FileToolPolicy(
+        (
+            _rule(
+                "image",
+                operations={"inpaint", "variation", "upscale"},
+                skip_remote_references=True,
+            ),
+            _rule(
+                "mask",
+                operations={"inpaint"},
+                skip_remote_references=True,
+            ),
+            _rule("input_path", operations={"crop", "resize", "rotate"}),
+            _rule(
+                "output_path",
+                operations={"crop", "resize", "rotate"},
+                mutates=True,
+            ),
+        ),
+        operation_argument="op",
+        known_operations=frozenset(
+            {"inpaint", "variation", "upscale", "crop", "resize", "rotate"}
+        ),
+    ),
+    "speak": _FileToolPolicy((_rule("output", mutates=True),)),
+    "html_to_app": _FileToolPolicy(
+        (
+            _rule(
+                "dest",
+                operations={"scaffold"},
+                mutates=True,
+                mutates_subtree=True,
+            ),
+        ),
+        operation_argument="op",
+        known_operations=frozenset({"analyze", "scaffold"}),
+    ),
+    "workspace_snapshot": _FileToolPolicy(
+        (
+            _rule("path", operations={"snapshot"}, default="."),
+            _rule(
+                "dest",
+                operations={"restore"},
+                mutates=True,
+                mutates_subtree=True,
+            ),
+        ),
+        operation_argument="op",
+        known_operations=frozenset({"snapshot", "list", "restore"}),
+    ),
+    "android": _FileToolPolicy(
+        (
+            _rule("apk_path", operations={"install"}),
+            _rule("out_path", operations={"screenshot"}, mutates=True),
+        ),
+        operation_argument="op",
+        known_operations=frozenset(
+            {
+                "devices",
+                "shell",
+                "install",
+                "uninstall",
+                "screenshot",
+                "tap",
+                "input_text",
+                "launch",
+                "logcat",
+            }
+        ),
+    ),
+    "ios_sim": _FileToolPolicy(
+        (
+            _rule("app_path", operations={"install"}),
+            _rule("out_path", operations={"screenshot"}, mutates=True),
+        ),
+        operation_argument="op",
+        known_operations=frozenset(
+            {
+                "list_devices",
+                "boot",
+                "shutdown",
+                "install",
+                "uninstall",
+                "launch",
+                "terminate",
+                "screenshot",
+                "open_url",
+            }
+        ),
+    ),
+    # Obsidian paths are resolved against its configured vault by the custom
+    # extractor below. They cannot be treated as workdir-relative raw notes.
+    "obsidian": _FileToolPolicy(
+        (),
+        operation_argument="op",
+        known_operations=frozenset({"list", "read", "create", "append", "search"}),
+    ),
+    # Like Obsidian, memory paths are rooted by operator configuration rather
+    # than relative to workdir and need a custom extractor below.
+    "memory": _FileToolPolicy(
+        (),
+        operation_argument="command",
+        known_operations=frozenset(
+            {"view", "create", "str_replace", "insert", "delete", "rename"}
+        ),
+    ),
+    # Persistence is opt-in, but when configured the browser can checkpoint
+    # after navigation, explicit save/close, or interpreter exit. The target is
+    # operator-selected and therefore resolved by a custom extractor.
+    "browser": _FileToolPolicy(
+        (),
+        operation_argument="action",
+        known_operations=frozenset(
+            {
+                "navigate",
+                "click",
+                "type",
+                "fill_form",
+                "press",
+                "scroll",
+                "screenshot",
+                "observe",
+                "extract_text",
+                "extract_html",
+                "find_text",
+                "wait_for",
+                "go_back",
+                "go_forward",
+                "current_url",
+                "list_links",
+                "save_session",
+                "close",
+            }
+        ),
+    ),
+    "oauth_helper": _FileToolPolicy(
+        (),
+        operation_argument="op",
+        known_operations=frozenset({"authorize_url", "exchange", "refresh"}),
+    ),
+}
+
+_IN_PROCESS_WORKSPACE_WRITERS = frozenset(
+    {
+        "write_file",
+        "str_replace_editor",
+        "ast_edit",
+        "apply_patch",
+        "spreadsheet",
+        "sql_query",
+        "ocr",
+        "wasm_run",
+        "diagram",
+        "latex",
+        "image_edit",
+        "speak",
+        "html_to_app",
+        "workspace_snapshot",
+        "android",
+        "ios_sim",
+        "obsidian",
+        "memory",
+        "browser",
+        "oauth_helper",
+    }
+)
+
+# P0 capability layer (host resource-scopes): the network tools whose URL
+# argument a capability's allow_hosts globs gate at the _run_tool chokepoint,
+# mapped to the arg name that carries that URL. Conservative on purpose --
+# only tools whose URL arg is verified against its real input_schema appear
+# here. `web_search` is intentionally absent: it takes a query/site, not a URL
+# to reach. The host is parsed from the URL; a URL without a host (or a missing
+# arg) skips the check. Empty allow_hosts == all (the capability's "empty ==
+# allow-all" convention), so this is a no-op unless capability enforcement was
+# opted in AND the active grant restricts hosts.
+_NET_TOOL_URL_ARGS: dict[str, str] = {
+    "http_fetch": "url",
+    "browser": "url",
+    "oidc": "token_url",
+    "oauth_helper": "token_url",
+}
+
+
+def _workspace_relative_path(sandbox: Any, raw_path: str) -> str:
+    """Return the canonical workspace-relative path a file tool will touch.
+
+    Filesystem tools resolve paths against ``sandbox.workdir`` before touching
+    them, collapsing ``..`` components and following symlinks. Capability path
+    scopes must be checked against the same canonical workspace-relative path,
+    not the raw model-supplied string.
+    """
+    workdir = Path(sandbox.workdir).resolve()
+    target = (workdir / raw_path).resolve()
+    rel = target.relative_to(workdir).as_posix()
+    return rel or "."
+
+
+def _default_workspace_path(
+    name: str,
+    rule: _WorkspacePathRule,
+    args: dict[str, Any],
+    sandbox: Any,
+) -> str | None:
+    """Resolve a tool's real default destination without executing it."""
+    if name == "diagram" and rule.argument == "out":
+        return f"diagram.{str(args.get('format') or 'svg').strip().lower()}"
+    if name == "speak" and rule.argument == "output":
+        base = Path(sandbox.workdir)
+        index = 1
+        while (base / f"speech-{index}.mp3").exists():
+            index += 1
+        return f"speech-{index}.mp3"
+    return rule.default
+
+
+def _normalize_file_tool_args(
+    name: str,
+    args: dict[str, Any],
+    sandbox: Any,
+) -> dict[str, Any]:
+    """Freeze dynamic path defaults once for policy, audit, hooks, and dispatch.
+
+    ``speak`` historically searched for the next free ``speech-N.mp3`` both in
+    the path gate and again inside the tool. A file appearing between those two
+    searches could shift the actual destination onto a protected next name.
+    Supplying the admitted name explicitly makes the checked and written path
+    identical.
+    """
+    if name != "speak" or args.get("output"):
+        return args
+    normalized = dict(args)
+    rule = _FILE_TOOL_POLICIES["speak"].paths[0]
+    output = _default_workspace_path(name, rule, normalized, sandbox)
+    if output:
+        normalized["output"] = output
+    return normalized
+
+
+def _one_workspace_access(
+    sandbox: Any,
+    target: str | Path,
+    *,
+    mutates_subtree: bool = False,
+) -> _ResolvedWorkspacePath:
+    return _ResolvedWorkspacePath(
+        _workspace_relative_path(sandbox, str(target)),
+        mutates_subtree=mutates_subtree,
+    )
+
+
+def _obsidian_path_accesses(
+    args: dict[str, Any],
+    sandbox: Any,
+    *,
+    mutating_only: bool,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Resolve vault-relative notes to their actual workspace identity."""
+    operation = args.get("op")
+    known_operations = (
+        "list",
+        "read",
+        "create",
+        "append",
+        "search",
+    )
+    mutates = (
+        operation in ("create", "append")
+        or operation not in known_operations
+    )
+    if mutating_only and not mutates:
+        return []
+    try:
+        from .tools.obsidian import _resolve, _vault
+
+        vault = _vault().resolve()
+        if operation in ("read", "create", "append"):
+            target = _resolve(vault, args.get("note") or "")
+        else:
+            target = vault
+    except (OSError, RuntimeError, ValueError):
+        # The tool will return its own actionable validation/config error.
+        return None
+    return [
+        _one_workspace_access(
+            sandbox,
+            target,
+            mutates_subtree=mutates and operation not in ("create", "append"),
+        )
+    ]
+
+
+def _memory_path_accesses(
+    args: dict[str, Any],
+    sandbox: Any,
+    *,
+    mutating_only: bool,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Resolve configured long-term-memory paths without granting its root."""
+    command = str(args.get("command") or "").strip()
+    mutating = {"create", "str_replace", "insert", "delete", "rename"}
+    if mutating_only and command not in mutating:
+        return []
+    try:
+        from .tools.memory import _memory_root, _resolve
+
+        root = _memory_root().resolve()
+        if command == "rename":
+            targets = [
+                _resolve(root, args.get("old_path") or args.get("path") or ""),
+                _resolve(root, args.get("new_path") or ""),
+            ]
+        elif command in {
+            "view",
+            "create",
+            "str_replace",
+            "insert",
+            "delete",
+        }:
+            targets = [_resolve(root, args.get("path") or "")]
+        else:
+            return []
+    except (OSError, RuntimeError, ValueError):
+        return None
+    recursive = command in {"delete", "rename"}
+    return [
+        _one_workspace_access(
+            sandbox,
+            target,
+            mutates_subtree=recursive,
+        )
+        for target in targets
+    ]
+
+
+def _sql_query_path_accesses(
+    args: dict[str, Any],
+    sandbox: Any,
+    *,
+    mutating_only: bool,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Mirror sql_query's coercion and include SQLite's writable sidecars."""
+    raw = args.get("database")
+    if not isinstance(raw, str) or not raw:
+        return None
+    read_only_arg = args.get("read_only")
+    read_only = True if read_only_arg is None else bool(read_only_arg)
+    if mutating_only and read_only:
+        return []
+    path = _workspace_relative_path(sandbox, raw)
+    accesses = [_ResolvedWorkspacePath(path)]
+    if not read_only:
+        # A writable connection may create rollback/WAL coordination files
+        # beside the main DB. Protecting one of those exact evidence paths must
+        # be as effective as protecting the main database itself.
+        accesses.extend(
+            _ResolvedWorkspacePath(path + suffix)
+            for suffix in ("-journal", "-wal", "-shm")
+        )
+    return accesses
+
+
+def _browser_path_accesses(
+    args: dict[str, Any],
+    sandbox: Any,
+    *,
+    mutating_only: bool,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Resolve the opt-in browser state file that any live session may save."""
+    del mutating_only  # every started persistent session may save at exit
+    if not args.get("action"):
+        return []
+    if os.environ.get("MAVERICK_BROWSER_NO_PERSIST") == "1":
+        return []
+    state = os.environ.get("MAVERICK_BROWSER_STATE", "")
+    if not state:
+        return []
+    return [_one_workspace_access(sandbox, Path(state).expanduser())]
+
+
+def _oauth_path_accesses(
+    args: dict[str, Any],
+    sandbox: Any,
+    *,
+    mutating_only: bool,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Resolve the legacy plaintext OAuth sink when the sealed vault is off."""
+    if args.get("op") not in ("exchange", "refresh"):
+        return []
+    try:
+        from .oauth_vault import enabled as oauth_vault_enabled
+
+        if oauth_vault_enabled():
+            return []
+    except Exception:
+        # The tool will fail before persisting if vault policy cannot resolve.
+        return None
+    out = os.environ.get("MAVERICK_OAUTH_OUT", "").strip()
+    if not out:
+        return []
+    del mutating_only  # exchange/refresh always overwrite the configured sink
+    return [_one_workspace_access(sandbox, Path(out).expanduser())]
+
+
+def _operation_in(operation: Any, options: frozenset[Any]) -> bool:
+    """Membership that treats malformed/unhashable direct-call values as unknown."""
+    try:
+        return operation in options
+    except TypeError:
+        return False
+
+
+def _workspace_path_accesses_for_tool(
+    name: str,
+    args: Any,
+    sandbox: Any,
+    *,
+    mutating_only: bool = False,
+) -> list[_ResolvedWorkspacePath] | None:
+    """Canonical workspace identities and recursive-write semantics for a call."""
+    if not isinstance(args, dict):
+        return None
+
+    if name == "apply_patch":
+        patch_text = args.get("patch")
+        if not isinstance(patch_text, str):
+            return None
+        from .tools.apply_patch import _files_in_patch
+
+        return [
+            _one_workspace_access(sandbox, raw)
+            for raw in _files_in_patch(patch_text)
+        ]
+
+    custom = {
+        "obsidian": _obsidian_path_accesses,
+        "memory": _memory_path_accesses,
+        "sql_query": _sql_query_path_accesses,
+        "browser": _browser_path_accesses,
+        "oauth_helper": _oauth_path_accesses,
+    }.get(name)
+    if custom is not None:
+        return custom(args, sandbox, mutating_only=mutating_only)
+
+    policy = _FILE_TOOL_POLICIES.get(name)
+    if policy is None:
+        return None
+
+    operation = (
+        args.get(policy.operation_argument)
+        if policy.operation_argument is not None
+        else None
+    )
+    unknown_operation = (
+        policy.operation_argument is not None
+        and not _operation_in(operation, policy.known_operations)
+    )
+    accesses: list[_ResolvedWorkspacePath] = []
+    for rule in policy.paths:
+        active = rule.operations is None or _operation_in(
+            operation,
+            rule.operations,
+        )
+        if not active and not unknown_operation:
+            continue
+        mutates = (
+            policy.unknown_operation_mutates
+            if unknown_operation and not active
+            else rule.mutates
+        )
+        if mutating_only and not mutates:
+            continue
+
+        raw: Any = None if rule.fixed_default else args.get(rule.argument)
+        if raw in (None, ""):
+            # Unknown operations do not get another operation's synthesized
+            # default. They can only be denied against paths they supplied.
+            raw = None if unknown_operation else _default_workspace_path(
+                name,
+                rule,
+                args,
+                sandbox,
+            )
+        values = raw if rule.many and isinstance(raw, list) else [raw]
+        if rule.many and raw is not None and not isinstance(raw, list):
+            return None
+        for value in values:
+            if not isinstance(value, str) or not value:
+                continue
+            if rule.skip_remote_references:
+                scheme = urlsplit(value).scheme.lower()
+                if scheme in {"http", "https", "data"}:
+                    continue
+            accesses.append(
+                _one_workspace_access(
+                    sandbox,
+                    value,
+                    mutates_subtree=mutates and rule.mutates_subtree,
+                )
+            )
+
+    if name == "workspace_snapshot" and operation == "snapshot":
+        # Snapshot archives and their temporary sibling are writes too. The
+        # store is operator-configurable and can legitimately overlap workdir.
+        from .workspace_snapshot import store_dir
+
+        accesses.append(
+            _one_workspace_access(
+                sandbox,
+                store_dir().resolve(),
+                mutates_subtree=True,
+            )
+        )
+
+    # Preserve order for audit messages while merging duplicate input/output
+    # identities (for example an in-place image edit).
+    deduplicated: dict[str, bool] = {}
+    for access in accesses:
+        deduplicated[access.path] = (
+            deduplicated.get(access.path, False) or access.mutates_subtree
+        )
+    return [
+        _ResolvedWorkspacePath(path, mutates_subtree=recursive)
+        for path, recursive in deduplicated.items()
+    ]
+
+
+def _capability_paths_for_tool(
+    name: str,
+    args: Any,
+    sandbox: Any,
+    *,
+    mutating_only: bool = False,
+) -> list[str] | None:
+    """Canonicalize the workspace paths a tool call will touch.
+
+    ``None`` preserves the legacy fail-soft behavior for malformed calls whose
+    path cannot be located confidently; those continue to the tool's own
+    validation. When ``mutating_only`` is true, read inputs are excluded so a
+    protected evidence file remains readable while every declared destination
+    stays immutable. ``apply_patch`` is special because its diff can name
+    multiple files.
+    """
+    accesses = _workspace_path_accesses_for_tool(
+        name,
+        args,
+        sandbox,
+        mutating_only=mutating_only,
+    )
+    return None if accesses is None else [access.path for access in accesses]
+
+
+def _governance_amount(args: Any) -> float | None:
+    """Extract a transaction ``amount`` from tool args for the governance gate.
+
+    The org policy's dollar-tier thresholds (``deny_above`` /
+    ``require_human_above`` -- the finance delegation-of-authority gate) compare
+    a transaction value, so the chokepoint passes the tool's conventional
+    ``amount`` arg through to :func:`maverick.governance.evaluate`. Accepts a
+    number or a numeric string; anything else (missing, non-numeric, bool)
+    yields ``None`` so the gate stays inert -- exactly as before for tools that
+    carry no amount.
+    """
+    if not isinstance(args, dict):
+        return None
+    v = args.get("amount")
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _tool_call_failed(output: str) -> bool:
+    """Did a tool result represent a failure? Used for the is_error flag and the
+    per-step success score.
+
+    Looks PAST the ``<tool_output …>`` security frame to the raw content: the
+    frame begins with ``<tool_output``, so a naive leading-``ERROR`` check on the
+    framed string was always False -- silently never setting ``is_error`` and
+    scoring every failed tool as a success. Tool-execution errors are prefixed
+    ``ERROR``; shield / hook blocks (which return UNframed) start with ``⚠``.
+    """
+    from .tool_results import tool_result_failed
+
+    return tool_result_failed(output)
+
+
+def _audit_summary(value: Any, limit: int = 200) -> str:
+    """Short, whitespace-collapsed, length-bounded text for the audit log.
+
+    Used for the ``input_summary`` / ``output_summary`` of TOOL_CALL /
+    TOOL_RESULT events. The audit writer scrubs secrets before signing, so this
+    only needs to bound size, not redact."""
+    try:
+        s = value if isinstance(value, str) else json.dumps(value, default=str)
+    except Exception:  # pragma: no cover -- unserializable arg
+        s = repr(value)
+    s = " ".join((s or "").split())
+    return s[:limit] + ("…" if len(s) > limit else "")
+
+
+def _tool_status(output: str) -> str:
+    """'error' | 'ok' for a tool result -- the TOOL_RESULT audit status."""
+    return "error" if _tool_call_failed(output) else "ok"
+
+
+# A single runaway tool result (multi-MB shell stdout, a giant query/file dump)
+# would otherwise enter the CURRENT context window uncapped -- compaction only
+# trims results behind the recent window -- blowing tokens/budget in one turn.
+# Cap any single result; the model keeps the head + tail and is told how to get
+# the rest. ~32 KB chars (~8k tokens) — the old 100 KB default let one result
+# inject ~25k tokens that compaction never touches while it sits in the recent
+# window. Scales up with the driving model's context window (32 KB is the
+# 200k-window baseline; see _tool_result_limit). Tune via
+# MAVERICK_MAX_TOOL_RESULT_BYTES.
+_DEFAULT_TOOL_RESULT_BYTES = 32_000
+_MAX_TOOL_RESULT_BYTES = max(
+    2_000, env_int("MAVERICK_MAX_TOOL_RESULT_BYTES", _DEFAULT_TOOL_RESULT_BYTES))
+
+
+def unframe_tool_output(framed: str) -> str:
+    """Recover the raw tool output from the ``<tool_output …>`` frame _run_tool
+    adds. Block/error messages (shield, hooks) are returned UNframed by
+    _run_tool, so they pass through unchanged. Used by code_exec to feed real
+    data -- not the model-facing frame -- into a sandboxed script."""
+    text = framed or ""
+    if not text.startswith("<tool_output "):
+        return text
+    nl = text.find("\n")
+    if nl == -1:
+        return text
+    inner = text[nl + 1:]
+    close = inner.rfind("\n</tool_output ")
+    if close != -1:
+        inner = inner[:close]  # drop the close tag (and any loop-guard note after it)
+    return inner
+
+
+def _tool_result_limit(model: str | None = None) -> int:
+    """Effective per-result byte cap for ``model``.
+
+    An explicit cap (MAVERICK_MAX_TOOL_RESULT_BYTES, or a test patching
+    ``_MAX_TOOL_RESULT_BYTES``) wins outright, even to shrink; otherwise
+    the default scales with the driving model's context window
+    (context_scaling.tool_result_bytes -- 32 KB at a 200k window, larger
+    above it), so a big-window model isn't stuck with a cap tuned for a
+    smaller one."""
+    if _MAX_TOOL_RESULT_BYTES != _DEFAULT_TOOL_RESULT_BYTES:
+        return _MAX_TOOL_RESULT_BYTES
+    try:
+        from .context_scaling import tool_result_bytes
+        return max(_MAX_TOOL_RESULT_BYTES, tool_result_bytes(model))
+    except Exception:  # pragma: no cover -- sizing never blocks a tool
+        return _MAX_TOOL_RESULT_BYTES
+
+
+def _cap_tool_output(text: str, limit: int | None = None) -> str:
+    """Bound a single tool result so one runaway can't blow the context window.
+
+    Keeps the head (2/3) and tail (1/3) -- results often put the actionable bit
+    (an error, a summary, the last rows) at the end -- with a middle marker that
+    states what was dropped and how to avoid it. A no-op below the cap, so normal
+    results are byte-identical. The head is preserved, so a leading ``ERROR`` is
+    intact for failure classification."""
+    if limit is None:
+        limit = _MAX_TOOL_RESULT_BYTES
+    if not isinstance(text, str):  # defensive: never crash on a non-str result
+        text = "" if text is None else str(text)
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    tail = limit - head
+    omitted = len(text) - head - tail
+    return (
+        text[:head]
+        + f"\n\n... [tool output truncated: {omitted} of {len(text)} chars "
+        "omitted to protect the context window. Narrow the command/query, or "
+        "write the full output to a file and read it back in slices.] ...\n\n"
+        + text[-tail:]
+    )
+
+
+def _finding_excerpt(final: str) -> str:
+    """The blackboard copy of a FINAL, bounded.
+
+    A finding is re-rendered into every later worker's first turn via
+    ``bb.render(40)`` — the O(K^2) swarm re-send — so post an excerpt, not the
+    whole answer. The full FINAL still reaches the parent via the spawn return
+    and is persisted in the world record. Tune via
+    MAVERICK_FINDING_POST_MAX_CHARS (min 200). NB: this bounds what is
+    STORED; Blackboard.render applies its own (smaller) per-entry cap at
+    injection, so raising this alone does not widen worker briefs — raise
+    MAVERICK_BB_RENDER_ENTRY_CHARS with it."""
+    from .compaction import excerpt
+    cap = max(200, env_int("MAVERICK_FINDING_POST_MAX_CHARS", 1500))
+    return excerpt(final or "", cap,
+                   "finding truncated; full answer in the run record")
+
+
+def _last_assistant_text(messages: list[dict]) -> str:
+    """Best-effort plain text of the most recent assistant message.
+
+    Content may be a string or a list of content blocks; pull any text out so a
+    worker that yields early (synthesis reserve) still returns its partial work.
+    """
+    for m in reversed(messages):
+        if m.get("role") != "assistant":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            return c.strip()
+        if isinstance(c, list):
+            text = " ".join(
+                b.get("text", "") for b in c
+                if isinstance(b, dict) and b.get("type") == "text"
+            ).strip()
+            if text:
+                return text
+    return ""
+
+
+def _assemble_assistant_content(resp: Any, final_dropped_tools: bool) -> list[dict]:
+    """Rebuild the assistant message content blocks from an LLM response,
+    preserving Anthropic's exact thinking-block order/signatures (interleaved
+    blocks must be echoed back unmodified). Extracted verbatim from
+    _run_inner; see the inline council-fix notes for the ordering rules."""
+    assistant_content: list[dict] = []
+    ordered_blocks = getattr(resp, "content_blocks", None)
+    if final_dropped_tools:
+        # May 28 fix #2: the model emitted a FINAL: marker AND
+        # tool_use in the same turn; we discard the tool attempt and
+        # treat FINAL as the answer. Do NOT replay the model's blocks
+        # here. Dropping the interleaved tool_use would merge
+        # previously-separated thinking blocks into one consecutive
+        # run, and on a revision pass (verifier/patch reject ->
+        # continue) the re-sent turn 400s:
+        #   messages.N.content.M: `thinking`/`redacted_thinking`
+        #   blocks in the latest assistant message cannot be modified.
+        # The tool_use can't stay either (orphan with no
+        # tool_result). Omitting thinking from a turn is explicitly
+        # allowed (the API auto-filters prior-turn thinking), so emit
+        # a clean text-only turn. resp.text is non-empty here (guarded
+        # by `resp.text and resp.tool_calls` above).
+        assistant_content.append({"type": "text", "text": resp.text})
+    elif ordered_blocks:
+        # May 28 fix: replay the model's blocks in their ORIGINAL
+        # order, COMPLETE and UNMODIFIED. Anthropic rejects a
+        # rearranged thinking-block sequence on the next request —
+        # the bucket-by-type rebuild in the else branch reordered
+        # interleaved Opus 4.7 turns (thinking between tool_use) and
+        # triggered "thinking blocks in the latest assistant message
+        # cannot be modified". (The only tool_use-dropping case,
+        # FINAL, is handled above — here every block is kept so the
+        # tool_use blocks always have matching tool_results below.)
+        for blk in ordered_blocks:
+            assistant_content.append(dict(blk))
+    else:
+        # May 26 council fix: emit ONE thinking block per original
+        # block, preserving each block's exact signature. Concatenating
+        # text but keeping only the first signature corrupted multi-
+        # block interleaved thinking on Opus 4.7 — the signature is
+        # derived from the EXACT text of its block. Falls back to
+        # the legacy single-block path when thinking_blocks is empty
+        # but resp.thinking is set (older mocks / non-Anthropic).
+        thinking_blocks = getattr(resp, "thinking_blocks", None) or []
+        if thinking_blocks:
+            # May 26 council fix (API audit #2): include the block
+            # EVEN IF the text is empty as long as a signature is
+            # present. Anthropic still requires the signature-bearing
+            # block to be echoed back to maintain continuity. The old
+            # `if resp.thinking:` check at the elif below would drop
+            # empty-text-signature pairs entirely.
+            for tb_text, tb_sig in thinking_blocks:
+                if not tb_text and not tb_sig:
+                    continue
+                block_dict: dict = {"type": "thinking", "thinking": tb_text}
+                if tb_sig:
+                    block_dict["signature"] = tb_sig
+                assistant_content.append(block_dict)
+        elif resp.thinking or getattr(resp, "thinking_signature", None):
+            sig = getattr(resp, "thinking_signature", None)
+            thinking_block: dict = {
+                "type": "thinking", "thinking": resp.thinking or "",
+            }
+            if sig:
+                thinking_block["signature"] = sig
+            assistant_content.append(thinking_block)
+        if resp.text:
+            assistant_content.append({"type": "text", "text": resp.text})
+        for tc in resp.tool_calls:
+            assistant_content.append(
+                {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.input}
+            )
+    return assistant_content
+
+
+@dataclass
+class AgentResult:
+    final: str | None = None
+    blocked_on_user: bool = False
+    error: str | None = None
+    role: str = ""
+    name: str = ""
+    # Verifier signals (only populated on the orchestrator's FINAL).
+    verifier_confidence: float = 1.0
+    verifier_critique: str = ""
+    # Wave 12: rendered unified diff produced by the FINAL handler
+    # (SEARCH/REPLACE blocks applied + `git diff` rendered, or unified
+    # diff extracted from FINAL). Best-of-N reads this directly instead
+    # of re-extracting from prose at orchestrator.py:364 — the prior
+    # path silently dropped SR-only candidates that produced a perfect
+    # rendered diff but had no `--- a/` substring in `result`.
+    final_patch: str | None = None
+
+
+def _final_uncertainty_reasons(
+    *,
+    verifier_rejected: bool,
+    verifier_incomplete: bool,
+    disagreement: float,
+    coding: bool,
+) -> list[str]:
+    """Reasons the orchestrator cannot cleanly stand behind a FINAL.
+
+    Empty list means nothing to flag: a clean verification, or a
+    sub-agent / coding-mode answer we must not wrap in prose (it may be a
+    patch). The swarm-disagreement signal is added only as colour when we
+    are *already* flagging uncertainty, so a reconciled-and-verified
+    answer is never noised up.
+    """
+    if coding:
+        return []
+    reasons: list[str] = []
+    if verifier_rejected:
+        reasons.append("an internal self-check did not pass after one revision")
+    if verifier_incomplete:
+        reasons.append("verification did not finish within the budget")
+    if reasons and disagreement >= 0.8:
+        reasons.append(f"parallel attempts disagreed (entropy {disagreement:.2f})")
+    return reasons
+
+
+def _final_with_uncertainty_note(final: str | None, reasons: list[str]) -> str | None:
+    """Prepend a brief honesty caveat to a user-facing answer.
+
+    Leaves the answer body untouched; only adds a leading note so an
+    unverified result is not handed over as if it were confirmed. No-op
+    when there is nothing to flag or there is no answer text.
+    """
+    if not final or not reasons:
+        return final
+    note = (
+        "⚠️ I could not fully verify this answer: "
+        + "; ".join(reasons)
+        + ". Treat it with caution."
+    )
+    return note + "\n\n" + final
+
+
+_HIGH_RISK_FINAL_MARKERS = (
+    "```",          # fenced code block
+    "diff --git",   # unified diff
+    "<<<<<<<",      # SEARCH/REPLACE edit block
+    "--- a/",       # diff hunk header
+)
+
+
+def _risk_proportional_verify_enabled() -> bool:
+    """Opt-in, off by default. Flipped on via
+    ``MAVERICK_RISK_PROPORTIONAL_VERIFY=1`` or ``[verification]
+    risk_proportional = true`` in config. When on, the orchestrator may
+    skip the LLM verifier on clearly low-risk answers -- SWE-AF's
+    ``needs_deeper_qa`` idea: spend verification where it matters.
+    """
+    if os.environ.get("MAVERICK_RISK_PROPORTIONAL_VERIFY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+    try:
+        from .config import load_config
+        cfg = (load_config() or {}).get("verification") or {}
+        return bool(cfg.get("risk_proportional"))
+    except Exception:
+        return False
+
+
+def _final_is_low_risk(final: str | None, *, coding: bool, tool_calls: int) -> bool:
+    """Cheap, conservative test: safe to skip LLM verification on this answer?
+
+    Low-risk means a short, prose-only answer the agent reached without
+    touching any tools -- a pure-knowledge reply. A coding task, any tool
+    use, an embedded code block / diff / edit, or a long multi-part answer
+    all fall through to full verification. Intentionally narrow: it gates
+    a quality check, so it only fires when skipping is clearly safe.
+    """
+    if coding or not final:
+        return False
+    if tool_calls > 0:
+        return False
+    text = final.strip()
+    if len(text) > 800:
+        return False
+    return not any(marker in text for marker in _HIGH_RISK_FINAL_MARKERS)
+
+
+class Agent:
+    def __init__(
+        self,
+        ctx: SwarmContext,
+        role: str,
+        brief: str,
+        model_override: str | None = None,
+        depth: int = 0,
+        parent: Agent | None = None,
+        max_steps: int = 25,
+        capability=None,
+        domain: str | None = None,
+        persona: str | None = None,
+        knowledge_sources: list[str] | None = None,
+        domain_effort: str | None = None,
+        autonomy=None,
+    ):
+        self.ctx = ctx
+        self.role = role
+        self.brief = brief
+        self.depth = depth
+        self.parent = parent
+        # Long-horizon review checkpoint (root only; opt-in). Built once per
+        # agent from config; None when unconfigured (the common case) so the
+        # turn gate stays a no-op. The reviewer uses the consent/approval path
+        # with silent auto-approval disabled, so crossing an interval requires
+        # an explicit operator decision to continue.
+        self._review_checkpoint = None
+        if role == "orchestrator":
+            try:
+                from .review_checkpoint import consent_review, from_config
+                _cp = from_config(
+                    review=lambda event: consent_review(event, goal_id=self.ctx.goal_id)
+                )
+                if _cp.policy.is_active():
+                    self._review_checkpoint = _cp
+            except Exception:  # pragma: no cover -- never block agent construction
+                self._review_checkpoint = None
+        # Agent compartments: the domain/sector this agent belongs to. The
+        # factory's spawn-from-profile sets it; otherwise a child inherits its
+        # parent's domain so a Rung-2 sector seal catches the whole sub-tree.
+        # None == unsectored (the orchestrator and ad-hoc agents).
+        self.domain = domain if domain is not None else getattr(parent, "domain", None)
+        # Per-agent autonomy profile (the agent-as-employee authority dial,
+        # maverick.agent_autonomy). The factory's spawn-from-profile sets it from
+        # the pack's [autonomy] block; a child inherits its parent's so a sub-tree
+        # shares the hire's authority. None == the default SUGGEST profile.
+        self._autonomy = autonomy if autonomy is not None else getattr(parent, "_autonomy", None)
+        # Workforce overrides are tied to the profile's original hire, not to an
+        # ad-hoc child role. Otherwise a model-selected spawn_subagent role could
+        # layer a more permissive [workforce.agents.<role>] override over an
+        # inherited low-authority profile. Explicit profile spawns establish a new
+        # override anchor; inherited profiles keep their parent's anchor.
+        self._autonomy_name = (
+            role if autonomy is not None
+            else getattr(parent, "_autonomy_name", role)
+        )
+        # Optional domain-pack persona, appended to the system prompt below.
+        self._domain_persona = persona
+        # Domain knowledge collections this agent may query (the DomainProfile's
+        # knowledge_sources). Children inherit the parent's, like ``domain``.
+        self.knowledge_sources = (
+            knowledge_sources if knowledge_sources is not None
+            else list(getattr(parent, "knowledge_sources", []) or [])
+        )
+        # P0 identity layer: the capability grant this agent runs under. An
+        # explicit arg (passed by an attenuating spawn) wins; otherwise inherit
+        # the run's root grant; otherwise the depth-0 orchestrator mints the
+        # root grant from config when enforcement is enabled. None ==
+        # unrestricted, so enforcement is a no-op unless opted in.
+        self.capability = self._resolve_capability(capability)
+        # Verified peer handoffs install an attenuated task grant here; _run_tool
+        # intersects it with ambient authority so verified delegations are bound
+        # to execution instead of existing only as model-facing text.
+        self._handoff_capability = None
+        # Wave 11: Scale Labs' Pro empirical study (arxiv 2509.16941)
+        # shows "most successful solutions resolve in ~25 rounds; long-
+        # tail iteration past that has diminishing returns." Allow ops
+        # to override globally via MAVERICK_MAX_STEPS, default 25.
+        self.max_steps = env_int("MAVERICK_MAX_STEPS", max_steps)
+        self.name = f"{role}-{depth}-{uuid.uuid4().hex[:6]}"
+        # Register before tool construction: bus tool closures enforce the
+        # SwarmContext roster on every send/receive/delegation. If an unusual
+        # test/adapter context lacks the hook, legacy tool behavior is retained;
+        # a real SwarmContext registration error fails the bus closed while the
+        # rest of the agent can still run.
+        _register_bus_agent = getattr(self.ctx, "register_bus_agent", None)
+        if callable(_register_bus_agent):
+            try:
+                _register_bus_agent(self.name)
+            except Exception as e:
+                log.warning("agent bus roster registration failed for %s: %s", self.name, e)
+
+        # Resolve the model BEFORE building the system prompt: the self-harness
+        # addendum layer (_with_harness_addendum) recalls guidance keyed on
+        # self.model, so self.model must exist when _build_system runs.
+        # Otherwise recall_addendum(self.model) raises AttributeError, the
+        # addendum's except swallows it, and the learned guidance is silently
+        # dropped from every prompt -- the feature becomes a no-op.
+        self.model = model_override or model_for_role(role)
+        self.tools = self._build_tools()
+        self.system = self._build_system()
+        # Per-role reasoning effort (opt-in; None unless configured). Resolved
+        # once against this agent's role + model so the cost/latency lever rides
+        # every LLM call this agent makes. Model-gated -> never 400s.
+        from .effort import effort_for_role
+        self.effort = effort_for_role(role, self.model, pack_default=domain_effort)
+        # Tracks whether we've already given one LLM-verifier-driven
+        # revision pass for this agent run. Separate from
+        # `_already_verified` so revised FINALs can be re-verified once
+        # without permitting repeated reject/revise loops.
+        self._verifier_revision_used = False
+
+        # Process-reward model: scores each step's promise/progress. Resolved
+        # from env (MAVERICK_PRM=null|heuristic|remote); default NullPRM is a
+        # no-op, so this is off unless an operator opts in. Scores are emitted
+        # to the blackboard (kind="prm") as an observability signal — the loop
+        # does not gate on them, so a misconfigured PRM can't stall a run.
+        from .prm import build_from_env
+        self._prm = build_from_env()
+        self._prm_enabled = type(self._prm).__name__ != "NullPRM"
+        self._last_step_score = 0.5
+        from .prm_guidance import PromiseWindow
+        self._promise_window = PromiseWindow()
+        self._last_prm_nudge_step = -100
+        # Live-spend mirror throttle (#614): the root agent periodically
+        # mirrors running totals onto its open episode row so `maverick runs`
+        # / `maverick budget` reflect accruing mid-run spend instead of
+        # $0.00 / 0 tools. Throttled to once per _SPEND_MIRROR_INTERVAL s.
+        self._last_spend_mirror = 0.0
+        # Loop guard: current consecutive failure streak. Grows only while the
+        # exact same tool call fails with the same raw error; any intervening
+        # different call or success starts a new streak.
+        self._tool_fail_streak: dict[str, int] = {}
+
+    def _resolve_capability(self, explicit):
+        """Pick this agent's capability grant.
+
+        A readable policy that leaves enforcement disabled intentionally yields
+        ``None`` (legacy unrestricted behavior). Once enforcement is enabled or
+        policy intent is uncertain, root-grant failures yield an explicit
+        deny-all grant instead of silently restoring unrestricted authority.
+        """
+        if explicit is not None:
+            return explicit
+        inherited = getattr(self.ctx, "capability", None)
+        if inherited is not None:
+            return inherited
+        if self.depth != 0:
+            return None
+        principal = f"user:{getattr(self.ctx, 'user_id', None) or 'local'}"
+        try:
+            from .capability import (
+                Capability,
+                capability_enforced,
+                capability_from_config,
+            )
+            if not capability_enforced():
+                return None
+            root = capability_from_config(
+                principal=principal,
+                channel=getattr(self.ctx, "channel", None),
+                user_id=getattr(self.ctx, "user_id", None),
+            )
+            if not isinstance(root, Capability):
+                raise TypeError("capability root mint returned an invalid grant")
+            # Stash on the shared context so spawned children inherit + attenuate.
+            try:
+                self.ctx.capability = root
+            except Exception:
+                pass
+            return root
+        except Exception:
+            log.exception(
+                "capability root-grant resolution failed for %s; denying all",
+                principal,
+            )
+            # A failure importing the capability module itself should stop agent
+            # construction rather than fabricate authority. Normal mint/config
+            # failures reach this import successfully and receive deny-all.
+            from .capability import deny_all_capability
+
+            root = deny_all_capability(principal)
+            try:
+                self.ctx.capability = root
+            except Exception:
+                pass
+            return root
+
+    @property
+    def checkpoint_id(self) -> str:
+        """Stable identity for durable checkpointing, distinct from ``name``.
+
+        ``name`` carries a per-process random suffix (for blackboard / agent-bus
+        uniqueness), so it can't key a checkpoint that must survive a
+        fresh-process resume. The depth-0 agent is the single orchestrator of
+        its episode, so ``"{role}-0"`` is stable and unique within
+        (goal_id, episode_id). Phase 2 will extend this for spawned children.
+        """
+        return f"{self.role}-{self.depth}"
+
+    def _build_tools(self) -> ToolRegistry:
+        # Honor [capabilities] from config: these gate the optional
+        # high-impact tools (computer_use / browser / web_search / mobile).
+        # Without this, enabling them in config (or the wizard) was a no-op --
+        # base_registry's enable_* flags defaulted off and nothing set them.
+        # The [security] ACL still applies on top (a capability can be enabled
+        # but a tool still denied).
+        try:
+            from .config import get_capabilities
+            caps = get_capabilities()
+        except Exception:  # pragma: no cover -- never block tool build on config
+            caps = {}
+        reg = base_registry(
+            self.ctx.world,
+            self.ctx.sandbox,
+            mcp_clients=self.ctx.mcp_clients,
+            goal_id=self.ctx.goal_id,
+            channel=self.ctx.channel,
+            user_id=self.ctx.user_id,
+            budget=self.ctx.budget,
+            enable_computer_use=bool(caps.get("computer_use", False)),
+            enable_browser=bool(caps.get("browser", False)),
+            enable_web_search=bool(caps.get("web_search", False)),
+            enable_mobile_tools=bool(caps.get("mobile_tools", False)),
+            enable_ros=bool(caps.get("ros", False)),
+        )
+        # Cross-agent bus tools, bound to this agent's id so send records
+        # the right sender and recv drains the right inbox.
+        reg.register(send_to_agent(self.name, ctx=self.ctx))
+        # recv is handoff-aware (verifies a signed delegation via the run's
+        # handoff authority); delegate_to_agent is the producer, offered only
+        # when capability enforcement is on -- otherwise a handoff is just a
+        # plain message and send_to_agent already covers it.
+        reg.register(recv_from_agent(self.name, agent=self, ctx=self.ctx))
+        from .capability import capability_enforced
+        if capability_enforced():
+            reg.register(delegate_to_agent(self))
+        if self.depth < self.ctx.max_depth:
+            reg.register(spawn_subagent_tool(self))
+            reg.register(spawn_swarm_tool(self))
+            # The bridge from the suite roster to the running fleet: deploy a
+            # curated domain pack as a specialist child (persona + compartment +
+            # attenuated envelope), and discover what's available.
+            reg.register(spawn_specialist_tool(self))
+            reg.register(list_specialists_tool(self))
+        # Per-domain document knowledge: bind a knowledge_search tool to this
+        # agent's collections when a knowledge base is configured for the run.
+        kb = getattr(self.ctx, "knowledge", None)
+        sources = self.knowledge_sources or ([self.domain] if self.domain else [])
+        if kb is not None and sources:
+            from .tools.knowledge import knowledge_search_tool
+            reg.register(knowledge_search_tool(kb, sources))
+        # Self-learning: bound to this agent so governed capability discovery
+        # can run by default. Executable tool creation and MCP acquisition stay
+        # behind their separate high-authority opt-ins.
+        try:
+            from . import self_learning
+            if self_learning.enabled():
+                from .tools.learn import learn_capability
+                reg.register(learn_capability(self))
+        except Exception as e:  # pragma: no cover -- never block tool build
+            log.debug("self_learning tool registration skipped: %s", e)
+        # Programmatic tool calling (opt-in): a sandboxed Python script that
+        # orchestrates declared tool calls, keeping their raw outputs out of the
+        # model's context. Powerful (runs code + tools), so off unless enabled
+        # via [capabilities] code_exec or MAVERICK_CODE_EXEC.
+        code_exec_on = caps.get("code_exec", False) or (
+            os.environ.get("MAVERICK_CODE_EXEC", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if code_exec_on:
+            from .tools.code_exec import code_exec_tool
+            reg.register(code_exec_tool(self))
+        # Deferred tool loading (default ON): hide the SaaS-connector long
+        # tail behind the find_tools meta-tool so the model's catalog stays
+        # lean -- 470+ connector schemas rode EVERY model turn at consumer
+        # defaults (observed: 601 tools offered per call), dominating context
+        # cost. The mechanism (ToolRegistry.enable_deferred / find_tools)
+        # already existed and was tested; nothing wired it. Everything
+        # registered above (file/shell/spawn/bus/memory/MCP/...) stays
+        # visible; only base_registry's marked long tail defers, and run()
+        # still executes ANY registered tool, so execution semantics are
+        # unchanged. Disable via [capabilities] deferred_tools = false or
+        # MAVERICK_DEFERRED_TOOLS=0.
+        env_dt = os.environ.get("MAVERICK_DEFERRED_TOOLS", "").strip().lower()
+        if env_dt in {"0", "false", "no", "off"}:
+            deferred_on = False
+        elif env_dt in {"1", "true", "yes", "on"}:
+            deferred_on = True
+        else:
+            deferred_on = bool(caps.get("deferred_tools", True))
+        deferrable = getattr(reg, "deferrable_names", None) or set()
+        if deferred_on and deferrable:
+            from .tools.find_tools import find_tools
+            reg.register(find_tools(reg))
+            reg.enable_deferred(core={t.name for t in reg.all()} - set(deferrable))
+        return reg
+
+    def _build_system(self) -> str:
+        # Wave 9 fix: coding mode applies to the ORCHESTRATOR too, not
+        # just workers. The orchestrator emits the FINAL; if it's still
+        # using ORCHESTRATOR_SYSTEM_TEMPLATE (prose-oriented), the patch
+        # validator + test-driven verifier both operate on prose, every
+        # extract_unified_diff returns None, every git apply --check
+        # rejects -> Wave 8 contributes negative value. (council code
+        # reviewer finding #1)
+        try:
+            from .coding_mode import from_env as _cm_from_env
+            _coding_cfg = _cm_from_env()
+        except Exception:
+            _coding_cfg = None
+
+        base = select_base_template(
+            role=self.role, depth=self.depth, max_depth=self.ctx.max_depth,
+            coding_enabled=bool(_coding_cfg is not None and _coding_cfg.enabled),
+        )
+
+        # Swarm-wide additive overlays (persona, output style, learned-habits
+        # prior) — global state, not agent-specific. Extracted as the second
+        # PromptBuilder collaborator.
+        base = apply_global_overlays(base)
+
+        # Per-agent role overlays (client role-addendum + domain-pack persona).
+        # Third PromptBuilder collaborator.
+        base = apply_role_overlays(
+            base, role=self.role, domain_persona=self._domain_persona)
+
+        # Skills from prior runs (fourth PromptBuilder collaborator). The seam
+        # renders + returns the recalled skills; the stats/ctx bookkeeping stays
+        # here, all-or-nothing inside one fail-safe block, exactly as before.
+        base, _skills = apply_skill_overlays(
+            base, brief=self.brief, use_skills=self.ctx.use_skills,
+            depth=self.depth)
+        if _skills:
+            try:
+                from .skill import stats as skill_stats
+                names = [s.name for s in _skills]
+                skill_stats.record_use(names)
+                self.ctx.skills_used.update(names)
+            except Exception:
+                pass
+
+        # Cross-session memory presence hint (fifth PromptBuilder collaborator,
+        # root agent only).
+        base = apply_memory_brief(base, depth=self.depth)
+
+        base = self._with_harness_addendum(base)
+        return base
+
+    def _with_harness_addendum(self, base: str) -> str:
+        """Append the self-harness addendum: model-specific operating guidance
+        the loop learned from THIS model's past failures, recalled like
+        skills/insights (never a kernel-template mutation). Keyed on the agent's
+        resolved model so a worker's lesson never bleeds into the orchestrator's.
+        Empty (no change) unless [self_harness] is enabled and an addendum
+        exists. Fully fail-safe."""
+        try:
+            from .self_harness import note_recall, recall_addendum
+            # Pass this run's domain AND its available tools so guidance mined
+            # SCOPED to a department or a tool is recalled only when it applies
+            # (model-wide guidance always is): a finance lesson on finance runs, a
+            # `web_fetch` lesson only when `web_fetch` is on hand (#7). Defaults to
+            # the model-wide block when the agent has no domain and no scoped tools.
+            _dom = getattr(self, "domain", None)
+            _tools = self._harness_tool_names()
+            # The agent's role scopes recall too: guidance mined per role rides
+            # only that role's prompts (an orchestrator lesson stays off a
+            # coder's context of the same model).
+            _role = getattr(self, "role", None)
+            addendum = recall_addendum(self.model, domain=_dom, tools=_tools,
+                                       role=_role)
+            if addendum:
+                # Track that this guidance was USED (throttled, best-effort) so
+                # retirement keeps actively-recalled lines and prunes dormant ones.
+                note_recall(self.model, domain=_dom, tools=_tools, role=_role)
+                # Register this model for run-end outcome attribution (mirrors
+                # ctx.skills_used): a WORKER's recalled guidance earns outcome
+                # credit too, not only the orchestrator's.
+                models = getattr(getattr(self, "ctx", None), "harness_models", None)
+                if isinstance(models, set):
+                    models.add(str(self.model))
+                return base + "\n\n" + addendum
+        except Exception:  # pragma: no cover -- never block a run
+            pass
+        return base
+
+    def _harness_tool_names(self) -> list[str]:
+        """The names of the tools this agent has on hand, for per-tool guidance
+        recall. Best-effort: a registry that can't be enumerated yields no tool
+        scopes (recall falls back to model-wide + domain), never an error."""
+        try:
+            return [t.name for t in self.tools.all()]
+        except Exception:  # pragma: no cover -- recall must never break a run
+            return []
+
+    def _thinking_budget(self) -> int | None:
+        if self.role not in ("orchestrator", "revisor"):
+            return None
+        # Thinking tokens bill at the output rate, so the base is a first-class
+        # cost knob: `[thinking] budget` (default 8000, the long-standing value).
+        # Resolved once per agent — this runs every turn and load_config()
+        # re-stats/merges overlay files on each call; config is fixed mid-run.
+        base = getattr(self, "_thinking_base", None)
+        if base is None:
+            base = 8000
+            try:
+                from .config import load_config
+                base = int(((load_config() or {}).get("thinking") or {})
+                           .get("budget", base) or base)
+            except Exception:  # pragma: no cover -- config never blocks a turn
+                pass
+            self._thinking_base = base
+        # Adaptive controller (opt-in, default off): trims/raises by recent
+        # success rate. Disabled or low-data -> returns `base` unchanged.
+        from .thinking_budget import adjust
+        return adjust(self.role, base)
+
+    def _turn_max_tokens(self) -> int:
+        """Per-turn output cap, scaled to the driving model's context window.
+
+        Was a hard 4096 regardless of model; now context_scaling derives it
+        from the model's real window (4096 stays the floor, so nothing
+        shrinks). MAVERICK_AGENT_MAX_TOKENS / [context] max_output_tokens
+        override; budget caps still bound actual spend. Fail-soft."""
+        try:
+            from .context_scaling import max_output_tokens
+            return max_output_tokens(self.model)
+        except Exception:  # pragma: no cover -- sizing never blocks a turn
+            return 4096
+
+    def _extract_and_apply_patch(self, final: str):
+        """Wave 11: unify SEARCH/REPLACE and unified-diff extraction.
+
+        Returns (patch_str_or_None, sr_summary_or_None). The patch is
+        the rendered unified diff (suitable for `git apply --check` /
+        the CSV). The `sr_summary` is the ApplySummary when blocks
+        were applied to disk, None when only a unified diff was found.
+
+        Caller is responsible for resetting the workdir AFTER capturing
+        the patch.
+
+        Wave 11: also runs `ast.parse` on every modified Python file
+        before rendering the diff. SyntaxError gets surfaced via a
+        synthesized ApplySummary so the agent re-emits, instead of
+        submitting a patch that breaks pytest collection (32% of Opus
+        4.1 / 57% of Gemini failures on Pro per Scale's Table 4).
+        """
+        from pathlib import Path as _Path
+
+        from .coding_mode import (
+            _ast_check_python_files,
+            extract_unified_diff,
+        )
+        from .edit_format import (
+            ApplyResult,
+            ApplySummary,
+            SearchReplaceBlock,
+            apply_blocks,
+            parse_blocks,
+            render_diff,
+        )
+
+        workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
+        blocks = parse_blocks(final)
+        if blocks:
+            import subprocess as _sub
+            import tempfile as _tempfile
+
+            sandbox = self.ctx.sandbox
+            has_exec = sandbox is not None and hasattr(sandbox, "exec")
+            apply_workdir = workdir
+            temp_root = None
+            used_temp_worktree = False
+
+            if has_exec:
+                # SEARCH/REPLACE application is necessarily host-local
+                # because it rewrites files via pathlib.  Do it in a
+                # disposable git worktree so exec-backed sandboxes (ssh,
+                # k8s, firecracker/E2B) cannot leave attacker-influenced
+                # edits behind in a host checkout while _reset_workdir()
+                # resets a different backend filesystem.
+                temp_root = _tempfile.TemporaryDirectory(
+                    prefix="maverick-sr-worktree-"
+                )
+                candidate = _Path(temp_root.name) / "worktree"
+                hooks_dir = _Path(temp_root.name) / "hooks"
+                try:
+                    hooks_dir.mkdir(mode=0o700)
+                    wt = _sub.run(
+                        [
+                            "git", "-c", f"core.hooksPath={hooks_dir}",
+                            "-C", str(workdir), "worktree", "add",
+                            "--detach", "--quiet", str(candidate), "HEAD",
+                        ],
+                        capture_output=True, timeout=60,
+                    )
+                    if wt.returncode != 0:
+                        raise RuntimeError(
+                            wt.stderr.decode("utf-8", errors="replace")
+                        )
+                    apply_workdir = candidate
+                    used_temp_worktree = True
+                except Exception as exc:
+                    temp_root.cleanup()
+                    summary = ApplySummary()
+                    summary.results.append(ApplyResult(
+                        ok=False,
+                        block=SearchReplaceBlock(
+                            path="<sandboxed search/replace>",
+                            search="", replace="",
+                        ),
+                        reason=(
+                            "SEARCH/REPLACE requires a disposable local git "
+                            f"worktree when sandbox.exec is available: {exc}"
+                        ),
+                    ))
+                    return None, summary
+
+            try:
+                summary = apply_blocks(blocks, apply_workdir, atomic=True)
+                if not summary.ok:
+                    return None, summary
+                touched_paths = sorted(summary.files_touched)
+                syntax_errors = _ast_check_python_files(
+                    apply_workdir, touched_paths
+                )
+                if syntax_errors:
+                    # Roll back the SR application so the next attempt sees
+                    # HEAD, then synthesise a failure summary the caller
+                    # can convert into a repair prompt.  Disposable
+                    # worktrees are cleaned below; only reset the real
+                    # workdir on the legacy no-exec path.
+                    if not used_temp_worktree:
+                        self._reset_workdir()
+                    summary.results.append(ApplyResult(
+                        ok=False,
+                        block=SearchReplaceBlock(
+                            path="<syntax check>", search="", replace="",
+                        ),
+                        reason=(
+                            "Python syntax errors after applying: "
+                            + "; ".join(syntax_errors)
+                        ),
+                    ))
+                    return None, summary
+                patch = render_diff(apply_workdir, paths=touched_paths)
+                return patch, summary
+            finally:
+                if used_temp_worktree:
+                    try:
+                        _sub.run(
+                            [
+                                "git", "-C", str(workdir), "worktree",
+                                "remove", "--force", str(apply_workdir),
+                            ],
+                            capture_output=True, timeout=30,
+                        )
+                    except Exception:
+                        pass
+                if temp_root is not None:
+                    temp_root.cleanup()
+        return extract_unified_diff(final), None
+
+    def _reset_workdir(self) -> None:
+        """Revert the sandbox workdir to a clean HEAD.
+
+        CLAUDE.md rule 4: route git plumbing through ``sandbox.exec`` so
+        it operates on the configured backend's filesystem (ssh/k8s/fc),
+        not the host. ``reset --hard`` then ``clean -fd`` in one shell
+        string; we only need the exit code, so the 8000-char output
+        truncation is irrelevant here. Falls back to host ``subprocess``
+        only when there's no sandbox or it lacks ``exec``.
+        """
+        sandbox = self.ctx.sandbox
+        if sandbox is not None and hasattr(sandbox, "exec"):
+            try:
+                sandbox.exec("git reset --hard HEAD && git clean -fd", timeout=30)
+            except Exception:
+                pass
+            return
+        import subprocess as _sub
+        from pathlib import Path as _Path
+        workdir = _Path(getattr(sandbox, "workdir", "."))
+        try:
+            _sub.run(
+                ["git", "-C", str(workdir), "reset", "--hard", "HEAD"],
+                capture_output=True, timeout=20,
+            )
+            _sub.run(
+                ["git", "-C", str(workdir), "clean", "-fd"],
+                capture_output=True, timeout=20,
+            )
+        except Exception:
+            pass
+
+    def _git_apply(self, patch: str) -> bool:
+        """Apply ``patch`` to the sandbox workdir; return whether it applied.
+
+        CLAUDE.md rule 4: run ``git apply`` on the configured backend.
+        ``sandbox.exec`` runs a shell string and can't pipe stdin, so we
+        write the patch to a temp file inside the workdir and
+        ``git apply <tmpfile>``, then clean the temp file up. Falls back
+        to host ``subprocess`` (piping via stdin) only when there's no
+        sandbox or it lacks ``exec``.
+        """
+        from pathlib import Path as _Path
+        sandbox = self.ctx.sandbox
+        workdir = _Path(getattr(sandbox, "workdir", "."))
+        if sandbox is not None and hasattr(sandbox, "exec"):
+            import os as _os
+            import tempfile as _tempfile
+            tmp_path = None
+            try:
+                with _tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".patch", dir=str(workdir),
+                    delete=False, encoding="utf-8",
+                ) as tmp:
+                    tmp.write(patch)
+                    tmp_path = tmp.name
+                import shlex as _shlex
+                rel = _shlex.quote(_os.path.basename(tmp_path))
+                res = sandbox.exec(f"git apply {rel}", timeout=30)
+                return getattr(res, "exit_code", 1) == 0
+            except Exception:
+                return False
+            finally:
+                if tmp_path is not None:
+                    try:
+                        _os.unlink(tmp_path)
+                    except OSError:
+                        pass
+        import subprocess as _sub
+        try:
+            ap = _sub.run(
+                ["git", "-C", str(workdir), "apply", "-"],
+                input=patch.encode("utf-8"),
+                capture_output=True, timeout=30,
+            )
+            return ap.returncode == 0
+        except Exception:
+            return False
+
+    def _maybe_seal(self, quarantine, verdict) -> None:
+        """Conservatively escalate a shield block to a Rung-1 seal.
+
+        Workers only; the trusted root orchestrator (the privileged promoter)
+        is never sealed. Do not trust ``role`` alone here: child agents receive
+        model-supplied role strings from spawn tools. Fail-open -- containment
+        must never break the agent loop.
+        """
+        is_root_orchestrator = (
+            getattr(self, "role", "") == "orchestrator"
+            and getattr(self, "depth", None) == 0
+            and getattr(self, "parent", None) is None
+        )
+        if quarantine is None or is_root_orchestrator:
+            return
+        try:
+            from .quarantine import triage_block
+            triage_block(
+                quarantine, self.name,
+                getattr(verdict, "severity", "high"),
+                "; ".join(getattr(verdict, "reasons", []) or []),
+            )
+        except Exception:  # pragma: no cover -- containment must never break the loop
+            pass
+
+    def _effective_capability(self, tool_name: str):
+        """Capability that gates a tool call, including active verified handoffs."""
+        ambient = getattr(self, "capability", None)
+        # Receiving bus messages is the control-plane path that lets an agent
+        # accept a replacement handoff. Keep it governed by ambient authority so
+        # an older task grant cannot strand the peer from future coordination.
+        if tool_name == "recv_from_agent":
+            return ambient
+        handoff = getattr(self, "_handoff_capability", None)
+        if handoff is None:
+            return ambient
+        if ambient is None:
+            return handoff
+        try:
+            return ambient.intersect(handoff, principal=handoff.principal)
+        except AttributeError:  # pragma: no cover -- defensive for foreign caps
+            return ambient
+
+    def _capability_revocation_denial(self, name: str, cap) -> str | None:
+        # Revocation kill-switch: a still-valid grant can be revoked out of
+        # band (leaked key / rogue agent / offboard); the registry is re-read
+        # on change so a revoke in another process reaches this running agent.
+        # Fail closed when configured revocation state cannot be trusted, and
+        # only consult it when a grant exists (== capability enforcement is
+        # on).
+        if cap is None:
+            return None
+        from .revocation import revoked_principal as _revoked_principal
+        principals = (
+            cap.revocation_principals()
+            if hasattr(cap, "revocation_principals") else (cap.principal,)
+        )
+        revoked = _revoked_principal(principals)
+        if revoked is None:
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} DENIED: principal {revoked} REVOKED",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(
+            EventKind.CAPABILITY_DENIED,
+                tool=name,
+                principal=cap.principal,
+                revoked_principal=revoked,
+                channel=getattr(self.ctx, "channel", None),
+                user_id=getattr(self.ctx, "user_id", None),
+        )
+        return (
+            f"⚠ DENIED by capability policy: principal {revoked!r} "
+            f"has been revoked. The tool was not executed."
+        )
+
+    def _capability_permits_denial(self, name: str, cap) -> str | None:
+        if cap is None or cap.permits(name):
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} DENIED by capability (principal={cap.principal})",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(
+            EventKind.CAPABILITY_DENIED,
+                tool=name,
+                principal=cap.principal,
+                channel=getattr(self.ctx, "channel", None),
+                user_id=getattr(self.ctx, "user_id", None),
+        )
+        return (
+            f"⚠ DENIED by capability policy: principal {cap.principal!r} is "
+            f"not granted tool {name!r}. The tool was not executed."
+        )
+
+    def _tool_token_denial(self, name: str, cap) -> str | None:
+        """Per-call token exchange: trade the run-long grant for a freshly
+        minted, single-tool-scoped, short-lived, signed token and verify it
+        before dispatch (Kagenti-style "token exchange for every tool call",
+        mapped onto our own capability + Ed25519 primitives).
+
+        No-op unless ``[capabilities] per_call_tokens`` is on AND a grant exists
+        (== capability enforcement is on). Minting/verification never crashing
+        the agent loop is treated as fail-open -- the static ``permits()`` check
+        above already authorized the call; a verification *failure* (expired,
+        tampered, replayed, wrong tool) fail-closes only because the operator
+        explicitly turned the feature on.
+        """
+        if cap is None:
+            return None
+        from .tool_token import tool_tokens_enabled
+        if not tool_tokens_enabled():
+            return None
+        from .tool_token import mint_tool_token, verify_tool_token
+        try:
+            token = mint_tool_token(cap, name)
+            # Same-process mint-then-verify: the token never crosses a trust
+            # boundary, so do not require a signature here -- that keeps the
+            # exchange fail-open when cryptography is unavailable (kernel rule),
+            # while a present signature is still verified and the exported
+            # verifier default stays require_signature=True for outside callers.
+            ok = verify_tool_token(token, name, require_signature=False)
+        except Exception:  # pragma: no cover -- exchange must never brick a run
+            return None
+        if ok:
+            # auditable record of the scoped credential this call ran under
+            from .audit import EventKind, audit_event
+            audit_event(
+                EventKind.TOKEN_EXCHANGE, agent=self.name,
+                goal_id=self.ctx.goal_id, tool=name, principal=cap.principal,
+                jti=token.jti, expires_at=token.expires_at,
+                signed=token.signature is not None,
+            )
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} DENIED: per-call token verification failed "
+            f"(principal={cap.principal})",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(EventKind.CAPABILITY_DENIED, tool=name,
+                   principal=cap.principal, reason="tool_token_invalid")
+        return (
+            f"⚠ DENIED by capability policy: per-call token for tool {name!r} "
+            "could not be verified. The tool was not executed."
+        )
+
+    def _capability_path_denial(self, name: str, args: dict, cap) -> str | None:
+        # P0 capability layer (path resource-scopes): for known filesystem
+        # tools, gate the canonical workspace-relative path(s) they will touch.
+        # This mirrors the tools' own resolution behavior, so raw paths like
+        # "allowed/../secret.txt" are checked as "secret.txt". ``list_dir``
+        # gets its schema default of ".", and ``apply_patch`` checks every
+        # file referenced by the unified diff. Malformed calls whose path
+        # cannot be located still fall through to tool validation.
+        if (
+            cap is None
+            or not cap.allow_paths
+            or not (name in _FILE_TOOL_POLICIES or name == "apply_patch")
+        ):
+            return None
+        denied_paths: list[str] = []
+        try:
+            paths = _capability_paths_for_tool(name, args, self.ctx.sandbox)
+        except ValueError:
+            # Absolute configured paths outside workdir are not representable
+            # by a workspace-relative grant. Deny without reflecting host path
+            # metadata (usernames, home layout) into model-visible output.
+            denied_paths = ["<outside-workspace>"]
+        else:
+            if paths is not None:
+                denied_paths = [p for p in paths if not cap.permits_path(p)]
+        if not denied_paths:
+            return None
+        denied = ", ".join(denied_paths)
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} path={denied} DENIED by capability "
+            f"(principal={cap.principal})",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(EventKind.CAPABILITY_DENIED, tool=name,
+                   principal=cap.principal, path=denied)
+        return (
+            f"⚠ DENIED by capability policy: principal {cap.principal!r} is "
+            f"not granted path {denied!r} for tool {name!r}. "
+            "The tool was not executed."
+        )
+
+    def _read_only_path_denial(self, name: str, args: dict) -> str | None:
+        """Keep protected workspace evidence immutable across every file tool.
+
+        Docker overlays ``sandbox.read_only_paths`` as read-only bind mounts
+        for shell/code execution. File tools run in-process, so they need the
+        same check here at the common dispatch chokepoint. Directory entries
+        protect their complete subtree.
+        """
+        protected = tuple(
+            PurePosixPath(path)
+            for path in getattr(self.ctx.sandbox, "read_only_paths", ())
+        )
+        if not protected:
+            return None
+        if name not in _FILE_TOOL_POLICIES and name != "apply_patch":
+            return None
+        try:
+            accesses = _workspace_path_accesses_for_tool(
+                name,
+                args,
+                self.ctx.sandbox,
+                mutating_only=True,
+            )
+        except ValueError:
+            return None
+        if not accesses:
+            return None
+        denied = [
+            access.path
+            for access in accesses
+            if any(
+                PurePosixPath(access.path) == root
+                or root in PurePosixPath(access.path).parents
+                or (
+                    access.mutates_subtree
+                    and PurePosixPath(access.path) in root.parents
+                )
+                for root in protected
+            )
+        ]
+        if not denied:
+            return None
+        rendered = ", ".join(denied)
+        self.ctx.blackboard.post(
+            self.name,
+            "error",
+            f"tool={name} path={rendered} DENIED by sandbox read-only policy",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(
+            EventKind.SANDBOX_DENIED,
+            tool=name,
+            path=rendered,
+            reason="read_only_path",
+        )
+        return (
+            f"DENIED by sandbox policy: path {rendered!r} is read-only. "
+            "The tool was not executed."
+        )
+
+    def _capability_host_denial(self, name: str, args: dict, cap) -> str | None:
+        # P0 capability layer (host resource-scopes): for a known network tool,
+        # the grant's allow_hosts globs also gate the host its URL reaches.
+        # No-op unless a host-restricted grant is active (empty == all). Fail-
+        # soft: if the URL arg is missing/unparseable (no host) we skip the
+        # check rather than error -- we never deny something we can't
+        # confidently locate the host for.
+        url_arg = _NET_TOOL_URL_ARGS.get(name)
+        if cap is None or url_arg is None:
+            return None
+        raw = args.get(url_arg) if isinstance(args, dict) else None
+        host = None
+        if isinstance(raw, str) and raw:
+            try:  # malformed URLs (e.g. bad IPv6) raise -- skip, don't crash
+                host = urlsplit(raw).hostname
+            except ValueError:
+                host = None
+        if not host or cap.permits_host(host):
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} host={host} DENIED by capability "
+            f"(principal={cap.principal})",
+        )
+        from .audit import EventKind
+        self._audit_tool_event(EventKind.CAPABILITY_DENIED, tool=name,
+                   principal=cap.principal, host=host)
+        return (
+            f"⚠ DENIED by capability policy: principal {cap.principal!r} is "
+            f"not granted host {host!r} for tool {name!r}. "
+            "The tool was not executed."
+        )
+
+    @staticmethod
+    def _with_capability_host_scope(name: str, args: dict, cap) -> dict:
+        """Attach active host scope for tools that enforce it internally.
+
+        Always FORCE-overwrite ``_capability_allow_hosts`` from the grant --
+        never ``setdefault``. It is a kernel-injected arg, never a legitimate
+        model-supplied one; honoring a model-provided value would let a tool
+        call widen its own host allowlist past the capability grant (a scope
+        escalation). The ``browser`` path already did this; every other tool
+        must too.
+        """
+        if cap is None or not cap.allow_hosts or not isinstance(args, dict):
+            return args
+        scoped = dict(args)
+        scoped["_capability_allow_hosts"] = tuple(cap.allow_hosts)
+        return scoped
+
+    def _autonomy_denial(self, name: str, cap) -> str | None:
+        # Autonomy servo (Loop 2): tighten the leash with live trust. When the
+        # run's trust is low -- a high-disagreement swarm fan-out or a low
+        # verifier verdict -- the effective risk ceiling drops, so an unresolved
+        # disagreement can't drive an irreversible (high-risk) action
+        # unattended. Composes WITH the capability ceiling above (it tightens
+        # from the grant's max_risk, never broadens). No-op unless [autonomy] is
+        # enabled. Fail-open: a bug here must never block a tool.
+        try:
+            from . import autonomy
+            _av = autonomy.gate_tool(
+                name,
+                disagreement=float(getattr(self.ctx, "last_disagreement", 0.0) or 0.0),
+                verifier_confidence=float(
+                    getattr(self.ctx, "last_verifier_confidence", 1.0) or 1.0
+                ),
+                configured_max_risk=getattr(cap, "max_risk", None),
+            )
+        except Exception:  # pragma: no cover -- autonomy gate must never break the loop
+            _av = None
+        if _av is None or _av.allowed:
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error", f"tool={name} GATED by autonomy: {_av.reason}",
+        )
+        # tamper-evident record of the gate. audit_event swallows write
+        # errors but propagates a refusal -- a gate we cannot record is a gate
+        # whose firing we cannot later prove.
+        from .audit import EventKind, audit_event
+        audit_event(
+            EventKind.AUTONOMY_GATED, agent=self.name,
+            goal_id=self.ctx.goal_id, tool=name,
+            effective_max_risk=_av.effective_max_risk,
+        )
+        return (
+            f"⚠ GATED by autonomy policy: {_av.reason}. The tool was not "
+            "executed. Resolve the disagreement (reconcile the divergent "
+            "findings) or get human approval via ask_user before retrying."
+        )
+
+    async def _governance_denial(self, name: str, args: dict, cap) -> str | None:
+        # Org oversight control plane (enterprise): on top of the per-principal
+        # capability above, an org-level policy can DENY an action outright or
+        # REQUIRE_HUMAN sign-off (EU AI Act Art 14). Default-open -- an empty
+        # [governance] policy returns ALLOW, so this is a no-op for non-
+        # enterprise installs. A present-but-invalid policy, unreadable source,
+        # missing enforcement module, or evaluation error fails CLOSED: true
+        # absence is represented by a successfully loaded empty Policy, so
+        # policy uncertainty must never masquerade as the default-open posture.
+        _gov = None
+        try:
+            from .governance import Decision as _GovDecision
+            from .governance import Policy as _GovPolicy
+            from .governance import Verdict as _GovVerdict
+            from .governance import evaluate as _gov_evaluate
+        except Exception:
+            log.warning(
+                "governance: enforcement module unavailable for %r; failing closed",
+                name,
+                exc_info=True,
+            )
+            self.ctx.blackboard.post(
+                self.name,
+                "error",
+                f"tool={name} DENIED: governance enforcement unavailable",
+            )
+            return (
+                "⚠ DENIED by governance policy (policy_unavailable): "
+                "the enforcement module was unavailable, so the tool was not "
+                "executed."
+            )
+        else:
+            try:
+                _gov_policy = _GovPolicy.from_config()
+            except Exception:
+                # The module is available but its active policy is not. This is
+                # distinguishable from the intentional no-policy posture because
+                # Policy.from_config returns an empty Policy for true absence and
+                # raises only when the source or a present field is untrusted.
+                log.warning(
+                    "governance: policy unavailable for %r; failing closed",
+                    name,
+                    exc_info=True,
+                )
+                _gov_policy = None
+                _gov = _GovVerdict(
+                    _GovDecision.DENY,
+                    "governance policy is unavailable or invalid (failed closed)",
+                    "policy_unavailable",
+                )
+        if _gov_policy is not None and not _gov_policy.is_empty():
+            try:
+                # Pass the transaction amount/currency so the policy's
+                # dollar-tier gates (deny_above / require_human_above) actually
+                # fire -- without this the finance delegation-of-authority
+                # thresholds are dead at the chokepoint.
+                _gov_currency = args.get("currency") if isinstance(args, dict) else None
+                _gov = _gov_evaluate(
+                    name, policy=_gov_policy,
+                    amount=_governance_amount(args),
+                    currency=_gov_currency if isinstance(_gov_currency, str) else "",
+                )
+            except Exception:
+                log.warning("governance: evaluation failed for %r; failing closed",
+                            name, exc_info=True)
+                self.ctx.blackboard.post(
+                    self.name, "error",
+                    f"tool={name} BLOCKED: governance evaluation error (fail-closed)",
+                )
+                _gov = _GovVerdict(
+                    _GovDecision.DENY,
+                    "governance evaluation error (failed closed)", "error",
+                )
+        # Per-agent autonomy level (the agent-as-employee authority dial):
+        # compose strictest-wins with the org governance verdict. Only
+        # consequential (non-low-risk) tools are gated -- reading/searching is
+        # always allowed regardless of the hire's rung. Independent of whether an
+        # [governance] policy is set; no-op unless [workforce] levels is enabled.
+        # Once the client enables this enforcement layer, an evaluation failure
+        # must refuse the action. Otherwise a classifier/profile bug would turn
+        # the authority dial into an execution bypass.
+        _autonomy_levels_enabled = False
+        try:
+            from . import agent_autonomy as _aa
+            from .governance import Decision as _GD
+            from .governance import Verdict as _GV
+            from .safety.tool_risk import risk_rank as _rr
+            from .safety.tool_risk import tool_risk as _tr
+            _autonomy_levels_enabled = _aa.levels_enabled()
+            _risk = _tr(name)
+            # Disabled => the gate is a strict no-op (kernel rule 1: byte-for-byte
+            # historical behaviour). Low-risk tools (reads/searches) and the
+            # coordination control-plane (spawn/bus/delegate -- how the workforce
+            # communicates) are never gated by the dial.
+            if (_autonomy_levels_enabled and _rr(_risk) > 0
+                    and name not in _aa.COORDINATION_TOOLS):
+                _al = _aa.decide(getattr(self, "_autonomy_name", self.role),
+                                 getattr(self, "_autonomy", None),
+                                 action=name, risk=_risk)
+                _amap = {"allow": _GD.ALLOW, "require_human": _GD.REQUIRE_HUMAN,
+                         "deny": _GD.DENY}
+                _adec = _amap.get(_al.decision, _GD.REQUIRE_HUMAN)
+                if _adec is not _GD.ALLOW:
+                    _rank = {_GD.ALLOW: 0, _GD.REQUIRE_HUMAN: 1, _GD.DENY: 2}
+                    if _gov is None or _rank[_adec] > _rank[_gov.decision]:
+                        _gov = _GV(_adec, f"autonomy level: {_al.reason}",
+                                   f"autonomy:{_al.level.value}")
+        except Exception:
+            if _autonomy_levels_enabled:
+                log.warning(
+                    "autonomy: level evaluation failed for %r; failing closed",
+                    name,
+                    exc_info=True,
+                )
+                self.ctx.blackboard.post(
+                    self.name,
+                    "error",
+                    f"tool={name} DENIED: autonomy evaluation unavailable",
+                )
+                from .audit import EventKind, audit_event
+
+                audit_event(
+                    EventKind.GOVERNANCE_DENIED,
+                    agent=self.name,
+                    goal_id=self.ctx.goal_id,
+                    tool=name,
+                    principal=(
+                        getattr(cap, "principal", None)
+                        if cap is not None else None
+                    ),
+                    rule="autonomy:error",
+                    reason="autonomy level evaluation failed closed",
+                )
+                return (
+                    "⚠ DENIED by autonomy policy (autonomy:error): "
+                    "authority evaluation was unavailable, so the tool was not "
+                    "executed."
+                )
+            log.warning(
+                "autonomy: level evaluation unavailable while disabled for %r; "
+                "skipping",
+                name,
+                exc_info=True,
+            )
+        if _gov is None or _gov.decision is _GovDecision.ALLOW:
+            return None
+        from .audit import EventKind
+        _principal = getattr(cap, "principal", None) if cap is not None else None
+        if _gov.decision is _GovDecision.DENY:
+            self.ctx.blackboard.post(
+                self.name, "error",
+                f"tool={name} DENIED by governance ({_gov.rule})",
+            )
+            # tamper-evident record of the denial; a refusal propagates
+            from .audit import EventKind, audit_event
+            audit_event(EventKind.GOVERNANCE_DENIED, agent=self.name,
+                        goal_id=self.ctx.goal_id, tool=name,
+                        principal=_principal, rule=_gov.rule,
+                        reason=_gov.reason)
+            return (
+                f"⚠ DENIED by org policy ({_gov.rule}): {_gov.reason}. "
+                "The tool was not executed."
+            )
+        # REQUIRE_HUMAN: the action runs only with a real human's approval
+        # (Art 14). allow_auto_approve=False means a silent auto-approve mode
+        # counts as a denial -- no human in the loop, no run.
+        import asyncio as _asyncio
+        granted = False
+        try:
+            from .safety.consent import require_consent
+            from .safety.tool_risk import tool_risk
+            decision = await _asyncio.to_thread(
+                require_consent, name,
+                risk=tool_risk(name), detail=_gov.reason,
+                provenance="governance",
+                allow_auto_approve=False,
+                # When the operator opts into per-action oversight, a prior
+                # persistent ledger grant must NOT silently satisfy the
+                # Art-14 gate -- demand a fresh human decision each time. The
+                # autonomy dial can drive REQUIRE_HUMAN with no [governance]
+                # policy set (_gov_policy None), so guard the attribute read.
+                consult_ledger=not (
+                    _gov_policy.require_fresh_human_approval if _gov_policy else False
+                ),
+            )
+            granted = bool(decision.granted)
+        except Exception:  # pragma: no cover -- consent unavailable -> fail closed
+            granted = False
+        if granted:
+            return None
+        self.ctx.blackboard.post(
+            self.name, "error",
+            f"tool={name} BLOCKED: governance requires human approval",
+        )
+        from .audit import EventKind, audit_event
+        audit_event(EventKind.GOVERNANCE_DENIED, agent=self.name,
+               goal_id=self.ctx.goal_id, tool=name,
+               principal=_principal, rule=_gov.rule,
+               reason="human approval not granted")
+        # Human-override ingestion: the operator's "no" is itself a
+        # learning signal — recallable on the next similar goal and
+        # consolidated by dreaming. No-op unless [reflexion] is on.
+        try:
+            from .reflexion import record_human_override
+            record_human_override(
+                self.brief, name, _gov.reason or _gov.rule,
+                domain=self.domain,
+                channel=getattr(self.ctx, "channel", None),
+                user_id=getattr(self.ctx, "user_id", None),
+            )
+        except Exception:  # pragma: no cover -- never block the denial
+            pass
+        return (
+            f"⚠ {name!r} requires human approval (EU AI Act Art 14): "
+            f"{_gov.reason}. Not granted, so the tool was not executed."
+        )
+
+    def _audit_tool_event(self, kind: str, **payload: Any) -> None:
+        """Record a tool-lifecycle audit event on the signed chain.
+
+        Kept off ``_run_tool`` so the audit path adds no control-flow branches to
+        that hot method. Best-effort with one deliberate exception:
+
+        ``AuditRefused`` propagates. It is raised only when the audit subsystem
+        declined to write because writing would have broken a guarantee the
+        deployment asserts, and swallowing it turned that refusal into "write
+        nothing and run the tool anyway" -- worse than either outcome the writer
+        was choosing between, and a silent falsification of the profile's
+        central claim that every action is recorded.
+
+        Catching the BASE matters. This site previously caught only
+        ``AuditWriteRefused``, so the sibling ``OffHostSigningRequiredError`` --
+        the refusal that fires under the strictest posture we sell -- fell
+        through to the ``except Exception`` below and was swallowed. The one
+        hardened call site in the tree was hardened against the wrong half.
+
+        Everything else is still swallowed, but no longer silently: a bare
+        ``pass`` here meant a permanently broken audit path looked identical to
+        a healthy one.
+        """
+        from .audit import audit_event
+        audit_event(kind, agent=self.name, goal_id=self.ctx.goal_id, **payload)
+
+    async def _run_tool(self, name: str, args: dict) -> str:
+        # Record the tool name on this agent's action sequence so a parent can
+        # capture per-sub-agent trajectories (maverick.credit.build_subtrajectories).
+        # Tool NAMES only -- never args -- so this carries no secrets. Lazy-init
+        # to avoid touching the constructor.
+        acts = getattr(self, "_actions", None)
+        if acts is None:
+            acts = self._actions = []
+        acts.append(name)
+        # Compartment Rung 1: a sealed agent runs no further tools. Its prior
+        # blackboard posts are also withheld (see Blackboard.render).
+        q = getattr(self.ctx, "quarantine", None)
+        if q is not None:
+            # Register this agent's domain so a Rung-2 sector seal reaches it.
+            q.register_agent(self.name, getattr(self, "domain", None))
+            if q.is_sealed(self.name):
+                return (
+                    f"⚠ Agent sealed by compartment quarantine "
+                    f"({q.reason(self.name)}). No further tools will run."
+                )
+        args = _normalize_file_tool_args(name, args, self.ctx.sandbox)
+        shield = self.ctx.shield
+        if shield is not None:
+            verdict = shield.scan_tool_call(name, args)
+            if not verdict.allowed:
+                self.ctx.blackboard.post(
+                    self.name, "error",
+                    f"tool={name} BLOCKED by Shield: {'; '.join(verdict.reasons)}",
+                )
+                # tamper-evident record of the shield block; a refusal propagates
+                from .audit import EventKind, audit_event
+                audit_event(EventKind.SHIELD_BLOCK, agent=self.name,
+                       goal_id=self.ctx.goal_id, stage="tool",
+                       reason="; ".join(verdict.reasons),
+                       score=getattr(verdict, "score", None))
+                self._maybe_seal(q, verdict)
+                return (
+                    f"⚠ BLOCKED by Shield ({verdict.severity}): "
+                    f"{'; '.join(verdict.reasons)}. The tool was not executed."
+                )
+
+        # P0 capability layer: a per-agent grant (attenuated from the parent
+        # on spawn) gates the tool surface. None == unrestricted, so this is a
+        # no-op unless capability enforcement was opted in. Deny wins -- the
+        # tool never runs and the model gets a clear, non-leaky refusal.
+        cap = self._effective_capability(name)
+        # Capability gates that key only on (name, cap): the revocation
+        # kill-switch, the tool-grant check, and the zero-trust per-call token
+        # exchange (scope the grant to this one tool, short-lived + signed, and
+        # verify before dispatch -- no-op unless [capabilities] per_call_tokens
+        # is on). Each returns a non-leaky refusal string when it denies, else
+        # None; checked in order so deny wins and the tool never runs.
+        for _gate in (
+            self._capability_revocation_denial,
+            self._capability_permits_denial,
+            self._tool_token_denial,
+        ):
+            if (d := _gate(name, cap)) is not None:
+                return d
+        if (d := self._capability_path_denial(name, args, cap)) is not None:
+            return d
+        if (d := self._read_only_path_denial(name, args)) is not None:
+            return d
+        # Operating-Twin pre-execution gates (governed rehearsal defaults on;
+        # both fail open on internal errors):
+        # rehearsal holds an elevated-risk tool the world-model can't vouch for;
+        # a learned guardrail holds an action the data engine has causally shown
+        # lowers outcomes (self-correcting -- dropped when the harm is gone).
+        if (d := self._twin_denial(name)) is not None:
+            return d
+        # The browser can follow redirects and later URL-less actions read or
+        # interact with the current page. Pass the active host scope into the
+        # tool so it can gate the final/current page host before returning
+        # content or continuing a restricted session. This must happen before
+        # the host-scope check so the (possibly rewritten) args carry forward.
+        args = self._with_capability_host_scope(name, args, cap)
+        if (d := self._capability_host_denial(name, args, cap)) is not None:
+            return d
+
+        # Autonomy servo (Loop 2): low run-trust tightens the risk ceiling.
+        if (d := self._autonomy_denial(name, cap)) is not None:
+            return d
+
+        # Org oversight control plane (enterprise): policy DENY or REQUIRE_HUMAN
+        # sign-off (EU AI Act Art 14). Default-open for non-enterprise installs.
+        if (d := await self._governance_denial(name, args, cap)) is not None:
+            return d
+
+        # PreToolUse hooks: any registered hook can BLOCK the call by
+        # returning a non-zero exit code (shell hook) or a falsy value
+        # (Python callable). Modeled on Claude Code's hook surface.
+        from .hooks import HookContext, HookEvent
+        from .hooks import dispatch as _dispatch_hooks
+        pre_ctx = HookContext(
+            event=HookEvent.PRE_TOOL_USE,
+            tool_name=name, tool_args=args,
+            goal_id=self.ctx.goal_id, agent_role=self.role,
+        )
+        if not await _dispatch_hooks(pre_ctx):
+            self.ctx.blackboard.post(
+                self.name, "error",
+                f"tool={name} BLOCKED by PreToolUse hook",
+            )
+            return "⚠ BLOCKED by hook. The tool was not executed."
+
+        # Success-path audit (who-did-what-when): a tamper-evident record that
+        # this tool call executed, on the same signed chain as the denial events.
+        self._audit_tool_event("tool_call", name=name,
+                               input_summary=_audit_summary(args))
+
+        output = await self.tools.run(name, args)
+
+        post_ctx = HookContext(
+            event=HookEvent.POST_TOOL_USE,
+            tool_name=name, tool_args=args, tool_result=output,
+            goal_id=self.ctx.goal_id, agent_role=self.role,
+        )
+        await _dispatch_hooks(post_ctx)
+        # Council finding: tool output flowed back to the LLM unscanned,
+        # so a malicious file contents / shell stdout containing
+        # `FINAL: <exfil>` or jailbreak instructions hit the next turn.
+        # Wrap the output in a clearly-delimited block so the agent
+        # treats it as data, and scan it through the shield.
+        if shield is not None:
+            try:
+                out_verdict = shield.scan_output(output)
+                if not out_verdict.allowed:
+                    self.ctx.blackboard.post(
+                        self.name, "error",
+                        f"tool={name} OUTPUT BLOCKED by Shield: "
+                        f"{'; '.join(out_verdict.reasons)}",
+                    )
+                    self._maybe_seal(q, out_verdict)
+                    return (
+                        f"⚠ Tool output BLOCKED by Shield ({out_verdict.severity}): "
+                        f"{'; '.join(out_verdict.reasons)}. Result withheld."
+                    )
+            except Exception as e:  # shield must never block tools on its own bug
+                # Fail-open, but NOT silently: a scanner that reliably throws
+                # on a crafted output would otherwise disable output gating for
+                # that call with zero trace. Surface it so the bypass is
+                # observable (warn + blackboard), per the "warn, don't fail
+                # silent" contract.
+                log.warning(
+                    "shield.scan_output raised on tool=%s output (fail-open): %s: %s",
+                    name, type(e).__name__, e,
+                )
+                self.ctx.blackboard.post(
+                    self.name, "warning",
+                    f"tool={name} shield output-scan errored (fail-open): "
+                    f"{type(e).__name__}",
+                )
+        # Defense-in-depth: redact secrets in tool output BEFORE it returns to
+        # the model / blackboard / channel. `cat .env`, a DB row, or an API
+        # response can carry a key the shield's scan_output doesn't classify
+        # as a policy violation; the env-scrub only covers the shell child's
+        # own env, not secrets the tool reads from files/services. Fail-open.
+        try:
+            from .safety.secret_detector import redact as _redact_secrets
+            output, _redacted = _redact_secrets(output)
+        except Exception:  # pragma: no cover
+            pass
+        # Bound a single runaway result before it enters the context window
+        # (compaction only trims results behind the recent window).
+        output = _cap_tool_output(output, limit=_tool_result_limit(self.model))
+        # Council-of-20 security finding: a literal `</tool_output>` in
+        # `output` (attacker-controlled file contents, shell stdout, MCP
+        # response) escapes the framing and lets following text read as
+        # authoritative LLM context. Use a random per-call nonce so the
+        # close tag is unforgeable. `secrets.token_hex(8)` = 16 hex chars.
+        nonce = _secrets.token_hex(8)
+        framed = (
+            f"<tool_output tool={name!r} id={nonce}>\n"
+            f"{output}\n"
+            f"</tool_output {nonce}>"
+        )
+        # Success-path audit: the tool's outcome (ok/error) + a bounded output
+        # summary, completing the TOOL_CALL/TOOL_RESULT pair on the signed chain.
+        self._audit_tool_event("tool_result", name=name,
+                               status=_tool_status(output),
+                               output_summary=_audit_summary(output))
+        # Loop guard: detect a repeated identical FAILURE from the raw result
+        # (before framing) and, past threshold, append a nudge OUTSIDE the data
+        # block -- it's trusted loop-control guidance, not tool output.
+        return framed + self._loop_guard_note(name, args, output)
+
+    @staticmethod
+    def _tool_call_key(name: str, args: dict) -> str:
+        try:
+            blob = json.dumps(args, sort_keys=True, default=str)
+        except Exception:  # pragma: no cover -- unserializable args
+            blob = repr(args)
+        return f"{name}\x00{blob}"
+
+    @staticmethod
+    def _tool_failure_key(name: str, args: dict, raw_output: str) -> str:
+        error_hash = hashlib.sha256((raw_output or "").strip().encode()).hexdigest()
+        return f"{Agent._tool_call_key(name, args)}\x00{error_hash}"
+
+    def _loop_guard_note(self, name: str, args: dict, raw_output: str) -> str:
+        """Track this call's outcome; return a nudge when an identical call has
+        failed the same way ``_LOOP_GUARD_THRESHOLD`` times in a row."""
+        if not _LOOP_GUARD_ENABLED:
+            return ""
+        failed = _tool_call_failed(raw_output)
+        if not failed:
+            self._tool_fail_streak.clear()
+            return ""
+        key = self._tool_failure_key(name, args, raw_output)
+        streak = self._tool_fail_streak.get(key, 0) + 1
+        self._tool_fail_streak.clear()
+        self._tool_fail_streak[key] = streak
+        if streak < _LOOP_GUARD_THRESHOLD:
+            return ""
+        # Tool-failure taxonomy: the streak the loop guard detected is a
+        # learnable pattern, not just an in-run nudge. Persist it (class
+        # ``tool_flaky``) so recall warns the next similar goal away from the
+        # tool and find_tools can demote it. No-op unless [reflexion] is on.
+        try:
+            from . import reflexion as _r
+            if _r.enabled():
+                head = (raw_output or "").strip().splitlines()
+                _r.record(
+                    goal_text=_r._sanitize_text(self.brief)[:500],
+                    failure_class="tool_flaky",
+                    failure_msg=(head[0][:200] if head else ""),
+                    reflection=(
+                        f"The `{name}` tool failed the same way {streak}x in a "
+                        "row on this kind of goal. Reach for an alternative "
+                        "tool or different arguments early instead of retrying."
+                    ),
+                    tools_used=[name],
+                    channel=getattr(self.ctx, "channel", None),
+                    user_id=getattr(self.ctx, "user_id", None),
+                    domain=self.domain,
+                )
+        except Exception:  # pragma: no cover -- learning never blocks the loop
+            pass
+        return (
+            f"\n\n[loop-guard] You have issued this exact `{name}` call "
+            f"{streak} times in a row and it failed the same way each time. "
+            "Do NOT repeat it again — change the arguments, switch tools, or "
+            "step back and rethink the approach."
+        )
+
+    def _is_parallel_safe(self, name: str) -> bool:
+        """Whether ``name`` may execute concurrently with the other tool
+        calls in the same turn. Reads the tool's ``parallel_safe`` flag;
+        unknown tools (and any tool missing the attribute, e.g. a plugin
+        built against an older Tool dataclass) default to False — serial.
+        """
+        try:
+            return bool(getattr(self.tools.get(name), "parallel_safe", False))
+        except KeyError:
+            return False
+
+    @staticmethod
+    def _make_tool_result(tool_use_id: str, output: str) -> dict:
+        """Build a tool_result block, flagging errors for the model.
+
+        May 26 council fix (API audit #4): set ``is_error: true`` on
+        tool_results that surface an error. Per Anthropic docs, this
+        tells Claude the tool failed so it can recover instead of
+        treating the error string as a normal output. Our tool registry
+        prefixes errors with "ERROR: " and the shield emits
+        "BLOCKED by Shield".
+        """
+        tr: dict = {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": output,
+        }
+        # Frame-aware: `output` is the <tool_output …>-wrapped string, so inspect
+        # the content inside it (a leading-ERROR check on the frame is always
+        # false -- that bug left is_error unset on every failed tool).
+        if _tool_call_failed(output):
+            tr["is_error"] = True
+        return tr
+
+    def _score_step(
+        self,
+        *,
+        step_index: int,
+        tool_name: str | None = None,
+        tool_succeeded: bool | None = None,
+        is_final: bool = False,
+        error: str | None = None,
+    ) -> None:
+        """Score one step via the PRM and post the result to the blackboard.
+
+        No-op unless a non-Null PRM is configured. Never raises: a scoring
+        failure is observability noise, not a reason to fail the agent loop.
+        """
+        promise = progress = None
+        if self._prm_enabled:
+            try:
+                from .prm import StepContext
+                reward = self._prm.score(StepContext(
+                    goal_id=self.ctx.goal_id or 0,
+                    step_index=step_index,
+                    role=self.role,
+                    tool_name=tool_name,
+                    tool_succeeded=tool_succeeded,
+                    is_final=is_final,
+                    error=error,
+                    prior_step_score=self._last_step_score,
+                ))
+                promise, progress = reward.promise, reward.progress
+                self._last_step_score = reward.promise
+                self._promise_window.push(reward.promise)
+                self.ctx.blackboard.post(
+                    self.name, "prm",
+                    f"step={step_index} promise={reward.promise:.2f} "
+                    f"progress={reward.progress:+.2f} conf={reward.confidence:.2f}",
+                )
+            except Exception as e:  # pragma: no cover - PRM must never break the loop
+                log.debug("PRM scoring skipped: %s", e)
+        # Capture is DECOUPLED from the PRM (Karpathy): cheap and unconditional,
+        # a no-op unless [self_improvement] capture is on. A deployment shouldn't
+        # need a reward model configured just to record what its agents did.
+        self._capture_trajectory_step(
+            step_index, tool_name, tool_succeeded, is_final, error, promise, progress)
+
+    def _last_tool(self) -> str:
+        """The tool used just before this one (``_actions`` already holds the
+        current call at [-1], so the prior is [-2]); '' at the first tool."""
+        acts = getattr(self, "_actions", None)
+        return acts[-2] if acts and len(acts) >= 2 else ""
+
+    def _speculative_turn_model(self) -> str:
+        """Pick the model for this turn: a cheap draft when the Operating Twin's
+        world-model is confident the turn is predictable, else the normal model.
+
+        No-op (returns ``self.model``) unless ``[speculative]`` is enabled with a
+        configured draft model and the state is speculatable; fail-open on any
+        error. At turn start the last EXECUTED tool is ``_actions[-1]``.
+        """
+        try:
+            from .speculative_exec import draft_model_for_turn
+            acts = getattr(self, "_actions", None)
+            last = acts[-1] if acts else ""
+            return draft_model_for_turn(self.domain, self.role, last) or self.model
+        except Exception:  # pragma: no cover -- never break the loop
+            return self.model
+
+    def _twin_denial(self, name: str) -> str | None:
+        """The Operating-Twin pre-execution gates, first hold wins: rehearsal
+        (world-model can't vouch) then learned guardrails (causally harmful)."""
+        return self._rehearsal_denial(name) or self._guardrail_denial(name)
+
+    def _rehearsal_denial(self, name: str) -> str | None:
+        """Hold an elevated-risk tool the rehearsal twin can't vouch for.
+
+        No-op unless ``[rehearsal]`` is enabled; only ``high``-risk tools are
+        gated; any error fails open (the tool runs). A confident-good rehearsal
+        proceeds; a confident-poor (BLOCK) or unvouchable (ESCALATE) one returns a
+        non-leaky refusal the model can react to.
+        """
+        try:
+            from . import rehearsal
+            if not rehearsal.enabled():
+                return None
+            from .safety.tool_risk import tool_risk
+            if tool_risk(name) != "high":
+                return None
+            from .rehearsal_runtime import gate_tool
+            v = gate_tool(domain=self.domain, role=self.role,
+                          last_tool=self._last_tool(), tool_name=name)
+            if v.decision == rehearsal.PROCEED:
+                try:  # pin the prediction as earned-autonomy evidence
+                    # (default-off, module self-gated). Only PROCEED verdicts:
+                    # they used to vanish, and they are exactly the predictions
+                    # reality later grades -- a held action never executes, so
+                    # its prediction must not be scored against the outcome.
+                    from .earned_autonomy import capture_prediction
+                    capture_prediction(
+                        v, principal=getattr(self, "_autonomy_name", self.role),
+                        action=name, risk="high",
+                        goal_id=int(self.ctx.goal_id or 0),
+                        episode_id=int(getattr(self.ctx, "episode_id", 0) or 0))
+                except Exception:  # pragma: no cover -- never breaks the loop
+                    pass
+                return None
+            # tamper-evident record of the hold; a refusal propagates
+            from .audit import EventKind, audit_event
+            audit_event(EventKind.SHIELD_BLOCK, agent=self.name, goal_id=self.ctx.goal_id,
+                   stage="rehearsal", reason=f"{v.decision}: {v.reason}")
+            return (
+                f"⚠ Held by pre-execution rehearsal ({v.decision}): {v.reason}. "
+                "The tool was not executed; choose another approach or seek approval."
+            )
+        except Exception:  # pragma: no cover -- rehearsal must never break the loop
+            return None
+
+    def _guardrail_denial(self, name: str) -> str | None:
+        """Hold an action a learned guardrail flags as causally harmful.
+
+        No-op unless ``[data_engine]`` is enabled (guardrails are its output);
+        consults the registry the flywheel writes; any error fails open. Unlike a
+        hand-written deny-list, the guardrail carries the causal effect that
+        justifies it and is auto-dropped when the harm is gone.
+        """
+        try:
+            from . import data_engine
+            if not data_engine.enabled():
+                return None
+            from .negative_knowledge import shared
+            g = shared().consult(name)
+            if g is None:
+                return None
+            # tamper-evident record of the hold; a refusal propagates
+            from .audit import EventKind, audit_event
+            audit_event(EventKind.SHIELD_BLOCK, agent=self.name, goal_id=self.ctx.goal_id,
+                   stage="guardrail", reason=g.rule)
+            return (
+                f"⚠ Held by a learned guardrail: {g.rule}. The tool was not executed; "
+                "choose another approach (this rule was learned from real outcomes and "
+                "is dropped automatically once the harm is gone)."
+            )
+        except Exception:  # pragma: no cover -- guardrails must never break the loop
+            return None
+
+    def _capture_trajectory_step(self, step_index, tool_name, tool_succeeded,
+                                 is_final, error, promise, progress) -> None:
+        """Append this step to the governed trajectory store -- the data
+        foundation for self-improvement. No-op unless [self_improvement] capture
+        is on; best-effort, never raises into the loop."""
+        try:
+            import time as _t
+
+            from .trajectory_store import (
+                TrajectoryStep,
+                capture_step,
+                episode_dag_fields,
+            )
+            # Decision-DAG edge + terminal outcome (the final answer's verifier
+            # confidence, set by the verify stage just before the is_final score).
+            dag = episode_dag_fields(
+                int(step_index), bool(is_final),
+                getattr(self.ctx, "last_verifier_confidence", None),
+            )
+            capture_step(TrajectoryStep(
+                ts=_t.time(), goal_id=int(self.ctx.goal_id or 0),
+                episode_id=int(getattr(self.ctx, "episode_id", 0) or 0),
+                step=int(step_index), role=self.role, tool=tool_name or "",
+                tool_succeeded=tool_succeeded, is_final=bool(is_final),
+                error=error or "", promise=promise, progress=progress,
+                domain=self.domain or "", **dag,
+            ))
+        except Exception:  # pragma: no cover -- capture must never break the loop
+            pass
+
+    def _mirror_live_spend(self, episode_id: int) -> None:
+        """Throttled write of running totals onto the open episode row (#614).
+
+        Only the root agent (depth 0) of a goal-scoped run mirrors; sub-agents
+        share the goal's single episode and budget, so the orchestrator's
+        write already covers the whole swarm's accruing spend. Read-side
+        observability only -- `update_episode_spend` guards on
+        `ended_at IS NULL` so it can never clobber `end_episode`. Never raises.
+        """
+        if self.depth != 0 or not episode_id or self.ctx.goal_id is None:
+            return
+        now = time.monotonic()
+        if (now - self._last_spend_mirror) < _SPEND_MIRROR_INTERVAL:
+            return
+        self._last_spend_mirror = now
+        b = self.ctx.budget
+        try:
+            self.ctx.world.update_episode_spend(
+                episode_id,
+                cost_dollars=b.dollars,
+                input_tokens=b.input_tokens,
+                output_tokens=b.output_tokens,
+                tool_calls=b.tool_calls,
+                cache_read_tokens=b.cache_read_tokens,
+                cache_write_tokens=b.cache_write_tokens,
+            )
+        except Exception as e:  # pragma: no cover -- observability never blocks
+            log.debug("live-spend mirror skipped: %s", e)
+
+    # Poll interval (seconds) for the killswitch while an LLM generation is
+    # in flight — small enough to feel responsive, large enough to be free.
+    _HALT_POLL_SECONDS = 1.0
+
+    async def _complete_guarded(self, **kw):
+        """Await an LLM completion, but ABORT the in-flight call when the
+        wall-clock budget is exhausted or the killswitch trips — instead of
+        letting a multi-minute generation run to completion and blow the SLA or
+        ignore a HALT (the cap/halt were otherwise only checked at turn
+        boundaries). Raises :class:`BudgetExceeded` (wall) or
+        :class:`killswitch.Halted`, both already handled by the caller."""
+        budget = self.ctx.budget
+        remaining = budget.remaining_wall()
+        if remaining <= 0:
+            raise BudgetExceeded(
+                f"wall time {budget.elapsed():.0f}s > {budget.max_wall_seconds:.0f}s")
+        task = asyncio.ensure_future(self.ctx.llm.complete_async(**kw))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + remaining
+        try:
+            while True:
+                slice_s = min(self._HALT_POLL_SECONDS, deadline - loop.time())
+                done, _ = await asyncio.wait({task}, timeout=max(0.0, slice_s))
+                if task in done:
+                    return task.result()  # re-raises any error from the call
+                if loop.time() >= deadline:
+                    raise BudgetExceeded(
+                        f"wall-clock cap {budget.max_wall_seconds:.0f}s reached "
+                        "mid-generation")
+                killswitch.check()  # raises killswitch.Halted if tripped
+        except BaseException:
+            # Wall cap, halt, or an upstream cancellation: cancel the in-flight
+            # generation (aborts the provider HTTP request) before propagating.
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+            raise
+
+    async def run(self) -> AgentResult:
+        # OTel GenAI semconv: every agent execution is an ``invoke_agent``
+        # span (gen_ai.agent.name/id), the third semconv leg alongside the
+        # LLM (chat) and tool (execute_tool) spans. No-op when tracing is off.
+        try:
+            from .observability import (
+                gen_ai_agent_attributes,
+                safe_agent_telemetry_label,
+                trace_span,
+            )
+        except Exception:  # pragma: no cover -- tracing never blocks a run
+            return await self._run_inner()
+        telemetry_role = safe_agent_telemetry_label(self.role)
+        with trace_span(
+            f"invoke_agent {telemetry_role}",
+            attributes=gen_ai_agent_attributes(self.role, agent_id=self.name),
+        ):
+            return await self._run_inner()
+
+    def _resume_from_checkpoint(self, messages: list[dict], bb, ep_id: int):
+        """Resume durable loop state for a depth-0 run (opt-in, fail-open).
+
+        Returns ``(ckpt, start_step, messages)``. When durable checkpointing is
+        disabled, there is no goal id, this is not the root agent, or anything
+        raises, returns ``(None, 0, messages)`` unchanged — today's warm-restart
+        behavior. Restores ``self.ctx.budget`` from the snapshot as a side effect
+        when one is present. Extracted from ``_run_inner`` (CheckpointManager).
+        """
+        start_step = 0
+        ckpt = None
+        if self.depth == 0 and self.ctx.goal_id is not None:
+            try:
+                from . import checkpoint as _ckpt_mod
+                if _ckpt_mod.enabled():
+                    ckpt = _ckpt_mod.Checkpointer(self.ctx.world)
+                    # Resume keys on a STABLE id, not self.name (a per-process
+                    # random uuid that never matched on a fresh-process resume).
+                    saved = ckpt.latest(
+                        self.ctx.goal_id, self.checkpoint_id, episode_id=ep_id,
+                    )
+                    if saved is not None and saved.messages:
+                        messages = saved.messages
+                        start_step = saved.step_seq
+                        try:
+                            self.ctx.budget = _ckpt_mod.restore_budget(saved.budget)
+                        except Exception:
+                            pass
+                        bb.post(self.name, "plan",
+                                f"resumed from checkpoint at step {start_step}")
+            except Exception as e:  # pragma: no cover -- never block a run
+                log.debug("checkpoint resume skipped: %s", e)
+        return ckpt, start_step, messages
+
+    def _save_checkpoint(self, ckpt, *, step: int, messages: list[dict],
+                         ep_id: int) -> None:
+        """Persist resumable loop state at a turn boundary. Fail-open no-op when
+        checkpointing is off (``ckpt is None``) or the store errors. Extracted
+        from ``_run_inner`` (CheckpointManager)."""
+        if ckpt is not None:
+            try:
+                ckpt.save(
+                    goal_id=self.ctx.goal_id, agent_id=self.checkpoint_id,
+                    episode_id=ep_id, step_seq=step, messages=messages,
+                    budget=self.ctx.budget, meta={"role": self.role},
+                )
+            except Exception as e:  # pragma: no cover
+                log.debug("checkpoint save skipped: %s", e)
+
+    async def _run_inner(self) -> AgentResult:  # noqa: C901  -- core agent turn loop; decompose only under dedicated review (see below)
+        bb = self.ctx.blackboard
+        bb.post(self.name, "plan", f"role={self.role} depth={self.depth} brief={self.brief}")
+
+        # Opt-in prompt-cache pre-warm (default OFF). Warm only the orchestrator
+        # -- the first, largest, user-facing prompt -- once before its loop, so
+        # the first real turn reads the system+tools cache instead of paying the
+        # cold-write latency. Subagents are skipped (each has a distinct prompt;
+        # warming them would be a wasted write). Never blocks the run.
+        if self.role == "orchestrator":
+            try:
+                from .llm import cache_prewarm_enabled
+                if cache_prewarm_enabled():
+                    self.ctx.budget.check()
+                    self.ctx.llm.prewarm(
+                        self.system, self.tools.to_anthropic(), self.model,
+                        budget=self.ctx.budget)
+            except Exception:  # pragma: no cover -- prewarm never blocks a run
+                pass
+
+        # If the goal has image/PDF attachments, embed them as vision /
+        # document content blocks on the first user message so the agent can
+        # see them (PDFs are budgeted against the driving model's context
+        # window). Everything else (audio, video, Office docs, text) is
+        # reachable via `list_attachments` + `read_file` / `transcribe_audio`
+        # (opt-in so we don't blow token budget on huge media).
+        image_blocks: list[dict] = []
+        if self.depth == 0 and self.ctx.goal_id is not None:
+            try:
+                from .attachments import content_blocks_for_goal
+                image_blocks = content_blocks_for_goal(
+                    self.ctx.world, self.ctx.goal_id, model=self.model,
+                    shield=self.ctx.shield,
+                )
+            except Exception:
+                image_blocks = []
+
+        brief_text = (
+            f"Sub-goal: {self.brief}\n\n"
+            f"Recent swarm activity:\n{bb.render(40) or '(empty)'}\n\n"
+            "Plan briefly, then act. End with FINAL: <answer> when done."
+        )
+        first_content: list[dict] | str
+        if image_blocks:
+            first_content = image_blocks + [{"type": "text", "text": brief_text}]
+        else:
+            first_content = brief_text
+        messages: list[dict] = [{"role": "user", "content": first_content}]
+
+        # Durable execution (Phase 1): resume a crashed single-agent run from its
+        # last committed step. Extracted to _resume_from_checkpoint; off by
+        # default, fail-open (leaves messages/start_step untouched on any error).
+        ep_id = getattr(self.ctx, "episode_id", 0) or 0
+        ckpt, start_step, messages = self._resume_from_checkpoint(messages, bb, ep_id)
+
+        for step in range(start_step, self.max_steps):
+            # Durable checkpoint at the turn boundary: commit the resumable loop
+            # state BEFORE the next LLM call, so a crash mid-step loses at most
+            # one step's work. Extracted to _save_checkpoint; fail-open.
+            self._save_checkpoint(ckpt, step=step, messages=messages, ep_id=ep_id)
+
+            # Turn-boundary safety gate. Evaluate the global killswitch
+            # (`maverick halt`, the dashboard Halt button, or the HALT
+            # file) and the wall-clock/token/tool caps BEFORE the next LLM
+            # call, so a runaway or over-budget swarm stops promptly
+            # instead of only after the next record_* call. killswitch and
+            # budget.check() are cheap and side-effect-free.
+            try:
+                killswitch.check()
+                self.ctx.budget.check()
+            except killswitch.Halted as e:
+                bb.post(self.name, "error", f"halted: {e}")
+                return AgentResult(error=f"halted: {e}", role=self.role, name=self.name)
+            except BudgetExceeded as e:
+                bb.post(self.name, "error", f"budget exceeded: {e}")
+                return AgentResult(error=f"budget exceeded: {e}", role=self.role, name=self.name)
+
+            # Long-horizon review checkpoint (opt-in [safety] review_checkpoint):
+            # at the root, fire a human-review heartbeat every N dollars / M tool
+            # calls / T seconds. A reviewer vote to halt stops the run cleanly,
+            # like the killswitch. Inert (no checkpoint object) when unconfigured.
+            if self.role == "orchestrator" and self._review_checkpoint is not None:
+                _cp_event = self._review_checkpoint.check(self.ctx.budget)
+                if _cp_event is not None:
+                    bb.post(self.name, "note",
+                            f"review checkpoint halted the run at "
+                            f"{_cp_event.reason}={_cp_event.value:g}")
+                    return AgentResult(
+                        error=f"halted at review checkpoint ({_cp_event.reason})",
+                        role=self.role, name=self.name)
+
+            # #614 live-spend mirror: at the turn boundary, the root agent
+            # writes the budget's running totals onto its open episode row
+            # (throttled) so `maverick runs` / `maverick budget` reflect
+            # accruing spend mid-run instead of $0.00 until end_episode.
+            # Read-side only; never blocks the run.
+            self._mirror_live_spend(ep_id)
+
+            # #611 synthesis reserve: a deeper worker yields before it eats the
+            # budget the top-level goal needs to write its answer. Only workers
+            # (depth > 0) stop here; the orchestrator (depth 0) keeps the reserve
+            # to synthesize. Return whatever partial findings we have rather than
+            # spending into the reserve, so the run delivers SOMETHING instead of
+            # paying in full for nothing.
+            if self.depth > 0 and _SYNTHESIS_RESERVE > 0:
+                _b = self.ctx.budget
+                if _b.dollars >= _b.max_dollars * (1.0 - _SYNTHESIS_RESERVE):
+                    bb.post(
+                        self.name, "note",
+                        f"stopping at ${_b.dollars:.2f}/${_b.max_dollars:.2f} to "
+                        f"reserve the final {_SYNTHESIS_RESERVE:.0%} for synthesis",
+                    )
+                    partial = _last_assistant_text(messages)
+                    return AgentResult(
+                        final=partial or "(stopped early to reserve synthesis budget)",
+                        role=self.role, name=self.name,
+                    )
+
+            # Karpathy SOTA-review item: long-context compaction. Drop
+            # raw tool_result content >2KiB once it's behind the recent
+            # window, and hold the whole window under a total ceiling
+            # (MAVERICK_COMPACT_MAX_TOTAL_BYTES) by shrinking into the
+            # recent window oldest-first when a few results at the
+            # per-result cap add up. The first message (user brief) and
+            # the newest message are always kept.
+            # The compaction cost is O(len(messages)) per turn -- cheap
+            # vs. paying full-price input tokens for a 100k history.
+            # Default path is the heuristic shrink; an operator can opt into a
+            # richer strategy via [context] compaction_strategy (heuristic /
+            # learned / multimodal / streaming / graph) — all registered in the
+            # one compaction.plugins dispatcher, which fails safe to heuristic
+            # on an unknown name — or into the ledger-learned v6 picker via
+            # [compaction] hybrid (an explicit strategy name always wins). The
+            # agent's llm seam + conversation id reach the strategies that use
+            # them.
+            # Process-reward guidance (governed default-on): if the PRM has
+            # judged the last few steps unpromising, nudge a course-change. A
+            # no-op unless [self_improvement] prm_guidance is on AND a PRM is
+            # configured; an explicit sub-knob or env opt-out pauses it.
+            from .prm_guidance import maybe_nudge
+            _prm_note = maybe_nudge(self._promise_window.values())
+            if _prm_note and step - self._last_prm_nudge_step >= 3:
+                messages.append({"role": "user", "content": _prm_note})
+                self._last_prm_nudge_step = step
+
+            from .compaction.plugins import compact_with
+            # Some opt-in strategies make provider calls, so apply the same
+            # pre-spend gate and budget object to compaction as the main turn.
+            self.ctx.budget.check()
+            messages = compact_with(
+                messages, llm=self.ctx.llm,
+                conversation_id=str(getattr(self.ctx, "goal_id", "") or ""),
+                budget=self.ctx.budget,
+                scope=self.domain,
+            )
+
+            try:
+                # Stop BEFORE spending another call when the cap is already
+                # hit. record_tokens() only checks AFTER the response lands,
+                # so a goal at 99% of budget would otherwise still fire one
+                # more (potentially expensive) call.
+                self.ctx.budget.check()
+                # Pass effort only when configured (None by default) so the call
+                # signature is unchanged when the feature is off.
+                _effort_kw = {"effort": self.effort} if self.effort else {}
+                resp = await self._complete_guarded(
+                    system=self.system,
+                    messages=messages,
+                    tools=self.tools.to_anthropic(),
+                    budget=self.ctx.budget,
+                    max_tokens=self._turn_max_tokens(),
+                    thinking_budget=self._thinking_budget(),
+                    model=self._speculative_turn_model(),
+                    **_effort_kw,
+                )
+            except BudgetExceeded as e:
+                bb.post(self.name, "error", f"budget exceeded: {e}")
+                return AgentResult(error=f"budget exceeded: {e}", role=self.role, name=self.name)
+            except killswitch.Halted as e:
+                # The killswitch tripped MID-generation; the in-flight call was
+                # cancelled by _complete_guarded. Stop like a turn-boundary halt.
+                bb.post(self.name, "error", f"halted: {e}")
+                return AgentResult(error=f"halted: {e}", role=self.role, name=self.name)
+
+            # May 26 smoke fix: when the response contains BOTH a FINAL:
+            # marker AND tool_use blocks, the model is confused. If
+            # FINAL validation fails and we `continue`, the tool_use
+            # blocks get appended to assistant message history with NO
+            # matching tool_result — Anthropic returns HTTP 400 on the
+            # next turn:
+            #   messages.N: tool_use ids were found without tool_result
+            #   blocks immediately after
+            # Drop the tool_use blocks before assembling the assistant
+            # message; the FINAL critique is what we want the model to
+            # respond to, not the orphan tools.
+            final_dropped_tools = False
+            if resp.text and resp.tool_calls:
+                from .coding_mode import has_final_marker as _has_final
+                if _has_final(resp.text):
+                    resp.tool_calls = []
+                    final_dropped_tools = True
+
+            assistant_content = _assemble_assistant_content(resp, final_dropped_tools)
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            if resp.text:
+                # Wave 12 hotfix: the prompt instructs the model to "End
+                # your turn with `FINAL:`" — many models emit a brief
+                # reasoning line BEFORE FINAL: (e.g. "Target: foo.py:bar
+                # — fix is X. FINAL: ..."). The prior `startswith` check
+                # missed those entirely; the SR block went to the
+                # blackboard as a plain observation, was never applied,
+                # and the orchestrator returned the raw SR text as
+                # `final` with `final_patch=None` — silent score loss.
+                # Use the LAST line-anchored FINAL: marker OUTSIDE any
+                # fenced code block. Skipping code-block markers
+                # prevents attacker-controlled quoted content (file
+                # bodies, tool output) from redefining the final
+                # answer mid-response.
+                from .coding_mode import find_final_marker_end as _final_end
+                _fe = _final_end(resp.text)
+                if _fe is not None:
+                    final = resp.text[_fe:].strip()
+                    # May 26 council fix: clear any stale `_final_patch`
+                    # from a previous FINAL attempt. If a prior FINAL was
+                    # rejected (defensive/validate) and the revised
+                    # FINAL has no apply-check (because _patch_validated
+                    # was True), the verifier/return branches would read
+                    # the STALE patch from the earlier FINAL and submit
+                    # it — wrong patch attribution.
+                    self._final_patch = None
+                    # May 26 council fix (agent-loop audit #4): also
+                    # clear `_already_verified` so the revised FINAL
+                    # gets verified afresh. Without this, a rejected
+                    # FINAL's `_already_verified=True` flag would skip
+                    # the verifier on the revised FINAL — and the
+                    # revised version would return with
+                    # `verifier_confidence=1.0` (the fallback when
+                    # verdict is None) regardless of actual quality.
+                    self._already_verified = False
+                    # #612: `_patch_validated` was sticky for the whole run
+                    # (only ever set True), so after one rejected patch a
+                    # later genuinely-different FINAL would skip its own
+                    # apply-check / diff extraction. Reset it alongside
+                    # `_already_verified` so each new FINAL re-validates the
+                    # patch it actually carries.
+                    self._patch_validated = False
+
+                    # Wave 8: coding-mode patch self-validation. If the
+                    # workdir is a git repo AND the FINAL contains a
+                    # unified diff, run `git apply --check` BEFORE
+                    # declaring FINAL. A rejected patch loops back with
+                    # the git error as critique -- catches the
+                    # ~30% of SWE-bench failures that are unapplyable
+                    # patches without burning a verifier round.
+                    coding_cfg = None
+                    try:
+                        from .coding_mode import (
+                            from_env as _cm_from_env,
+                        )
+                        from .coding_mode import (
+                            validate_patch,
+                        )
+                        coding_cfg = _cm_from_env()
+                    except Exception:
+                        pass
+
+                    if (coding_cfg is not None and coding_cfg.enabled
+                            and coding_cfg.require_apply_check
+                            and not getattr(self, "_patch_validated", False)):
+                        from pathlib import Path as _Path
+                        workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
+                        # Wave 11: prefer SEARCH/REPLACE over unified-diff.
+                        from .edit_format import repair_prompt_for_failure
+                        # Serialize the apply->reset on the SHARED sandbox.workdir
+                        # with the same lock the verifier branch below uses.
+                        # require_apply_check runs for every coding-mode agent
+                        # regardless of depth/role, so concurrent coder children
+                        # under spawn_swarm would otherwise interleave apply +
+                        # `git reset --hard` on one git tree and corrupt each
+                        # other's edits. (Sequential with the verifier branch's
+                        # own `async with`, so no nested/reentrant acquire.)
+                        async with self.ctx.workdir_lock:
+                            # Offload blocking git/subprocess work to a thread so
+                            # it doesn't stall the event loop (freezing every other
+                            # concurrent sub-agent, the channel server, and the
+                            # dashboard) while the lock is held. Mirrors the
+                            # asyncio.to_thread wrap in tools/agent_bus_tool.py.
+                            patch, sr_summary = await asyncio.to_thread(
+                                self._extract_and_apply_patch, final)
+                            # Reset workdir AFTER capturing the diff so the
+                            # verifier branch (and downstream evaluators) see
+                            # HEAD when they re-apply.
+                            if sr_summary is not None:
+                                await asyncio.to_thread(self._reset_workdir)
+                                try:
+                                    self.ctx.blackboard.post(
+                                        self.name, "tool_signal",
+                                        "search_replace_used=1",
+                                    )
+                                except Exception:
+                                    pass
+                        if patch is None and sr_summary is not None:
+                            self._patch_validated = True
+                            bb.post(
+                                self.name, "verify",
+                                f"SEARCH/REPLACE apply failed: "
+                                f"{sr_summary.summary_text()}",
+                            )
+                            first_fail = next(
+                                (r for r in sr_summary.results if not r.ok),
+                                None,
+                            )
+                            critique = (
+                                "Your FINAL SEARCH/REPLACE block(s) did "
+                                "not apply.\n\n" + sr_summary.summary_text()
+                            )
+                            if first_fail is not None:
+                                critique += "\n\n" + repair_prompt_for_failure(
+                                    first_fail,
+                                )
+                            messages.append({"role": "user", "content": critique})
+                            continue
+                        if patch is None:
+                            self._patch_validated = True
+                            bb.post(
+                                self.name, "verify",
+                                "no valid SEARCH/REPLACE or unified diff in "
+                                "FINAL; asking for revision",
+                            )
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "Your FINAL did not contain valid edits. "
+                                    "Use SEARCH/REPLACE format (preferred):\n\n"
+                                    "path/to/file.py\n"
+                                    "<<<<<<< SEARCH\n"
+                                    "<exact existing lines>\n"
+                                    "=======\n"
+                                    "<new lines>\n"
+                                    ">>>>>>> REPLACE\n\n"
+                                    "Multiple blocks allowed, each can target "
+                                    "a different file. Or as a fallback, a "
+                                    "unified diff in ```diff fences."
+                                ),
+                            })
+                            continue
+                        # Stash the rendered patch so the verifier branch
+                        # doesn't have to re-parse.
+                        self._final_patch = patch
+                        # Wave 11: defensive validation BEFORE git apply
+                        # --check. Catches grader-fatal patches (test
+                        # files, dep pins, cheating-detector overlap)
+                        # so we ask for revision instead of submitting
+                        # something the grader will silently zero out.
+                        try:
+                            from .coding_mode import (
+                                defensive_validate,
+                                get_gold_patch,
+                            )
+                            def_check = defensive_validate(
+                                patch,
+                                fail_to_pass=coding_cfg.fail_to_pass,
+                                pass_to_pass=coding_cfg.pass_to_pass,
+                                gold_patch=get_gold_patch(),
+                                opaque=(os.environ.get(
+                                    "MAVERICK_BENCHMARK_OPAQUE", "1",
+                                ) != "0"),
+                            )
+                        except Exception:
+                            def_check = None
+                        if def_check is not None and not def_check.ok:
+                            # May 26 smoke fix: DO NOT set
+                            # `_patch_validated = True` here. The flag
+                            # short-circuits the entire SR-extract-apply
+                            # block on the next iteration, so when the
+                            # agent revises in response to the critique,
+                            # the new SR blocks are silently ignored
+                            # (workdir untouched, no patch produced).
+                            # Fired on pallets/flask-5014 — agent
+                            # produced correct fix, cheating detector
+                            # false-positive rejected it, then the
+                            # agent's revision attempt was no-op'd.
+                            bb.post(
+                                self.name, "verify",
+                                f"patch rejected by defensive validator: "
+                                f"{def_check.blocked_paths or def_check.warnings}",
+                            )
+                            messages.append({
+                                "role": "user",
+                                "content": def_check.critique(),
+                            })
+                            continue
+                        # Wave 12 hardening: when defensive validate
+                        # passes (ok=True) but emitted warnings (WARN
+                        # path — conftest.py / pyproject.toml etc.),
+                        # post the advisory to the blackboard so it
+                        # shows up in trace; we still ACCEPT the patch.
+                        if def_check is not None and def_check.warnings:
+                            bb.post(
+                                self.name, "verify",
+                                f"defensive warnings (accepted anyway): "
+                                f"{def_check.warnings}",
+                            )
+                        validation = validate_patch(patch, workdir)
+                        if not validation.valid:
+                            self._patch_validated = True  # one retry max
+                            bb.post(
+                                self.name, "verify",
+                                f"patch rejected: {validation.reason}",
+                            )
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "Your FINAL patch did not pass "
+                                    "`git apply --check`.\n\n"
+                                    f"Reason: {validation.reason}\n\n"
+                                    f"git stderr:\n{validation.git_apply_stderr}\n\n"
+                                    "Re-examine the exact line content via "
+                                    "`read_file`, fix the edits, and respond "
+                                    "with a new FINAL using SEARCH/REPLACE "
+                                    "blocks (preferred) or a unified diff."
+                                ),
+                            })
+                            continue
+
+                    # Karpathy SOTA-review item: verifier role exists in
+                    # prompt strings only -- no code actually runs a
+                    # second-pass check. Now we do, but only on the
+                    # orchestrator's FINAL (depth=0) and only once per
+                    # goal. Sub-agents skip verification (their parent
+                    # is the verifier of last resort).
+                    verdict = None
+                    # Set True once verify_final actually runs, so a verifier
+                    # that hits the budget (verdict stays None) is distinguished
+                    # from a role that never verifies -- see the FINAL return.
+                    verifier_attempted = False
+                    # Risk-proportional verification (opt-in): set True when the
+                    # orchestrator deems the FINAL low-risk and skips the LLM
+                    # verifier. Distinct from "attempted but did not complete".
+                    verification_skipped = False
+                    # Only the orchestrator's FINAL is verified. Sub-agents
+                    # answer to their parent; the parent is their verifier.
+                    if (
+                        self.role == "orchestrator"
+                        and self.depth == 0
+                        and not getattr(self, "_already_verified", False)
+                        and self.ctx.goal_id is not None
+                    ):
+                        # Wave 8: when SWE-bench-style ground-truth tests
+                        # are provided, run them as the verifier instead
+                        # of (or alongside) the LLM judge. Ground truth
+                        # >> opinion; this is how OpenHands gets to 72%.
+                        if (coding_cfg is not None and coding_cfg.enabled
+                                and (coding_cfg.fail_to_pass or coding_cfg.pass_to_pass)):
+                            async with self.ctx.workdir_lock:
+                                from pathlib import Path as _Path
+
+                                from .coding_mode import run_failing_tests
+                                workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
+                                # Wave 11: reuse the patch produced by the
+                                # validate branch above (SEARCH/REPLACE or
+                                # unified-diff). If the validate branch was
+                                # skipped (e.g. require_apply_check=False),
+                                # extract here.
+                                patch = getattr(self, "_final_patch", None)
+                                if patch is None:
+                                    patch, _ = await asyncio.to_thread(
+                                        self._extract_and_apply_patch, final)
+                                    if patch is not None:
+                                        # We applied to disk; reset for the
+                                        # verifier's own apply.
+                                        await asyncio.to_thread(self._reset_workdir)
+                                if patch is None:
+                                    if not getattr(self, "_patch_validated", False):
+                                        self._patch_validated = True
+                                        bb.post(
+                                            self.name, "verify",
+                                            "no valid diff in FINAL; asking for revision",
+                                        )
+                                        messages.append({
+                                            "role": "user",
+                                            "content": (
+                                                "Your FINAL did not contain valid "
+                                                "edits. Use SEARCH/REPLACE blocks "
+                                                "(preferred) or a unified diff in "
+                                                "```diff fences."
+                                            ),
+                                        })
+                                        continue
+                                    # Already revised once; surface and exit.
+                                    return AgentResult(
+                                        final=final, role=self.role, name=self.name,
+                                        verifier_confidence=0.0,
+                                        verifier_critique="no valid diff in FINAL",
+                                    )
+
+                                apply_ok = await asyncio.to_thread(self._git_apply, patch)
+
+                                # Wave 10 (D10): only run tests when apply
+                                # succeeded. Running tests on HEAD when apply
+                                # failed wastes a full test run (minutes on
+                                # SWE-bench), reports all FAIL_TO_PASS as
+                                # failing for the wrong reason, then misleads
+                                # the revision pass.
+                                if not apply_ok:
+                                    test_result = None  # type: ignore[assignment]
+                                else:
+                                    try:
+                                        # run_failing_tests shells out to pytest --
+                                        # minutes on SWE-bench. Off-load it so the
+                                        # whole event loop isn't frozen for the
+                                        # duration.
+                                        test_result = await asyncio.to_thread(
+                                            run_failing_tests,
+                                            workdir,
+                                            coding_cfg.fail_to_pass,
+                                            coding_cfg.pass_to_pass,
+                                            self.ctx.sandbox,
+                                            language=coding_cfg.language,
+                                        )
+                                    finally:
+                                        # Always revert the workdir so the next
+                                        # attempt reads HEAD, not the post-patch
+                                        # tree. Without this, successive
+                                        # revisions see corrupted state and
+                                        # compound the error.
+                                        await asyncio.to_thread(self._reset_workdir)
+
+                                if not apply_ok:
+                                    # Wave 10 (D10): tests were skipped because
+                                    # the patch wouldn't apply. Tell the agent
+                                    # so it doesn't 'fix' a working patch into
+                                    # a broken one based on apply-fail noise.
+                                    if not getattr(self, "_patch_validated", False):
+                                        self._patch_validated = True
+                                        bb.post(
+                                            self.name, "verify",
+                                            "patch failed to apply pre-test; "
+                                            "asking proposer to revise",
+                                        )
+                                        messages.append({
+                                            "role": "user",
+                                            "content": (
+                                                "Your patch could not be applied "
+                                                "via `git apply`. Re-examine the "
+                                                "current file contents with "
+                                                "`read_file` and produce a fresh "
+                                                "unified diff against HEAD."
+                                            ),
+                                        })
+                                        continue
+                                    # Already retried once; surface and exit.
+                                    return AgentResult(
+                                        final=final, role=self.role, name=self.name,
+                                        verifier_confidence=0.0,
+                                        verifier_critique="patch did not apply",
+                                    )
+
+                                bb.post(
+                                    self.name, "verify",
+                                    f"test-driven verifier: {test_result.summary()}",
+                                )
+                                # Calibration auto-collection: tests are GROUND
+                                # TRUTH here, so also ask the LLM verifier and
+                                # record (confidence, correct) -- this is how the
+                                # calibration interlock learns whether the judge
+                                # still tracks reality. Opt-in (one extra verifier
+                                # call) + fail-open.
+                                try:
+                                    from . import calibration
+                                    if calibration.collect_from_coding_enabled():
+                                        from .verifier import verify_proposal
+                                        _cv = await verify_proposal(
+                                            self.brief, final, self.ctx.llm,
+                                            self.ctx.budget, proposer_model=self.model,
+                                        )
+                                        calibration.record_sample(
+                                            _cv.confidence, test_result.all_pass,
+                                            source="coding",
+                                        )
+                                except Exception:  # pragma: no cover -- never break the loop
+                                    pass
+                                if test_result.all_pass:
+                                    # Tests pass → accept FINAL. Skip LLM verifier.
+                                    self._already_verified = True
+                                    return AgentResult(
+                                        final=final, role=self.role, name=self.name,
+                                        verifier_confidence=test_result.score,
+                                        verifier_critique=test_result.summary(),
+                                        final_patch=getattr(self, "_final_patch", None),
+                                    )
+                                # Tests failed → revise. Wave 9 (council H2):
+                                # do NOT leak raw assertion bodies to the
+                                # agent in benchmark mode -- that's a recipe
+                                # for hardcoding to the test's expected value.
+                                # Wave 11 (PROBE-lite): classify the failure
+                                # type and surface a targeted hint without
+                                # leaking expected values.
+                                opaque = os.environ.get("MAVERICK_BENCHMARK_OPAQUE", "1") != "0"
+                                from .coding_mode import classify_failure
+                                fail_class, fail_hint = classify_failure(
+                                    test_result.raw_output,
+                                )
+                                class_line = (
+                                    f"Dominant failure class: {fail_class}.\n{fail_hint}"
+                                    if fail_class != "other" else ""
+                                )
+                                if opaque:
+                                    critique = (
+                                        "Your patch did not pass the required tests.\n\n"
+                                        f"{test_result.summary()}\n\n"
+                                        f"{class_line}\n\n"
+                                        "Revise based on your understanding of the "
+                                        "code, not from inspecting the failing "
+                                        "tests' expected values. Respond with a "
+                                        "new FINAL using SEARCH/REPLACE blocks."
+                                    ).strip()
+                                else:
+                                    critique = (
+                                        "Your patch did not pass the required tests.\n\n"
+                                        f"{test_result.summary()}\n\n"
+                                        f"{class_line}\n\n"
+                                        f"Recent test output:\n{test_result.raw_output}\n\n"
+                                        "Inspect the failing tests, revise your patch, "
+                                        "and respond with a new FINAL using "
+                                        "SEARCH/REPLACE blocks."
+                                    ).strip()
+                                # Wave 9 fix (#2): one retry max so a flaky
+                                # verifier or unfixable instance doesn't loop
+                                # forever. The retry IS re-verified.
+                                if getattr(self, "_patch_validated", False):
+                                    # Already revised once; accept whatever this is.
+                                    self._already_verified = True
+                                    return AgentResult(
+                                        final=final, role=self.role, name=self.name,
+                                        verifier_confidence=test_result.score,
+                                        verifier_critique=test_result.summary(),
+                                        final_patch=getattr(self, "_final_patch", None),
+                                    )
+                                self._patch_validated = True
+                                messages.append({"role": "user", "content": critique})
+                                continue
+
+                        if (
+                            _risk_proportional_verify_enabled()
+                            and _final_is_low_risk(
+                                final,
+                                coding=bool(coding_cfg and coding_cfg.enabled),
+                                tool_calls=self.ctx.budget.tool_calls,
+                            )
+                        ):
+                            verification_skipped = True
+                            bb.post(
+                                self.name, "verify",
+                                "verification skipped (risk-proportional: "
+                                "low-risk answer, no tools/code)",
+                            )
+                        else:
+                            try:
+                                from .verifier import verify_final
+                                verifier_attempted = True
+                                # Loop 1: a high-disagreement swarm fan-out asks
+                                # FINAL to face the cross-family ensemble.
+                                verdict = await verify_final(
+                                    self.brief, final, self.ctx.llm, self.ctx.budget,
+                                    proposer_model=self.model,
+                                    force_ensemble=bool(
+                                        getattr(self.ctx, "escalate_verification", False)
+                                    ),
+                                )
+                                # Stamp the verdict so the autonomy servo (Loop 2)
+                                # can tighten the leash on low-confidence runs.
+                                self.ctx.last_verifier_confidence = verdict.confidence
+                            except BudgetExceeded:
+                                verdict = None
+                            except Exception as e:  # pragma: no cover
+                                bb.post(self.name, "error", f"verifier failed: {e}")
+                                verdict = None
+
+                        if verdict is not None and not verdict.accepts:
+                            if getattr(self, "_verifier_revision_used", False):
+                                self._already_verified = True
+                                bb.post(
+                                    self.name, "verify",
+                                    "verifier rejected after retry; accepting "
+                                    "second attempt per one-revision cap",
+                                )
+                                _reasons = _final_uncertainty_reasons(
+                                    verifier_rejected=True,
+                                    verifier_incomplete=False,
+                                    disagreement=float(
+                                        getattr(self.ctx, "last_disagreement", 0.0) or 0.0
+                                    ),
+                                    coding=bool(coding_cfg and coding_cfg.enabled),
+                                )
+                                return AgentResult(
+                                    final=_final_with_uncertainty_note(final, _reasons),
+                                    role=self.role, name=self.name,
+                                    verifier_confidence=verdict.confidence,
+                                    verifier_critique=verdict.critique,
+                                    final_patch=getattr(self, "_final_patch", None),
+                                )
+                            self._already_verified = True
+                            self._verifier_revision_used = True
+                            bb.post(
+                                self.name, "verify",
+                                f"verifier rejected (conf={verdict.confidence:.2f}): "
+                                f"{verdict.critique}",
+                            )
+                            # Capture the rejected draft as the "rejected" half of
+                            # a DPO preference pair: the agent revises until the
+                            # verifier accepts, so the accepted FINAL (high score)
+                            # vs THIS rejected draft (low score) is the genuine
+                            # quality gradient this architecture produces -- the
+                            # only one it produces, since every shipped answer is
+                            # driven to "good". Stashed on ctx (the same channel
+                            # donation reads last_disagreement/credit from); a bug
+                            # here must never break the run loop.
+                            try:
+                                self.ctx.last_rejected_attempts = (
+                                    getattr(self.ctx, "last_rejected_attempts", []) or []
+                                ) + [{
+                                    "text": final,
+                                    "confidence": float(verdict.confidence),
+                                    "critique": verdict.critique or "",
+                                }]
+                            except Exception:  # pragma: no cover -- never block
+                                pass
+                            # Hand the critique to the proposer as a
+                            # revision brief. One revision pass max --
+                            # the second attempt is accepted regardless.
+                            issues_block = (
+                                "\n".join(f"  - {i}" for i in verdict.issues)
+                                if verdict.issues else "  (no specific issues listed)"
+                            )
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "A verifier rejected your FINAL answer. "
+                                    "Revise and try again.\n\n"
+                                    f"Verifier confidence: {verdict.confidence:.2f}\n"
+                                    f"Critique: {verdict.critique}\n"
+                                    f"Specific issues:\n{issues_block}\n\n"
+                                    "Address each issue and respond with a "
+                                    "new FINAL: <revised answer>."
+                                ),
+                            })
+                            continue
+                        if verdict is not None:
+                            bb.post(
+                                self.name, "verify",
+                                f"verifier accepted (conf={verdict.confidence:.2f})",
+                            )
+
+                    bb.post(self.name, "finding", _finding_excerpt(final))
+                    self.ctx.world.append_message(
+                        self.ctx.goal_id, f"agent:{self.name}", final
+                    )
+                    # Stop hooks: the agent has decided on FINAL. Post-style
+                    # (non-blocking) -- observers/loggers, cannot veto.
+                    from .hooks import HookEvent
+                    from .hooks import emit as _emit_hook
+                    await _emit_hook(
+                        HookEvent.STOP,
+                        goal_id=self.ctx.goal_id, agent_role=self.role,
+                        extra={"name": self.name, "final": final},
+                    )
+                    self._score_step(step_index=step, is_final=True)
+                    if verification_skipped:
+                        _vconf, _vcrit = 0.9, (
+                            "verification skipped (risk-proportional: low-risk answer)"
+                        )
+                    elif verdict is not None:
+                        _vconf, _vcrit = verdict.confidence, verdict.critique
+                    elif verifier_attempted:
+                        # Attempted but hit budget/error (verdict is None) must
+                        # NOT report high confidence: a budget-starved run would
+                        # otherwise be donated as a "high-confidence" trajectory
+                        # it never verified (#612).
+                        _vconf, _vcrit = 0.0, "verifier did not complete (budget)"
+                    else:
+                        # Roles that never verify keep the 1.0 default.
+                        _vconf, _vcrit = 1.0, ""
+                    _reasons = _final_uncertainty_reasons(
+                        verifier_rejected=False,
+                        verifier_incomplete=(verdict is None and verifier_attempted),
+                        disagreement=float(
+                            getattr(self.ctx, "last_disagreement", 0.0) or 0.0
+                        ),
+                        coding=bool(coding_cfg and coding_cfg.enabled),
+                    )
+                    return AgentResult(
+                        final=_final_with_uncertainty_note(final, _reasons),
+                        role=self.role, name=self.name,
+                        verifier_confidence=_vconf,
+                        verifier_critique=_vcrit,
+                        final_patch=getattr(self, "_final_patch", None),
+                    )
+                bb.post(self.name, "observation", resp.text[:1000])
+
+            if not resp.tool_calls:
+                if resp.text:
+                    return AgentResult(final=resp.text, role=self.role, name=self.name)
+                return AgentResult(
+                    error="empty response with no tools", role=self.role, name=self.name
+                )
+
+            # Tool-call boundary: honour a halt that arrived while the
+            # model was producing this turn (e.g. the user hit Halt
+            # during a long think) before executing any tool.
+            try:
+                killswitch.check()
+            except killswitch.Halted as e:
+                bb.post(self.name, "error", f"halted: {e}")
+                return AgentResult(
+                    error=f"halted: {e}", role=self.role, name=self.name,
+                )
+
+            # Frontier-loop optimization: when the model emits 2+ tool
+            # calls in one turn and EVERY one is parallel-safe (pure,
+            # idempotent reads — read_file / list_dir / repo_map /
+            # dep_graph), run them concurrently with asyncio.gather. This
+            # is the dominant localization pattern ("read these 5 files")
+            # and collapses N serial awaits into one round-trip's worth of
+            # latency. A turn containing ANY stateful tool (shell, write,
+            # spawn, ask_user, a rate-limited network tool) falls through
+            # to the serial path below, so side-effect ordering and the
+            # ask_user block-on-user semantics are unchanged. Disable with
+            # MAVERICK_PARALLEL_TOOLS=0.
+            run_parallel = (
+                len(resp.tool_calls) > 1
+                and os.environ.get("MAVERICK_PARALLEL_TOOLS", "1") != "0"
+                and all(self._is_parallel_safe(tc.name) for tc in resp.tool_calls)
+            )
+
+            tool_results: list[dict] = []
+            blocked = False
+
+            def _answer_pending_tool_uses(
+                reason: str,
+                *,
+                resp=resp,
+                messages=messages,
+                tool_results=tool_results,
+            ) -> None:
+                # #612: a control-flow stop (BudgetExceeded / Halted) can fire
+                # mid-dispatch -- most often from budget.record_tool_call(),
+                # which calls check() and can raise AFTER the assistant turn's
+                # tool_use blocks are already in `messages`. If we unwind now,
+                # the saved/resumed history (or a parent that keeps these
+                # messages) has tool_use ids with no matching tool_result ->
+                # Anthropic 400 on the next call. Append an error tool_result
+                # for every still-unanswered tool_use, then let the caller
+                # re-raise/return so the stop is NOT swallowed.
+                answered = {tr["tool_use_id"] for tr in tool_results}
+                pending = [tc for tc in resp.tool_calls if tc.id not in answered]
+                if not pending:
+                    return
+                for tc in pending:
+                    tool_results.append(self._make_tool_result(tc.id, reason))
+                messages.append({"role": "user", "content": tool_results})
+
+            if run_parallel:
+                import asyncio as _asyncio
+                # Account every call up front; record_tool_call mirrors
+                # the serial path (one per tool, same count). A budget trip
+                # here raises BEFORE any tool ran -- answer every pending
+                # tool_use so the turn isn't left with orphan tool_use blocks.
+                try:
+                    for _tc in resp.tool_calls:
+                        self.ctx.budget.record_tool_call()
+                except BudgetExceeded:
+                    _answer_pending_tool_uses(
+                        "ERROR: tool not executed (budget exceeded)"
+                    )
+                    raise
+
+                # Per-host concurrency cap (#434): same-host network reads in
+                # this turn are throttled by a semaphore so a fan-out of reads
+                # to one host can't hammer it / trip its rate limit; local and
+                # cross-host calls stay fully concurrent (no-op context).
+                from . import net_concurrency as _netcc
+
+                async def _run_capped(tc):
+                    async with _netcc.limit(tc.name, tc.input):
+                        return await self._run_tool(tc.name, tc.input)
+
+                # return_exceptions=True: tools.run swallows its own errors, but
+                # the shield scan / PreToolUse hooks inside _run_tool can still
+                # raise. Without this, one such raise propagates out of gather,
+                # discards the sibling results, and leaves the assistant turn's
+                # tool_use blocks with no matching tool_results -> the next API
+                # call 400s. Convert a raised exception into an error
+                # tool_result so every tool_use is still answered -- but
+                # re-raise control-flow signals (budget/halt) so a stop isn't
+                # silently downgraded to a tool error.
+                outputs = await _asyncio.gather(
+                    *(_run_capped(tc) for tc in resp.tool_calls),
+                    return_exceptions=True,
+                )
+                from . import killswitch as _ks
+                from .budget import BudgetExceeded as _BE
+                _norm: list[str] = []
+                for o in outputs:
+                    if isinstance(o, (_BE, _ks.Halted)):
+                        # #612: re-raise as a stop, but first answer every
+                        # tool_use this turn emitted so the history isn't left
+                        # with orphan tool_use blocks for a resume/parent.
+                        _answer_pending_tool_uses(
+                            f"ERROR: tool not executed ({type(o).__name__})"
+                        )
+                        raise o
+                    _norm.append(
+                        o if isinstance(o, str)
+                        else f"ERROR: tool raised {type(o).__name__}: {o}"
+                    )
+                outputs = _norm
+                # Preserve original call order in the results (matched by
+                # tool_use_id, but ordering keeps traces readable).
+                for tc, output in zip(resp.tool_calls, outputs, strict=False):
+                    bb.post(
+                        self.name, "observation",
+                        f"tool={tc.name} -> {output[:500]}",
+                    )
+                    self._score_step(
+                        step_index=step,
+                        tool_name=tc.name,
+                        tool_succeeded=not _tool_call_failed(output),
+                    )
+                    tool_results.append(self._make_tool_result(tc.id, output))
+            else:
+                for tc in resp.tool_calls:
+                    # Per-tool halt check: a serial turn may run a long
+                    # shell command; honour a halt that lands mid-turn.
+                    try:
+                        killswitch.check()
+                    except killswitch.Halted as e:
+                        # #612: answer any tool_use we've already passed (and
+                        # this + remaining ones) so the assistant turn isn't
+                        # left with orphan tool_use blocks before we unwind.
+                        _answer_pending_tool_uses("ERROR: tool not executed (halted)")
+                        bb.post(self.name, "error", f"halted: {e}")
+                        return AgentResult(
+                            error=f"halted: {e}", role=self.role, name=self.name,
+                        )
+                    # #612: record_tool_call() calls check() and can raise
+                    # mid-turn; answer pending tool_use blocks, then re-raise
+                    # so the budget trip still stops the run cleanly.
+                    try:
+                        self.ctx.budget.record_tool_call()
+                    except BudgetExceeded:
+                        _answer_pending_tool_uses(
+                            "ERROR: tool not executed (budget exceeded)"
+                        )
+                        raise
+                    # #612: a stateful serial tool (notably `spawn_subagent`,
+                    # whose child shares this Budget) can trip BudgetExceeded
+                    # — or a halt can land — DURING execution. That raise would
+                    # leave this tool_use + any siblings already dispatched this
+                    # turn without matching tool_results -> Anthropic 400 on a
+                    # resume/parent. Answer every pending tool_use, then re-raise
+                    # so the stop still halts the run cleanly.
+                    try:
+                        output = await self._run_tool(tc.name, tc.input)
+                    except (BudgetExceeded, killswitch.Halted):
+                        _answer_pending_tool_uses(
+                            "ERROR: tool not executed (run stopped)"
+                        )
+                        raise
+                    if tc.name == "ask_user":
+                        from .autonomy import assume_when_headless
+                        if assume_when_headless():
+                            # No human is available to answer (headless /
+                            # autonomous run). Blocking forever on a question
+                            # nobody will answer is worse than proceeding -- and
+                            # a blocked run never reaches FINAL, so it also never
+                            # distills what it learned. Turn the question into a
+                            # directive to assume and continue, and require the
+                            # assumption be stated so the choice stays auditable.
+                            # Off by default (MAVERICK_AUTONOMOUS / [autonomy]
+                            # headless_assume); unchanged blocking otherwise.
+                            output = (
+                                "AUTONOMOUS MODE: no human is available to "
+                                "answer questions. Do not wait. Choose the most "
+                                "reasonable assumption, state it explicitly in "
+                                "your FINAL answer, and continue."
+                            )
+                        else:
+                            blocked = True
+                    bb.post(
+                        self.name, "observation",
+                        f"tool={tc.name} -> {output[:500]}",
+                    )
+                    self._score_step(
+                        step_index=step,
+                        tool_name=tc.name,
+                        tool_succeeded=not _tool_call_failed(output),
+                    )
+                    tool_results.append(self._make_tool_result(tc.id, output))
+                    # Governed-action lineage (opt-in via [actions] enable /
+                    # MAVERICK_GOVERNED_ACTIONS; off by default). Record a
+                    # tamper-evident link for each CONSEQUENTIAL tool call so a
+                    # run's actions are traceable. Fail-open: never breaks a run.
+                    try:
+                        from . import governed_actions as _gov
+                        if getattr(self, "_lineage_on", None) is None:
+                            self._lineage_on = _gov.enabled()
+                        if self._lineage_on:
+                            _gov.record_tool_lineage(
+                                self.ctx.goal_id, tc.name, tc.input,
+                                skills=tuple(sorted(self.ctx.skills_used or ())),
+                                actor=self.name)
+                    except Exception:
+                        pass
+
+            # Step-budget awareness: when only a few tool-using turns remain
+            # before max_steps force-stops the run, tell the model so it
+            # synthesizes a FINAL now instead of starting new work and getting
+            # cut off with no answer. Appended after the tool_results (text
+            # after tool_result blocks is a valid user turn); only on turns that
+            # ran tools, which is exactly when a working agent risks the cutoff.
+            remaining = self.max_steps - 1 - step
+            if tool_results and _STEP_BUDGET_WARNING and 0 < remaining <= _STEP_BUDGET_WARNING:
+                tool_results.append({
+                    "type": "text",
+                    "text": (
+                        f"⚠ Step budget almost exhausted: about {remaining} more "
+                        "tool-using turn(s) remain before this run is force-stopped. "
+                        "Prioritize giving your FINAL: answer now with the best "
+                        "result you have rather than starting new work."
+                    ),
+                })
+            messages.append({"role": "user", "content": tool_results})
+
+            if blocked:
+                return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
+
+        # Wave 12 hotfix: when the agent loop exhausts max_steps without
+        # emitting FINAL, the workdir may STILL contain edits made via
+        # `str_replace_editor` (the secondary tool channel). The May 26
+        # smoke surfaced 3/6 instances where the agent edited via the
+        # tool but never produced a FINAL — those instances reported
+        # `no-diff` even though the patch was already on disk.
+        # Salvage that work by rendering the workdir as the final_patch
+        # if there are uncommitted changes.
+        try:
+            from pathlib import Path as _Path
+
+            from .edit_format import render_diff
+            workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
+            if (workdir / ".git").exists():
+                rendered = render_diff(workdir)
+                if rendered and rendered.strip():
+                    return AgentResult(
+                        error=f"hit max_steps={self.max_steps}; "
+                              "captured workdir diff as final_patch",
+                        final_patch=rendered,
+                        role=self.role,
+                        name=self.name,
+                    )
+        except Exception:
+            pass
+        return AgentResult(
+            error=f"hit max_steps={self.max_steps}",
+            role=self.role,
+            name=self.name,
+        )

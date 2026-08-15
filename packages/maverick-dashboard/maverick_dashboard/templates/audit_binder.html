@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Audit binder · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .bnd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 var(--space-4); }
+  .bnd-stat .v { font-size: var(--text-2xl); font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+  .bnd-stat .l { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .bnd-actions { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-4); }
+  .bnd-scroll { overflow-x: auto; }
+  .bnd-mono { font-family: var(--font-mono, monospace); font-size: var(--text-xs); }
+  @media print {
+    .sidebar, .topbar, nav, .bnd-actions, footer, header { display: none !important; }
+    .panel { break-inside: avoid; border: 1px solid #ccc; }
+    body { background: #fff; color: #000; }
+  }
+</style>
+
+  <h1 class="page-title">Audit binder</h1>
+  <p class="page-subtitle">The evidence pack, assembled from the records themselves:
+    signed-chain verification, approvals with identity and quorum, the assessment
+    register with revisions, the privacy registers, and the learning KPIs.
+    Window: last {{ days }} days · generated {{ b.generated }}.</p>
+  <div class="bnd-actions">
+    <button class="btn btn--primary" onclick="window.print()" type="button">Print / save as PDF</button>
+    <a class="btn" href="/api/v1/audit/binder?days={{ days }}">JSON</a>
+    <a class="btn" href="/audit/binder?days=30">30d</a>
+    <a class="btn" href="/audit/binder?days=90">90d</a>
+    <a class="btn" href="/audit/binder?days=365">12m</a>
+    <a class="btn" href="/audit">← audit log</a>
+  </div>
+
+  <div class="section-head"><h2>Signed audit chain</h2></div>
+  <div class="panel">
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">
+        {% if b.chain.intact is none %}—{% elif b.chain.intact %}INTACT{% else %}BROKEN{% endif %}
+      </div><div class="l">chain verdict</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.files | length }}</div><div class="l">day files verified</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.events }}</div><div class="l">events in window</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.kinds | length }}</div><div class="l">event kinds</div></div>
+    </div>
+    {% if b.chain.files %}
+    <div class="bnd-scroll">
+    <table>
+      <thead><tr><th scope="col">day</th><th scope="col">events</th>
+        <th scope="col">verification</th><th scope="col">breaks</th></tr></thead>
+      <tbody>
+        {% for f in b.chain.files %}
+        <tr>
+          <td class="bnd-mono">{{ f.day }}</td>
+          <td>{{ f.events }}</td>
+          <td><span class="badge {{ 'done' if f.intact else 'blocked' }}">{{ 'intact' if f.intact else 'BREAKS FOUND' }}</span></td>
+          <td class="bnd-mono">{% for br in f.breaks %}line {{ br.line }}: {{ br.reason }}{% if not loop.last %}; {% endif %}{% else %}—{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">
+      Top event kinds: {% for k, n in (b.chain.kinds.items() | list)[:10] %}{{ k }} ({{ n }}){% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% else %}
+    <p class="muted">No audit day files in this window.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Approvals — identity &amp; quorum</h2></div>
+  <div class="panel">
+    {% if b.approvals %}
+    <div class="bnd-scroll">
+    <table>
+      <thead><tr><th scope="col">#</th><th scope="col">action</th><th scope="col">risk</th>
+        <th scope="col">status</th><th scope="col">requested by</th>
+        <th scope="col">decided by</th><th scope="col">quorum</th></tr></thead>
+      <tbody>
+        {% for a in b.approvals[:60] %}
+        <tr>
+          <td>{{ a.id }}</td>
+          <td style="max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ a.action }}">{{ a.action }}</td>
+          <td><span class="badge {{ 'blocked' if a.risk == 'high' else 'warn' if a.risk == 'medium' else 'done' }}">{{ a.risk }}</span></td>
+          <td><span class="badge {{ 'done' if a.status == 'approved' else 'blocked' if a.status == 'denied' else 'info' }}">{{ a.status }}</span></td>
+          <td>{{ a.requested_by or '—' }}</td>
+          <td>{{ a.decided_by or '—' }}</td>
+          <td>{{ a.approvals_required }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No approvals in this window.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Assessment register — revisions &amp; decisions</h2></div>
+  <div class="panel">
+    {% if b.assessments %}
+    <div class="bnd-scroll">
+    <table>
+      <thead><tr><th scope="col">id</th><th scope="col">framework</th><th scope="col">subject</th>
+        <th scope="col">risk (inh → res)</th><th scope="col">status</th>
+        <th scope="col">revision</th><th scope="col">template digest</th></tr></thead>
+      <tbody>
+        {% for s in b.assessments[:80] %}
+        <tr>
+          <td class="bnd-mono">{{ s.id }}</td>
+          <td>{{ s.type }}</td>
+          <td>{{ s.subject }}</td>
+          <td>{{ s.inherent }} → {{ s.residual }}</td>
+          <td><span class="badge {{ 'done' if s.status == 'approved' else 'blocked' if s.status == 'rejected' else 'info' }}">{{ s.status | replace('_', ' ') }}</span>{% if s.review_due %} <span class="badge warn">review due</span>{% endif %}</td>
+          <td>{{ s.revision }}</td>
+          <td class="bnd-mono">{{ s.template_digest or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">
+      {{ b.assessments | length }} record(s) shown (capped at 300); each revision is CAS-guarded and every mutation carries an audit receipt.</p>
+    {% else %}
+    <p class="muted">No assessment records yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Privacy registers</h2></div>
+  <div class="panel">
+    {% if b.registers.enabled %}
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ b.registers.ropa }}</div><div class="l">RoPA entries</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dpa }}</div><div class="l">DPA reviews</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.ai }}</div><div class="l">AI systems</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dsar }}</div><div class="l">DSARs</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.incidents }}</div><div class="l">incidents</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dsar_aging.overdue }}</div><div class="l">DSARs overdue</div></div>
+    </div>
+    {% else %}
+    <p class="muted">Privacy ops registers are disabled ([privacy_ops]).</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Learning — reviewer acceptance</h2></div>
+  <div class="panel">
+    {% if b.learning.decided %}
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ b.learning.first_pass_rate }}%</div><div class="l">first-pass acceptance</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.decided }}</div><div class="l">decided</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.qualified }}</div><div class="l">approved after follow-ups</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.rejected }}</div><div class="l">rejected</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.median_days_to_decision }}</div><div class="l">median days to decision</div></div>
+    </div>
+    <p class="muted" style="font-size: var(--text-xs);">First-pass = approved with no follow-up thread: the reviewer accepted the agent's draft as-is. Monthly trend on the <a href="/privacy/board">command center</a>.</p>
+    {% else %}
+    <p class="muted">No decided assessments yet — the acceptance record starts with the first approval.</p>
+    {% endif %}
+  </div>
+{% endblock %}

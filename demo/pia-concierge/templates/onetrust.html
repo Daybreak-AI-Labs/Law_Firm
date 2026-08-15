@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% set active = 'onetrust' %}
+{% block title %}OneTrust — Assessments{% endblock %}
+{% block tab_title %}{{ self.title() }}{% endblock %}
+{% block favicon %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%236CC04F'/%3E%3Ctext x='16' y='21' font-size='13' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3EOT%3C/text%3E%3C/svg%3E">{% endblock %}
+
+{% block body %}
+<style>
+  /* A OneTrust-style GRC console rendered as an app window: dark navy rail,
+     signature green accents, light content. Wordmark is plain text — no
+     trademarked artwork. */
+  .ot { border-radius: 12px; overflow: hidden; border: 1px solid #0d2b40;
+        box-shadow: 0 18px 60px rgba(0,0,0,.5); background: #f5f7f8; color: #24333f;
+        display: grid; grid-template-columns: 200px 1fr; min-height: 480px;
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+  .ot__rail { background: #00263e; color: #b8c9d4; padding: 14px 0; font-size: 13.5px; }
+  .ot__logo { display: flex; align-items: center; gap: 8px; padding: 4px 16px 16px; }
+  .ot__logo .mark { width: 22px; height: 22px; border-radius: 50%;
+                    background: conic-gradient(#78be20 0 65%, #ffffff33 65% 100%); }
+  .ot__logo b { color: #fff; font-size: 15px; letter-spacing: -0.01em; }
+  .ot__nav div { padding: 8px 16px; display: flex; align-items: center; gap: 10px; cursor: default; }
+  .ot__nav div:hover { background: #ffffff10; color: #fff; }
+  .ot__nav div.on { background: #ffffff18; color: #fff; border-left: 3px solid #78be20; padding-left: 13px; }
+  .ot__main { padding: 0; }
+  .ot__top { display: flex; align-items: center; gap: 14px; background: #ffffff;
+             border-bottom: 1px solid #dde4e9; padding: 12px 22px; }
+  .ot__top h2 { font-size: 17px; font-weight: 700; color: #14242f; margin: 0; }
+  .ot__top .crumb { color: #7a8a96; font-size: 12.5px; }
+  .ot__newbtn { margin-left: auto; background: #78be20; color: #113300; border: none;
+                border-radius: 4px; padding: 8px 16px; font-weight: 700; font-size: 13px; }
+  .ot__content { padding: 18px 22px; }
+  .ot__filters { display: flex; gap: 8px; margin-bottom: 14px; }
+  .ot__filters span { font-size: 12.5px; color: #51626f; border: 1px solid #cfd9e0;
+                      border-radius: 16px; padding: 4px 12px; background: #fff; }
+  .ot__filters span.on { background: #eaf6da; border-color: #78be20; color: #3c6b00; font-weight: 600; }
+  table.ot__tbl { width: 100%; border-collapse: collapse; background: #fff; font-size: 13.5px;
+                  border: 1px solid #dde4e9; border-radius: 8px; overflow: hidden; }
+  .ot__tbl th { text-align: left; background: #f0f3f5; color: #51626f; font-size: 11.5px;
+                text-transform: uppercase; letter-spacing: .05em; padding: 10px 14px;
+                border-bottom: 1px solid #dde4e9; }
+  .ot__tbl td { padding: 12px 14px; border-bottom: 1px solid #eef1f4; vertical-align: middle; }
+  .ot__tbl tr:hover td { background: #f7fbf1; cursor: pointer; }
+  .ot__id { color: #2a7ab0; font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+  .ot__chip { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 3px;
+              padding: 3px 10px; text-transform: capitalize; }
+  .ot__chip.completed { background: #eaf6da; color: #3c6b00; }
+  .ot__chip.underreview { background: #fef2dd; color: #925f0a; }
+  .ot__chip.sentback { background: #fde8e8; color: #b42318; }
+  .ot__chip.rereview { background: #ffe9f2; color: #a61e6a; }
+  .ot__chip.high   { background: #fde8e8; color: #b42318; }
+  .ot__chip.medium { background: #fef2dd; color: #925f0a; }
+  .ot__chip.low, .ot__chip.minimal { background: #eaf6da; color: #3c6b00; }
+  .ot__empty { background: #fff; border: 1px dashed #cfd9e0; border-radius: 8px;
+               padding: 48px 20px; text-align: center; color: #7a8a96; font-size: 14px; }
+
+  /* Record detail pop-out */
+  dialog.ot-dlg { border: none; border-radius: 10px; padding: 0; margin: auto;
+                  width: min(720px, calc(100vw - 2rem)); max-height: 84vh;
+                  box-shadow: 0 24px 80px rgba(0,0,0,.55); color: #24333f;
+                  font-family: "Segoe UI", -apple-system, sans-serif; }
+  dialog.ot-dlg::backdrop { background: rgba(4, 20, 33, .6); }
+  .otd__bar { display: flex; align-items: center; gap: 12px; background: #00263e; color: #fff;
+              padding: 12px 18px; font-weight: 600; font-size: 14px; }
+  .otd__bar .ot__id { color: #9fd456; }
+  .otd__bar button { margin-left: auto; background: transparent; border: none; color: #fff;
+                     font-size: 16px; cursor: pointer; padding: 2px 8px; border-radius: 4px; }
+  .otd__bar button:hover { background: #ffffff22; }
+  .otd__body { padding: 16px 20px; overflow-y: auto; max-height: calc(84vh - 60px); background: #f5f7f8; }
+  .otd__kv { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; font-size: 13.5px;
+             background: #fff; border: 1px solid #dde4e9; border-radius: 8px; padding: 14px 16px;
+             margin: 0 0 14px; }
+  .otd__kv dt { color: #7a8a96; }
+  .otd__kv dd { margin: 0; }
+  .otd__sec { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+              color: #51626f; margin: 14px 0 8px; }
+  .otd__finding { background: #fff; border: 1px solid #dde4e9; border-left: 4px solid #cfd9e0;
+                  border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; }
+  .otd__finding.high { border-left-color: #b42318; }
+  .otd__finding.medium { border-left-color: #e8a13c; }
+  .otd__finding.low { border-left-color: #78be20; }
+  .otd__finding .g { color: #51626f; font-size: 12.5px; margin-top: 3px; }
+  .otd__ans { background: #fff; border: 1px solid #dde4e9; border-radius: 6px;
+              padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+  .otd__ans .q { color: #51626f; }
+  .otd__ans .a { font-weight: 700; text-transform: capitalize; }
+  .otd__ans .note { color: #51626f; font-size: 12.5px; font-style: italic; margin-top: 2px; }
+  .otd__decide { position: sticky; bottom: 0; display: flex; gap: 10px; align-items: center;
+                 background: #ffffff; border-top: 1px solid #dde4e9; padding: 12px 20px;
+                 margin: 14px -20px -16px; }
+  .otd__decide input { border: 1px solid #cfd9e0; border-radius: 4px; padding: 7px 10px;
+                       font-size: 13px; width: 170px; }
+  .otd__approve { background: #78be20; color: #113300; border: none; border-radius: 4px;
+                  padding: 9px 20px; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+  .otd__reject { background: #fff; color: #b42318; border: 1px solid #e5b9b4; border-radius: 4px;
+                 padding: 9px 16px; font-weight: 600; font-size: 13.5px; cursor: pointer; }
+  .otd__adddoc { background: #fff; color: #2a7ab0; border: 1px solid #bcd5e6; border-radius: 4px;
+                 padding: 7px 14px; font-weight: 600; font-size: 12.5px; cursor: pointer; }
+  .otd__msg { font-size: 12.5px; color: #51626f; }
+</style>
+
+<div class="sim-banner"><span class="sim-chip">Simulated</span>
+  <span>Stand-in for the customer's <b>OneTrust</b> tenant, speaking the <b>field-verified wire
+  protocol</b>: launch (<span class="mono">v3</span>) → answers + justification + personal-data
+  triples in one <span class="mono">responses</span> call → submit → stage self-check, with
+  deliverables attached to the vendor record. The agent stops at <b>Under Review</b> — the privacy
+  team <b>reviews and approves it right here</b>. Every decision lands on Lightwork's signed audit chain.</span></div>
+
+<div class="ot">
+  <div class="ot__rail">
+    <div class="ot__logo"><span class="mark"></span><b>OneTrust</b></div>
+    <div class="ot__nav">
+      <div>▦ Dashboard</div>
+      <div class="on">☰ Assessments</div>
+      <div>◈ Inventory</div>
+      <div>⚑ Risks</div>
+      <div>✉ Data Mapping</div>
+      <div>⚙ Settings</div>
+    </div>
+  </div>
+  <div class="ot__main">
+    <div class="ot__top">
+      <div>
+        <div class="crumb">Assessment Automation / Assessments</div>
+        <h2>Assessments</h2>
+      </div>
+      <button class="ot__newbtn" type="button">＋ New Assessment</button>
+    </div>
+    <div class="ot__content">
+      <div class="ot__filters">
+        <span class="on">All ({{ assessments|length }})</span>
+        <span>Under Review ({{ n_review }})</span>
+        <span>Completed ({{ assessments|selectattr('status', 'equalto', 'Completed')|list|length }})</span>
+      </div>
+      {% if assessments %}
+      <table class="ot__tbl">
+        <tr><th>ID</th><th>Assessment</th><th>Subject</th><th>Inherent risk</th><th>Residual risk</th><th>Status</th></tr>
+        {% for a in assessments %}
+        <tr data-i="{{ loop.index0 }}" role="button" tabindex="0" aria-label="Open {{ a.assessment_id }}">
+          <td class="ot__id">{{ a.assessment_id }}</td>
+          <td><b>{{ a.name }}</b>{% if a.addenda %} <span class="ot__chip" style="background:#eef1f4; color:#51626f;">+{{ a.addenda|length }} doc{{ 's' if a.addenda|length != 1 }}</span>{% endif %}</td>
+          <td>{{ a.subject }}</td>
+          <td><span class="ot__chip {{ (a.result or {}).get('inherent_risk', a.risk_level) }}">{{ (a.result or {}).get('inherent_risk', a.risk_level) }}</span></td>
+          <td><span class="ot__chip {{ (a.result or {}).get('residual_risk', a.risk_level) }}">{{ (a.result or {}).get('residual_risk', a.risk_level) }}</span></td>
+          <td><span class="ot__chip {{ a.status|lower|replace(' ', '') }}">{{ a.status }}</span>{% if a.needs_re_review %} <span class="ot__chip rereview">re-review</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="ot__empty">No assessments yet. Submit an intake and the agent files its
+        analysis here as Under Review — pre-populated with the answers, risk rating,
+        findings, and controls, ready for your decision.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<dialog class="ot-dlg" id="otDlg" aria-labelledby="otd-name">
+  <div class="otd__bar">
+    <span class="ot__id" id="otd-id"></span>
+    <span id="otd-name"></span>
+    <button id="otd-close" aria-label="Close">✕</button>
+  </div>
+  <div class="otd__body" id="otd-body"></div>
+</dialog>
+
+<input type="file" id="otd-file" multiple style="display:none;">
+
+<script>
+const RECORDS = {{ records_json | tojson }};
+const dlg = document.getElementById('otDlg');
+const fileInput = document.getElementById('otd-file');
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function section(b, label) { b.appendChild(el('div', 'otd__sec', label)); }
+
+function openRecord(r) {
+  document.getElementById('otd-id').textContent = r.assessment_id;
+  document.getElementById('otd-name').textContent = r.name;
+  const b = document.getElementById('otd-body');
+  b.innerHTML = '';
+  const kv = document.createElement('dl'); kv.className = 'otd__kv';
+  [['Subject', r.subject], ['Template', r.template],
+   ['Inherent risk', String(r.inherent_risk).toUpperCase()],
+   ['Residual risk', String(r.residual_risk).toUpperCase() +
+      (r.risks_in_scope ? ' (' + r.controls_in_place + ' of ' + r.risks_in_scope + ' risk areas controlled)' : '')],
+   ['Status', r.status + (r.decided_by ? ' · by ' + r.decided_by : '')],
+   ['Responses', r.answered + ' / ' + r.total + ' answered'],
+   ['Filed by', 'Lightwork agent (input + analysis; decision is human)']].forEach(function (p) {
+    kv.append(el('dt', '', p[0]), el('dd', '', p[1]));
+  });
+  if (r.speed && r.speed.filed_elapsed) {
+    kv.append(el('dt', '', 'Agent speed'), el('dd', '',
+      'ticket → filed in ' + r.speed.filed_elapsed +
+      (r.speed.decided_elapsed ? ' · decided at ' + r.speed.decided_elapsed : '') +
+      (r.speed.auto_answered ? ' · ' + r.speed.auto_answered + ' answer(s) from evidence on file' : '')));
+  }
+  b.appendChild(kv);
+
+  if ((r.answers || []).length) {
+    section(b, 'Interview responses (' + r.answers.length + ')');
+    r.answers.forEach(function (a) {
+      const d = el('div', 'otd__ans');
+      const q = el('div', 'q', a.question);
+      const ans = el('div');
+      ans.append(el('span', 'a', String(a.answer || '?')));
+      if (a.by) ans.append(el('span', 'note', '  — answered by ' + a.by));
+      d.append(q, ans);
+      if (a.note) d.appendChild(el('div', 'note', '“' + a.note + '”'));
+      b.appendChild(d);
+    });
+  }
+  if ((r.findings || []).length) {
+    section(b, 'Findings (' + r.findings.length + ')');
+    r.findings.forEach(function (f) {
+      const d = el('div', 'otd__finding ' + (f.severity || 'low'));
+      d.append(
+        el('div', '', '[' + String(f.severity || '?').toUpperCase() + '] ' + (f.text || f.question || '')),
+        el('div', 'g', f.guidance || f.recommendation || ''));
+      b.appendChild(d);
+    });
+  }
+  if ((r.controls || []).length) {
+    section(b, 'Required controls (' + r.controls.length + ')');
+    r.controls.forEach(function (c) {
+      const d = el('div', 'otd__ans');
+      d.append(el('div', '', c.id + ' — ' + c.title));
+      if (c.frameworks) d.appendChild(el('div', 'note', c.frameworks));
+      b.appendChild(d);
+    });
+  }
+
+  // The agent's deliverables, retained by the tenant and openable here:
+  // risk analysis + notice cross-check from the protocol run, and the
+  // paper-review memo + tracked-changes redline from the reviewer desk.
+  const docs = r.documents || [];
+  section(b, 'Documents — vendor record (' + docs.length + ')');
+  if (!docs.length) {
+    b.appendChild(el('div', 'otd__msg',
+      'None yet — the agent attaches its risk analysis, notice cross-check ' +
+      'and any paper-review redline here when it files.'));
+  }
+  docs.forEach(function (doc) {
+    const d = el('div', 'otd__ans');
+    const row = el('div');
+    const chip = el('span', 'otd__filechip');
+    if (doc.kind === 'docx') {
+      chip.textContent = 'W'; chip.style.background = '#185abd';
+    } else if (doc.kind === 'pdf') {
+      chip.textContent = 'PDF'; chip.style.background = '#b3261e';
+    } else {
+      chip.textContent = 'TXT'; chip.style.background = '#5f6368';
+    }
+    chip.style.cssText += 'display:inline-block;min-width:22px;text-align:center;' +
+      'color:#fff;font-size:10px;font-weight:700;border-radius:4px;' +
+      'padding:2px 4px;margin-right:7px;vertical-align:1px;';
+    row.appendChild(chip);
+    const a = document.createElement('a');
+    a.href = '/onetrust/attachment/' + encodeURIComponent(doc.id);
+    a.textContent = doc.filename;
+    a.style.cssText = 'color:#2a7ab0;font-weight:600;text-decoration:none;';
+    if (doc.kind === 'text') a.target = '_blank';
+    row.appendChild(a);
+    d.appendChild(row);
+    const kb = doc.bytes >= 1024
+      ? (doc.bytes / 1024).toFixed(1) + ' KB' : doc.bytes + ' B';
+    const when = doc.at
+      ? new Date(doc.at * 1000).toISOString().slice(0, 10) + ' · ' : '';
+    const hint = doc.kind === 'docx'
+      ? (String(doc.filename).endsWith('-redline.docx')
+         ? ' · Word document — downloads; open it to see the tracked changes'
+         : String(doc.filename).endsWith('-our-paper.docx')
+           ? ' · Word document — downloads; auto-filled values are in red'
+           : ' · Word document — downloads; opens in Word')
+      : doc.kind === 'text' ? ' · opens in a new tab' : '';
+    const who = doc.by ? doc.by + ' · ' : '';
+    d.appendChild(el('div', 'note', who + when + kb + hint +
+      (doc.available ? '' : ' · content no longer retained')));
+    b.appendChild(d);
+  });
+
+  // "We're just adding stuff": documents appended after the assessment.
+  section(b, 'Documents added after assessment (' + (r.addenda || []).length + ')');
+  (r.addenda || []).forEach(function (a) {
+    const d = el('div', 'otd__finding ' + (a.re_review ? 'medium' : 'low'));
+    if (a.attachment_id) {
+      const link = document.createElement('a');
+      link.href = '/onetrust/attachment/' + encodeURIComponent(a.attachment_id);
+      link.textContent = '📎 ' + a.filename;
+      link.style.cssText = 'color:#2a7ab0;font-weight:600;text-decoration:none;';
+      if (String(a.filename || '').toLowerCase().endsWith('.txt')) link.target = '_blank';
+      const row = el('div');
+      row.appendChild(link);
+      d.appendChild(row);
+    } else {
+      d.appendChild(el('div', '', '📎 ' + a.filename));
+    }
+    d.appendChild(el('div', 'g', a.summary || ''));
+    if ((a.closed_gaps || []).length) {
+      const c = el('div', 'g', '✓ Closes from last review: ' + a.closed_gaps.join('; '));
+      c.style.color = '#3c6b00';
+      d.appendChild(c);
+    }
+    if ((a.gaps || []).length) d.appendChild(el('div', 'g', 'Still missing: ' + a.gaps.join('; ')));
+    b.appendChild(d);
+  });
+  const addRow = el('div');
+  addRow.style.cssText = 'margin: 4px 0 10px;';
+  const addBtn = el('button', 'otd__adddoc', '＋ Add document to this vendor');
+  addBtn.type = 'button';
+  const addMsg = el('span', 'otd__msg', '');
+  addMsg.style.marginLeft = '10px';
+  addBtn.onclick = function () {
+    fileInput.onchange = function () {
+      const files = [...fileInput.files];
+      fileInput.value = '';
+      addMsg.textContent = 'Analyzing…';
+      Promise.all(files.map(function (f) {
+        const fd = new FormData();
+        fd.append('file', f);
+        return fetch('/onetrust/record/' + encodeURIComponent(r.assessment_id) + '/add-document',
+                     {method: 'POST', body: fd}).then(function (resp) { return resp.json(); });
+      })).then(function (rs) {
+        const bad = rs.find(function (x) { return !x.ok; });
+        if (bad) { addMsg.textContent = 'Rejected: ' + (bad.error || '?'); return; }
+        addMsg.textContent = 'Appended ✓ — reloading…';
+        setTimeout(function () { location.reload(); }, 600);
+      }).catch(function () { addMsg.textContent = 'Network error.'; });
+    };
+    fileInput.click();
+  };
+  addRow.append(addBtn, addMsg);
+  b.appendChild(addRow);
+
+  // The decision happens HERE, in the tenant the customer already lives in.
+  if (r.status === 'Under Review') {
+    const bar = el('div', 'otd__decide');
+    const who = document.createElement('input');
+    who.type = 'text';
+    who.placeholder = 'Reviewer name';
+    who.value = 'Privacy Reviewer';
+    who.setAttribute('aria-label', 'Reviewer name');
+    const ok = el('button', 'otd__approve', '✓ Approve');
+    ok.type = 'button';
+    const back = el('button', 'otd__reject', 'Send back');
+    back.type = 'button';
+    const msg = el('span', 'otd__msg', 'Approval is recorded on Lightwork\'s signed audit chain.');
+    function decide(action) {
+      ok.disabled = back.disabled = true;
+      msg.textContent = action === 'approve' ? 'Approving…' : 'Sending back…';
+      fetch('/onetrust/decide', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({assessment_id: r.assessment_id, decision: action,
+                              reviewer: who.value.trim()}),
+      }).then(function (resp) { return resp.json().then(function (j) { return {s: resp.status, j: j}; }); })
+        .then(function (x) {
+          if (!x.j.ok) {
+            ok.disabled = back.disabled = false;
+            msg.textContent = x.j.error || ('Failed: ' + x.s);
+            return;
+          }
+          msg.textContent = x.j.status + ' ✓ — reloading…';
+          setTimeout(function () { location.reload(); }, 600);
+        })
+        .catch(function () { ok.disabled = back.disabled = false; msg.textContent = 'Network error.'; });
+    }
+    ok.onclick = function () { decide('approve'); };
+    back.onclick = function () { decide('send_back'); };
+    bar.append(who, ok, back, msg);
+    b.appendChild(bar);
+  }
+  dlg.showModal();
+}
+
+document.querySelectorAll('.ot__tbl tr[data-i]').forEach(function (row) {
+  function open() {
+    const r = RECORDS[Number(row.dataset.i)];
+    if (r) openRecord(r);
+  }
+  row.addEventListener('click', open);
+  row.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+});
+document.getElementById('otd-close').onclick = () => dlg.close();
+</script>
+{% endblock %}

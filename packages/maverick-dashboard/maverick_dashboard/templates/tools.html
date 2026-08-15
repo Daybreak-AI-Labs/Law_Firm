@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Tools · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Workforce capability', 'Tools',
+               subtitle='What your workforce can use',
+               lede='Everything your agents are able to use here, after your
+                     organization\'s allow, deny and rate-limit rules are
+                     applied — rules your administrator manages inside the
+                     platform, not in a config file.') %}
+    {% if error %}
+      {{ state('Current state', 'Tool list unavailable',
+               badge='needs attention', badge_class='warn',
+               copy='The tool registry could not be read — the details are
+                     shown below.') }}
+    {% else %}
+      {{ state('Current state', (tools | length) ~ ' tool(s) available',
+               badge='governed', badge_class='ok',
+               copy='This list already reflects your organization\'s allow,
+                     deny and rate-limit rules — nothing outside it can be
+                     called.') }}
+    {% endif %}
+  {% endcall %}
+
+  <div class="panel">
+    {% if error %}
+      <p style="color: var(--danger);">Could not build the tool list: <code>{{ error }}</code></p>
+    {% elif tools %}
+      <table>
+        <thead><tr><th scope="col">name</th><th scope="col">description</th></tr></thead>
+        <tbody>
+        {% for t in tools %}
+          <tr>
+            <td><code>{{ t.name }}</code></td>
+            <td class="muted" style="font-size: 0.85rem;">{{ t.description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No tools registered.</p>
+    {% endif %}
+  </div>
+{% endblock %}

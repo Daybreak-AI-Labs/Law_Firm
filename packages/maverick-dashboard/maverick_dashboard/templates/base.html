@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="{{ lang or 'en' }}" dir="{{ dir or 'ltr' }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e1320" />
+  <title>{% block title %}Lightwork{% endblock %}</title>
+  <link rel="stylesheet" href="/static/lightwork.css" />
+  {% if custom_theme_css %}
+  <style>
+    /* Operator-defined themes ([dashboard] themes in config.toml). Values
+       are strictly validated as #hex colors before they reach this block.
+       These set only --bg/--panel/--text/--accent; everything else (borders,
+       surfaces, badges, brand) is derived from them by the rules above. */
+{{ custom_theme_css }}
+  </style>
+  {% endif %}
+  <link rel="icon" href="/static/daybreak-logo.jpg" />
+  <link rel="apple-touch-icon" href="/static/daybreak-logo.jpg" />
+</head>
+<body class="theme-{{ theme or 'dark' }} font-{{ font or 'default' }} density-{{ density or 'comfortable' }}">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-chat" viewBox="0 0 16 16"><path d="M13 8.4A2.2 2.2 0 0 1 10.8 10.6H6.4L3 13V5.2A2.2 2.2 0 0 1 5.2 3h5.6A2.2 2.2 0 0 1 13 5.2z"/></symbol>
+      <symbol id="i-target" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><circle cx="8" cy="8" r="2"/></symbol>
+      <symbol id="i-agents" viewBox="0 0 16 16"><rect x="3.4" y="5" width="9.2" height="7" rx="2.2"/><path d="M8 2.6V5M6.4 8.2v.9M9.6 8.2v.9"/></symbol>
+      <symbol id="i-roles" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2.2"/><circle cx="8" cy="6.6" r="1.6"/><path d="M5.4 11.4a2.7 2.7 0 0 1 5.2 0"/></symbol>
+      <symbol id="i-builder" viewBox="0 0 16 16"><path d="M3.5 12.5 10 6"/><path d="M11 2.6l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></symbol>
+      <symbol id="i-workflow" viewBox="0 0 16 16"><rect x="2.5" y="2.6" width="4.6" height="3.4" rx="1"/><rect x="8.9" y="10" width="4.6" height="3.4" rx="1"/><path d="M4.8 6v3.2a1.2 1.2 0 0 0 1.2 1.2h2.9"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.4 1.5"/></symbol>
+      <symbol id="i-graph" viewBox="0 0 16 16"><circle cx="4" cy="4.2" r="1.7"/><circle cx="12" cy="5" r="1.7"/><circle cx="7" cy="12" r="1.7"/><path d="M5.5 4.7 10.5 5M5.3 5.6 6.4 10.4M8.4 11 10.8 6.5"/></symbol>
+      <symbol id="i-fleets" viewBox="0 0 16 16"><path d="M8 2.6 14 5.6 8 8.6 2 5.6z"/><path d="M2.6 8.6 8 11.4 13.4 8.6"/></symbol>
+      <symbol id="i-overview" viewBox="0 0 16 16"><rect x="2.6" y="2.6" width="4.8" height="4.8" rx="1.2"/><rect x="8.6" y="2.6" width="4.8" height="4.8" rx="1.2"/><rect x="2.6" y="8.6" width="4.8" height="4.8" rx="1.2"/><rect x="8.6" y="8.6" width="4.8" height="4.8" rx="1.2"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.8 8S4 3.9 8 3.9 14.2 8 14.2 8 12 12.1 8 12.1 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/></symbol>
+      <symbol id="i-spend" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M8 4.8v6.4M9.5 6.1a1.7 1.7 0 0 0-1.5-.9c-.9 0-1.6.5-1.6 1.2 0 1.7 3.2 1 3.2 2.7 0 .7-.7 1.2-1.6 1.2a1.8 1.8 0 0 1-1.5-.9"/></symbol>
+      <symbol id="i-providers" viewBox="0 0 16 16"><path d="M5.6 2.6v3M10.4 2.6v3"/><rect x="4" y="5.6" width="8" height="4" rx="1.6"/><path d="M8 9.6v3.8"/></symbol>
+      <symbol id="i-bench" viewBox="0 0 16 16"><path d="M2.4 13.4h11.2"/><path d="M4.4 13.4V8.4M7.4 13.4V4.2M10.4 13.4V6.6M13 13.4V9.4" /></symbol>
+      <symbol id="i-learned" viewBox="0 0 16 16"><path d="M8 2.4a4 4 0 0 0-2.4 7.2c.4.3.6.7.6 1.1v.3h3.6v-.3c0-.4.2-.8.6-1.1A4 4 0 0 0 8 2.4z"/><path d="M6.6 13.4h2.8"/></symbol>
+      <symbol id="i-cube" viewBox="0 0 16 16"><path d="M8 2.5 13.5 5.5V10.5L8 13.5 2.5 10.5V5.5z"/><path d="M2.7 5.7 8 8.6 13.3 5.7M8 8.6v4.8"/></symbol>
+      <symbol id="i-check" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M5.6 8.2 7.2 9.8 10.5 6.3"/></symbol>
+      <symbol id="i-key" viewBox="0 0 16 16"><circle cx="6" cy="6" r="2.5"/><path d="M7.9 7.9 13 13M11.2 11.2l1.3-1.3M10 10l1.4-1.4"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 2.5 13 4.2V8c0 3-2.2 4.8-5 5.5-2.8-.7-5-2.5-5-5.5V4.2z"/></symbol>
+      <symbol id="i-compliance" viewBox="0 0 16 16"><rect x="3.5" y="3" width="9" height="10.5" rx="1.6"/><path d="M6 3V2.2h4V3"/><path d="M6.2 8.2 7.4 9.4 10 6.7"/></symbol>
+      <symbol id="i-compartments" viewBox="0 0 16 16"><rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.6"/><path d="M8 2.6v10.8M2.6 8h10.8"/></symbol>
+      <symbol id="i-audit" viewBox="0 0 16 16"><path d="M5.4 4h7.2M5.4 8h7.2M5.4 12h4.8"/><circle cx="3.3" cy="4" r=".7"/><circle cx="3.3" cy="8" r=".7"/><circle cx="3.3" cy="12" r=".7"/></symbol>
+      <symbol id="i-skills" viewBox="0 0 16 16"><path d="M8 2.4 9.2 6.2 13 7.4 9.2 8.6 8 12.4 6.8 8.6 3 7.4 6.8 6.2z"/></symbol>
+      <symbol id="i-store" viewBox="0 0 16 16"><path d="M4.4 5.6h7.2l-.5 7a1.1 1.1 0 0 1-1.1 1H6a1.1 1.1 0 0 1-1.1-1z"/><path d="M6 5.6V4.9a2 2 0 0 1 4 0v.7"/></symbol>
+      <symbol id="i-templates" viewBox="0 0 16 16"><rect x="5.6" y="5.6" width="7" height="7" rx="1.6"/><path d="M3.4 9.6V4.4A1.6 1.6 0 0 1 5 2.8h5"/></symbol>
+      <symbol id="i-tools" viewBox="0 0 16 16"><path d="M11.4 2.6a3 3 0 0 0-3.8 3.7l-4.6 4.6a1.4 1.4 0 0 0 1.9 1.9l4.6-4.6a3 3 0 0 0 3.7-3.8l-1.7 1.7-1.6-.4-.4-1.6z"/></symbol>
+      <symbol id="i-plugins" viewBox="0 0 16 16"><path d="M6.2 3.4h1.2a1.1 1.1 0 1 1 2.2 0h1.2a.8.8 0 0 1 .8.8v1.2a1.1 1.1 0 1 0 0 2.2v1.6a.8.8 0 0 1-.8.8H9.6a1.1 1.1 0 1 0-2.2 0H5.8a.8.8 0 0 1-.8-.8V8.6a1.1 1.1 0 1 1 0-2.2V4.2a.8.8 0 0 1 .8-.8z"/></symbol>
+      <symbol id="i-mcp" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.9"/><path d="M8 2.5v3.6M8 9.9v3.6M2.5 8h3.6M9.9 8h3.6"/></symbol>
+      <symbol id="i-channels" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.4"/><path d="M5.3 5.3a4 4 0 0 0 0 5.4M10.7 5.3a4 4 0 0 1 0 5.4M3.5 3.5a6.4 6.4 0 0 0 0 9M12.5 3.5a6.4 6.4 0 0 1 0 9"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2"/><path d="M8 1.9v1.7M8 12.4v1.7M14.1 8h-1.7M3.6 8H1.9M12.3 3.7l-1.2 1.2M4.9 11.1l-1.2 1.2M12.3 12.3l-1.2-1.2M4.9 4.9 3.7 3.7"/></symbol>
+      <symbol id="i-users" viewBox="0 0 16 16"><circle cx="6" cy="6" r="2.2"/><path d="M2.6 13a3.5 3.5 0 0 1 6.8 0"/><path d="M10.4 4.2a2.2 2.2 0 0 1 0 4.2M11 13a3.5 3.5 0 0 0-1.3-2.7"/></symbol>
+      <symbol id="i-tenants" viewBox="0 0 16 16"><rect x="3.5" y="2.6" width="9" height="10.8" rx="1.2"/><path d="M6 5.2h1.4M9 5.2h1.4M6 7.6h1.4M9 7.6h1.4M6.6 13.4v-2.2h2.8v2.2"/></symbol>
+      <symbol id="i-cache" viewBox="0 0 16 16"><ellipse cx="8" cy="4.2" rx="4.4" ry="1.8"/><path d="M3.6 4.2v7.6c0 1 2 1.8 4.4 1.8s4.4-.8 4.4-1.8V4.2"/><path d="M3.6 8c0 1 2 1.8 4.4 1.8s4.4-.8 4.4-1.8"/></symbol>
+      <symbol id="i-facts" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M8 7.4v3.2M8 5.3v.8"/></symbol>
+      <symbol id="i-walkthroughs" viewBox="0 0 16 16"><path d="M5.6 3 3 4.2v9l2.6-1.2 4.8 2 2.6-1.2v-9l-2.6 1.2-4.8-2z"/><path d="M5.6 3v8.8M10.4 5v8.8"/></symbol>
+      <symbol id="i-embed" viewBox="0 0 16 16"><path d="M5.6 5.4 3 8l2.6 2.6M10.4 5.4 13 8l-2.6 2.6M9 4l-2 8"/></symbol>
+      <symbol id="i-dot" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2"/></symbol>
+    </defs>
+  </svg>
+  <header class="topbar">
+    <button type="button" class="topbar__menu" id="nav-toggle"
+            aria-label="Toggle sidebar" aria-expanded="false" aria-controls="sidebar">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="/" aria-label="Lightwork by Daybreak Labs — home">
+      <span class="brand__plate">
+        <img class="brand__logo" src="/static/daybreak-logo.jpg" alt="Daybreak Labs"
+             width="35" height="24" />
+      </span>
+      <span class="brand__name">Lightwork</span>
+    </a>
+    <span class="topbar__controls">
+      <a href="#" id="halt-pill" class="halt-pill" role="button" aria-label="Emergency stop: stop or resume all work">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="halt-label" aria-live="polite">checking</span>
+      </a>
+      {% if show_settings_link is not defined or show_settings_link %}
+      <a class="iconbtn" href="/settings" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-settings"></use></svg>
+      </a>
+      {% endif %}
+      <details class="prefs" id="prefs-menu">
+        <summary class="iconbtn" aria-label="Display preferences" title="Display preferences">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h3.4M10.4 5h3.1M2.5 11h6.3M13.1 11h.4"/><circle cx="7.7" cy="5" r="1.7"/><circle cx="10.8" cy="11" r="1.7"/></svg>
+        </summary>
+        <div class="prefs__panel" role="group" aria-label="Display preferences">
+          <label class="prefs__row"><span>Theme</span>
+      <select class="ctl" id="theme-select" onchange="if (this.value) { const u = new URL(window.location); u.searchParams.set('theme', this.value); window.location = u; }" aria-label="Theme">
+        <option value="">Theme</option>
+        <option value="dark" {% if theme == 'dark' %}selected{% endif %}>Dark</option>
+        <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
+        <option value="solarized" {% if theme == 'solarized' %}selected{% endif %}>Solarized</option>
+        <option value="hicontrast" {% if theme == 'hicontrast' %}selected{% endif %}>High contrast</option>
+        {% for name in custom_theme_names %}
+        <option value="{{ name }}" {% if theme == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+          </label>
+          <label class="prefs__row"><span>Density</span>
+      <select class="ctl" id="density-select" onchange="if (this.value) { const u = new URL(window.location); u.searchParams.set('density', this.value); window.location = u; }" aria-label="Density">
+        <option value="">Density</option>
+        <option value="comfortable" {% if density == 'comfortable' %}selected{% endif %}>Comfortable</option>
+        <option value="compact" {% if density == 'compact' %}selected{% endif %}>Compact</option>
+      </select>
+          </label>
+          <label class="prefs__row"><span>{{ t('label.font') }}</span>
+      <select class="ctl" id="font-select" onchange="if (this.value) { const u = new URL(window.location); u.searchParams.set('font', this.value); window.location = u; }" aria-label="{{ t('label.font') }}">
+        <option value="">{{ t('label.font') }}</option>
+        <option value="default" {% if font == 'default' %}selected{% endif %}>{{ t('font.default') }}</option>
+        <option value="dyslexic" {% if font == 'dyslexic' %}selected{% endif %}>{{ t('font.dyslexic') }}</option>
+      </select>
+          </label>
+          <label class="prefs__row"><span>{{ t('label.language') }}</span>
+      <select class="ctl" id="lang-select" onchange="if (this.value) { const u = new URL(window.location); u.searchParams.set('lang', this.value); window.location = u; }" aria-label="{{ t('label.language') }}">
+        <option value="">{{ t('label.language') }}</option>
+        <option value="en" {% if lang == 'en' %}selected{% endif %}>English</option>
+        <option value="fr" {% if lang == 'fr' %}selected{% endif %}>Français</option>
+        <option value="de" {% if lang == 'de' %}selected{% endif %}>Deutsch</option>
+        <option value="ja" {% if lang == 'ja' %}selected{% endif %}>日本語</option>
+        <option value="zh" {% if lang == 'zh' %}selected{% endif %}>中文</option>
+        <option value="ar" {% if lang == 'ar' %}selected{% endif %}>العربية</option>
+      </select>
+          </label>
+        </div>
+      </details>
+    </span>
+  </header>
+  <div class="nav-backdrop" id="nav-backdrop"></div>
+  <aside class="sidebar" id="sidebar">
+    <nav aria-label="Primary">
+      <a class="btn btn--primary navquick" href="/chat"
+         style="display: flex; align-items: center; justify-content: center; gap: 0.4rem; margin: 0 var(--space-2) var(--space-3);">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span class="nav-label">New goal</span>
+      </a>
+      {% set _path = request.url.path if request else '' %}
+      {# The dashboard lands on /chat, so highlight Chat when at the bare root. #}
+      {% set _active_path = '/chat' if _path == '/' else _path %}
+      {# nav_groups comes from the _nav_context context processor: the page
+         registry (maverick_dashboard.ui_visibility.PAGES) filtered to what the
+         caller's RBAC role may see. Auth off -> the full nav, as before. #}
+      {% for _group in nav_groups %}
+        <div class="navgrp">
+          <button type="button" class="navgrp__toggle" data-grp="{{ _group.label }}"
+                  aria-expanded="true" aria-controls="navgrp-{{ loop.index0 }}">
+            <span class="navgrp__label">{{ _group.label }}</span>
+            <svg class="navgrp__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <ul class="navgrp__items" id="navgrp-{{ loop.index0 }}">
+            {% for _link in _group.links %}
+              {% set _active = (_active_path == _link.href or _active_path.startswith(_link.href ~ '/')) %}
+              <li><a href="{{ _link.href }}"{% if _active %} class="active" aria-current="page"{% endif %}><svg class="nav-ic" aria-hidden="true"><use href="#i-{{ _link.icon or 'dot' }}"></use></svg><span class="nav-label">{{ _link.label }}</span></a></li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
+    </nav>
+  </aside>
+  <main id="content" tabindex="-1">
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <span class="muted">Lightwork by Daybreak Labs · {{ t('footer.local') }} · proprietary software</span>
+  </footer>
+
+  <!-- Reusable toast regions + confirm dialog (window.mvToast / window.mvConfirm).
+       Two pre-existing live regions: errors announce assertively, status politely. -->
+  <div class="mv-toasts">
+    <div id="mv-toasts-alert" class="mv-toasts__list" role="alert" aria-live="assertive" aria-atomic="false"></div>
+    <div id="mv-toasts" class="mv-toasts__list" aria-live="polite" aria-atomic="false"></div>
+  </div>
+  <dialog id="mv-confirm" class="mv-confirm" aria-labelledby="mv-confirm-msg">
+    <div class="mv-confirm__body">
+      <p class="mv-confirm__msg" id="mv-confirm-msg"></p>
+      <div class="mv-confirm__row">
+        <button type="button" class="btn btn--ghost" id="mv-confirm-cancel">Cancel</button>
+        <button type="button" class="btn btn--primary" id="mv-confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="mv-form" class="mv-confirm mv-form" aria-labelledby="mv-form-title">
+    <form id="mv-form-form" class="mv-confirm__body">
+      <h2 class="mv-form__title" id="mv-form-title"></h2>
+      <div id="mv-form-fields"></div>
+      <p class="mv-form__err" id="mv-form-err" aria-live="polite"></p>
+      <div class="mv-confirm__row">
+        <button type="button" class="btn btn--ghost" id="mv-form-cancel">Cancel</button>
+        <button type="submit" class="btn btn--primary" id="mv-form-ok">OK</button>
+      </div>
+    </form>
+  </dialog>
+  <!-- Platform copilot: one helper, every page, lower-right. -->
+  <button class="mv-copilot__fab" id="mv-copilot-fab" type="button"
+          aria-expanded="false" aria-controls="mv-copilot"
+          title="Copilot — need a hand?">💬</button>
+  <div class="mv-copilot" id="mv-copilot" role="dialog"
+       aria-label="Lightwork copilot" hidden>
+    <div class="mv-copilot__head">
+      <strong>Copilot</strong>
+      <button class="btn btn--ghost" id="mv-copilot-close" type="button"
+              aria-label="Close copilot">✕</button>
+    </div>
+    <p class="mv-copilot__hello" id="mv-copilot-hello">Need help getting
+      started on this page?</p>
+    <ul class="mv-copilot__tips" id="mv-copilot-tips"></ul>
+    <div class="mv-copilot__log" id="mv-copilot-log" aria-live="polite"></div>
+    <form id="mv-copilot-form">
+      <div class="mv-copilot__row">
+        <input class="input" id="mv-copilot-input" autocomplete="off"
+               placeholder="Ask about this page…"
+               aria-label="Ask the copilot">
+        <button class="btn btn--primary" id="mv-copilot-send"
+                type="submit">Send</button>
+      </div>
+      <p class="mv-copilot__note" id="mv-copilot-note"></p>
+    </form>
+  </div>
+  <script>
+  (function () {
+    var TIPS = {
+      "/flows":   ["Drag a step from the palette onto the canvas to start.",
+                   "The 💬 Copilot inside the designer builds the flow from a sentence.",
+                   "Dry-run before publishing — nothing real happens until you publish."],
+      "/security":["Start with the readiness board pack for the executive view.",
+                   "Each control row cites its evidence — click through before accepting.",
+                   "The threat hunters are switched on right here on this page."],
+      "/privacy": ["The worklist filters show what actually needs you today.",
+                   "Upload a vendor's DPA under Vendor paper for a tracked-changes redline.",
+                   "The Lineage tab answers 'why did we approve this vendor?'."],
+      "/learning":["Every learning system has a plain-language description and a switch.",
+                   "Nothing learned is trusted until the self-harness re-proves it."],
+      "/workforce":["Open a department to see its team and reviews in a pop-out.",
+                    "Performance reviews come from delivered work, not vibes."],
+      "/goals":   ["A goal is one outcome; the timeline shows every step and cost.",
+                   "Blocked goals name exactly what they are waiting on."],
+      "/agents":  ["Describe the specialist in plain English — Lightwork drafts the rest.",
+                   "Saves that would weaken the safety envelope are rejected, not merged."],
+      "/spend":   ["Every dollar traces to a goal and a model call — click any bar.",
+                   "Set cost tiers to steer routing economics without code."],
+      "/tenants": ["A workspace isolates one client or team: its own records, keys, and budget.",
+                   "Create one per client engagement so evidence never mixes."],
+    };
+    var fab = document.getElementById("mv-copilot-fab");
+    var panel = document.getElementById("mv-copilot");
+    if (!fab || !panel) { return; }
+    function tipsFor(path) {
+      var keys = Object.keys(TIPS);
+      for (var i = 0; i < keys.length; i++) {
+        if (path.indexOf(keys[i]) === 0) { return TIPS[keys[i]]; }
+      }
+      return ["Every page's primary action is the highlighted button up top.",
+              "Anything an agent does lands on the Audit page, signed.",
+              "Admins can switch platform systems on the Learning and Security pages."];
+    }
+    function open() {
+      var list = document.getElementById("mv-copilot-tips");
+      list.innerHTML = "";
+      tipsFor(window.location.pathname).forEach(function (t) {
+        var li = document.createElement("li");
+        li.textContent = t;
+        list.appendChild(li);
+      });
+      panel.hidden = false;
+      fab.setAttribute("aria-expanded", "true");
+    }
+    function close() {
+      panel.hidden = true;
+      fab.setAttribute("aria-expanded", "false");
+    }
+    fab.addEventListener("click", function () {
+      panel.hidden ? open() : close();
+    });
+    document.getElementById("mv-copilot-close")
+      .addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !panel.hidden) { close(); }
+    });
+
+    // The conversation itself: one turn per send, grounded in this page.
+    var history = [];
+    var log = document.getElementById("mv-copilot-log");
+    var form = document.getElementById("mv-copilot-form");
+    var input = document.getElementById("mv-copilot-input");
+    var note = document.getElementById("mv-copilot-note");
+    function say(role, text) {
+      var d = document.createElement("div");
+      d.className = "mv-copilot__msg mv-copilot__msg--" + role;
+      d.textContent = text;
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+    }
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var msg = (input.value || "").trim();
+      if (!msg) { return; }
+      input.value = "";
+      note.textContent = "";
+      say("user", msg);
+      var sendBtn = document.getElementById("mv-copilot-send");
+      sendBtn.disabled = true;
+      fetch("/api/v1/copilot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg,
+                               page: window.location.pathname,
+                               history: history.slice(-6) }),
+      }).then(function (r) {
+        return r.json().then(function (j) { return { s: r.status, j: j }; });
+      }).then(function (x) {
+        if (x.s === 200 && x.j.reply) {
+          say("bot", x.j.reply);
+          history.push({ role: "user", content: msg },
+                       { role: "assistant", content: x.j.reply });
+        } else if (x.s === 400 || x.s === 503) {
+          note.textContent = "Live answers need a model provider — an admin "
+            + "connects one under Admin → Connections. The tips above work "
+            + "without it.";
+        } else {
+          note.textContent = "That didn't go through — try again.";
+        }
+      }).catch(function () {
+        note.textContent = "That didn't go through — try again.";
+      }).finally(function () { sendBtn.disabled = false; input.focus(); });
+    });
+  })();
+  </script>
+  <script src="/static/lightwork-ui.js"></script>
+  <script src="/static/lightwork-voice.js" defer></script>
+</body>
+</html>

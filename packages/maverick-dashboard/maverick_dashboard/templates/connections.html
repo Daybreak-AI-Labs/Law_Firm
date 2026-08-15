@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Connections · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .cx { max-width: 820px; }
+  .cx__sub { color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+  .cx__form { border: 1px solid var(--glass-border, var(--border)); border-radius: var(--radius-lg);
+              background: var(--glass-soft, var(--surface)); box-shadow: var(--glass-edge);
+              -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+              padding: var(--space-4); margin-bottom: var(--space-5); }
+  .cx__fld { margin-bottom: var(--space-3); }
+  .cx__fld label { display: block; font-size: var(--text-sm); font-weight: var(--font-semibold); margin-bottom: 3px; }
+  .cx__fld .sub { font-weight: 400; color: var(--muted); }
+  .cx__grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+  .advanced{ border: 1px solid var(--glass-border, var(--border)); border-radius: var(--radius-md);
+    margin: var(--space-2) 0 var(--space-3); overflow: hidden; }
+  .advanced > summary{ cursor: pointer; list-style: none; padding: 0.5rem var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-sm); }
+  .advanced > summary::-webkit-details-marker{ display: none; }
+  .advanced > summary::before{ content: "⚙"; }
+  .advanced__body{ padding: 0 var(--space-3) var(--space-3); }
+  .cx__actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+    padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+  .cx__list { list-style: none; padding: 0; margin: 0; }
+  .cx__row { display: flex; align-items: baseline; gap: var(--space-3);
+             border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3);
+             margin-bottom: var(--space-2); }
+  .cx__row .name { font-weight: var(--font-semibold); }
+  .cx__row .meta { color: var(--muted); font-size: var(--text-sm); flex: 1; word-break: break-all; }
+  .cx__badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); }
+  .cx__badge.ok { color: var(--success, #16a34a); border-color: currentColor; }
+  .cx__badge.no { color: var(--danger, #dc2626); border-color: currentColor; }
+  .cx__msg { font-size: var(--text-sm); color: var(--muted); min-height: 1.2em; }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% call hero('Integrations', 'Connections',
+             subtitle='Your tools, wired in once',
+             lede='Connect a tool once — pick what it is and paste its API
+                   token — and your flows can use it by name with no further
+                   setup.') %}
+  {{ state('Current state', 'Sealed credential vault',
+           badge='encrypted at rest', badge_class='ok',
+           copy='Tokens are sealed the moment you save and are never shown
+                 again. Managing connections is admin-only; builders
+                 reference a saved connection by name.') }}
+{% endcall %}
+
+<div class="cx">
+  <div class="section-head"><h2>Add a connection</h2></div>
+  <form class="cx__form" id="cx-form" autocomplete="off">
+    <div class="cx__fld">
+      <label for="cx-preset">What are you connecting? <span class="sub">— pick one to prefill it</span></label>
+      <select class="input" id="cx-preset">
+        <option value="">— choose a service —</option>
+        <option value="custom">Custom / other</option>
+      </select>
+    </div>
+    <div class="cx__fld">
+      <label for="cx-name">Name <span class="sub">— how you'll refer to it in flows</span></label>
+      <input class="input" id="cx-name" placeholder="salesforce-eu" required>
+    </div>
+    <div class="cx__fld">
+      <label for="cx-token">API token / key <span class="sub">— sealed, never shown again</span></label>
+      <input class="input" id="cx-token" type="password" placeholder="paste the token">
+    </div>
+
+    <details class="advanced" id="cx-advanced">
+      <summary>Advanced — connector name &amp; base URL
+        <span style="margin-inline-start:auto;">▾</span></summary>
+      <div class="advanced__body">
+        <div class="cx__grid">
+          <div class="cx__fld" style="margin-bottom:0;">
+            <label for="cx-connector">Connector (tool name)</label>
+            <input class="input" id="cx-connector" placeholder="salesforce">
+          </div>
+          <div class="cx__fld" style="margin-bottom:0;">
+            <label for="cx-base">Base URL</label>
+            <input class="input" id="cx-base" placeholder="https://api.example.com">
+          </div>
+        </div>
+        <p class="cx__sub" id="cx-hint" style="margin:var(--space-2) 0 0;"></p>
+        <div class="cx__fld" style="margin-top:var(--space-3);">
+          <label><input type="checkbox" id="cx-tenant-access"> Allow every authenticated user in this tenant to use this credential</label>
+          <p class="cx__sub" style="margin:3px 0 0;">Off by default. Credential management stays admin-only either way.</p>
+        </div>
+        <div class="cx__fld" style="margin-bottom:0;">
+          <label for="cx-principals">Additional allowed principals <span class="sub">— one <code>user:id</code> per line</span></label>
+          <textarea class="input" id="cx-principals" rows="3" placeholder="user:alice"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <div class="cx__actions">
+      <button class="btn btn--primary" type="submit">Save connection</button>
+      <button class="btn" type="button" id="cx-save-test">Save &amp; test</button>
+      <span class="cx__msg" id="cx-msg" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <div class="section-head"><h2>Saved connections</h2></div>
+  <ul class="cx__list" id="cx-list"></ul>
+  <p class="cx__sub" id="cx-empty" hidden>None yet — save your first connection above and it appears here, ready to test.</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var msg = document.getElementById('cx-msg');
+  var list = document.getElementById('cx-list');
+  function say(t, err) { msg.textContent = t || ''; msg.style.color = err ? 'var(--danger)' : 'var(--muted)'; }
+  {% include "_dash_helpers.js" %}
+
+  // ---- guided presets: pick a service, we prefill connector + base URL. The
+  // Advanced fold still lets a power user override either. Org-specific hosts
+  // are offered as a hint/placeholder rather than a wrong hard-coded value. ----
+  var PRESETS = [
+    { id: 'slack',      label: 'Slack',       connector: 'slack',      base: 'https://slack.com/api' },
+    { id: 'github',     label: 'GitHub',      connector: 'github',     base: 'https://api.github.com' },
+    { id: 'notion',     label: 'Notion',      connector: 'notion',     base: 'https://api.notion.com' },
+    { id: 'hubspot',    label: 'HubSpot',     connector: 'hubspot',    base: 'https://api.hubapi.com' },
+    { id: 'stripe',     label: 'Stripe',      connector: 'stripe',     base: 'https://api.stripe.com' },
+    { id: 'salesforce', label: 'Salesforce',  connector: 'salesforce', base: '', hint: 'https://<your-org>.my.salesforce.com' },
+    { id: 'zendesk',    label: 'Zendesk',     connector: 'zendesk',    base: '', hint: 'https://<subdomain>.zendesk.com' },
+    { id: 'jira',       label: 'Jira',        connector: 'jira',       base: '', hint: 'https://<site>.atlassian.net' },
+  ];
+  var preset = document.getElementById('cx-preset');
+  var nameEl = document.getElementById('cx-name');
+  var connEl = document.getElementById('cx-connector');
+  var baseEl = document.getElementById('cx-base');
+  var hintEl = document.getElementById('cx-hint');
+  var advanced = document.getElementById('cx-advanced');
+  // Insert preset options before the trailing "Custom" entry.
+  PRESETS.forEach(function (p) {
+    var o = document.createElement('option'); o.value = p.id; o.textContent = p.label;
+    preset.insertBefore(o, preset.querySelector('option[value="custom"]'));
+  });
+  var nameEdited = false;
+  nameEl.addEventListener('input', function () { nameEdited = true; });
+  preset.addEventListener('change', function () {
+    var p = PRESETS.filter(function (x) { return x.id === preset.value; })[0];
+    hintEl.textContent = '';
+    if (!p) {                                   // Custom / none: reveal Advanced
+      if (preset.value === 'custom') { advanced.open = true; }
+      return;
+    }
+    connEl.value = p.connector;
+    baseEl.value = p.base || '';
+    if (p.hint) { baseEl.placeholder = p.hint; hintEl.textContent = 'Base URL is org-specific — e.g. ' + p.hint; advanced.open = true; }
+    if (!nameEdited && !nameEl.value.trim()) { nameEl.value = p.id; }
+  });
+
+  function load() {
+    api('/api/v1/connections').then(function (r) {
+      if (r.status === 403) { say('Connections are turned off — an administrator can enable them in Settings.', true); return { connections: [] }; }
+      return r.ok ? r.json() : { connections: [] };
+    }).then(function (j) {
+      var conns = j.connections || [];
+      list.textContent = '';
+      document.getElementById('cx-empty').hidden = conns.length > 0;
+      conns.forEach(function (c) {
+        var li = el('li', 'cx__row');
+        li.appendChild(el('span', 'name', c.name));
+        var scope = c.access === 'tenant' ? 'tenant use' : 'owner/granted use';
+        var readiness = c.last_test ? (c.last_test.authenticated ? ' · ready' : ' · not ready') : ' · untested';
+        var meta = el('div', 'meta', (c.connector ? '→ ' + c.connector + '  ' : '') + (c.base_url || '(no base URL)') + ' · ' + scope + readiness);
+        li.appendChild(meta);
+        li.appendChild(el('span', 'cx__badge ' + (c.has_token ? 'ok' : 'no'), c.has_token ? 'token set' : 'no token'));
+        var test = el('button', 'btn btn--ghost', 'Test');
+        test.type = 'button';
+        test.addEventListener('click', function () {
+          test.textContent = 'Testing…';
+          api('/api/v1/connections/' + encodeURIComponent(c.name) + '/test', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (res) { test.textContent = (res.ok ? '✓ ' : '✗ ') + (res.detail || ''); })
+            .catch(function () { test.textContent = '✗ error'; });
+        });
+        var del = el('button', 'btn btn--ghost', '🗑');
+        del.type = 'button';
+        del.setAttribute('aria-label', 'Delete connection ' + c.name);
+        del.addEventListener('click', async function () {
+          if (!(await mvConfirm('Delete connection “' + c.name + '”?', { okText: 'Delete' }))) return;
+          api('/api/v1/connections/' + encodeURIComponent(c.name), { method: 'DELETE' })
+            .then(function () { load(); });
+        });
+        li.appendChild(test); li.appendChild(del);
+        list.appendChild(li);
+      });
+    }).catch(function () { say('Could not load connections.', true); });
+  }
+
+  function readBody() {
+    return {
+      name: document.getElementById('cx-name').value.trim(),
+      connector: document.getElementById('cx-connector').value.trim(),
+      base_url: document.getElementById('cx-base').value.trim(),
+      token: document.getElementById('cx-token').value,
+      access: document.getElementById('cx-tenant-access').checked ? 'tenant' : 'owner',
+      allowed_principals: document.getElementById('cx-principals').value.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean),
+    };
+  }
+
+  // Save, then (optionally) fire the reachability test for the just-saved one.
+  function save(thenTest) {
+    var body = readBody();
+    if (!body.name) { say('Give the connection a name.', true); return; }
+    say(thenTest ? 'Saving & testing…' : 'Saving…');
+    return api('/api/v1/connections', { method: 'POST', body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { say(res.j.detail || 'Save failed', true); return; }
+        document.getElementById('cx-token').value = '';
+        if (!thenTest) { say('Saved ✓'); load(); return; }
+        return api('/api/v1/connections/' + encodeURIComponent(body.name) + '/test', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (t) { say((t.ok ? 'Saved ✓ — ' : 'Saved, but test failed: ') + (t.detail || ''), !t.ok); load(); })
+          .catch(function () { say('Saved ✓ (test could not run)', true); load(); });
+      }).catch(function () { say('Save failed', true); });
+  }
+
+  document.getElementById('cx-form').addEventListener('submit', function (e) { e.preventDefault(); save(false); });
+  document.getElementById('cx-save-test').addEventListener('click', function () { save(true); });
+
+  load();
+})();
+</script>
+{% endblock %}

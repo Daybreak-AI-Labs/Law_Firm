@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Goals · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Goals — a clean toolbar (compose + search) over scannable run rows, in the
+     same glass family as the rest of the platform. The search JS rebuilds the
+     same .g-row markup, so server- and client-rendered rows match. */
+  .g-bar{ display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .g-bar__search{ margin-inline-start: auto; min-width: 16rem; flex: 0 1 22rem; }
+  .g-list{ display: flex; flex-direction: column; gap: var(--space-2); }
+  .g-row{ display: flex; align-items: center; gap: var(--space-3);
+    border: 1px solid var(--glass-border, var(--border)); border-radius: var(--radius-lg);
+    background: var(--glass-soft, var(--surface-1)); box-shadow: var(--glass-edge);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    padding: var(--space-3) var(--space-4); }
+  .g-row__id{ font-variant-numeric: tabular-nums; color: var(--muted); font-size: var(--text-sm); flex: none; width: 3.5rem; }
+  .g-row__main{ flex: 1; min-width: 0; }
+  .g-row__title{ font-weight: var(--font-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .g-row__desc{ color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .g-row__actions{ display: flex; gap: var(--space-2); flex: none; opacity: 0.72; }
+  .g-row__actions a{ font-size: var(--text-sm); color: var(--muted); }
+  .g-row__actions a:hover{ color: var(--brand-hi); }
+  .g-row:hover .g-row__actions{ opacity: 1; }
+  .g-empty{ text-align: center; color: var(--muted); padding: var(--space-6) var(--space-4);
+    border: 1px dashed var(--glass-border, var(--border)); border-radius: var(--radius-lg);
+    background: var(--glass-soft, var(--surface-1)); }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% set running = goals | selectattr('status', 'equalto', 'running') | list | length %}
+  {% call hero('Your AI workforce', 'Goals',
+               subtitle='Every run on record',
+               lede='Every run this deployment has executed — search across
+                     them, then open a plan, replay, or errors.') %}
+    {{ state('Current state',
+             goals | length ~ ' recent run' ~ ('' if goals | length == 1 else 's'),
+             badge=(running ~ ' running') if running else ('ready' if goals else 'none yet'),
+             badge_class='ok' if goals else 'idle',
+             copy='Start new work from Chat, the Quick Goal form, or the Goal
+                   Map editor — every run lands here with its plan, replay,
+                   and errors.') }}
+  {% endcall %}
+
+  <div class="g-bar">
+    <a class="btn btn--primary" href="/chat">New goal in Chat</a>
+    <a class="btn" href="/goal-builder">Quick Goal form</a>
+    <a class="btn btn--ghost" href="/graph-editor">Goal Map editor</a>
+    {% if goals %}
+    <input id="run-search-q" type="search" placeholder="Search across runs…"
+           aria-label="Search runs by title or description" autocomplete="off"
+           class="input g-bar__search">
+    {% endif %}
+  </div>
+
+  {% if goals %}
+  <div class="g-list" id="run-list">
+    {% for g in goals %}
+    <div class="g-row" id="{{ g.id }}">
+      <span class="g-row__id">#{{ g.id }}</span>
+      <span class="badge {{ g.status }}">{{ g.status }}</span>
+      <span class="g-row__main">
+        <div class="g-row__title">{{ g.title }}</div>
+        {% if g.description %}<div class="g-row__desc" title="{{ g.description }}">{{ (g.description or '')[:160] }}</div>{% endif %}
+      </span>
+      <span class="g-row__actions">
+        <a href="/goals/{{ g.id }}/plan">plan</a>
+        <a href="/goals/{{ g.id }}/trajectory">replay</a>
+        <a href="/goals/{{ g.id }}/errors">errors</a>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+    <div class="g-empty">
+      <p style="font-weight: var(--font-semibold); margin: 0 0 var(--space-2);">No goals yet</p>
+      <p style="margin: 0;">Start your first piece of work from <a href="/chat">Chat</a> — describe what you need in plain English.</p>
+      <details style="margin-top: var(--space-3);">
+        <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: start a goal from the command line</summary>
+        <pre style="background: var(--surface-sunken); color: var(--text); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); display: inline-block; text-align: start; margin: var(--space-2) 0 0;">maverick start "Plan a 3-day trip to Lisbon under $1500"</pre>
+      </details>
+    </div>
+  {% endif %}
+
+  <script>
+  (function () {
+    var input = document.getElementById('run-search-q');
+    var listEl = document.getElementById('run-list');
+    if (!input || !listEl) return;
+    var original = listEl.innerHTML;
+    var timer = null;
+    function esc(s) {
+      return (s == null ? '' : String(s)).replace(/[&<>"]/g, function (c) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+      });
+    }
+    function render(goals) {
+      if (!goals.length) {
+        listEl.innerHTML = '<div class="g-empty" style="padding:var(--space-5);">No matching runs.</div>';
+        return;
+      }
+      listEl.innerHTML = goals.map(function (g) {
+        var d = (g.description || '').slice(0, 160);
+        return '<div class="g-row" id="' + g.id + '">' +
+          '<span class="g-row__id">#' + g.id + '</span>' +
+          '<span class="badge ' + esc(g.status) + '">' + esc(g.status) + '</span>' +
+          '<span class="g-row__main"><div class="g-row__title">' + esc(g.title) + '</div>' +
+          (d ? '<div class="g-row__desc">' + esc(d) + '</div>' : '') + '</span>' +
+          '<span class="g-row__actions">' +
+          '<a href="/goals/' + g.id + '/plan">plan</a>' +
+          '<a href="/goals/' + g.id + '/trajectory">replay</a>' +
+          '<a href="/goals/' + g.id + '/errors">errors</a></span></div>';
+      }).join('');
+    }
+    input.addEventListener('input', function () {
+      var q = input.value.trim();
+      clearTimeout(timer);
+      if (!q) { listEl.innerHTML = original; return; }
+      timer = setTimeout(function () {
+        fetch('/api/v1/goals/search?q=' + encodeURIComponent(q) + '&limit=100',
+              {headers: {'Accept': 'application/json'}})
+          .then(function (r) { return r.ok ? r.json() : []; })
+          .then(render)
+          .catch(function () { /* keep current rows on error */ });
+      }, 200);
+    });
+  })();
+  </script>
+{% endblock %}

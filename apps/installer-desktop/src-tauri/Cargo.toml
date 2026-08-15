@@ -1,0 +1,48 @@
+[package]
+name = "maverick-installer-desktop"
+version = "0.1.7"
+edition = "2021"
+description = "Tauri GUI installer for Lightwork"
+authors = ["cdayAI"]
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/Daybreak-AI-Labs/Lightwork"
+
+[lib]
+name = "maverick_installer_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Council distribution-seat fix: the package had only [lib] and a
+# src/main.rs with a bare fn main(), but no [[bin]] target — cargo had
+# no binary to build, so `tauri build` produced nothing. The standard
+# Tauri v2 layout splits the logic into lib.rs (run()) and a thin
+# main.rs that calls it; this declares the binary explicitly.
+[[bin]]
+name = "maverick-installer-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+sha2 = "=0.10.9"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.59.0", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

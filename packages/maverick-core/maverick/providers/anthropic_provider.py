@@ -1,0 +1,703 @@
+"""Anthropic provider client.
+
+Full implementation: prompt caching on system prompt + tool catalog
+(ephemeral cache control), extended thinking on demand, streaming with
+progress callbacks, sync + async client.
+
+This is the canonical client; other providers translate to/from its
+format.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from collections.abc import Callable
+from typing import Any
+
+import anthropic
+
+from ..budget import Budget
+from ..llm import LLMResponse, ToolCall
+from ..retry import async_retry, sync_retry
+
+log = logging.getLogger(__name__)
+# Module-level flag so we only emit the low-cache warning once per process.
+_LOW_CACHE_WARNING_EMITTED: dict[str, bool] = {}
+
+
+def _default_cache_ttl() -> str:
+    """Wave 11: benchmark mode defaults to 5m TTL (no cross-instance
+    reuse), interactive mode keeps 1h (multi-turn within a single
+    long-running goal benefits from longer cache life).
+
+    Explicit MAVERICK_ANTHROPIC_CACHE_TTL always wins.
+    """
+    explicit = os.environ.get("MAVERICK_ANTHROPIC_CACHE_TTL")
+    if explicit:
+        return explicit
+    coding = os.environ.get("MAVERICK_CODING_MODE", "").lower() in ("1", "true", "yes")
+    if coding:
+        return "5m"
+    return "1h"
+
+
+def _adaptive_max_tokens_floor() -> int:
+    """Headroom ceiling for AUTO-adaptive thinking (Opus 4.7/4.8, no explicit
+    thinking_budget). Adaptive thinking bills as output (~5x input) and can
+    spend up to max_tokens, so this floor is the worst-case output cost of
+    every non-thinking-role turn on the default model. 16384 (the May 26
+    council value) quadrupled the agent loop's 4096 for roles that never asked
+    to think; 8192 keeps generous anti-empty-response headroom at half the
+    ceiling. Tune via MAVERICK_ADAPTIVE_MAX_TOKENS_FLOOR (min 2048)."""
+    from .._envparse import env_int
+    return max(2048, env_int("MAVERICK_ADAPTIVE_MAX_TOKENS_FLOOR", 8192))
+
+
+def _is_opus_adaptive(model_id: str) -> bool:
+    """Opus 4.7/4.8 (incl. ``-fast`` variants): the models that ONLY accept
+    adaptive thinking (explicit "enabled" returns 400) and get the auto-
+    adaptive default. The single place to extend when 4.9 lands — the request
+    builder and the budget estimate both key off this predicate."""
+    return (model_id.startswith("claude-opus-4-7")
+            or model_id.startswith("claude-opus-4-8"))
+
+
+def effective_max_tokens(model_id: str, max_tokens: int,
+                         thinking_budget: int | None = None) -> int:
+    """The max_tokens ``_build_request`` sends — and the value it computes it
+    with: the builder calls this, so the budget ``reserve()`` estimate that
+    also calls it can never drift from the real request. Accepts bare model
+    ids or "provider:model" specs.
+    """
+    mid = (model_id or "").split(":", 1)[-1]
+    if thinking_budget and thinking_budget > 0:
+        return max(max_tokens, thinking_budget + 1024)
+    if _is_opus_adaptive(mid):
+        return max(max_tokens, _adaptive_max_tokens_floor())
+    return max_tokens
+
+
+def _ephemeral(obj: dict) -> dict:
+    # Anthropic regressed the default cache TTL from 1h to 5m in early
+    # March 2026 (issue #46829 on anthropics/claude-code). For agent
+    # workloads -- where system prompts and tool catalogs are reused
+    # across many turns inside a single goal -- 5m is too short and
+    # forces ~20% extra spend on re-creates. Explicitly set 1h on every
+    # cache control block so we get the discount we expect.
+    # Wave 11: in coding-mode (SWE-bench style), default to 5m since
+    # there is no cross-instance reuse and the 25% cache-write surcharge
+    # on a 1h TTL is wasted.
+    #
+    # Wave 12 hotfix — minimum cacheable prompt size:
+    # Claude Opus 4.5+, Sonnet 4.5+, and Haiku 4.5: the cumulative prompt
+    # up to AND INCLUDING the cache breakpoint must be >= 4,096 tokens
+    # or the breakpoint is silently ignored (no API error, no cache
+    # write, no cache read on subsequent calls). Older Claude 4.x and
+    # 3.x models use 1,024.
+    #
+    # Lightwork's current system prompt (~1,085 tokens) + tool catalog
+    # (~716 tokens) sit BELOW the 4,096 threshold individually, which
+    # means cache_control on them is currently a no-op. The messages
+    # breakpoint is the one that actually delivers caching on long
+    # agent traces (history grows past 4k by turn 3-4). We still mark
+    # system + tools with cache_control — it's harmless if the block
+    # is too small, and starts working once the prompt expands.
+    ttl = _default_cache_ttl()
+    return {**obj, "cache_control": {"type": "ephemeral", "ttl": ttl}}
+
+
+# Wave 12 hotfix: cacheable-block minimums per Anthropic model family.
+# Used to warn / no-op cache_control when the prompt is too small.
+_MIN_CACHE_TOKENS_4X = 4096
+_MIN_CACHE_TOKENS_3X = 1024
+
+
+def _min_cache_tokens(model_id: str) -> int:
+    """Minimum cumulative prompt tokens (up to + including breakpoint)
+    required for prompt caching to actually take effect.
+
+    Claude 4.5+ (opus 4.5/4.6/4.7/4.8, sonnet 4.5/4.6, haiku 4.5): 4096.
+    Earlier 4.x and all 3.x: 1024.
+    """
+    if (
+        model_id.startswith("claude-opus-4-5")
+        or model_id.startswith("claude-opus-4-6")
+        or model_id.startswith("claude-opus-4-7")
+        or model_id.startswith("claude-opus-4-8")
+        or model_id.startswith("claude-sonnet-4-5")
+        or model_id.startswith("claude-sonnet-4-6")
+        or model_id.startswith("claude-haiku-4-5")
+    ):
+        return _MIN_CACHE_TOKENS_4X
+    return _MIN_CACHE_TOKENS_3X
+
+
+def _cached_system(text: str) -> list[dict]:
+    return [_ephemeral({"type": "text", "text": text})]
+
+
+def _cached_tools(tools: list[dict]) -> list[dict]:
+    if not tools:
+        return tools
+    # Wave 12 (council F13d): sort tools by name BEFORE sending so the
+    # tool catalog is byte-identical across calls — Anthropic's prompt
+    # cache key includes the tools[] block, and a non-deterministic
+    # order silently busts the cache write. Stable order = predictable
+    # cache hits = 30-50% input cost reduction over the run.
+    # Wave 12 hardening: coerce key via str() so a malformed tool with
+    # name=None or non-string doesn't blow sorted() with TypeError.
+    out = [dict(t) for t in sorted(
+        tools, key=lambda t: str(t.get("name") or ""),
+    )]
+    out[-1] = _ephemeral(out[-1])
+    return out
+
+
+def _strip_message_cache_control(messages: list[dict]) -> list[dict]:
+    """Remove any pre-existing ``cache_control`` from message content blocks.
+
+    Re-sent history can carry ``cache_control`` marks from earlier turns (a
+    previously-marked breakpoint replayed in the next request). Left in place
+    they stack with the fresh system + tools + messages breakpoints and can
+    exceed Anthropic's hard limit of **4 cache breakpoints** -- a 400 on long
+    trajectories. Stripping first guarantees the messages array contributes at
+    most the single breakpoint we add below.
+    """
+    out: list[dict] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list) and any(
+            isinstance(b, dict) and "cache_control" in b for b in content
+        ):
+            blocks = [
+                {k: v for k, v in b.items() if k != "cache_control"}
+                if isinstance(b, dict) else b
+                for b in content
+            ]
+            out.append({**m, "content": blocks})
+        else:
+            out.append(m)
+    return out
+
+
+# A single agentic turn can append many tool_use/tool_result blocks. Anthropic
+# walks back at most 20 content blocks from a breakpoint to find a prior cache
+# entry, so on a long turn the next request's breakpoint can fall outside the
+# window and silently miss. When the history is long we add a SECOND, earlier
+# breakpoint within the window so the chain stays warm. System(1)+tools(1)+2
+# message marks = 4, exactly the hard breakpoint limit.
+#
+# All three thresholds are counted in CONTENT BLOCKS, the unit the lookback
+# actually uses — the old >=24-MESSAGE trigger missed block-heavy histories (a
+# few fan-out turns with many parallel tool_results blow past 20 blocks well
+# under 24 messages), leaving the chain cold exactly when tool output is
+# biggest and each turn re-wrote the full prefix.
+_LONG_HISTORY_BLOCKS = 16
+_SECONDARY_MIN_GAP_BLOCKS = 4
+_SECONDARY_MAX_GAP_BLOCKS = 16
+
+
+def _content_block_count(msg: dict) -> int:
+    """Content blocks one message contributes (str content counts as one)."""
+    c = msg.get("content")
+    return len(c) if isinstance(c, list) else 1
+
+
+def _msg_cache_ttl() -> str:
+    """TTL for the MESSAGE-tier breakpoints (system/tools keep
+    ``_default_cache_ttl``). The message breakpoint re-anchors to a new
+    position every turn, so its write surcharge is paid per turn — and the
+    re-read lands seconds later on the next turn. 5m (1.25x write) covers
+    that; 1h (2x write) buys nothing unless turns stall. An explicit
+    operator TTL (either env) still wins."""
+    explicit = (os.environ.get("MAVERICK_ANTHROPIC_MSG_CACHE_TTL")
+                or os.environ.get("MAVERICK_ANTHROPIC_CACHE_TTL"))
+    return explicit or "5m"
+
+
+def _mark_user_message(msg: dict) -> dict:
+    """Return a copy of ``msg`` with cache_control on its last content block."""
+    cc = {"type": "ephemeral", "ttl": _msg_cache_ttl()}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return {**msg, "content": [{"type": "text", "text": content, "cache_control": cc}]}
+    if isinstance(content, list) and content:
+        new_blocks = [dict(b) for b in content]
+        new_blocks[-1] = {**new_blocks[-1], "cache_control": cc}
+        return {**msg, "content": new_blocks}
+    return msg
+
+
+def _add_messages_cache_breakpoint(messages: list[dict]) -> list[dict]:
+    """Mark the most recent stable user/tool_result message(s) for caching.
+
+    Wave 10: Anthropic prompt caching caches everything up to AND including the
+    marked breakpoint. The system prompt + tools are already cached; the
+    remaining breakpoint slots are best spent on the most recent stable turn so
+    multi-turn agent loops (which re-send the entire history every step) get
+    cache reads instead of writes for the message body (40-55% input cost cut on
+    long tool-use trajectories). On a long history we add a second, earlier
+    breakpoint so the 20-block lookback never strands the chain.
+    """
+    if not messages or len(messages) < 2:
+        return messages
+    # Drop any cache_control carried in from prior turns so the messages array
+    # contributes only the breakpoints we add (system + tools + <=2 <= 4 limit).
+    messages = _strip_message_cache_control(messages)
+    # Primary: the most recent user message that's NOT the final one (the final
+    # user message changes every turn -- caching it would write a fresh entry
+    # every call, the OPPOSITE of what we want).
+    target_idx = None
+    for i in range(len(messages) - 2, -1, -1):
+        if messages[i].get("role") == "user":
+            target_idx = i
+            break
+    if target_idx is None:
+        return messages
+    new_messages = list(messages)
+    new_messages[target_idx] = _mark_user_message(new_messages[target_idx])
+
+    # Secondary breakpoint for long histories: an earlier user message inside
+    # the lookback window, so a single long turn can't push the chain out of
+    # it. Counted in blocks (the lookback's unit): pick the closest user
+    # message >= MIN_GAP blocks behind the primary, giving up past MAX_GAP.
+    total_blocks = sum(_content_block_count(m) for m in messages)
+    if total_blocks >= _LONG_HISTORY_BLOCKS:
+        gap = _content_block_count(messages[target_idx])
+        for i in range(target_idx - 1, -1, -1):
+            if gap > _SECONDARY_MAX_GAP_BLOCKS:
+                break
+            if (gap >= _SECONDARY_MIN_GAP_BLOCKS
+                    and new_messages[i].get("role") == "user"):
+                new_messages[i] = _mark_user_message(new_messages[i])
+                break
+            gap += _content_block_count(messages[i])
+    return new_messages
+
+
+class AnthropicClient:
+    DEFAULT_MODEL = "claude-sonnet-4-6"
+
+    def __init__(self, api_key: str | None = None, base_url: str | None = None,
+                 default_headers: dict | None = None):
+        # May 26 council fix (long-tail audit #1): strip whitespace.
+        # `export ANTHROPIC_API_KEY=$(cat key.txt)` is a common source of
+        # trailing newline; without strip, every API call 401s and the
+        # operator sees "API outage" instead of the real "key has
+        # whitespace" issue.
+        key = (api_key or os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
+        from .base import llm_http_timeout
+        kw: dict = {"api_key": key}
+        # Thread an explicit `[providers.anthropic] base_url` into the SDK so a
+        # configured endpoint (proxy / gateway) is honored. ``None`` leaves the
+        # SDK's own default base_url (mirrors how OpenAIClient handles base_url).
+        if base_url:
+            kw["base_url"] = base_url
+        # Data-residency / ZDR control: operator-set `[providers.anthropic]
+        # default_headers` are attached to every request, so a compliance
+        # gateway can enforce region pinning / zero-data-retention headers
+        # (e.g. {"anthropic-region": "eu"}). Empty by default -> no extra headers.
+        if default_headers:
+            kw["default_headers"] = dict(default_headers)
+        timeout = llm_http_timeout()
+        if timeout is not None:
+            kw["timeout"] = timeout
+        self.client = anthropic.Anthropic(**kw)
+        self.aclient = anthropic.AsyncAnthropic(**kw)
+
+    def _build_request(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        max_tokens: int,
+        thinking_budget: int | None,
+        model: str | None,
+        effort: str | None = None,
+    ) -> dict[str, Any]:
+        # Wave 10: cache the most recent stable user message so repeated
+        # tool-use turns hit the cache for the history (40-55% input
+        # token cost cut on long trajectories). Toggle via env var so
+        # the dashboard can A/B it.
+        if os.environ.get("MAVERICK_CACHE_MESSAGES", "1") != "0":
+            messages_out = _add_messages_cache_breakpoint(messages)
+        else:
+            messages_out = messages
+
+        kwargs: dict[str, Any] = {
+            "model": model or self.DEFAULT_MODEL,
+            "system": _cached_system(system),
+            "messages": messages_out,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = _cached_tools(tools)
+
+        # Wave 12 hotfix: note (at DEBUG, once per model) when system+tools is
+        # below the min-cache threshold. The cache_control markers are silently
+        # ignored in that case — we still set them so caching kicks in if/when
+        # the prompt grows. Kept at debug, not warning: the consumer CLI installs
+        # no log handler, so a WARNING bleeds straight onto the terminal in the
+        # middle of a normal `chat` / `start` run. Operators who want it can
+        # raise the log level (e.g. MAVERICK_DEBUG=1).
+        model_for_min = kwargs["model"] or ""
+        min_tokens = _min_cache_tokens(model_for_min)
+        if not _LOW_CACHE_WARNING_EMITTED.get(model_for_min):
+            # Heuristic token estimate: 4 chars/token.
+            sys_tok = len(system or "") // 4
+            tools_tok = (
+                sum(len(str(t)) for t in (tools or [])) // 4
+            )
+            if sys_tok + tools_tok < min_tokens:
+                log.debug(
+                    "prompt cache no-op: system+tools=%d tok (~%d sys + ~%d tools) "
+                    "< %d-token min for %s. cache_control on system/tools "
+                    "is ignored; only the messages breakpoint will cache "
+                    "once history grows past %d tokens. Expand the system "
+                    "prompt or tool descriptions to unlock system/tool caching.",
+                    sys_tok + tools_tok, sys_tok, tools_tok,
+                    min_tokens, model_for_min, min_tokens,
+                )
+                _LOW_CACHE_WARNING_EMITTED[model_for_min] = True
+        # Wave 12 hotfix: thinking + interleaved-thinking handling per
+        # Anthropic's May 2026 docs (platform.claude.com/docs/.../adaptive-thinking):
+        #
+        #   - Opus 4.7:  ONLY adaptive mode accepted. Manual
+        #                `thinking={"type":"enabled"}` returns 400.
+        #                Interleaved thinking is automatic — no header.
+        #   - Opus 4.6 / Sonnet 4.6 / Haiku 4.5: interleaved is automatic
+        #                in adaptive mode; the beta header is deprecated
+        #                and ignored.
+        #   - Sonnet 4.5 / Opus 4.5 and older: the
+        #                `interleaved-thinking-2025-05-14` header is
+        #                still required to get interleaved behavior.
+        #
+        # An earlier Wave 12 commit set the beta header unconditionally
+        # for any "claude-opus-/claude-sonnet-4" prefix — that breaks
+        # against Opus 4.7 (400) and is wasted noise on 4.6.
+        model_id = (model or self.DEFAULT_MODEL) or ""
+        # Opus 4.7 AND 4.8 (the current default, incl. its `-fast` variant)
+        # only accept adaptive thinking; manual `enabled` returns 400.
+        # Gating on 4-7 alone left the default model on the `enabled` path.
+        is_opus_47 = _is_opus_adaptive(model_id)
+        is_modern_4x = (
+            model_id.startswith("claude-opus-4-6")
+            or model_id.startswith("claude-opus-4-7")
+            or model_id.startswith("claude-opus-4-8")
+            or model_id.startswith("claude-sonnet-4-6")
+            or model_id.startswith("claude-haiku-4-5")
+        )
+        legacy_thinking_header_required = (
+            model_id.startswith("claude-opus-4-5")
+            or model_id.startswith("claude-sonnet-4-5")
+        )
+
+        if thinking_budget and thinking_budget > 0:
+            kwargs["max_tokens"] = effective_max_tokens(
+                model_id, max_tokens, thinking_budget)
+            if is_opus_47:
+                # Opus 4.7 rejects explicit "enabled"; only "adaptive"
+                # is supported. Drop budget_tokens — adaptive auto-sizes.
+                kwargs["thinking"] = {"type": "adaptive"}
+            else:
+                kwargs["thinking"] = {
+                    "type": "enabled", "budget_tokens": thinking_budget,
+                }
+
+        # Beta header gating — only set on legacy models that still need it.
+        if legacy_thinking_header_required and "thinking" in kwargs:
+            extra_headers = kwargs.get("extra_headers", {})
+            beta = extra_headers.get("anthropic-beta", "")
+            betas = [b.strip() for b in beta.split(",") if b.strip()]
+            if "interleaved-thinking-2025-05-14" not in betas:
+                betas.append("interleaved-thinking-2025-05-14")
+            extra_headers["anthropic-beta"] = ",".join(betas)
+            kwargs["extra_headers"] = extra_headers
+        # For 4.6 and 4.7 models, interleaved is automatic in adaptive
+        # mode — no header needed. Note: even WITHOUT thinking_budget,
+        # callers may want adaptive default on Opus 4.7. Surface that:
+        if is_opus_47 and "thinking" not in kwargs:
+            # Opus 4.7 with no explicit thinking spec: let the model
+            # decide via adaptive. This matches the docs' "adaptive is
+            # the only supported mode" guidance.
+            kwargs["thinking"] = {"type": "adaptive"}
+            # May 26 council fix (API audit #18): adaptive thinking
+            # can spend the entire `max_tokens` budget on thinking and
+            # leave nothing for the tool_use / text output, producing
+            # an empty response. Bump headroom for adaptive runs — but
+            # bounded: this fires for every role that did NOT ask to
+            # think (thinking_budget=None), so the floor is the default
+            # worst-case output spend of the whole fleet.
+            kwargs["max_tokens"] = effective_max_tokens(model_id, max_tokens)
+        _ = is_modern_4x  # documented above; kept for future logic
+        # Orchestrator best-of-N sets a per-attempt sampling temperature to
+        # force candidate diversity. It is read from a ContextVar (per goal
+        # task, race-free across concurrent goals); MAVERICK_TEMPERATURE remains
+        # honoured as a process-wide fallback for manual/CLI use.
+        # Thinking models reject explicit temperature (400). Gate on whether
+        # `thinking` actually ended up in the request -- not on thinking_budget,
+        # which misses the adaptive-thinking auto-injected for Opus 4.7/4.8 just
+        # above (that path set thinking_budget=None yet still sends thinking, so
+        # the old gate let temperature through and the API 400'd).
+        from .base import sampling_temperature
+        temp = sampling_temperature()
+        if temp is None:
+            raw = os.environ.get("MAVERICK_TEMPERATURE")
+            if raw:
+                try:
+                    temp = float(raw)
+                except ValueError:
+                    temp = None
+        if temp is not None and "thinking" not in kwargs:
+            kwargs["temperature"] = temp
+
+        # Per-role reasoning effort (output_config.effort) — the biggest
+        # cost/latency lever on Opus 4.7/4.8. Caller usually resolves it via
+        # maverick.effort.effort_for_role, but provider failover can carry a
+        # primary model's effort to a lower-ceiling fallback. Defence-in-depth:
+        # validate and re-clamp for the actual model so a stray effort never 400s.
+        if effort:
+            from ..effort import effort_for_model
+            model_effort = effort_for_model(effort, model_id)
+            if model_effort:
+                oc = kwargs.get("output_config")
+                if isinstance(oc, dict):
+                    oc["effort"] = model_effort
+                else:
+                    kwargs["output_config"] = {"effort": model_effort}
+        return kwargs
+
+    def _parse_response(
+        self,
+        resp: Any,
+        budget: Budget | None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        # May 26 council fix (API audit #1): preserve PER-BLOCK
+        # signatures. With Opus 4.7 interleaved thinking, a single
+        # turn can emit multiple thinking blocks, each with its own
+        # signature derived from that block's text. Concatenating
+        # text but keeping only the first signature broke the
+        # second turn (Anthropic rejects the assistant message
+        # because the signature doesn't match the text).
+        thinking_blocks: list[tuple[str, str | None]] = []
+        # May 28 fix: capture blocks in their ORIGINAL order. Anthropic
+        # rejects a rearranged thinking-block sequence ("the latest
+        # assistant message ... cannot be modified"), which the old
+        # bucket-by-type reconstruction triggered on interleaved Opus
+        # 4.7 turns (thinking between tool_use). We replay these verbatim.
+        content_blocks: list[dict] = []
+        for block in resp.content:
+            t = getattr(block, "type", None)
+            if t == "text":
+                text_parts.append(block.text)
+                content_blocks.append({"type": "text", "text": block.text})
+            elif t == "thinking":
+                text = getattr(block, "thinking", "")
+                sig = getattr(block, "signature", None)
+                thinking_parts.append(text)
+                thinking_blocks.append((text, sig))
+                tb: dict = {"type": "thinking", "thinking": text}
+                if sig:
+                    tb["signature"] = sig
+                content_blocks.append(tb)
+            elif t == "redacted_thinking":
+                # Opaque, signature-bearing block. The old loop dropped
+                # these entirely, which also breaks the "must match the
+                # original response" contract — echo it back unchanged.
+                data = getattr(block, "data", None)
+                rb: dict = {"type": "redacted_thinking"}
+                if data is not None:
+                    rb["data"] = data
+                content_blocks.append(rb)
+            elif t == "tool_use":
+                tool_calls.append(ToolCall(id=block.id, name=block.name, input=dict(block.input)))
+                content_blocks.append({
+                    "type": "tool_use", "id": block.id,
+                    "name": block.name, "input": dict(block.input),
+                })
+
+        # Wave 12 (council F13c) + hardening: nullsafe usage parsing.
+        # If resp.usage itself is None (streaming refusal), getattr
+        # chains through 0 defaults. Coerce all values via int() inside
+        # a try block to catch non-int truthy values (string "100" from
+        # a mock, Decimal from a future SDK schema).
+        usage = getattr(resp, "usage", None)
+
+        def _safe_int(value, default=0) -> int:
+            try:
+                return int(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        cache_creation = _safe_int(getattr(usage, "cache_creation_input_tokens", 0))
+        cache_read = _safe_int(getattr(usage, "cache_read_input_tokens", 0))
+        in_tok = _safe_int(getattr(usage, "input_tokens", 0))
+        out_tok = _safe_int(getattr(usage, "output_tokens", 0))
+
+        if budget is not None:
+            # ``usage.input_tokens`` is non-cached input only. Cache reads
+            # and writes are billed separately at different rates.
+            budget.record_tokens(
+                in_tok, out_tok,
+                model=model,
+                cache_read_tok=cache_read,
+                cache_write_tok=cache_creation,
+                # Wave 12: pass TTL so write surcharge math matches the
+                # actual breakpoint TTL (5m vs 1h).
+                cache_write_ttl=_default_cache_ttl(),
+            )
+
+        # Prometheus token + cache-effectiveness metrics (no-op unless the
+        # exporter is on). Records billed tokens by direction and the three
+        # prompt-cache buckets so a `cache_read / (cache_read + input)` hit-rate
+        # panel makes a silent cache invalidator visible as a metric, not just a
+        # cost bump. Fail-soft: metrics never break a turn.
+        try:
+            from ..observability import record_metric as _rm
+            _m = model or self.DEFAULT_MODEL or "default"
+            _lbl = {"provider": "anthropic", "model": _m}
+            if in_tok:
+                _rm("llm_tokens", in_tok, labels={**_lbl, "direction": "input"})
+            if out_tok:
+                _rm("llm_tokens", out_tok, labels={**_lbl, "direction": "output"})
+            if cache_read:
+                _rm("llm_cache_tokens", cache_read, labels={**_lbl, "kind": "read"})
+            if cache_creation:
+                _rm("llm_cache_tokens", cache_creation, labels={**_lbl, "kind": "creation"})
+            if in_tok:
+                _rm("llm_cache_tokens", in_tok, labels={**_lbl, "kind": "uncached"})
+        except Exception:  # pragma: no cover -- metrics never break a turn
+            pass
+
+        # Per-turn observability — log model + cache stats so operators
+        # can verify caching is actually engaging on real API calls.
+        # Gated on MAVERICK_LOG_TURNS to keep production logs quiet.
+        # Print direct to stderr so it survives default-level logging
+        # filters (log.info doesn't print by default).
+        if os.environ.get("MAVERICK_LOG_TURNS"):
+            import sys as _sys
+            _sys.stderr.write(
+                f"llm_turn model={model or 'default'} "
+                f"in={in_tok} out={out_tok} "
+                f"cache_read={cache_read} cache_write={cache_creation} "
+                f"stop={resp.stop_reason}\n"
+            )
+            _sys.stderr.flush()
+
+        return LLMResponse(
+            text="\n".join(text_parts).strip(),
+            thinking="\n".join(thinking_parts).strip() or None,
+            thinking_blocks=thinking_blocks,
+            thinking_signature=(
+                thinking_blocks[0][1] if thinking_blocks else None
+            ),
+            content_blocks=content_blocks,
+            tool_calls=tool_calls,
+            stop_reason=resp.stop_reason,
+            cache_creation_tokens=cache_creation,
+            cache_read_tokens=cache_read,
+            raw=resp,
+        )
+
+    def complete(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        budget: Budget | None = None,
+        max_tokens: int = 4096,
+        thinking_budget: int | None = None,
+        model: str | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        effort: str | None = None,
+    ) -> LLMResponse:
+        kwargs = self._build_request(
+            system, messages, tools, max_tokens, thinking_budget, model, effort)
+        if on_delta is None:
+            resp = sync_retry(lambda: self.client.messages.create(**kwargs))
+            return self._parse_response(resp, budget, model=kwargs.get("model"))
+
+        # Council finding: wrapping the streaming path in sync_retry
+        # would replay every on_delta callback after a mid-stream
+        # failure, so consumers see duplicate prefixes. Streaming is
+        # called from interactive paths (CLI --stream, dashboard chat);
+        # surface the error directly and let the caller retry the
+        # higher-level request without partial output.
+        with self.client.messages.stream(**kwargs) as stream:
+            for event in stream.text_stream:
+                on_delta(event)
+            final = stream.get_final_message()
+        return self._parse_response(final, budget, model=kwargs.get("model"))
+
+    async def complete_async(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        budget: Budget | None = None,
+        max_tokens: int = 4096,
+        thinking_budget: int | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> LLMResponse:
+        kwargs = self._build_request(
+            system, messages, tools, max_tokens, thinking_budget, model, effort)
+        resp = await async_retry(lambda: self.aclient.messages.create(**kwargs))
+        return self._parse_response(resp, budget, model=kwargs.get("model"))
+
+    def prewarm(
+        self,
+        system: str,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        *,
+        budget: Budget | None = None,
+    ) -> bool:
+        """Pre-warm the prompt cache with a ``max_tokens=0`` prefill.
+
+        Writes the cache at the system + tools breakpoint and returns
+        immediately (``content: []``, no output tokens billed), so the *first*
+        real turn reads the cache instead of paying the cold-write latency.
+        Built without ``_build_request`` on purpose: ``max_tokens=0`` rejects
+        ``thinking``/``output_config``/``tool_choice``, and toggling thinking
+        leaves the system+tools cache intact (it only invalidates the messages
+        tier), so a thinking-free warm still serves a thinking-enabled real call.
+        Never raises into the caller; returns whether the warm was sent."""
+        # Minimum-size gate: below the model's cacheable-prefix minimum the
+        # breakpoint is silently ignored, so the warm call would bill its
+        # full input at list price and write NOTHING — cost with zero
+        # benefit. chars/4 mirrors the preflight heuristic.
+        mid = model or self.DEFAULT_MODEL
+        est_tokens = (len(system or "")
+                      + sum(len(str(t)) for t in tools or [])) / 4
+        min_tokens = _min_cache_tokens(mid)
+        if est_tokens < min_tokens:
+            log.debug(
+                "prompt-cache prewarm skipped: est %d tokens < %d minimum "
+                "for %s (nothing would be cached)",
+                est_tokens, min_tokens, mid)
+            return False
+        try:
+            kwargs: dict[str, Any] = {
+                "model": model or self.DEFAULT_MODEL,
+                "system": _cached_system(system),
+                "max_tokens": 0,
+                # Placeholder turn (any non-whitespace string); the breakpoint is
+                # on system/tools, so this message is read during prefill but not
+                # cached and never answered.
+                "messages": [{"role": "user", "content": "warmup"}],
+            }
+            if tools:
+                kwargs["tools"] = _cached_tools(tools)
+            resp = self.client.messages.create(**kwargs)
+            if budget is not None:
+                self._parse_response(resp, budget, model=kwargs.get("model"))
+            return True
+        except Exception:  # pragma: no cover -- prewarm is best-effort
+            log.debug("prompt-cache prewarm skipped", exc_info=True)
+            return False
+

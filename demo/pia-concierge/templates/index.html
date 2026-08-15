@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}PIA Concierge{% endblock %}
+{% block body %}
+<div class="page-head">
+  {% if standalone %}
+  <div class="eyebrow">Privacy assessment agent · Standalone</div>
+  <h1>PIA Concierge</h1>
+  <p>The privacy-assessment agent, running on its own: it takes the intake
+     (chat, voice, or guided), scores the risk, files into OneTrust, and a
+     human reviews and approves there. The governance layer — signed audit
+     chain, approval queue, program workspace, control-catalog citations, and
+     learning — <b>comes with Lightwork</b>.
+     <a href="/about">See the full comparison →</a></p>
+  {% else %}
+  <div class="eyebrow">Governed digital workforce · Demo harness</div>
+  <h1>PIA Concierge</h1>
+  <p>This window is the <b>world outside Lightwork</b>: the ticketing system, the requester's
+     inbox and questionnaire, and the OneTrust tenant. Everything else — the goal timeline,
+     the risk scoring, the approvals queue, the signed audit chain — happens in the
+     <b>real Lightwork dashboard</b>.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>The flow</h2>
+  <div class="flow" style="gap:8px; font-size:14px;">
+    <span class="pill">1 · Ticket filed <span class="sim-chip">ServiceNow</span></span>
+    <span class="faint">→</span>
+    <span class="pill">2 · Agent emails intake link</span>
+    <span class="faint">→</span>
+    <span class="pill">3 · Chat or guided interview (voice works) + documents</span>
+    <span class="faint">→</span>
+    <span class="pill">4 · Risk + controls <b>· agent analysis</b></span>
+    <span class="faint">→</span>
+    <span class="pill">5 · Filed Under Review <span class="sim-chip">OneTrust</span></span>
+    <span class="faint">→</span>
+    <span class="pill">6 · Human review &amp; approve <span class="sim-chip">OneTrust</span></span>
+  </div>
+  <hr>
+  <div class="flow">
+    <a class="btn" href="/servicenow">Start: open the ticketing system →</a>
+    <a class="btn ghost" href="/onetrust">Review queue: OneTrust →</a>
+    {% if not standalone %}
+    <a class="btn ghost" href="{{ dashboard_url }}/goals" target="lightwork">Lightwork: goals ↗</a>
+    <a class="btn ghost" href="{{ dashboard_url }}/audit" target="lightwork">Lightwork: audit chain ↗</a>
+    {% else %}
+    <a class="btn ghost" href="/about">What you get vs. Lightwork →</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if value and value.filed %}
+<div class="card" id="value-strip">
+  <h2>The speed story</h2>
+  <div class="flow" style="gap: 26px; flex-wrap: wrap; align-items: baseline;">
+    <div>
+      <div style="font-size: 26px; font-weight: 800;">{{ value.filed }}</div>
+      <div class="muted" style="font-size: 12px;">assessment(s) filed</div>
+    </div>
+    <div>
+      <div style="font-size: 26px; font-weight: 800;">{{ value.median_minutes }}m</div>
+      <div class="muted" style="font-size: 12px;">median, ticket → decision</div>
+    </div>
+    <div>
+      <div style="font-size: 26px; font-weight: 800;">{{ value.auto_answered }}/{{ value.answered }}</div>
+      <div class="muted" style="font-size: 12px;">answers auto-answered with quoted evidence</div>
+    </div>
+    <div>
+      <div style="font-size: 26px; font-weight: 800;">≈{{ value.saved_hours }}h</div>
+      <div class="muted" style="font-size: 12px;">privacy-team time saved vs a
+        {{ value.baseline_hours|int }}h manual PIA <em>(stated assumption, configurable)</em></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid two">
+  <div class="card">
+    <h2>Open tickets ({{ tickets|length }})</h2>
+    {% if tickets %}
+    <table>
+      <tr><th>Number</th><th>System</th><th>State</th></tr>
+      {% for t in tickets %}
+      <tr class="clickable" onclick="location='/servicenow/ticket/{{ t.number }}'">
+        <td class="mono">{{ t.number }}</td>
+        <td>{{ t.system_name }}</td>
+        <td><span class="pill state-{{ t.state|replace(' ','') }}">{{ t.state }}</span></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}<div class="empty">No tickets yet — open the ServiceNow view to create one.</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Assessments in flight ({{ cases|length }})</h2>
+    {% if cases %}
+    <table>
+      <tr><th>Case</th><th>Subject</th><th>Stage</th></tr>
+      {% for c in cases %}
+      <tr><td class="mono">{{ c.id }}</td><td>{{ c.subject }}</td>
+          <td><span class="pill state-{{ c.stage }}">{{ c.stage|replace('_',' ') }}</span></td></tr>
+      {% endfor %}
+    </table>
+    {% else %}<div class="empty">No assessments yet.</div>{% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Customers · Daybreak Console{% endblock %}
+{% block main %}
+<div class="pagehead">
+  <div>
+    <h1>Customers</h1>
+    <p class="sub">{{ customers|length }} account{{ '' if customers|length==1 else 's' }}</p>
+  </div>
+  <form method="get" action="/customers">
+    <input name="q" value="{{ q }}" placeholder="Search name / email" style="width:240px">
+  </form>
+</div>
+
+<div class="card">
+  <table>
+    <tr><th>Customer</th><th>Contact</th><th>Posture</th><th>Status</th></tr>
+    {% for c in customers %}
+    <tr>
+      <td><a href="/customers/{{ c.id }}"><strong>{{ c.name }}</strong></a></td>
+      <td class="muted">{{ c.contact_email or '—' }}</td>
+      <td class="muted">{{ c.posture }}</td>
+      <td><span class="badge b-{{ c.status }}">{{ c.status }}</span></td>
+    </tr>
+    {% endfor %}
+    {% if not customers %}<tr><td colspan="4" class="muted">No customers yet.</td></tr>{% endif %}
+  </table>
+</div>
+
+{% if staff.can_write %}
+<h2>Add a customer</h2>
+<div class="card">
+  <form method="post" action="/customers">
+    <div class="formgrid">
+      <div><label>Name</label><input name="name" required></div>
+      <div><label>Contact email</label><input name="contact_email" type="email"></div>
+      <div><label>Primary contact</label><input name="primary_contact"></div>
+      <div><label>Environment posture</label>
+        <select name="posture">
+          <option value="connected">Connected (egress to the console)</option>
+          <option value="vpc">Change-controlled VPC</option>
+          <option value="airgapped">Air-gapped (hand-delivered files)</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn" type="submit" style="margin-top:16px">Create customer</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,456 @@
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'Newsreader';font-weight:500;src:url(file:///home/user/Lightwork/pitch/site/fonts/ns-500.woff2)}
+@font-face{font-family:'Newsreader';font-weight:600;src:url(file:///home/user/Lightwork/pitch/site/fonts/ns-600.woff2)}
+@font-face{font-family:'NewsreaderI';font-style:italic;font-weight:400;src:url(file:///home/user/Lightwork/pitch/site/fonts/ns-400i.woff2)}
+@font-face{font-family:'Inter';font-weight:400;src:url(file:///home/user/Lightwork/pitch/site/fonts/inter-400.woff2)}
+@font-face{font-family:'Inter';font-weight:500;src:url(file:///home/user/Lightwork/pitch/site/fonts/inter-500.woff2)}
+@font-face{font-family:'Inter';font-weight:600;src:url(file:///home/user/Lightwork/pitch/site/fonts/inter-600.woff2)}
+@font-face{font-family:'Inter';font-weight:700;src:url(file:///home/user/Lightwork/pitch/site/fonts/inter-700.woff2)}
+@font-face{font-family:'JBM';font-weight:500;src:url(file:///home/user/Lightwork/pitch/site/fonts/jbm-500.woff2)}
+@page{size:13.333in 7.5in;margin:0}
+:root{
+ --paper:#FAF8F3;--paper2:#F1EEE6;--card:#FFF;--ink:#14161B;--ink2:#3C424C;--muted:#6B7079;--faint:#9A9387;
+ --line:#E5E0D4;--line2:#D5CFC1;--accent:#2E50E0;--accent2:#5B78FF;--accentink:#22409f;
+ --navy:#0B0F17;--navy2:#141B29;--navyline:#26314A;--on:#EEF1F7;--onmut:#9AA6BC;--bright:#8CA6FF;
+ --mint:#3DBB8C;--coral:#E0706C;--amber:#E0A93B;
+ --serif:'Newsreader',Georgia,serif;--sans:'Inter',system-ui,sans-serif;--mono:'JBM',monospace;
+ --gnavy:linear-gradient(150deg,#1a2440,#0B0F17);}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#3a3d44}
+body{font-family:var(--sans);color:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact;-webkit-font-smoothing:antialiased}
+.s{position:relative;width:13.333in;height:7.5in;overflow:hidden;page-break-after:always;display:flex;background:var(--paper)}
+.s:last-child{page-break-after:auto}
+.s.dark{color:var(--on);background:radial-gradient(120% 130% at 82% 8%,#1c2740 0,#0B0F17 60%)}
+.dkbg{background:radial-gradient(120% 130% at 85% 5%,#20304f 0%,#0e1522 42%,#080b12 100%)}
+.L{flex:1;padding:0.62in 0.6in;display:flex;flex-direction:column;position:relative;z-index:2}
+.R{position:relative;flex:none}
+h1{font-family:var(--serif);font-weight:500;letter-spacing:-.022em;line-height:1.02;font-size:54px}
+h2{font-family:var(--serif);font-weight:500;letter-spacing:-.018em;line-height:1.05;font-size:38px}
+h3{font-weight:600;font-size:18px;letter-spacing:-.01em}
+.k{font-size:12.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.dark .k,.dkbg .k{color:var(--bright)}
+.lead{font-size:19px;line-height:1.5;color:var(--ink2)}.dark .lead,.dkbg .lead{color:var(--onmut)}
+.accent{color:var(--accent)}.dark .accent,.dkbg .accent{color:var(--bright)}
+em{font-style:italic}.serif-accent{color:var(--accent)}
+.pg{position:absolute;bottom:.34in;right:.5in;font-family:var(--mono);font-size:10.5px;color:var(--faint);z-index:5}
+.bl{position:absolute;bottom:.34in;left:.6in;font-size:10.5px;font-weight:600;color:var(--muted);z-index:5}.bl b{color:var(--ink)}.dark .bl,.dkbg .bl{color:var(--onmut)}.dark .bl b,.dkbg .bl b{color:var(--on)}
+.mark{width:32px;height:26px;background:#0A0E15;border:1px solid var(--navyline);border-radius:7px;display:inline-flex;align-items:center;justify-content:center}
+.mark span{width:15px;height:15px;border-radius:4px;background:var(--accent);display:block}
+.wm{display:flex;align-items:center;gap:12px;font-weight:600;font-size:22px;letter-spacing:-.02em}
+.fill{background:rgba(92,120,255,.16);border:1px dashed var(--accent2);color:var(--bright);border-radius:6px;padding:1px 8px;font-size:.8em;font-weight:600;white-space:nowrap}
+.s:not(.dark):not(.dkbg) .fill{background:rgba(46,80,224,.09);border-color:var(--accent);color:var(--accentink)}
+.hd h2{margin-top:12px}
+.grow{flex:1;display:flex;flex-direction:column;justify-content:center}
+/* right visual panel */
+.vpanel{width:100%;height:100%;position:relative;overflow:hidden}
+.glow{position:absolute;border-radius:50%;filter:blur(60px);opacity:.55}
+/* receipt / terminal card */
+.term{border:1px solid var(--navyline);border-radius:14px;background:#0A0E16;box-shadow:0 30px 80px -30px rgba(0,0,0,.7);overflow:hidden}
+.term .bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid var(--navyline)}
+.term .bar i{width:10px;height:10px;border-radius:50%;display:block}
+.term .ttl{margin-left:10px;font-family:var(--mono);font-size:12.5px;color:var(--onmut)}
+.term .bd{padding:14px 18px;font-family:var(--mono);font-size:14px;line-height:2.05;color:#C7D0E0}
+.term .row{display:flex;justify-content:space-between;gap:20px}
+.badge{font-weight:700}
+.deny{color:var(--coral)}.human{color:var(--amber)}.cap{color:var(--bright)}.ok{color:var(--mint)}.seal{color:#8893a5}
+/* browser frame */
+.brow{border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.14);box-shadow:0 34px 90px -30px rgba(0,0,0,.7);background:#0A0E16}
+.brow .bar{display:flex;align-items:center;gap:7px;padding:9px 12px;background:#12161f}
+.brow .u{margin-left:8px;flex:1;background:rgba(255,255,255,.08);border-radius:6px;height:18px;max-width:220px}
+.brow img{display:block;width:100%}
+/* pills / chips */
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--on);border:1px solid var(--navyline);border-radius:999px;padding:7px 15px;background:rgba(255,255,255,.04)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mint)}
+/* cards grid */
+.cards{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:1fr 1fr 1fr}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+.card.q{padding:22px 22px 24px}
+.card .qm{font-family:var(--serif);font-size:44px;line-height:.6;color:var(--accent);height:26px}
+.card h3{margin-top:8px}.card p{font-size:14px;color:var(--muted);margin-top:7px;line-height:1.45}
+.card .tab{height:4px;border-radius:3px;width:38px;margin-bottom:14px}
+/* big stat blocks */
+.stat4{display:grid;grid-template-columns:1fr 1fr;gap:14px;flex:1}
+.sb{border-radius:16px;padding:22px 22px;display:flex;flex-direction:column;justify-content:center;background:var(--card);border:1px solid var(--line)}
+.sb.d{background:var(--navy);border:0;color:var(--on)}
+.sb .n{font-family:var(--serif);font-weight:600;font-size:52px;letter-spacing:-.03em;line-height:.95;color:var(--accent)}
+.sb.d .n{color:var(--bright)}
+.sb .l{font-size:14px;color:var(--muted);margin-top:8px;line-height:1.35}.sb.d .l{color:var(--onmut)}
+/* gate flow */
+.gate{display:flex;gap:0;width:100%}
+.gate .st{flex:1;position:relative;padding:20px 16px;background:rgba(255,255,255,.03);border:1px solid var(--navyline);margin-left:-1px}
+.gate .st:first-child{border-radius:12px 0 0 12px}.gate .st:last-child{border-radius:0 12px 12px 0}
+.gate .st .n{font-family:var(--mono);font-size:12px;color:var(--bright)}
+.gate .st .t{font-weight:700;font-size:16px;margin-top:9px}
+.gate .st .d{font-size:12.5px;color:var(--onmut);margin-top:6px;line-height:1.4}
+.gate .st .ar{position:absolute;right:-9px;top:50%;transform:translateY(-50%);z-index:3;color:var(--bright);font-size:15px;background:#0e1522;padding:0 2px}
+/* moat stack */
+.moat{display:flex;flex-direction:column;gap:14px;width:100%}
+.mrow{display:flex;align-items:center;gap:18px;background:linear-gradient(100deg,rgba(46,80,224,.16),rgba(20,27,41,.5));border:1px solid var(--navyline);border-radius:14px;padding:18px 22px}
+.mrow .mn{font-family:var(--serif);font-size:32px;color:var(--bright);font-weight:600;width:42px;flex:none}
+.mrow h3{font-size:18px}.mrow p{font-size:13.5px;color:var(--onmut);margin-top:4px;line-height:1.4}
+/* market rings */
+.rings{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+.ring{position:absolute;border-radius:50%;display:flex;align-items:flex-start;justify-content:center;padding-top:20px}
+.ring .rl{font-size:14px;font-weight:700;letter-spacing:.02em}
+.ring.a{width:420px;height:420px;background:rgba(140,166,255,.06);border:1px solid rgba(140,166,255,.25)}
+.ring.a .rl{color:var(--onmut)}
+.ring.b{width:290px;height:290px;background:rgba(92,120,255,.12);border:1px solid var(--accent2)}
+.ring.b .rl{color:var(--bright)}
+.ring.c{width:170px;height:170px;background:linear-gradient(150deg,#3a5bff,#2038c9);border:0;align-items:center;padding:0;box-shadow:0 20px 50px -12px rgba(46,80,224,.6)}
+.ring.c .rl{color:#fff;text-align:center;line-height:1.25;font-size:15px}
+/* quad */
+.quad{position:relative;width:100%;height:100%;border-left:2px solid var(--navyline);border-bottom:2px solid var(--navyline)}
+.quad .lt{position:absolute;inset:0}
+.quad .fillq{position:absolute;right:0;top:0;width:50%;height:50%;background:linear-gradient(150deg,rgba(46,80,224,.16),transparent)}
+.quad .ax{position:absolute;font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--onmut)}
+.quad .axx{bottom:-26px;right:0}.quad .axy{top:0;left:-2px;transform-origin:left top;transform:rotate(90deg) translateY(-100%);white-space:nowrap}
+.node{position:absolute;transform:translate(-50%,50%);text-align:center}
+.node .nd{width:12px;height:12px;border-radius:50%;background:#5b657d;margin:0 auto 6px}.node .nt{font-size:13px;font-weight:600;color:var(--onmut);white-space:nowrap}
+.node.us .nd{width:20px;height:20px;background:var(--accent2);box-shadow:0 0 0 7px rgba(92,120,255,.18)}.node.us .nt{color:var(--bright);font-weight:800;font-size:16px}
+/* two motions */
+.mot{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column}
+.mot .i{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600}
+.flow{display:flex;align-items:center;gap:8px;margin-top:auto;flex-wrap:wrap;font-size:12.5px}
+.flow .b{background:var(--paper2);border:1px solid var(--line);border-radius:8px;padding:7px 11px;color:var(--ink2);font-weight:600}
+.flow .ar{color:var(--accent);font-weight:700}
+/* table */
+.tbl{width:100%;border-collapse:collapse;font-size:15px}
+.tbl th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:0 12px 11px;border-bottom:2px solid var(--line2)}
+.tbl td{padding:14px 12px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink2)}.tbl td b{color:var(--ink)}
+.tbl tr:nth-child(even){background:rgba(0,0,0,.015)}
+.tbl td.r{text-align:right;font-family:var(--serif);font-size:22px;color:var(--accent);white-space:nowrap;font-weight:600}
+/* timeline + allocation */
+.tl{display:flex;width:100%}
+.tl .step{flex:1;position:relative;text-align:center;padding:0 8px}
+.tl .step:before{content:'';position:absolute;top:11px;left:0;right:0;height:3px;background:var(--line2)}
+.tl .step.on:before{background:var(--accent)}
+.tl .step:first-child:before{left:50%}.tl .step:last-child:before{right:50%}
+.tl .dt{width:22px;height:22px;border-radius:50%;background:var(--accent);border:4px solid var(--paper);position:relative;margin:0 auto 14px;box-shadow:0 0 0 2px var(--accent)}
+.tl .step.f .dt{background:var(--paper);box-shadow:0 0 0 2px var(--line2)}
+.tl .when{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600}
+.tl .what{font-size:14px;margin-top:7px;line-height:1.35}.tl .what b{color:var(--ink)} .tl .what{color:var(--ink2)}
+.alloc{display:flex;height:44px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.alloc .seg{display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;color:#fff}
+.alloc .leg{}
+.bul{list-style:none}.bul li{display:flex;gap:11px;font-size:16px;color:var(--ink2);line-height:1.45;margin-top:13px}.dark .bul li,.dkbg .bul li{color:var(--onmut)}
+.bul .c{color:var(--accent);font-weight:800;flex:none}.dark .bul .c,.dkbg .bul .c{color:var(--bright)}.bul b{color:var(--ink)}.dark .bul b,.dkbg .bul b{color:var(--on)}
+.av{width:78px;height:78px;border-radius:50%;background:linear-gradient(150deg,#1c2740,#0e1522);border:1px solid var(--navyline);display:flex;align-items:center;justify-content:center;color:var(--onmut);font-size:11px;font-weight:700;letter-spacing:.08em}
+</style></head><body>
+
+<!-- 1 COVER -->
+<section class="s dkbg">
+ <div class="glow" style="width:560px;height:560px;background:#2E50E0;right:-130px;top:-160px;opacity:.42"></div>
+ <div class="glow" style="width:420px;height:420px;background:#3a5bff;right:6%;bottom:-6%;opacity:.14"></div>
+ <div class="L" style="padding:0.62in 0.7in 0;flex:1.1;z-index:2">
+  <div class="wm" style="color:var(--on)"><span class="mark"><span></span></span> Lightwork <span style="font-size:14px;color:var(--onmut);font-weight:500">by Daybreak Labs</span></div>
+  <div class="grow" style="justify-content:center;padding-bottom:1.1in">
+   <h1 style="font-size:66px;max-width:14ch;color:var(--on)">The governed AI workforce for regulated enterprises.</h1>
+   <p class="lead" style="margin-top:22px;font-size:22px;max-width:38ch;color:var(--onmut)">The agent platform a bank, insurer, or CPA firm can <em>actually deploy</em> — governed on every action, provable, self-hosted, and always improving.</p>
+  </div>
+ </div>
+ <div class="R" style="width:42%;z-index:2">
+  <div class="vpanel" style="display:flex;align-items:center;justify-content:center;padding:0 .7in 1.5in .1in">
+   <div class="term" style="width:100%;max-width:470px;transform:rotate(-1.5deg)">
+    <div class="bar"><i style="background:#E97A75"></i><i style="background:#E0A93B"></i><i style="background:#46C08F"></i><span class="ttl">lightwork · golden-path</span><span style="margin-left:auto;font-size:11px;color:var(--mint)">&#9679; chain verified</span></div>
+    <div class="bd" style="font-size:15px;line-height:2.35">
+     <div class="row"><span>boot finance specialist</span><span class="badge seal">SEALED</span></div>
+     <div class="row"><span>$60,000 wire</span><span class="badge deny">DENY</span></div>
+     <div class="row"><span>$6,000 release</span><span class="badge human">REQUIRE_HUMAN</span></div>
+     <div class="row"><span>runaway loop</span><span class="badge cap">CAPPED</span></div>
+     <div class="row"><span>tampered audit row</span><span class="badge ok">CAUGHT</span></div>
+    </div>
+   </div>
+  </div>
+ </div>
+ <!-- bottom band -->
+ <div style="position:absolute;left:0.7in;right:0.7in;bottom:0.86in;z-index:4;border-top:1px solid var(--navyline);padding-top:16px;display:flex;justify-content:space-between;align-items:center;gap:24px">
+  <div style="font-size:13.5px;color:var(--onmut)"><span style="color:var(--faint);font-weight:700;letter-spacing:.11em;text-transform:uppercase;font-size:11px;margin-right:14px">Built for</span>Finance · Healthcare · Insurance · Banking · Legal · GRC</div>
+  <div style="font-size:13.5px;color:var(--onmut);white-space:nowrap"><b style="color:var(--on)">Self-hosted</b> or air-gapped &nbsp;·&nbsp; <b style="color:var(--on)">Signed</b> audit &nbsp;·&nbsp; <b style="color:var(--on)">Provably</b> improving</div>
+ </div>
+ <div class="bl">info@daybreakailabs.com &nbsp;·&nbsp; daybreakailabs.com &nbsp;·&nbsp; <b>confidential</b></div><div class="pg">01</div>
+</section>
+
+<!-- 2 THESIS -->
+<section class="s">
+ <div class="L" style="flex:1.25">
+  <span class="k">The thesis</span>
+  <div class="grow"><h1 style="font-size:52px;max-width:20ch">The agent runtime is commoditizing.<br>The <span class="serif-accent"><em>governance &amp; proof layer</em></span> is the ownable business.</h1>
+  <p class="lead" style="margin-top:22px;max-width:56ch">Frontier labs make agents smarter every month — a treadmill. The durable company is built on what wraps the agent: governance on every action, an audit trail that can't be forged, and a workforce that improves under proof. In regulated work, that layer is the whole ballgame — and <b>no one owns it.</b></p></div>
+ </div>
+ <div class="R" style="width:40%"><div class="vpanel dkbg" style="display:flex;flex-direction:column;justify-content:center;padding:0 .55in;gap:14px">
+  <div class="glow" style="width:300px;height:300px;background:#2E50E0;right:-80px;bottom:-60px;opacity:.35"></div>
+  <div style="font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--onmut);margin-bottom:4px">Where value accrues</div>
+  <div style="background:linear-gradient(100deg,#2E50E0,#5B78FF);border-radius:12px;padding:18px 20px;color:#fff;box-shadow:0 20px 40px -18px rgba(46,80,224,.6)"><div style="font-weight:700;font-size:17px">Governance &amp; proof layer</div><div style="font-size:12.5px;opacity:.85;margin-top:3px">defensible · ownable · regulated moat</div></div>
+  <div style="background:rgba(255,255,255,.05);border:1px solid var(--navyline);border-radius:12px;padding:16px 20px;color:var(--onmut)"><div style="font-weight:600;font-size:15px;color:var(--on)">Agent workforce</div></div>
+  <div style="background:rgba(255,255,255,.03);border:1px solid var(--navyline);border-radius:12px;padding:14px 20px;color:var(--faint)"><div style="font-size:14px">Model runtime <span style="float:right">commoditizing ↓</span></div></div>
+ </div></div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">02</div>
+</section>
+
+<!-- 3 PROBLEM -->
+<section class="s" style="background:var(--paper2)">
+ <div class="L">
+  <span class="k">The problem</span>
+  <h2 style="margin-top:12px;max-width:24ch">Every regulated enterprise wants an agent workforce. Almost none can deploy one.</h2>
+  <p class="lead" style="margin-top:14px;max-width:70ch">The blocker isn't capability — it's three questions no one can answer. So the pilot dies the moment the CISO, the compliance officer, and the GC walk in.</p>
+  <div class="cards g3" style="margin-top:auto;margin-bottom:8px">
+   <div class="card q"><div class="tab" style="background:var(--accent)"></div><div class="qm">&ldquo;</div><h3>What did it do?</h3><p>No tamper-evident record of the actions an agent took.</p></div>
+   <div class="card q"><div class="tab" style="background:var(--coral)"></div><div class="qm">&ldquo;</div><h3>Could it exfiltrate our data?</h3><p>A hosted black box, or a framework you must secure yourself.</p></div>
+   <div class="card q"><div class="tab" style="background:var(--amber)"></div><div class="qm">&ldquo;</div><h3>Will it get worse?</h3><p>No proof it's improving instead of quietly degrading.</p></div>
+  </div>
+  <p style="font-size:14px;color:var(--muted)">Today's options force a bad trade: <b>hosted black boxes</b> you can't run on your data, or <b>ungoverned frameworks</b> you have to secure yourself.</p>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">03</div>
+</section>
+
+<!-- 4 WHY NOW -->
+<section class="s">
+ <div class="L" style="flex:1.15">
+  <span class="k">Why now</span><h2 style="margin-top:12px;max-width:20ch">Three forces converging in the next 24 months.</h2>
+  <div class="grow"><ul class="bul" style="max-width:52ch">
+   <li><span class="c">01</span><div><b>&ldquo;Ungoverned agent&rdquo; becomes a non-starter.</b> EU AI Act, HIPAA, SOX, GLBA — audit &amp; oversight go mandatory. AI regulation is projected to reach most of the world's economies by 2030.</div></li>
+   <li><span class="c">02</span><div><b>Agents move from pilots to budget</b> — and stall on exactly the governance gap between &ldquo;works in a demo&rdquo; and &ldquo;cleared our review.&rdquo;</div></li>
+   <li><span class="c">03</span><div><b>The model layer races to zero margin.</b> Raw capability commoditizes; value and defensibility migrate to the governed layer around it.</div></li>
+  </ul></div>
+ </div>
+ <div class="R" style="width:40%"><div class="vpanel" style="background:var(--paper2);display:flex;flex-direction:column;justify-content:center;padding:0 .5in;border-left:1px solid var(--line)">
+  <div style="font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:26px">Two markets · one product</div>
+  <div style="font-size:13.5px;color:var(--ink2);font-weight:600">AI agents — the workforce we build</div>
+  <div style="display:flex;align-items:baseline;gap:13px;margin-top:4px"><div style="font-family:var(--serif);font-size:56px;font-weight:600;letter-spacing:-.03em;color:var(--accent);line-height:1">~$52B</div><div style="font-size:13.5px;color:var(--muted);line-height:1.3">by 2030<br>~46% CAGR</div></div>
+  <div style="height:1px;background:var(--line);margin:24px 0"></div>
+  <div style="font-size:13.5px;color:var(--ink2);font-weight:600">AI governance — the layer we own</div>
+  <div style="display:flex;align-items:baseline;gap:13px;margin-top:4px"><div style="font-family:var(--serif);font-size:56px;font-weight:600;letter-spacing:-.03em;color:var(--accent);line-height:1">~$16B</div><div style="font-size:13.5px;color:var(--muted);line-height:1.3">by 2030<br>30%+ CAGR</div></div>
+  <div style="margin-top:30px;font-size:14px;color:var(--ink2);border-left:3px solid var(--accent);padding-left:13px;line-height:1.4">Lightwork sits where they intersect — the <b>governed agent workforce</b>.</div>
+  <div style="font-size:11px;color:var(--faint);margin-top:16px">MarketsandMarkets &amp; Forrester (2025). Directional; re-confirm before external use.</div>
+ </div></div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">04</div>
+</section>
+
+<!-- 5 SOLUTION / GATE -->
+<section class="s dkbg">
+ <div class="glow" style="width:460px;height:460px;background:#2E50E0;left:30%;top:-200px;opacity:.28"></div>
+ <div class="L" style="padding:0.6in 0.7in">
+  <span class="k">The solution</span>
+  <h2 style="margin-top:12px;color:var(--on);max-width:26ch">Not a chatbot. Not a framework. One governed runtime — every action clears one gate.</h2>
+  <div class="grow" style="justify-content:center">
+   <div class="gate">
+    <div class="st"><div class="n">01</div><div class="t">Capability</div><div class="d">Attenuate-only. Narrow, never widen.</div><span class="ar">→</span></div>
+    <div class="st"><div class="n">02</div><div class="t">Policy</div><div class="d">Allow · deny · require a human.</div><span class="ar">→</span></div>
+    <div class="st"><div class="n">03</div><div class="t">Shield</div><div class="d">Screens the dangerous call.</div><span class="ar">→</span></div>
+    <div class="st"><div class="n">04</div><div class="t">Budget</div><div class="d">Hard $ / time / token caps.</div><span class="ar">→</span></div>
+    <div class="st"><div class="n">05</div><div class="t">Audit</div><div class="d">Signed · offline-verifiable.</div></div>
+   </div>
+   <p class="lead" style="margin-top:26px;font-size:17px;max-width:80ch;color:var(--onmut)">Self-hosted or air-gapped, on your data — so even a successful prompt injection can't move data out. Then it lands where a human signs off.</p>
+  </div>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">05</div>
+</section>
+
+<!-- 6 BUILT / PROVABLE -->
+<section class="s">
+ <div class="L" style="flex:1.05">
+  <span class="k">Traction — the product</span><h2 style="margin-top:12px;max-width:22ch">Not a concept. Built, installable, and provable today.</h2>
+  <div class="stat4" style="margin-top:20px">
+   <div class="sb"><div class="n">2,020</div><div class="l">governed specialist packs · 53 suites</div></div>
+   <div class="sb d"><div class="n">14/14</div><div class="l">core guarantees proven · signed &amp; reproducible</div></div>
+   <div class="sb d"><div class="n">1</div><div class="l">command proves governance live — deny · require-human · cap · catch</div></div>
+   <div class="sb"><div class="n" style="font-size:40px;line-height:1.04;letter-spacing:-.02em">Self-hosted<br><span style="font-size:19px;color:var(--muted);font-weight:500;font-family:var(--sans);letter-spacing:0">or air-gapped</span></div><div class="l">runs entirely in your environment — your data never leaves</div></div>
+  </div>
+ </div>
+ <div class="R" style="width:44%"><div class="vpanel dkbg" style="display:flex;align-items:center;justify-content:center;padding:.55in">
+  <div class="glow" style="width:360px;height:360px;background:#2E50E0;right:-110px;top:-70px;opacity:.32"></div>
+  <div class="brow" style="width:100%;height:84%;display:flex;flex-direction:column">
+   <div class="bar" style="background:#0e1522;flex:none"><i style="width:9px;height:9px;border-radius:50%;background:#E97A75;display:block"></i><i style="width:9px;height:9px;border-radius:50%;background:#E0A93B;display:block"></i><i style="width:9px;height:9px;border-radius:50%;background:#46C08F;display:block"></i><span class="u"></span></div>
+   <div style="flex:1;overflow:hidden"><img src="file:///tmp/claude-0/-home-user-Lightwork/4217a759-f48a-5486-8f7a-71418322089c/scratchpad/deck-site-hero.png" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top left"></div>
+  </div>
+ </div></div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">06</div>
+</section>
+
+<!-- 7 COMPOUNDING ENGINE -->
+<section class="s" style="background:var(--paper2)">
+ <div class="L" style="padding:0.58in 0.7in;flex:1">
+  <span class="k">Why it compounds</span>
+  <h2 style="margin-top:12px;max-width:26ch">The workforce improves itself — and builds itself.</h2>
+  <p class="lead" style="margin-top:12px;max-width:78ch">Most agent libraries are hand-built and frozen. Lightwork's does the work, learns from it <em>under proof</em>, and manufactures its own new specialists — a flywheel a hosted competitor can't run inside your walls.</p>
+  <div class="grow" style="justify-content:center">
+   <div class="cards g3" style="margin:8px 0 26px">
+    <div class="card" style="padding:26px 24px 28px"><div class="tab" style="background:var(--accent)"></div><h3 style="font-size:20px">2,020 governed specialists</h3><p style="font-size:15px;margin-top:10px">The workforce that does the work — finance, tax, legal, GRC across 53 suites — every one under the same gate.</p></div>
+    <div class="card" style="padding:26px 24px 28px"><div class="tab" style="background:var(--mint)"></div><h3 style="font-size:20px">Self-improving harness</h3><p style="font-size:15px;margin-top:10px">Each specialist gets better on <em>your</em> data. Every learned change is proven before it ships, bounded, and reversible in one step — it compounds without drifting.</p></div>
+    <div class="card" style="padding:26px 24px 28px"><div class="tab" style="background:var(--amber)"></div><h3 style="font-size:20px">Agent factory (Forge)</h3><p style="font-size:15px;margin-top:10px">Programming-by-demonstration turns a shown workflow into a new governed specialist. The library isn't hand-built forever — the workforce extends itself.</p></div>
+   </div>
+   <div style="display:flex;align-items:center;gap:9px;width:100%">
+    <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 10px;text-align:center;box-shadow:0 1px 0 rgba(0,0,0,.02)"><div style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700">01</div><div style="font-weight:600;font-size:13.5px;margin-top:5px;color:var(--ink)">Do the governed work</div></div>
+    <div style="color:var(--accent);font-weight:700;font-size:17px">→</div>
+    <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 10px;text-align:center;box-shadow:0 1px 0 rgba(0,0,0,.02)"><div style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700">02</div><div style="font-weight:600;font-size:13.5px;margin-top:5px;color:var(--ink)">Learn — verifier-gated</div></div>
+    <div style="color:var(--accent);font-weight:700;font-size:17px">→</div>
+    <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 10px;text-align:center;box-shadow:0 1px 0 rgba(0,0,0,.02)"><div style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700">03</div><div style="font-weight:600;font-size:13.5px;margin-top:5px;color:var(--ink)">Ship the proven gain</div></div>
+    <div style="color:var(--accent);font-weight:700;font-size:17px">→</div>
+    <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 10px;text-align:center;box-shadow:0 1px 0 rgba(0,0,0,.02)"><div style="font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700">04</div><div style="font-weight:600;font-size:13.5px;margin-top:5px;color:var(--ink)">Forge new specialists</div></div>
+    <div style="background:linear-gradient(150deg,#2E50E0,#5B78FF);color:#fff;border-radius:10px;padding:13px 15px;text-align:center;white-space:nowrap;box-shadow:0 14px 30px -14px rgba(46,80,224,.6)"><div style="font-size:20px;line-height:1">&#8635;</div><div style="font-weight:700;font-size:12.5px;margin-top:3px">compounds</div></div>
+   </div>
+   <p style="font-size:13px;color:var(--muted);margin-top:14px">Determinism, bounded change, and one-step rollback are all reproducible — the same proof pack that verifies governance verifies the learning loop never quietly regresses.</p>
+  </div>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">07</div>
+</section>
+
+<!-- 8 MOAT -->
+<section class="s dkbg">
+ <div class="L" style="flex:1">
+  <span class="k">Why it's defensible</span><h2 style="margin-top:12px;color:var(--on);max-width:22ch">Three reinforcing layers. All audited. None a prompt over an API.</h2>
+  <p class="lead" style="margin-top:12px;max-width:60ch">Each customer's workforce improves on <em>their</em> data, inside <em>their</em> boundary — switching cost is the moat, never a data network effect.</p>
+ </div>
+ <div class="R" style="width:52%"><div class="vpanel" style="display:flex;flex-direction:column;justify-content:center;padding:0 .6in 0 0;gap:14px">
+  <div class="moat">
+   <div class="mrow"><div class="mn">01</div><div><h3 style="color:var(--on)">Governance on every action</h3><p>Attenuate-only capability tokens, a policy engine, an egress lock, and a signed hash-chained audit.</p></div></div>
+   <div class="mrow"><div class="mn">02</div><div><h3 style="color:var(--on)">Provable, self-improving learning</h3><p>Gets better on its own — every change proven before it ships, reversible in one step. Compounds without drifting.</p></div></div>
+   <div class="mrow"><div class="mn">03</div><div><h3 style="color:var(--on)">The 2,020-pack governed library</h3><p>53 regulated suites, lint-clean, extended by an agent factory. A hosted incumbent can't air-gap it into a bank.</p></div></div>
+  </div>
+ </div></div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">08</div>
+</section>
+
+<!-- 9 MARKET -->
+<section class="s">
+ <div class="R" style="width:44%;order:0"><div class="vpanel" style="background:var(--navy);"><div class="dkbg" style="width:100%;height:100%"><div class="rings">
+  <div class="glow" style="width:300px;height:300px;background:#2E50E0;left:50%;top:50%;transform:translate(-50%,-50%);opacity:.25"></div>
+  <div class="ring a"><span class="rl">Agentic enterprise software</span></div>
+  <div class="ring b"><span class="rl">Regulated enterprises</span></div>
+  <div class="ring c"><span class="rl">BFSI<br>beachhead</span></div>
+ </div></div></div></div>
+ <div class="L">
+  <span class="k">Market</span><h2 style="margin-top:12px;max-width:18ch">A big market, entered through a sharp wedge.</h2>
+  <div class="grow"><ul class="bul" style="max-width:46ch">
+   <li><span class="c">▪</span><div><b>~10,000</b> US regulated financial institutions in the beachhead.</div></li>
+   <li><span class="c">▪</span><div><b>100 customers × ~$250K ACV ≈ $25M ARR</b> from BFSI alone. <span class="fill">validate</span></div></li>
+   <li><span class="c">▪</span><div><b>53 suites already built</b> for land-and-expand well beyond finance.</div></li>
+   <li><span class="c">▪</span><div>Second wedge: <b>tax-prep for CPA firms</b> — a citation-backed docs→1040 pipeline.</div></li>
+  </ul></div>
+  <p style="font-size:13px;color:var(--faint)">Market-sizing figures are directional; re-confirmed before external use.</p>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">09</div>
+</section>
+
+<!-- 10 BUSINESS MODEL -->
+<section class="s" style="background:var(--paper2)">
+ <div class="L" style="padding:0.6in 0.7in">
+  <span class="k">Business model</span><h2 style="margin-top:10px">Platform + packs + governance plane. Land, then expand.</h2>
+  <div class="grow" style="justify-content:flex-start">
+  <table class="tbl" style="margin-top:16px">
+   <thead><tr><th>Revenue line</th><th>Who buys</th><th style="text-align:right">Anchor ACV</th></tr></thead>
+   <tbody>
+    <tr><td><b>Platform</b> — governed runtime + Operating Record</td><td>CISO · CIO · Head of Ops</td><td class="r">$18K–$500K+</td></tr>
+    <tr><td><b>Specialist packs</b> — Finance, Tax, Legal, …</td><td>CFO · GC · function owner</td><td class="r">$25K–$75K</td></tr>
+    <tr><td><b>Fleet Governance</b> — govern agents they didn't build</td><td>CISO · platform team</td><td class="r">$75K</td></tr>
+    <tr><td><b>Custom work</b> — bespoke &amp; regulated deployment</td><td>Enterprise / regulated</td><td class="r">from $25K</td></tr>
+   </tbody>
+  </table>
+  <div style="display:flex;gap:14px;margin-top:20px">
+   <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px"><div style="font-size:13px;color:var(--muted)">Mid-market land</div><div style="font-family:var(--serif);font-size:26px;color:var(--ink);font-weight:600">~$150K</div><div style="font-size:12.5px;color:var(--muted)">Gold + Finance pack</div></div>
+   <div style="display:flex;align-items:center;color:var(--accent);font-size:22px;font-weight:700">→</div>
+   <div style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px"><div style="font-size:13px;color:var(--muted)">Regulated expand</div><div style="font-family:var(--serif);font-size:26px;color:var(--accent);font-weight:600">~$350K</div><div style="font-size:12.5px;color:var(--muted)">Platinum + Banking + Fleet Gov</div></div>
+   <div style="flex:1;background:var(--navy);border-radius:12px;padding:14px 18px;color:var(--on)"><div style="font-size:13px;color:var(--onmut)">Expansion across</div><div style="font-family:var(--serif);font-size:26px;color:var(--bright);font-weight:600">53 suites</div><div style="font-size:12.5px;color:var(--onmut)">drives net revenue retention</div></div>
+  </div>
+  </div>
+  <p style="font-size:13px;color:var(--faint)">Recurring, high-margin software; agent count is never a multiplier. Pricing is a directional hypothesis, validated with design partners.</p>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">10</div>
+</section>
+
+<!-- 11 GTM -->
+<section class="s">
+ <div class="L" style="padding:0.6in 0.7in">
+  <span class="k">Go-to-market</span><h2 style="margin-top:10px">Two motions into the same wedge.</h2>
+  <div class="grow" style="justify-content:center"><div class="cards g2" style="height:66%">
+   <div class="mot"><div class="i">motion 1 · direct</div><h3 style="margin-top:8px;font-size:20px">BFSI design partners → paid pilot → expand</h3><p style="font-size:14px;color:var(--muted);margin-top:8px;line-height:1.5">Founder-led pilots on one governed workflow, in the customer's environment. Win the CISO with provable governance; expand across suites once the first department lands.</p><div class="flow"><span class="b">design partner</span><span class="ar">→</span><span class="b">scoped pilot</span><span class="ar">→</span><span class="b">paid platform</span><span class="ar">→</span><span class="b">+ packs</span></div></div>
+   <div class="mot" style="background:var(--navy);border:0;color:var(--on)"><div class="i" style="color:var(--bright)">motion 2 · overlay</div><h3 style="margin-top:8px;font-size:20px;color:var(--on)">&ldquo;Govern the agents you already have&rdquo;</h3><p style="font-size:14px;color:var(--onmut);margin-top:8px;line-height:1.5">Bring existing Agentforce / Copilot / in-house / open-source agents under Lightwork's governance + memory plane. The easiest way in — and a natural acquisition story for a GRC / ServiceNow buyer.</p><div class="flow"><span class="b" style="background:var(--navy2);border-color:var(--navyline);color:var(--onmut)">their agents</span><span class="ar" style="color:var(--bright)">→</span><span class="b" style="background:var(--navy2);border-color:var(--navyline);color:var(--onmut)">Fleet Governance</span><span class="ar" style="color:var(--bright)">→</span><span class="b" style="background:var(--navy2);border-color:var(--navyline);color:var(--onmut)">full platform</span></div></div>
+  </div></div>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">11</div>
+</section>
+
+<!-- 12 COMPETITION -->
+<section class="s dkbg">
+ <div class="L" style="flex:1.15;padding:0.6in 0 0.6in 0.7in">
+  <span class="k">Competition</span><h2 style="margin-top:12px;color:var(--on);max-width:20ch">Nobody owns the top-right: governed <em>and</em> self-hostable, for regulated work.</h2>
+  <div class="grow"><ul class="bul" style="max-width:44ch">
+   <li><span class="c">·</span><div><b>Sierra</b> ($15.8B) — hosted CX agents; can't air-gap into a bank.</div></li>
+   <li><span class="c">·</span><div><b>Cognition</b> — coding agents, not governed enterprise ops.</div></li>
+   <li><span class="c">·</span><div><b>LangChain</b> — ungoverned plumbing you secure yourself.</div></li>
+   <li><span class="c">·</span><div><b>Agentforce / Copilot</b> — incumbents with policy, no agent-native self-hostable governed runtime.</div></li>
+  </ul></div>
+ </div>
+ <div class="R" style="width:46%"><div class="vpanel" style="display:flex;align-items:center;justify-content:center;padding:.85in .8in .8in .3in">
+  <div class="quad" style="width:100%;height:80%">
+   <div class="fillq"></div>
+   <span class="ax axy">Self-hostable / air-gap →</span><span class="ax axx">Governance →</span>
+   <div class="node" style="left:22%;top:80%"><div class="nd"></div><div class="nt">LangChain</div></div>
+   <div class="node" style="left:30%;top:42%"><div class="nd"></div><div class="nt">Cognition</div></div>
+   <div class="node" style="left:70%;top:64%"><div class="nd"></div><div class="nt">Sierra</div></div>
+   <div class="node" style="left:58%;top:50%"><div class="nd"></div><div class="nt">Agentforce/Copilot</div></div>
+   <div class="node us" style="left:82%;top:16%"><div class="nd"></div><div class="nt">Lightwork</div></div>
+  </div>
+ </div></div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">12</div>
+</section>
+
+<!-- 13 TRACTION -->
+<section class="s">
+ <div class="L">
+  <span class="k">Traction</span><h2 style="margin-top:12px;max-width:20ch">A built asset, meeting early pull.</h2>
+  <div class="grow"><div class="cards g2">
+   <div class="card" style="padding:26px"><div class="tab" style="background:var(--accent)"></div><h3 style="font-size:20px">Shipped &amp; provable</h3><p style="font-size:15px;margin-top:10px">Installable today; 2,020 packs; reproducible signed proofs; a pre-answered security questionnaire that de-risks the CISO review before the first call.</p></div>
+   <div class="card" style="padding:26px;background:var(--navy);border:0;color:var(--on)"><div class="tab" style="background:var(--bright)"></div><h3 style="font-size:20px;color:var(--on)">Demand</h3><p style="font-size:15px;margin-top:10px;color:var(--onmut)"><span class="fill">design-partner conversations · LOIs · waitlist</span><br><br>The pull that converts a built asset into a round.</p></div>
+  </div></div>
+  <p style="font-size:13.5px;color:var(--muted)">Fill with real numbers: discovery calls booked · LOIs in progress · pilots scoped · inbound. A handful of serious BFSI/CPA conversations is a fundable signal.</p>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">13</div>
+</section>
+
+<!-- 14 ASK -->
+<section class="s">
+ <div class="L" style="padding:0.6in 0.7in">
+  <span class="k">The ask</span><h2 style="margin-top:10px">Raising <span class="fill" style="font-size:.9em">$ amount</span> to turn a built asset into revenue.</h2>
+  <p class="lead" style="margin-top:12px;max-width:74ch">Use of funds over 12–18 months, mapped to the milestones that set up a fundable Series&nbsp;A.</p>
+  <div class="grow" style="justify-content:space-between;padding:26px 0 6px">
+   <div>
+    <div style="font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:22px">Milestones the round unlocks</div>
+    <div class="tl">
+     <div class="step on"><div class="dt"></div><div class="when">now</div><div class="what"><b>Built &amp; alpha</b><br>installable · provable · 2,020 packs</div></div>
+     <div class="step f"><div class="dt"></div><div class="when">+6 mo</div><div class="what"><b>3 design partners live</b><br>SOC 2 Type I in motion</div></div>
+     <div class="step f"><div class="dt"></div><div class="when">+12 mo</div><div class="what"><b>First paid ARR</b><br>2 engineering hires</div></div>
+     <div class="step f"><div class="dt"></div><div class="when">+18 mo</div><div class="what"><b>Series A metrics</b><br>repeatable BFSI motion</div></div>
+    </div>
+   </div>
+   <div style="background:linear-gradient(100deg,rgba(46,80,224,.08),transparent);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:16px 22px;font-size:16.5px;color:var(--ink2)"><b style="color:var(--ink)">Fully allocated to reach first revenue and a repeatable BFSI motion</b> — the metrics that unlock a Series&nbsp;A.</div>
+   <div>
+    <div style="font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Use of funds</div>
+    <div class="alloc" style="height:58px">
+     <div class="seg" style="width:45%;background:var(--accent)">Engineering 45%</div>
+     <div class="seg" style="width:25%;background:#5B78FF">GTM / design partners 25%</div>
+     <div class="seg" style="width:18%;background:#8CA6FF;color:#17191E">Security / SOC 2 · 18%</div>
+     <div class="seg" style="width:12%;background:#C3CCEC;color:#17191E">Ops 12%</div>
+    </div>
+    <p style="font-size:13px;color:var(--faint);margin-top:14px">Allocation illustrative. Instrument &amp; terms: <span class="fill">SAFE vs priced · target close · lead status</span>.</p>
+   </div>
+  </div>
+ </div>
+ <div class="bl"><b>Lightwork</b></div><div class="pg">14</div>
+</section>
+
+<!-- 15 CLOSE -->
+<section class="s dkbg">
+ <div class="glow" style="width:560px;height:560px;background:#2E50E0;right:-140px;bottom:-160px;opacity:.35"></div>
+ <div class="L" style="padding:0.7in">
+  <div class="wm" style="color:var(--on)"><span class="mark"><span></span></span> Lightwork <span style="font-size:14px;color:var(--onmut);font-weight:500">by Daybreak Labs</span></div>
+  <div class="grow"><h1 style="font-size:58px;max-width:20ch;color:var(--on)">The governed AI workforce for regulated work — built, provable, ready to land.</h1>
+  <p class="lead" style="margin-top:20px;font-size:21px;color:var(--onmut)">We don't say it's governed. We show it. Let's scope one workflow.</p></div>
+  <div style="font-size:18px;color:var(--on)"><span style="color:var(--bright);font-weight:600">info@daybreakailabs.com</span> &nbsp;·&nbsp; (423) 322-9722 &nbsp;·&nbsp; <span style="color:var(--bright);font-weight:600">daybreakailabs.com</span></div>
+ </div>
+ <div class="bl"><b>Lightwork</b> · Daybreak Labs · confidential</div><div class="pg">15</div>
+</section>
+
+</body></html>

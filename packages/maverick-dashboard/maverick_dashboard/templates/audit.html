@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Audit log · Lightwork{% endblock %}
+{% block content %}
+  <style>
+    /* Detail cell: labeled fields instead of a raw JSON dump; the chain
+       material (hash/sig) folds away behind the signature badge. */
+    .aud-detail { display: flex; flex-direction: column; gap: 2px; max-width: 46rem; }
+    .aud-kv { display: grid; grid-template-columns: 9rem 1fr; gap: var(--space-2); align-items: baseline; }
+    .aud-k { color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; font-family: var(--font-mono, monospace); }
+    .aud-v { font-size: var(--text-sm); word-break: break-word; min-width: 0; }
+    .aud-v code { font-size: var(--text-xs); white-space: pre-wrap; word-break: break-all; }
+    .aud-sig { margin-top: 2px; }
+    .aud-sig summary { cursor: pointer; color: var(--muted); font-size: var(--text-xs); list-style-position: inside; }
+    .aud-sig summary:hover { color: var(--text); }
+    .aud-sig[open] summary { margin-bottom: 4px; }
+    .aud-hash { font-size: var(--text-xs); word-break: break-all; color: var(--muted); }
+  </style>
+
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Governance', 'Audit',
+               subtitle='The operating record',
+               lede='A complete, tamper-resistant record of everything that
+                     has happened here — filter or search any event.
+                     <a href="/audit/binder">Audit binder (evidence pack)
+                     →</a>') %}
+    {{ state('Current state', 'Ed25519-signed chain',
+             badge='tamper-evident', badge_class='ok',
+             copy='Showing the last ' ~ n ~ ' events. Every agent action and
+                   every human decision lands here, each entry signed and
+                   linked to the one before — any tampering breaks the
+                   chain.') }}
+  {% endcall %}
+
+  <div class="panel">
+    <form method="get" action="/audit" style="display: flex; gap: 1rem; align-items: end; flex-wrap: wrap;">
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">lines</div>
+        <input type="number" name="n" value="{{ n }}" min="1" max="1000"
+               style="padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">day (YYYY-MM-DD)</div>
+        <input type="text" name="day" value="{{ day or '' }}" placeholder="today"
+               style="padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">kind</div>
+        <select name="kind"
+                style="padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">
+          <option value="">(all)</option>
+          {% for k in kinds %}
+          <option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit"
+              style="padding: 0.45rem 1rem; background: var(--surface-1); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">
+        load
+      </button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <form id="audit-search" style="display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;">
+      <label style="flex: 1 1 300px;">
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">search (text)</div>
+        <input type="text" id="audit-pattern" placeholder="shield_block"
+               style="width: 100%; padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">day</div>
+        <input type="text" id="audit-search-day" value="{{ day or '' }}" placeholder="today"
+               style="padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+      </label>
+      <button type="submit"
+              style="padding: 0.45rem 1rem; background: var(--brand); color: var(--brand-fg); border: 0; border-radius: var(--radius-md); cursor: pointer;">
+        search
+      </button>
+    </form>
+    <p id="audit-search-msg" role="status" aria-live="polite" class="muted" style="margin-top: 0.5rem; min-height: 1em; font-size: 0.85rem;"></p>
+    <pre id="audit-search-results" tabindex="0" aria-label="Search results" style="white-space: pre-wrap; margin: 0; max-height: 360px; overflow-y: auto; font-size: 0.8rem;"></pre>
+  </div>
+
+  <script>
+    (function() {
+      const form = document.getElementById('audit-search');
+      const pat = document.getElementById('audit-pattern');
+      const day = document.getElementById('audit-search-day');
+      const msg = document.getElementById('audit-search-msg');
+      const out = document.getElementById('audit-search-results');
+      const btn = form.querySelector('button[type="submit"]');
+      form.addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        const p = pat.value.trim();
+        if (!p) { msg.textContent = 'Pattern required.'; return; }
+        if (btn) btn.disabled = true;
+        msg.style.color = 'var(--muted)';
+        msg.textContent = 'Searching…';
+        out.textContent = '';
+        const url = new URL('/api/v1/audit/grep', window.location.origin);
+        url.searchParams.set('pattern', p);
+        if (day.value.trim()) url.searchParams.set('day', day.value.trim());
+        try {
+          const r = await fetch(url.toString());
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            msg.style.color = 'var(--danger)';
+            msg.textContent = j.detail || ('HTTP ' + r.status);
+            return;
+          }
+          const data = await r.json();
+          const events = data.events || [];
+          msg.textContent = events.length + ' match(es).';
+          // Chain material (hash/sig/key ids) stays out of the on-screen
+          // dump — the signed chain is verified server-side, not by eye.
+          const CHAIN_KEYS = ['hash', 'prev_hash', 'sig', 'key_id'];
+          out.textContent = events.map(e => {
+            const shown = {};
+            Object.keys(e).forEach(k => {
+              if (CHAIN_KEYS.indexOf(k) === -1) shown[k] = e[k];
+            });
+            return JSON.stringify(shown);
+          }).join('\n');
+        } catch (e) {
+          msg.style.color = 'var(--danger)';
+          msg.textContent = String(e);
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+
+  <div class="panel">
+    {% if events %}
+      <div style="display: flex; gap: var(--space-3); align-items: end; margin-bottom: var(--space-3); flex-wrap: wrap;">
+        <label style="flex: 1 1 280px;">
+          <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">filter shown events (instant)</div>
+          <input type="text" id="audit-quick" placeholder="type to filter — kind, agent, case, subject, any field"
+                 style="width: 100%; padding: 0.4rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text);" />
+        </label>
+        <span class="muted" id="audit-quick-count" role="status" aria-live="polite" style="font-size: var(--text-sm); padding-bottom: 0.5rem;"></span>
+      </div>
+      <table id="audit-table">
+        <thead>
+          <tr><th scope="col">ts</th><th scope="col">kind</th><th scope="col">agent</th><th scope="col">goal</th><th scope="col">detail</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in events %}
+          <tr>
+            <td class="muted" style="white-space: nowrap;">{{ ev.ts | datetime }}</td>
+            <td><code>{{ ev.kind }}</code></td>
+            <td class="muted">{{ ev.agent or '-' }}</td>
+            <td class="muted">{{ ev.goal_id if ev.goal_id is not none else '-' }}</td>
+            <td>
+              {% set keep = ['v', 'ts', 'kind', 'agent', 'goal_id'] %}
+              {% set chain_keys = ['hash', 'prev_hash', 'sig', 'key_id'] %}
+              {% set payload = {} %}
+              {% set chain = {} %}
+              {% for k, v in ev.items() if k not in keep %}
+                {% if k in chain_keys %}{% set _ = chain.update({k: v}) %}
+                {% else %}{% set _ = payload.update({k: v}) %}{% endif %}
+              {% endfor %}
+              {% if payload or chain %}
+                <div class="aud-detail">
+                  {% for k, v in payload.items() %}
+                  <div class="aud-kv">
+                    <span class="aud-k">{{ k }}</span>
+                    <span class="aud-v">{% if v is string or v is number or v is boolean %}{{ v }}{% else %}<code>{{ v | tojson(indent=2) }}</code>{% endif %}</span>
+                  </div>
+                  {% endfor %}
+                  {% if chain %}
+                  <details class="aud-sig">
+                    <summary>🔏 Verification detail{% if not chain.prev_hash %} · genesis{% endif %}</summary>
+                    {% for k in chain_keys if k in chain %}
+                    <div class="aud-kv">
+                      <span class="aud-k">{{ k }}</span>
+                      <span class="aud-v"><code class="aud-hash">{{ chain[k] if chain[k] else '— genesis (first link in the chain) —' }}</code></span>
+                    </div>
+                    {% endfor %}
+                  </details>
+                  {% endif %}
+                </div>
+              {% else %}
+                <span class="muted">-</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">
+        No activity recorded for this day yet. Every action is logged here
+        automatically as soon as work runs.
+      </p>
+    {% endif %}
+  </div>
+<script>
+  // Instant filter over the loaded events — matches any text in the row
+  // (kind, agent, goal, every detail field). Complements the server-side
+  // day/kind loaders above without another round trip.
+  (function () {
+    const input = document.getElementById('audit-quick');
+    const count = document.getElementById('audit-quick-count');
+    const table = document.getElementById('audit-table');
+    if (!input || !table) return;
+    const rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+    function apply() {
+      const q = input.value.trim().toLowerCase();
+      let shown = 0;
+      rows.forEach(function (tr) {
+        const hit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+        tr.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      });
+      count.textContent = q ? (shown + ' of ' + rows.length + ' events') : '';
+    }
+    input.addEventListener('input', apply);
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,26 @@
+{
+  "artifact_name": "lightwork-platform-threat-hunter",
+  "description": "Reduced, local-only platform threat hunter standalone source SKU",
+  "display_name": "Lightwork Platform Threat Hunter",
+  "entrypoint": "serve_standalone.py",
+  "files": [
+    "README.md",
+    "app.py",
+    "backend.py",
+    "capabilities.py",
+    "hunter_engine.py",
+    "request_limits.py",
+    "requirements.txt",
+    "run_standalone.sh",
+    "serve_standalone.py",
+    "templates/about.html",
+    "templates/base.html",
+    "templates/index.html",
+    "test_platform_hunter_standalone.py"
+  ],
+  "schema_version": 1,
+  "shared_files": [
+    "LICENSE",
+    "TRADEMARK.md"
+  ]
+}

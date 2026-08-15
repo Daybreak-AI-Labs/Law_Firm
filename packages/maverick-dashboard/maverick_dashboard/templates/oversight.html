@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Oversight · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* By-guardrail breakdown — horizontal bars scaled to the busiest guardrail. */
+  .gbars { display: flex; flex-direction: column; gap: var(--space-3); }
+  .gbar { display: grid; grid-template-columns: 96px 1fr 2.5rem; align-items: center; gap: var(--space-3); }
+  .gbar__label { color: var(--muted); font-size: var(--text-sm); }
+  .gbar__track { height: 10px; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+  .gbar__fill { display: block; height: 100%; border-radius: var(--radius-pill); min-width: 2px; background: linear-gradient(90deg, var(--brand), var(--brand-hi)); }
+  .gbar__count { text-align: end; font-variant-numeric: tabular-nums; font-weight: var(--font-semibold); }
+</style>
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Human oversight', 'Oversight',
+               subtitle='Mission control',
+               lede='Every time a guardrail stepped in — policy holds, shield
+                     blocks, capability and egress denials, consent denials,
+                     and emergency halts — in one place, next to what your
+                     agents are doing right now. Deep dives:
+                     <a href="/approvals">approvals</a>,
+                     <a href="/safety">safety</a>,
+                     <a href="/fleets">fleets</a>,
+                     <a href="/audit">audit</a>.') %}
+    {{ state('Current state',
+             'Halted — all work stopped' if halted else (active ~ ' agent' ~ ('' if active == 1 else 's') ~ ' working now'),
+             badge=(pending ~ ' awaiting sign-off') if pending else 'clear',
+             badge_class='warn' if (halted or pending) else 'ok',
+             copy=total ~ ' intervention' ~ ('' if total == 1 else 's') ~ ' in
+                   this window. Each one is recorded in the audit log kept on
+                   this server.') }}
+  {% endcall %}
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+    <div class="bd-slicer" role="group" aria-label="Time range">
+      <button type="button" data-days="30" aria-pressed="false">30d</button>
+      <button type="button" data-days="90" class="on" aria-pressed="true">90d</button>
+      <button type="button" data-days="180" aria-pressed="false">180d</button>
+      <button type="button" data-days="365" aria-pressed="false">1y</button>
+    </div>
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Interventions over time</h2>
+      <p class="viz-sub">Guardrail actions through the window (weekly at longer ranges). Hover for the count.</p>
+      <div id="bd-interventions"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>What fired</h2>
+      <p class="viz-sub">Which guardrails stepped in, busiest first.</p>
+      <div id="bd-fired"></div>
+    </div>
+  </div>
+
+  <div class="section-head" style="margin-top: var(--space-5);"><h2>Active now</h2></div>
+  <div class="panel">
+    <div id="active-now" aria-live="polite"><p class="muted">loading…</p></div>
+    <div id="why-panel" aria-live="polite"></div>
+  </div>
+
+  <script>
+    // Live "Active now" panel: poll the owner-scoped endpoint and re-render
+    // just this table (no full-page reload, so the approve/deny panel below is
+    // never interrupted). Escapes all values via textContent. The "why?" button
+    // opens the governance drill-down (the reasoning/tool chain + cost) inline,
+    // so a supervisor answers "why is this agent doing this" without leaving.
+    (function() {
+      const box = document.getElementById('active-now');
+      const why = document.getElementById('why-panel');
+      if (!box) return;
+      // Quote-safe: escapes " and ' too, so values are safe in both element
+      // content and quoted attributes (the textContent->innerHTML trick left
+      // quotes unescaped).
+      function esc(s) {
+        return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) {
+          return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+        });
+      }
+      function ago(ts) {
+        if (!ts) return '';
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        return Math.floor(s / 3600) + 'h ago';
+      }
+      async function showWhy(id) {
+        if (!why) return;
+        why.innerHTML = '<p class="muted">loading reasoning for #' + esc(id) + '…</p>';
+        try {
+          const r = await fetch('/api/v1/oversight/why/' + encodeURIComponent(id));
+          if (!r.ok) { why.innerHTML = '<p class="muted">No drill-down available for #' + esc(id) + '.</p>'; return; }
+          const d = await r.json();
+          const sum = Object.entries(d.summary || {}).map(function(kv) { return esc(kv[0]) + ': ' + esc(kv[1]); }).join(' · ');
+          let h = '<div class="panel" style="border-color: var(--brand);">'
+                + '<div style="display:flex; justify-content:space-between; align-items:center;">'
+                + '<strong>Why #' + esc(id) + ' — ' + esc(d.title) + '</strong>'
+                + '<button type="button" class="btn btn--ghost" data-why-close '
+                + 'style="font-size:var(--text-sm);padding:0.1rem 0.5rem;">close</button></div>'
+                + '<p class="muted" style="margin:0.3rem 0;">status <strong>' + esc(d.status) + '</strong>'
+                + ' · cost <strong>$' + esc((d.cost_dollars || 0).toFixed ? d.cost_dollars.toFixed(4) : d.cost_dollars) + '</strong>'
+                + (sum ? ' · ' + sum : '') + '</p>';
+          const evs = d.events || [];
+          if (!evs.length) {
+            h += '<p class="muted">No recorded steps yet.</p>';
+          } else {
+            h += '<ol style="margin:0.3rem 0; padding-left:1.2rem;">';
+            for (const e of evs) {
+              h += '<li style="margin-bottom:0.25rem;"><code>' + esc(e.kind) + '</code> '
+                 + '<span class="muted">' + esc(e.agent) + '</span> — ' + esc(e.content) + '</li>';
+            }
+            h += '</ol>';
+          }
+          why.innerHTML = h + '</div>';
+        } catch (e) { why.innerHTML = '<p class="muted">Could not load reasoning for #' + esc(id) + '.</p>'; }
+      }
+      box.addEventListener('click', function(ev) {
+        const b = ev.target.closest('button[data-why]');
+        if (b) showWhy(b.getAttribute('data-why'));
+      });
+      // Close the drill-down panel (delegated, so no per-render inline handler).
+      if (why) why.addEventListener('click', function(ev) {
+        if (ev.target.closest('[data-why-close]')) why.innerHTML = '';
+      });
+      async function tick() {
+        try {
+          const r = await fetch('/api/v1/oversight/active');
+          if (!r.ok) return;
+          const goals = (await r.json()).goals || [];
+          if (!goals.length) { box.innerHTML = '<p class="muted">No agents running right now.</p>'; return; }
+          let h = '<table><thead><tr><th scope="col">goal</th><th scope="col">title</th>'
+                + '<th scope="col">last activity</th><th scope="col">updated</th><th scope="col">why</th></tr></thead><tbody>';
+          for (const g of goals) {
+            h += '<tr><td class="muted">#' + esc(g.id) + '</td><td>' + esc(g.title) + '</td>'
+               + '<td><code>' + esc(g.activity || '—') + '</code></td>'
+               + '<td class="muted" style="white-space:nowrap;">' + esc(ago(g.updated_at)) + '</td>'
+               + '<td><button type="button" class="btn btn--ghost" data-why="' + esc(g.id) + '" '
+               + 'style="font-size:var(--text-sm);padding:0.1rem 0.5rem;">why?</button></td></tr>';
+          }
+          box.innerHTML = h + '</tbody></table>';
+        } catch (e) { /* keep last render on a transient error */ }
+      }
+      tick();
+      setInterval(tick, 5000);
+    })();
+  </script>
+
+  <div class="section-head" style="margin-top: var(--space-5);"><h2>Pending approvals</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Actions held for human sign-off (EU AI Act Art 14, the human-oversight requirement) — approve or deny each one here.</p>
+    {% include "_approvals_queue.html" %}
+  </div>
+
+  <div class="section-head" style="margin-top: var(--space-5);"><h2>By guardrail</h2></div>
+  <div class="panel">
+    {% set _gk = [
+      ('governance', by_kind.get('governance_denied', 0)),
+      ('shield', by_kind.get('shield_block', 0)),
+      ('capability', by_kind.get('capability_denied', 0)),
+      ('egress', by_kind.get('egress_blocked', 0)),
+      ('consent', by_kind.get('consent_result', 0)),
+      ('halt', by_kind.get('halt', 0)),
+    ] %}
+    {% set _gmax = ([by_kind.get('governance_denied', 0), by_kind.get('shield_block', 0), by_kind.get('capability_denied', 0), by_kind.get('egress_blocked', 0), by_kind.get('consent_result', 0), by_kind.get('halt', 0)] | max) or 1 %}
+    {% if total %}
+    <div class="gbars">
+      {% for _label, _count in _gk %}
+      <div class="gbar">
+        <span class="gbar__label">{{ _label }}</span>
+        <span class="gbar__track"><span class="gbar__fill" style="width: {{ (_count / _gmax * 100) | round(1) }}%;"></span></span>
+        <span class="gbar__count">{{ _count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" style="margin: 0;">No interventions in this window.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head" style="margin-top: var(--space-5);"><h2>Recent interventions</h2></div>
+  <div class="grid">
+    <div class="stat">
+      {% if halted %}
+      <div class="num" style="color: var(--danger);"><strong>HALTED</strong></div>
+      {% else %}
+      <div class="num">Running</div>
+      {% endif %}
+      <div class="label">Killswitch</div>
+    </div>
+    <div class="stat">
+      <div class="num">{{ total }}</div>
+      <div class="label">Interventions {% if ranged %}({{ since or '…' }} → {{ until or '…' }}){% elif day %}({{ day }}){% else %}(today){% endif %}</div>
+    </div>
+  </div>
+  <details class="panel" style="margin-bottom: var(--space-3);"{% if ranged or day %} open{% endif %}>
+    <summary style="cursor: pointer; color: var(--muted); font-size: var(--text-sm);">
+      ⧉ Filter window{% if ranged %} — {{ since or '…' }} → {{ until or '…' }}{% elif day %} — {{ day }}{% else %} — today{% endif %}
+    </summary>
+    <form method="get" action="/oversight" style="display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; margin-top: var(--space-3);">
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">events scanned</div>
+        <input type="number" name="n" value="{{ n }}" min="1" max="5000" class="ctl" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">day (YYYY-MM-DD)</div>
+        <input type="text" name="day" value="{{ day or '' }}" placeholder="today" class="ctl" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">since (YYYY-MM-DD)</div>
+        <input type="text" name="since" value="{{ since or '' }}" placeholder="open" class="ctl" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.75rem; text-transform: uppercase;">until (YYYY-MM-DD)</div>
+        <input type="text" name="until" value="{{ until or '' }}" placeholder="open" class="ctl" />
+      </label>
+      <button type="submit" class="btn">Load</button>
+    </form>
+    <p class="muted" style="margin: var(--space-2) 0 0; font-size: 0.8rem;">
+      Set <em>since</em> and/or <em>until</em> for a multi-day window (incident review); they override <em>day</em>.
+    </p>
+  </details>
+  <div class="panel">
+    {% if events %}
+      <table>
+        <thead>
+          <tr><th scope="col">Time</th><th scope="col">Guardrail</th><th scope="col">Agent</th><th scope="col">Goal</th><th scope="col">Detail</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in events %}
+          <tr>
+            <td class="muted" style="white-space: nowrap;">{{ ev.ts | datetime }}</td>
+            <td><code>{{ ev.kind }}</code></td>
+            <td>{{ ev.agent }}</td>
+            <td class="muted">{% if ev.goal_id is not none %}#{{ ev.goal_id }}{% else %}-{% endif %}</td>
+            <td>{{ ev.detail }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">
+        No interventions for the selected day — nothing was blocked or
+        held. Every intervention is recorded in the audit log kept on this
+        server.
+      </p>
+    {% endif %}
+  </div>
+
+  <script src="/static/board.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var B = window.LWBoard;
+
+    function render(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      k.appendChild(B.kpi({ label: 'Interventions', value: D.interventions,
+        spark: D.daily.map(function (r) { return r.n; }),
+        sub: 'guardrail actions, last ' + D.days + ' days' }));
+      k.appendChild(B.kpi({ label: 'Pending approvals', value: D.pending_approvals,
+        sub: D.pending_approvals ? 'waiting on a human' : 'queue clear' }));
+      k.appendChild(B.kpi({ label: 'Kill switch', value: D.halted ? 1 : 0,
+        format: function () { return D.halted ? 'HALTED' : 'clear'; },
+        sub: D.halted ? 'the fleet is stopped' : 'fleet running normally' }));
+      k.appendChild(B.kpi({ label: 'Guardrail kinds', value: D.by_kind.length,
+        sub: 'distinct controls that fired' }));
+
+      if (D.interventions) {
+        var weekly = D.days > 60;
+        B.area(document.getElementById('bd-interventions'), {
+          data: weekly ? B.bucketWeekly(D.daily, ['n']) : D.daily,
+          x: 'd',
+          series: [{ key: 'n', label: 'Interventions', cls: 'brand' }],
+          aria: 'Guardrail interventions per ' + (weekly ? 'week' : 'day') +
+                ' over the last ' + D.days + ' days.',
+          tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+          xTick: function (r, i, n) {
+            return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : '';
+          } });
+      } else {
+        B.empty(document.getElementById('bd-interventions'),
+          'No guardrail interventions in this window — nothing needed stopping.');
+      }
+
+      if (D.by_kind.length) {
+        var kmax = 1;
+        D.by_kind.forEach(function (r) { kmax = Math.max(kmax, r.n); });
+        B.hbars(document.getElementById('bd-fired'),
+          D.by_kind.map(function (r) {
+            return { label: r.kind, value_text: B.fmt(r.n),
+                     pct: r.n / kmax * 100,
+                     title: r.kind + ' — ' + B.fmt(r.n) + ' intervention(s)' };
+          }), 'Guardrail interventions by kind in this window.');
+      } else {
+        B.empty(document.getElementById('bd-fired'),
+          'No guardrail interventions in this window — nothing needed stopping.');
+      }
+    }
+
+    B.attach({ board: 'oversight', render: render });
+  })();
+  </script>
+{% endblock %}

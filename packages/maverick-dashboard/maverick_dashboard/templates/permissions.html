@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Permissions · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set enabled_tools = perm.tools | selectattr('enabled') | list %}
+  {% call hero('Governance', 'Permissions',
+               subtitle='What Lightwork can do',
+               lede='Everything the agent is currently allowed to do — tools,
+                     capabilities, channels, and where your data goes.
+                     Disabling a tool here takes effect on the next goal.') %}
+    {{ state('Current state',
+             enabled_tools | length ~ ' of ' ~ perm.tools | length ~ ' tools enabled',
+             badge='review sandbox' if perm.sandbox_warning else 'governed',
+             badge_class='warn' if perm.sandbox_warning else 'ok',
+             copy='Sandbox: <code>' ~ (perm.sandbox.backend or 'local') ~
+                  '</code> · network policy: <code>' ~ perm.network ~
+                  '</code>. Every toggle applies on the next goal.') }}
+  {% endcall %}
+
+  {% if perm.error %}
+    <div class="panel"><p style="color: var(--danger);">{{ perm.error }}</p></div>
+  {% endif %}
+
+  {% if perm.sandbox_warning %}
+    <div class="panel" style="border-left: 3px solid var(--danger);">
+      <p style="color: var(--danger);"><strong>⚠ {{ perm.sandbox_warning }}</strong></p>
+    </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Tools</h2></div>
+  <div class="panel">
+    {% if perm.tools %}
+      <table>
+        <thead><tr><th scope="col">tool</th><th scope="col">status</th><th scope="col">action</th></tr></thead>
+        <tbody>
+        {% for t in perm.tools %}
+          <tr>
+            <td><code>{{ t.name }}</code></td>
+            <td>
+              {% if t.enabled %}<span class="badge active">enabled</span>
+              {% else %}<span class="badge blocked">disabled</span>{% endif %}
+            </td>
+            <td>
+              {% if t.enabled %}
+                <button class="perm-toggle" data-name="{{ t.name }}" data-action="disable">Disable</button>
+              {% else %}
+                <button class="perm-toggle" data-name="{{ t.name }}" data-action="enable">Enable</button>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No tools registered.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Capabilities &amp; limits</h2></div>
+  <div class="panel">
+    <table>
+      <tbody>
+        <tr><td>computer-use</td><td>{% if perm.capabilities.computer_use %}<span class="badge blocked">⚠ on</span>{% else %}<span class="badge done">off</span>{% endif %}</td></tr>
+        <tr><td>browser</td><td>{% if perm.capabilities.browser %}<span class="badge blocked">⚠ on</span>{% else %}<span class="badge done">off</span>{% endif %}</td></tr>
+        <tr><td>web search</td><td>{% if perm.capabilities.web_search %}<span class="badge active">on</span>{% else %}<span class="badge done">off</span>{% endif %}</td></tr>
+        <tr><td>sandbox</td><td><code>{{ perm.sandbox.backend or 'local' }}</code></td></tr>
+        <tr><td>network policy</td><td><code>{{ perm.network }}</code></td></tr>
+        <tr><td>budget / task</td><td>${{ perm.budget.max_dollars if perm.budget.max_dollars is defined else '?' }} · {{ perm.budget.max_wall_seconds if perm.budget.max_wall_seconds is defined else '?' }}s</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-head"><h2>Channels</h2></div>
+  <div class="panel">
+    {% if perm.channels %}
+      {% for c in perm.channels %}
+        <span class="badge {{ 'active' if c.enabled else 'done' }}">{{ c.name }}</span>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No channels enabled — nothing is reachable from the network.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Your data</h2></div>
+  <div class="panel">
+    <p class="muted">
+      Your prompts and tool outputs are sent to:
+      {% if perm.providers %}<strong>{{ perm.providers | join(', ') }}</strong>{% else %}<strong>(no provider configured)</strong>{% endif %}.
+      Nothing else.
+    </p>
+    <ul class="muted">
+      <li>No telemetry. Lightwork collects no usage analytics.</li>
+      <li>All activity is logged on this server and retained locally,
+        {{ perm.retention.audit_days if perm.retention.audit_days is defined else 'until you delete them' }} day(s).</li>
+      <li>Everything Lightwork remembers stays on this server. A person's
+        data can be erased on request from the <a href="/privacy">Privacy
+        workspace</a>.</li>
+    </ul>
+  </div>
+
+  <p id="perm-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em;"></p>
+
+  <style>
+    button.perm-toggle { padding: 0.35rem 0.85rem; background: var(--surface-1); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    button.perm-toggle:hover { border-color: var(--brand); }
+    button.perm-toggle[disabled] { opacity: 0.6; cursor: not-allowed; }
+  </style>
+
+  <script>
+    (function() {
+      const msg = document.getElementById('perm-msg');
+      document.querySelectorAll('button.perm-toggle').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const name = btn.dataset.name;
+          const action = btn.dataset.action;  // "disable" | "enable"
+          btn.disabled = true;
+          msg.style.color = 'var(--muted)';
+          msg.textContent = (action === 'disable' ? 'Disabling ' : 'Enabling ') + name + '…';
+          try {
+            const r = await fetch('/api/v1/permissions/tools/' + encodeURIComponent(name) + '/' + action, {
+              method: 'POST',
+            });
+            if (r.ok || r.status === 204) {
+              msg.style.color = 'var(--accent)';
+              msg.textContent = name + ' ' + action + 'd. Takes effect on the next goal.';
+              // Mutate the row in place (keeps scroll position) instead of
+              // a full reload: flip the badge + the button's next action.
+              const nowEnabled = action === 'enable';
+              const row = btn.closest('tr');
+              if (row) {
+                const badge = row.querySelector('.badge');
+                if (badge) {
+                  badge.className = 'badge ' + (nowEnabled ? 'active' : 'blocked');
+                  badge.textContent = nowEnabled ? 'enabled' : 'disabled';
+                }
+              }
+              btn.dataset.action = nowEnabled ? 'disable' : 'enable';
+              btn.textContent = nowEnabled ? 'Disable' : 'Enable';
+              btn.disabled = false;
+            } else {
+              const j = await r.json().catch(function() { return {}; });
+              btn.disabled = false;
+              msg.style.color = 'var(--danger)';
+              msg.textContent = (j.detail || ('Failed: ' + r.status));
+            }
+          } catch (e) {
+            btn.disabled = false;
+            msg.style.color = 'var(--danger)';
+            msg.textContent = String(e);
+          }
+        });
+      });
+    })();
+  </script>
+{% endblock %}

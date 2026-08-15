@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% set active = 'servicenow' %}
+{% block title %}ServiceNow — Privacy Requests{% endblock %}
+{% block tab_title %}{{ self.title() }}{% endblock %}
+{% block favicon %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%231B9E57'/%3E%3Ctext x='16' y='21' font-size='13' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3ESN%3C/text%3E%3C/svg%3E">{% endblock %}
+
+{% block body %}
+<style>
+  /* A ServiceNow-style ITSM workspace rendered as an app window: near-black
+     Polaris header, light list-and-form workspace, teal accents. Wordmark is
+     plain text — no trademarked artwork. */
+  .sn { border-radius: 12px; overflow: hidden; border: 1px solid #0c1a1f;
+        box-shadow: 0 18px 60px rgba(0,0,0,.5); background: #f7f9f9; color: #2e3436;
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+  .sn__top { display: flex; align-items: center; gap: 16px; background: #032d42;
+             color: #fff; padding: 9px 16px; font-size: 13.5px; }
+  .sn__word { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  .sn__word span { color: #62d84e; }
+  .sn__crumbs { display: flex; gap: 14px; color: #b8c9d1; }
+  .sn__search { margin-left: auto; background: #12455e; border-radius: 4px;
+                padding: 5px 12px; color: #9fb6c2; font-size: 12.5px; min-width: 200px; }
+  .sn__av { width: 26px; height: 26px; border-radius: 50%; background: #62d84e; color: #05310c;
+            font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .sn__bar { display: flex; align-items: center; gap: 12px; background: #fff;
+             border-bottom: 1px solid #d8dfe1; padding: 10px 18px; }
+  .sn__bar h2 { font-size: 16px; font-weight: 700; margin: 0; color: #1a2b32; }
+  .sn__bar .pillcnt { font-size: 12px; background: #e3f2e1; color: #1d6a10;
+                      border-radius: 12px; padding: 2px 10px; font-weight: 700; }
+  .sn__main { display: grid; grid-template-columns: 1fr 1.15fr; gap: 0; }
+  @media (max-width: 900px) { .sn__main { grid-template-columns: 1fr; } }
+  .sn__form { padding: 18px 20px; border-right: 1px solid #e2e8ea; background: #fff; }
+  .sn__form h3, .sn__list h3 { font-size: 13px; font-weight: 700; color: #51626f;
+                               text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+  .sn__form label { display: block; margin-bottom: 12px; }
+  .sn__form .lbl { display: block; font-size: 12.5px; font-weight: 600; color: #5b6a72; margin-bottom: 4px; }
+  .sn__form .lbl .req { color: #c83c3c; }
+  .sn__form input { width: 100%; border: 1px solid #bfcace; border-radius: 4px;
+                    padding: 8px 10px; font-size: 13.5px; background: #fff; color: #2e3436;
+                    font-family: inherit; }
+  .sn__form input:focus { outline: 2px solid #278efc; outline-offset: 0; border-color: transparent; }
+  .sn__submit { background: #0570b8; color: #fff; border: none; border-radius: 4px;
+                padding: 9px 18px; font-weight: 600; font-size: 13.5px; cursor: pointer; }
+  .sn__submit:hover { background: #045a94; }
+  .sn__list { padding: 18px 20px; background: #f7f9f9; }
+  table.sn__tbl { width: 100%; border-collapse: collapse; background: #fff; font-size: 13px;
+                  border: 1px solid #d8dfe1; }
+  .sn__tbl th { text-align: left; background: #eef2f3; color: #51626f; font-weight: 700;
+                font-size: 11.5px; padding: 8px 12px; border-bottom: 1px solid #d8dfe1; }
+  .sn__tbl td { padding: 10px 12px; border-bottom: 1px solid #eef1f2; vertical-align: top; }
+  .sn__tbl tr:hover td { background: #f0f7fc; cursor: pointer; }
+  .sn__num { color: #0570b8; font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+  .sn__sys { color: #7a8a96; font-size: 12px; }
+  .sn__state { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 3px;
+               padding: 3px 10px; }
+  .sn__state.s-New { background: #e8eef1; color: #51626f; }
+  .sn__state.s-InProgress { background: #fdf3dc; color: #8a6116; }
+  .sn__state.s-Resolved { background: #e3f2e1; color: #1d6a10; }
+  .sn__empty { background: #fff; border: 1px dashed #bfcace; padding: 42px 18px;
+               text-align: center; color: #7a8a96; font-size: 13.5px; }
+</style>
+
+<div class="sim-banner">
+  <span class="sim-chip">Simulated</span>
+  <span>Stand-in for the customer's <b>ServiceNow</b> (or Jira, Zendesk, email…) intake.
+  Creating a request fires a real HTTP webhook to Lightwork — point it at a live instance and nothing else changes.</span>
+</div>
+
+<div class="sn">
+  <div class="sn__top">
+    <span class="sn__word">service<span>now</span></span>
+    <nav class="sn__crumbs"><span>All</span><span>Favorites</span><span style="color:#fff; border-bottom:2px solid #62d84e; padding-bottom:6px; margin-bottom:-8px;">Privacy Requests</span></nav>
+    <div class="sn__search">🔍&nbsp; Search</div>
+    <div class="sn__av">{{ (tickets[0].requester if tickets else 'U')[:1]|upper }}</div>
+  </div>
+  <div class="sn__bar">
+    <h2>Privacy assessment requests</h2>
+    <span class="pillcnt">{{ tickets|length }} record{{ 's' if tickets|length != 1 }}</span>
+    <span class="muted" style="color:#7a8a96; font-size:12.5px; margin-left:auto;">
+      IT Service Management · Privacy Office</span>
+  </div>
+  <div class="sn__main">
+    <div class="sn__form">
+      <h3>New request</h3>
+      <form method="post" action="/servicenow/create">
+        <label><span class="lbl">Short description <span class="req">*</span></span>
+          <input type="text" name="short_description" required
+                 value="Privacy review for new marketing CRM (Acme CRM)"></label>
+        <label><span class="lbl">Requested by <span class="req">*</span></span>
+          <input type="text" name="requester" required value="Jordan Ellis (Marketing Ops)"></label>
+        <label><span class="lbl">Requester email <span class="req">*</span></span>
+          <input type="email" name="requester_email" required value="jordan.ellis@company.com"></label>
+        <label><span class="lbl">System / vendor under review <span class="req">*</span></span>
+          <input type="text" name="system_name" required value="Acme CRM"></label>
+        <label><span class="lbl">Data types involved <span class="req">*</span></span>
+          <input type="text" name="data_types" required
+                 value="Customer name, email, phone, browsing history"></label>
+        <button class="sn__submit" type="submit">Submit</button>
+      </form>
+      <p style="color:#7a8a96; font-size:12px; margin-top:12px;">
+        An employee rolling out a new system raises a ticket here — the way they already do.
+        They never open Lightwork.</p>
+    </div>
+    <div class="sn__list">
+      <h3>Queue</h3>
+      {% if tickets %}
+      <table class="sn__tbl">
+        <tr><th>Number</th><th>Short description</th><th>Requested by</th><th>State</th></tr>
+        {% for t in tickets %}
+        <tr onclick="location='/servicenow/ticket/{{ t.number }}'" role="button" tabindex="0"
+            onkeydown="if(event.key==='Enter'){location='/servicenow/ticket/{{ t.number }}'}"
+            aria-label="Open {{ t.number }}">
+          <td class="sn__num">{{ t.number }}</td>
+          <td>{{ t.short_description }}<br><span class="sn__sys">{{ t.system_name }}</span></td>
+          <td>{{ t.requester }}</td>
+          <td><span class="sn__state s-{{ t.state|replace(' ','') }}">{{ t.state }}</span></td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}<div class="sn__empty">No requests yet. Submit one to kick off the flow.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

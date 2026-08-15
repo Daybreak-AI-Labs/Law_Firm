@@ -1,0 +1,184 @@
+# Getting started
+
+## Install
+
+The Lightwork distribution names are not yet reserved on public PyPI, so do
+not install those names from the public index. Install a reviewed source
+commit instead:
+
+```bash
+git clone https://github.com/Daybreak-AI-Labs/Lightwork
+cd Lightwork
+git checkout --detach <reviewed-full-40-character-commit-sha>
+pip install -e ./packages/maverick-core
+pip install -e ./apps/installer-cli
+maverick init
+```
+
+If you need the no-prerequisite desktop bootstrap, download
+`deploy/desktop/install.sh` or `deploy/desktop/install.ps1` from the same
+commit, verify it, and set `MAVERICK_REF` to the lowercase, full SHA. The
+scripts fail on missing or mutable refs and have no public-index fallback.
+Every `MAVERICK_*` variable can also be spelled `LIGHTWORK_*`.
+
+From source while iterating:
+
+```bash
+git clone https://github.com/Daybreak-AI-Labs/Lightwork
+cd Lightwork
+pip install -e ./packages/maverick-core
+pip install -e ./apps/installer-cli
+maverick init
+```
+
+## First run
+
+```bash
+maverick init
+maverick preflight
+maverick doctor
+```
+
+The wizard takes ~2 minutes. It writes `~/.maverick/config.toml` and `~/.maverick/.env`.
+
+Then:
+
+```bash
+maverick start "Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"
+```
+
+## Watch the swarm decompose
+
+Run `maverick monitor` in a second terminal. The orchestrator plans the goal, then spawns specialist sub-agents that work in parallel — here a researcher pins down the API, a coder writes the tool, and a verifier runs it:
+
+```
+Goal #1 active  2m elapsed
+Build a CLI that emails me a digest of today's top Hacker News stories
+
+Plan tree
+  ├─        done  #2 Research the Hacker News Firebase API
+  ├─      active  #3 Write the digest CLI (fetch + format + send)
+  ├─      active  #4 Verify it runs and emails a sample digest
+  ├─     pending  #5 Write a short usage README
+
+Latest episode #7 (running)  $0.0431  in=18,204 out=2,910 tools=11
+
+Recent activity
+  4s ago [researcher] decision: top stories live at /v0/topstories.json, then /v0/item/<id>.json
+  3s ago [coder] tool_call: write_file hn_digest.py (118 lines)
+  1s ago [verifier] tool_call: run "python hn_digest.py --dry-run" -> printed 10 stories
+
+Cumulative spend on this DB: $0.21
+```
+
+When done:
+
+```bash
+maverick status      # what's currently active or blocked
+maverick skills      # what the swarm distilled from this run
+maverick facts       # what it learned about you
+```
+
+## Pausing / resuming
+
+If the swarm needs something only you can answer, it pauses and queues a question:
+
+```bash
+maverick status
+# shows: open questions: #3 (goal 1): Which dates are you traveling?
+
+maverick answer 3 "May 15-29"
+maverick resume
+```
+
+Goals survive restarts. You can shut your laptop and come back tomorrow.
+
+## Building your own specialist from a watched task
+
+You don't have to describe a job in words — you can show it. Capture an ordered
+record of someone doing the work (the actions they took and any narration of why)
+as JSONL or simple prefixed text, then hand the file to Lightwork:
+
+```
+ACTION[gmail]: send the morning digest -> ops@acme.com
+NOTE: only the top 5 stories, with one-line summaries
+SEE: digest looks right, ops confirmed receipt
+```
+
+```bash
+maverick learn-demo demo.txt
+```
+
+This parses the demonstration, induces a draft specialist, shows you the derived
+workflow, and waits for your approval before saving. Secrets are redacted at the
+door, and the draft inherits the same capability clamp and persona scan a
+described pack gets — nothing activates without your yes. Useful flags:
+
+```bash
+maverick learn-demo demo.txt --name "Morning Digest" --no-llm --yes
+```
+
+`--no-llm` mirrors the observed steps deterministically (tools = what the person
+used); drop it to let the model propose from the transcript.
+
+The same agent-factory flow runs when you build a pack conversationally:
+
+```bash
+maverick onboard
+```
+
+On approval, `onboard` now provisions the pack — it installs the catalog skills
+its workflow needs and synthesizes any declared tools that aren't built in, so a
+freshly approved specialist is equipped to do its job from the first run. (This
+step honors the `[self_learning]` / `provision_packs` config and never widens the
+pack's clamped envelope.)
+
+## Voice input (built-in, offline)
+
+The dashboard's mic button and the `transcribe_audio` tool work with no
+provider key: the local Whisper engine ships with the dashboard package, and
+the checksum-verified model is fetched automatically when the dashboard
+first starts (skipped on egress-locked deployments, or with
+`[voice] auto_fetch_model = false`). The CLI covers the details:
+
+```bash
+maverick voice setup    # fetch the checksum-verified model (~148 MB)
+maverick voice status   # see which speech-to-text backends are usable
+maverick voice transcribe clip.wav   # smoke-test the pipeline
+```
+
+Prefer a system engine instead? A `whisper.cpp` binary on PATH (`brew
+install whisper-cpp`) or faster-whisper both plug into the same chain. Set
+`[voice] stt_backend = "local"` to keep audio on-machine even when
+OpenAI/Groq keys are configured.
+
+## Changing models or providers
+
+Re-run the wizard any time:
+
+```bash
+maverick init
+```
+
+Or edit `~/.maverick/config.toml` directly. The `[models]` section maps each agent role to a `provider:model-id` string. See [`configuration.md`](./configuration.md) for the schema.
+
+## Where data lives
+
+| File | What |
+|---|---|
+| `~/.maverick/config.toml` | Your config (deployment, models, safety, budget) |
+| `~/.maverick/.env` | API keys (chmod 600) |
+| `~/.maverick/world.db` | Persistent world model: goals, facts, episodes |
+| `~/.maverick/skills/` | Auto-distilled SKILL.md files from successful runs |
+| `~/maverick-workspace/` | Default sandbox working directory |
+| `~/.maverick/learned-skills/` | Skills distilled by the learning loops |
+| `~/.maverick/dreams/` | Consolidated insights, rehearsal queue, learning snapshots |
+
+All local. Nothing is uploaded except your prompts to the cloud LLM you chose.
+
+Once you have a few runs behind you, the learning surface is four commands:
+`maverick dream` (consolidate experience), `maverick hindsight` (did learning
+help or regress?), `maverick proof` (deliverables, cost avoided, ROI), and
+`maverick domains-lint` (audit the 2,020-agent specialist catalog), plus
+`maverick domains-audit` (governance posture: what each agent can reach, denies,
+and refuses) and `maverick domains-eval --check` (behavioral golden cases).

@@ -1,0 +1,70 @@
+INHERIT: mkdocs.yml
+
+# The Pages workflow copies docs/public-docs.txt into this clean staging tree.
+# GitHub Pages never sees the full docs/ directory, so a new internal document
+# is private by default and cannot leak merely because it was omitted from nav.
+docs_dir: .public-docs
+
+# A missing link on the customer-facing site is a release defect. The private
+# documentation inherits informational diagnostics because many engineering
+# pages intentionally cite repository-relative sources outside docs_dir; the
+# reviewed public stage contains every supported target and therefore fails
+# strict builds on missing links.
+validation:
+  links:
+    not_found: warn
+
+# The verifier requires this navigation and docs/public-docs.txt to describe
+# the exact same document set.
+nav:
+  - Home:
+      - Welcome: index.md
+      - Getting started: getting-started.md
+  - Guides:
+      - Configuration: configuration.md
+      - Pricing governance: pricing-governance.md
+      - Environment variables: env-vars.md
+      - Deployment: deployment.md
+      - Reference architectures: reference-architectures.md
+      - Operations: operations.md
+      - Safety: safety.md
+      - Governed execution: governed-execution.md
+      - Plugins: plugins.md
+      - Connectors: connectors.md
+      - Starter goals: starter-goals.md
+  - Reference:
+      - API: api.md
+      - gRPC API: grpc.md
+      - A2A (Agent2Agent): a2a.md
+      - External agents (BYOA): external-agents.md
+      - External agent quickstart: clients/external-agent-quickstart.md
+      - How Lightwork compares: comparison.md
+  - Performance:
+      - Streaming parity: performance/streaming-parity.md
+  - Security:
+      - Security & GRC suite: SECURITY_GRC.md
+      - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
+      - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
+      - Audit checkpoint operations: audit-checkpoints.md
+      - Governance Frontier benchmark: benchmarks/governance-frontier.md
+      - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
+      - Threat model: security/threat-model.md
+      - DGM evaluator evidence: security/dgm-evaluator-evidence.md
+      - Capability attenuation: security/capability-attenuation.md
+      - Shield benchmark: security/shield-benchmark.md
+      - Encryption at rest: encryption.md
+      - Regulated deployment: regulated-deployment.md
+      - Compliance assessments: compliance-assessments.md
+      - Agent threat hunting: threat-hunting.md
+  - Enterprise:
+      - Editions: enterprise/editions.md
+      - Security & compliance overview: enterprise/security-overview.md
+      - Architecture: enterprise/architecture.md
+  - Community:
+      - Showcase: showcase.md
+      - Press kit: press-kit.md
+      - Observability integrations: integrations/observability-partners.md
+      - Contributing: CONTRIBUTING.md
+      - Contributor License Agreement: CLA.md
+      - Code of Conduct: CODE_OF_CONDUCT.md
+      - Security policy: security-policy.md

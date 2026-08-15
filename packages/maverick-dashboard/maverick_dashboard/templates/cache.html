@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Cache · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">Cache</h1>
+  <p class="page-subtitle">Inspect and purge the caches this deployment keeps — file reads and the repository map — to reclaim space or force a refresh.</p>
+
+  <div class="panel">
+    <p class="muted">
+      Lightwork keeps short-term caches so it doesn't redo the same reading
+      work. Purge if a result looks stale or you want to force a fresh
+      read.
+    </p>
+    <table>
+      <thead><tr><th scope="col">scope</th><th scope="col">size</th><th scope="col">action</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>files</code></td>
+          <td class="muted">
+            {{ stats.files.entries }} entries · {{ stats.files.bytes }} bytes
+            <span class="muted" style="font-size: 0.8rem;">(cap: {{ stats.files.max_entries }} entries / {{ stats.files.max_bytes }} bytes)</span>
+          </td>
+          <td><button class="purge" data-scope="files">Purge</button></td>
+        </tr>
+        <tr>
+          <td><code>repo_map</code></td>
+          <td class="muted">in-process</td>
+          <td><button class="purge" data-scope="repo_map">Purge</button></td>
+        </tr>
+        <tr>
+          <td><code>skill_embeddings</code></td>
+          <td class="muted">
+            {% if stats.skill_embeddings.bytes %}
+              on disk · {{ stats.skill_embeddings.bytes }} bytes
+            {% else %}
+              not cached
+            {% endif %}
+          </td>
+          <td><button class="purge" data-scope="skill_embeddings">Purge</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin-top: 1rem;">
+      <button class="purge" data-scope="all"
+              style="background: var(--brand); color: var(--brand-fg); border: 0; border-radius: var(--radius-md); padding: 0.5rem 1.25rem; cursor: pointer; font-weight: 500;">
+        Purge all
+      </button>
+    </p>
+    <p id="cache-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em; margin-top: 0.75rem;"></p>
+  </div>
+
+  <style>
+    button.purge {
+      padding: 0.35rem 0.85rem;
+      background: var(--surface-1);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    button.purge:hover { border-color: var(--brand); }
+    button.purge[disabled] { opacity: 0.6; cursor: not-allowed; }
+  </style>
+
+  <script>
+    (function() {
+      const msg = document.getElementById('cache-msg');
+      document.querySelectorAll('button.purge').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const scope = btn.dataset.scope;
+          document.querySelectorAll('button.purge').forEach(b => b.disabled = true);
+          msg.style.color = 'var(--muted)';
+          msg.textContent = 'Purging…';
+          try {
+            const r = await fetch('/api/v1/cache/purge', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({scopes: [scope]}),
+            });
+            if (r.ok) {
+              msg.style.color = 'var(--accent)';
+              msg.textContent = 'Purged. Reloading…';
+              setTimeout(function() { window.location.reload(); }, 500);
+            } else {
+              const j = await r.json().catch(function() { return {}; });
+              msg.style.color = 'var(--danger)';
+              msg.textContent = (j.detail || ('Purge failed: ' + r.status));
+              document.querySelectorAll('button.purge').forEach(b => b.disabled = false);
+            }
+          } catch (e) {
+            msg.style.color = 'var(--danger)';
+            msg.textContent = String(e);
+            document.querySelectorAll('button.purge').forEach(b => b.disabled = false);
+          }
+        });
+      });
+    })();
+  </script>
+{% endblock %}

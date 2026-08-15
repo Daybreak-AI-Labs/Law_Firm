@@ -1,0 +1,24 @@
+diff --git a/solver.py b/solver.py
+index a2b4110..519ea31 100644
+--- a/solver.py
++++ b/solver.py
+@@ -28,7 +28,7 @@ from pathlib import Path
+ # The cheapest per-role default in maverick.llm.ROLE_MODELS is ``summarizer``
+ # (Haiku, $1/$5 per Mtok) -- the sensible pick for a throwaway baseline solver.
+ _ROLE = "summarizer"
+-_MAX_TOKENS = 3000
++_MAX_TOKENS = 4000
+ # Per-call caps. record_tokens() enforces EVERY cap at record time, so each is
+ # raised comfortably above what one 3k-output call can reach (a cap crossed on
+ # an axis you didn't mean to bound still kills the call).
+@@ -92,7 +92,9 @@ def _build_prompt(instance) -> tuple[str, str]:
+         "You are a bug-fixing coder. Given a bug brief and the failing test "
+         "file(s), output ONLY a unified diff (git format, `diff --git a/... "
+         "b/...`) that patches the project SOURCE so the failing tests pass. "
+-        "Never edit the tests. No prose, no explanation -- just the diff.")
++        "Never edit the tests. No prose, no explanation -- just the diff. "
++        "Quote removed lines EXACTLY as they appear in the file; keep "
++        "hunks minimal with 3 lines of unchanged context around each change.")
+     parts = [f"Bug brief:\n{getattr(instance, 'brief', '') or '(none)'}\n"]
+     for rel, src in _failing_test_sources(instance):
+         parts.append(f"Failing test file `{rel}`:\n```python\n{src}\n```\n")

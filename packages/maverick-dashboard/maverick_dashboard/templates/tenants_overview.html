@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Tenant Overview · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set suspended_count = rows | selectattr('suspended') | list | length %}
+  {% call hero('Administration', 'Tenant overview',
+               subtitle='Per-workspace rollup',
+               lede='A per-tenant summary: goals by status, today\'s spend,
+                     and how close each tenant is to its daily spend limit.
+                     The full roster — and where new workspaces are created —
+                     lives on <a href="/tenants">Tenants</a>.') %}
+    {{ state('Current state',
+             rows | length ~ ' workspace' ~ ('' if rows | length == 1 else 's') ~ ' reporting',
+             badge=(suspended_count ~ ' suspended') if suspended_count
+                   else ('all active' if rows else 'single-tenant'),
+             badge_class='warn' if suspended_count else ('ok' if rows else 'idle'),
+             copy='Spend today across workspaces: $'
+                  ~ ('%.2f' % (rows | sum(attribute='spend_today'))) ~ '.
+                  One budget per workspace — no tenant can spend
+                  another\'s.') }}
+  {% endcall %}
+
+  <div class="section-head"><h2>Why create a workspace?</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin: 0;">
+      A workspace walls off one client or team: its own records and run
+      history, its own uploaded knowledge and customized agents, its own
+      daily spend limit and usage ledger, and its own per-workspace roles.
+      Evidence never mixes between clients, one workspace can never spend
+      another's budget, and any one of them can be suspended without
+      touching the rest. Create and manage workspaces on
+      <a href="/tenants">Tenants</a>.
+    </p>
+  </div>
+
+  {% if not is_admin %}
+    <div class="panel">
+      <p class="muted">Operator (admin) access is required to view the
+      cross-tenant rollup. You're seeing this scoped view because your
+      identity maps to a single tenant.</p>
+    </div>
+  {% elif not rows %}
+    <div class="panel">
+      <p class="muted" style="margin: 0;">No tenants provisioned. Single-tenant and
+      unprovisioned deployments run without a registry — create your first
+      workspace on <a href="/tenants">Tenants</a> when you take on a second
+      client or team.</p>
+    </div>
+  {% else %}
+    <div class="section-head"><h2>Per-workspace rollup</h2></div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">tenant</th><th scope="col">status</th>
+            <th scope="col">plan</th><th scope="col">goals</th>
+            <th scope="col">by status</th>
+            <th scope="col">spend today</th><th scope="col">quota</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td><code>{{ r.id }}</code>{% if r.display_name %} <span class="muted">{{ r.display_name }}</span>{% endif %}</td>
+              <td>
+                {% if r.suspended %}
+                  <span class="badge blocked">suspended</span>
+                {% else %}
+                  <span class="badge active">active</span>
+                {% endif %}
+              </td>
+              <td>{{ r.plan }}</td>
+              <td>{{ r.total_goals }}</td>
+              <td>
+                {% if r.goals %}
+                  {% for status, n in r.goals | dictsort %}
+                    <span class="badge {{ status }}">{{ status }} {{ n }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">no runs yet</span>
+                {% endif %}
+              </td>
+              <td>${{ '%.2f' % r.spend_today }}</td>
+              <td class="muted">
+                {% if r.max_daily_dollars %}${{ '%g' % r.max_daily_dollars }}/day{% else %}unlimited{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

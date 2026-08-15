@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Skill Store · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Workforce capability', 'Store',
+               subtitle='Curated skill catalog',
+               lede='Curated skills from the community catalog — each pinned
+                     to the exact version that was reviewed, so what you
+                     install is what was checked.') %}
+    {{ state('Current state',
+             ((entries | length) ~ ' skill(s) in the catalog') if entries
+             else 'Catalog empty or unreachable',
+             badge='browsable' if entries else 'none yet',
+             badge_class='ok' if entries else 'idle',
+             copy='In-app installation is off by default — your administrator
+                   can switch it on, and can point this page at your
+                   organization\'s own private catalog.') }}
+  {% endcall %}
+
+  {% if entries %}
+    <div class="card-grid">
+      {% for e in entries %}
+        <div class="card">
+          <div class="store__head">
+            <code class="store__name">{{ e.name }}</code>
+            {% if e.verified %}<span class="badge active" title="Verified author">verified</span>{% endif %}
+          </div>
+          <p class="store__summary">{{ e.summary or "No description." }}</p>
+          <p class="muted store__meta">
+            {% if e.author %}by {{ e.author }} · {% endif %}v{{ e.version }}
+            {% if e.install_count %} · {{ e.install_count }} installs{% endif %}
+          </p>
+          {% if e.name in installed %}
+            <button class="btn btn--ghost store__btn" disabled>Installed</button>
+          {% else %}
+            <button class="btn btn--primary store__btn install" data-name="{{ e.name }}">Install</button>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No catalog entries</p>
+      <p class="mv-empty__body">
+        The catalog is empty or unreachable right now. Once a community
+        catalog is published (or your administrator points this page at your
+        organization's own), curated skills appear here for one-click install.
+      </p>
+    </div>
+  {% endif %}
+
+  <p id="store-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em; margin-top: var(--space-4);"></p>
+
+  <style>
+    .card-grid .card { display: flex; flex-direction: column; }
+    .store__head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+    .store__name { font-size: var(--text-sm); }
+    .store__summary { margin: 0 0 var(--space-3); flex: 1 1 auto; }
+    .store__meta { font-size: var(--text-xs); margin: 0 0 var(--space-3); }
+    .store__btn { align-self: flex-start; margin-top: auto; }
+  </style>
+
+  <script>
+    (function() {
+      const msg = document.getElementById('store-msg');
+      document.querySelectorAll('button.store__btn.install').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const name = btn.dataset.name;
+          btn.disabled = true;
+          btn.textContent = 'Installing…';
+          msg.style.color = 'var(--muted)';
+          msg.textContent = '';
+          try {
+            const r = await fetch('/api/v1/catalog/skills/install', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({name: name}),
+            });
+            if (r.ok) {
+              btn.textContent = 'Installed';
+              btn.classList.remove('install', 'btn--primary');
+              btn.classList.add('btn--ghost');
+              msg.style.color = 'var(--accent)';
+              msg.textContent = 'Installed ' + name + '.';
+            } else {
+              const j = await r.json().catch(function() { return {}; });
+              btn.disabled = false;
+              btn.textContent = 'Install';
+              msg.style.color = 'var(--danger)';
+              msg.textContent = (j.detail || ('HTTP ' + r.status));
+            }
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Install';
+            msg.style.color = 'var(--danger)';
+            msg.textContent = String(e);
+          }
+        });
+      });
+    })();
+  </script>
+{% endblock %}

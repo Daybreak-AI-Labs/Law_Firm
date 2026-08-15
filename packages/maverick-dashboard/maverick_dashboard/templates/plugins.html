@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Plugins · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set ns = namespace(total=0, on=0) %}
+  {% for label, items in groups.items() %}{% for p in items %}{% set ns.total = ns.total + 1 %}{% if p.enabled %}{% set ns.on = ns.on + 1 %}{% endif %}{% endfor %}{% endfor %}
+  {% call hero('Workforce capability', 'Plugins',
+               subtitle='Extensions, managed in-app',
+               lede='Extend Lightwork with installed plugins — extra tools,
+                     channels, and integrations packaged for one-step install,
+                     switched on and off right here.') %}
+    {% if error %}
+      {{ state('Current state', 'Plugin discovery unavailable',
+               badge='needs attention', badge_class='warn',
+               copy='The plugin registry could not be read — the details are
+                     shown below.') }}
+    {% else %}
+      {{ state('Current state',
+               (ns.on ~ ' of ' ~ ns.total ~ ' plugin(s) enabled') if ns.total
+               else 'No plugins installed yet',
+               badge='active' if ns.on else 'none active',
+               badge_class='ok' if ns.on else 'idle',
+               copy='Toggles apply from the next run — enabling a plugin loads
+                     its code on the next goal.') }}
+    {% endif %}
+  {% endcall %}
+
+  {% if error %}
+    <div class="panel">
+      <p style="color: var(--danger);">{{ error }}</p>
+    </div>
+  {% endif %}
+
+  <div class="panel">
+    <p class="muted" style="margin: 0;">
+      Toggle plugins on or off here — changes apply from the next run.
+      {% if allowlist_active %}
+        Your organization's baseline policy decides which plugins start
+        enabled; toggles here override it.
+      {% else %}
+        Installed plugins are on by default — turn off any you don't want.
+      {% endif %}
+    </p>
+  </div>
+
+  {% for label, items in groups.items() %}
+    <h2 style="margin-top: 2rem;">{{ label }}</h2>
+    <div class="panel">
+      {% if items %}
+        <table>
+          <thead><tr><th scope="col">name</th><th scope="col">module</th><th scope="col">status</th><th scope="col">action</th></tr></thead>
+          <tbody>
+          {% for p in items %}
+            <tr>
+              <td><code>{{ p.name }}</code></td>
+              <td class="muted" style="font-size: 0.8rem;">{{ p.module }}</td>
+              <td>
+                <span class="badge {{ 'active' if p.enabled else 'blocked' }}">
+                  {{ 'enabled' if p.enabled else 'disabled' }}
+                </span>
+                {% if p.forced %}<span class="muted" style="font-size: 0.72rem;">(set here)</span>{% endif %}
+              </td>
+              <td>
+                <form method="post" action="/plugins/toggle" style="display: inline-flex; gap: var(--space-2);">
+                  <input type="hidden" name="name" value="{{ p.name }}" />
+                  {% if p.enabled %}
+                  <button type="submit" name="action" value="disable" class="btn btn--ghost">Disable</button>
+                  {% else %}
+                  <button type="submit" name="action" value="enable" class="btn btn--primary">Enable</button>
+                  {% endif %}
+                  {% if p.forced %}
+                  <button type="submit" name="action" value="reset" class="btn btn--ghost" title="Revert to the organization default">Reset</button>
+                  {% endif %}
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No {{ label }} plugins installed.</p>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  <h2 style="margin-top: 2rem;">Install a plugin</h2>
+  <div class="panel">
+    {% if installable %}
+      <p class="muted">
+        Plugin packages approved by your administrator — one-click install, then
+        enable from the list above.
+        {% if not install_enabled %}
+          <strong>In-app installation is off:</strong> ask your administrator to
+          switch it on to use these buttons.
+        {% endif %}
+      </p>
+      <table>
+        <thead><tr><th scope="col">package</th><th scope="col">action</th></tr></thead>
+        <tbody>
+        {% for pkg in installable %}
+          <tr>
+            <td><code>{{ pkg }}</code></td>
+            <td>
+              <form method="post" action="/plugins/install" style="display: inline;">
+                <input type="hidden" name="name" value="{{ pkg }}" />
+                <button type="submit" class="btn btn--primary" {% if not install_enabled %}disabled{% endif %}>Install</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted" style="font-size: 0.85rem; margin-top: var(--space-3); margin-bottom: 0;">
+        New plugins take effect on the next goal. Only these pre-approved packages
+        can be installed here — never arbitrary input.
+      </p>
+    {% else %}
+      <p class="muted" style="margin-bottom: 0;">
+        Plugins add new tools, channels, skills and personas. No plugin
+        packages are approved for in-app installation yet — your administrator
+        manages the approved list and the install switch for this platform.
+      </p>
+    {% endif %}
+  </div>
+{% endblock %}

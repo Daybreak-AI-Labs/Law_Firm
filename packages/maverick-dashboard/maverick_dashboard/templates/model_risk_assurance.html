@@ -1,0 +1,547 @@
+{% extends "base.html" %}
+{% block title %}AI Evidence Gateway &amp; Model Risk - Lightwork{% endblock %}
+{% block content %}
+<style>
+  .assurance-stats {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(8rem,1fr));
+    gap:var(--space-3);
+    margin:var(--space-4) 0;
+  }
+  .assurance-stat {
+    padding:var(--space-3);
+    border:1px solid var(--border);
+    border-radius:8px;
+    background:var(--surface-2);
+  }
+  .assurance-stat strong { display:block; font-size:var(--text-xl); }
+  .assurance-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:var(--space-4);
+  }
+  .assurance-table { overflow-x:auto; }
+  .assurance-table caption { text-align:left; color:var(--muted); padding:0 0 var(--space-2); }
+  .assurance-note {
+    border-left:4px solid var(--warn);
+    padding-left:var(--space-3);
+  }
+  .assurance-alert {
+    border-left:4px solid var(--danger);
+    padding:var(--space-3);
+    background:var(--surface-2);
+  }
+  .assurance-actions {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:var(--space-2);
+    margin:var(--space-4) 0;
+  }
+  .assurance-demo {
+    display:inline-block;
+    padding:.15rem .45rem;
+    border:1px solid var(--warn);
+    border-radius:999px;
+    color:var(--warn);
+    font-size:var(--text-xs);
+    font-weight:700;
+    letter-spacing:.06em;
+  }
+  .assurance-status-current { color:var(--success); font-weight:700; }
+  .assurance-status-stale { color:var(--danger); font-weight:700; }
+  .assurance-citations { margin:0; padding-left:1rem; }
+  .assurance-muted { color:var(--muted); }
+  .assurance-overview {
+    border:1px solid var(--border);
+    border-left:4px solid var(--brand);
+    border-radius:8px;
+    padding:var(--space-4);
+    background:var(--surface-1);
+    margin:var(--space-4) 0;
+  }
+  .assurance-overview--blocked { border-left-color:var(--danger); }
+  .assurance-overview--review,
+  .assurance-overview--waiting,
+  .assurance-overview--demo { border-left-color:var(--warn); }
+  .assurance-overview--ready { border-left-color:var(--success); }
+  .assurance-overview__head {
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:var(--space-3);
+  }
+  .assurance-overview__head h2 { margin:0 0 var(--space-1); }
+  .assurance-badge {
+    flex:none;
+    border:1px solid currentColor;
+    border-radius:999px;
+    padding:.2rem .55rem;
+    font-size:var(--text-xs);
+    font-weight:700;
+  }
+  .assurance-overview--blocked .assurance-badge { color:var(--danger); }
+  .assurance-overview--review .assurance-badge,
+  .assurance-overview--waiting .assurance-badge,
+  .assurance-overview--demo .assurance-badge { color:var(--warn); }
+  .assurance-overview--ready .assurance-badge { color:var(--success); }
+  .assurance-progress {
+    height:6px;
+    border-radius:999px;
+    background:var(--surface-2);
+    overflow:hidden;
+    margin:var(--space-3) 0 var(--space-2);
+  }
+  .assurance-progress > i {
+    display:block;
+    height:100%;
+    background:var(--brand);
+  }
+  .assurance-checklist {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:var(--space-2) var(--space-4);
+    list-style:none;
+    padding:0;
+  }
+  .assurance-checklist li::before { content:"○"; margin-right:.45rem; color:var(--muted); }
+  .assurance-checklist li.is-done::before { content:"✓"; color:var(--success); }
+  .assurance-next {
+    border-top:1px solid var(--border);
+    margin-top:var(--space-3);
+    padding-top:var(--space-3);
+  }
+  .assurance-next h3 { margin:0 0 var(--space-1); }
+  .assurance-next code { display:block; width:max-content; max-width:100%; overflow-wrap:anywhere; margin:var(--space-2) 0; }
+  .assurance-empty { margin:var(--space-2) 0; }
+  .assurance-empty .mv-empty__body { max-width:42rem; }
+  .assurance-sr {
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    margin:-1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+    white-space:nowrap;
+    border:0;
+  }
+  @media (max-width:900px) {
+    .assurance-stats, .assurance-grid, .assurance-checklist { grid-template-columns:1fr; }
+    .assurance-overview__head { flex-direction:column; }
+  }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% call hero('Governed AI assurance', 'AI Evidence-Ready Gateway &amp; Assurance Cockpit',
+             subtitle='Evidence, not certification',
+             lede='Disclosure enforcement, hash-only interaction receipts,
+                   model and policy bindings, regulatory impact review, and
+                   exact signed packets.') %}
+  {% if not gateway_enabled %}
+  {{ state('Current state', 'Gateway is switched off',
+           badge='off', badge_class='idle',
+           copy='No delivery receipts are being recorded. Existing model-risk
+                 records remain available below.') }}
+  {% elif gateway_error %}
+  {{ state('Current state', 'Records unavailable',
+           badge='needs attention', badge_class='warn',
+           copy='Gateway records could not be loaded safely, so no readiness
+                 conclusion is shown.') }}
+  {% else %}
+  {{ state('Current state', gateway_view.status.label,
+           badge=gateway_view.ingestion,
+           badge_class='ok' if gateway_view.status.key == 'ready'
+                       else ('idle' if gateway_view.status.key == 'empty' else 'warn'),
+           copy=gateway_view.done_count ~ ' of ' ~ gateway_view.total_steps
+                ~ ' production-evidence steps complete. '
+                ~ gateway_view.status.detail) }}
+  {% endif %}
+{% endcall %}
+
+<p class="assurance-note"><strong>Decision boundary:</strong> this cockpit reports
+  evidence and deterministic control state. It does not certify compliance, make
+  a legal classification, or replace a qualified human reviewer.</p>
+
+{% if not gateway_enabled %}
+  <section class="panel">
+    <h2>AI Evidence-Ready Gateway is disabled</h2>
+    <p>The gateway records disclosure enforcement and hash-only delivery
+      receipts once it is switched on. Ask an administrator to enable the
+      AI Evidence Gateway for this deployment; enabling it also brings in the
+      evidence graph and Model Risk Officer it depends on. Existing
+      model-risk records remain available below.</p>
+    <p><strong>Next step:</strong> once the gateway is enabled, reload this
+      page &mdash; the readiness checklist will walk through the first
+      production-evidence steps.</p>
+  </section>
+{% else %}
+  {% if gateway_error %}
+  <div class="assurance-alert" role="alert">
+    <strong>{{ gateway_error }}</strong>
+    <p>{{ gateway_error_action }}</p>
+    <p>The redacted support bundle identifies the failing dependency without
+      exposing evidence content; review it before sharing it or changing
+      evidence state.</p>
+  </div>
+  {% endif %}
+  {% if not gateway_error %}
+  <section class="assurance-overview assurance-overview--{{ gateway_view.status.key }}"
+           aria-labelledby="gateway-status-title">
+    <div class="assurance-overview__head">
+      <div>
+        <h2 id="gateway-status-title">{{ gateway_view.status.label }}</h2>
+        <p class="assurance-muted">{{ gateway_view.status.detail }}</p>
+      </div>
+      <span class="assurance-badge">{{ gateway_view.ingestion }}</span>
+    </div>
+    {% if gateway_view.synthetic %}
+      <p class="assurance-alert" role="status"><strong>Synthetic demo tenant:</strong>
+        every demo record is labeled synthetic. Nothing on this page is
+        production assurance evidence.</p>
+    {% endif %}
+    <div class="assurance-progress" role="progressbar"
+         aria-label="Production evidence readiness"
+         aria-valuenow="{{ gateway_view.done_count }}" aria-valuemin="0"
+         aria-valuemax="{{ gateway_view.total_steps }}">
+      <i style="width:{{ gateway_view.progress_percent }}%"></i>
+    </div>
+    <p class="assurance-muted">{{ gateway_view.done_count }} of
+      {{ gateway_view.total_steps }} production-evidence steps complete
+      {% if gateway_view.last_receipt_issued_at %}
+        · last receipt {{ gateway_view.last_receipt_issued_at }}
+      {% endif %}
+    </p>
+    <ul class="assurance-checklist">
+      {% for step in gateway_view.progress %}
+      <li{% if step.done %} class="is-done"{% endif %}>
+        <span class="assurance-sr">
+          {{ "Complete:" if step.done else "Incomplete:" }}
+        </span>{{ step.label }}
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="assurance-next">
+      <h3>Next best action: {{ gateway_view.next_action.title }}</h3>
+      <p>{{ gateway_view.next_action.detail }}</p>
+      {% if gateway_view.next_action.code %}
+      <code>{{ gateway_view.next_action.code }}</code>
+      {% endif %}
+      {% if gateway_view.next_action.href %}
+        <a class="btn btn--ghost" href="{{ gateway_view.next_action.href }}">
+          {{ gateway_view.next_action.label }}
+        </a>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="assurance-stats" aria-label="AI evidence gateway totals">
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.current_policy_count|default(0, true) }}</strong>
+      <span>active policies</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.current_interaction_receipt_count|default(0, true) }}</strong>
+      <span>current receipts</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.stale_interaction_receipt_count|default(0, true) }}</strong>
+      <span>stale receipts</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.pending_regulatory_impact_count|default(0, true) }}</strong>
+      <span>impacts awaiting review</span>
+    </div>
+  </div>
+
+  <div class="assurance-actions">
+    {% if gateway_admin %}
+    <button class="btn" id="gateway-packet-download" type="button">
+      Download exact signed packet
+    </button>
+    {% endif %}
+    <a class="btn" href="/benchmarks">Governance benchmark dashboard</a>
+    <a href="https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md"
+       target="_blank" rel="noopener noreferrer">Published benchmark report</a>
+    {% if gateway_admin and gateway_view.demo_seed_allowed %}
+    <span class="assurance-demo">SYNTHETIC DEMO</span>
+    <button class="btn" id="gateway-demo-seed" type="button">
+      Load synthetic no-network demo
+    </button>
+    <span class="assurance-muted">Empty or dedicated demo tenant only.</span>
+    {% elif gateway_admin %}
+    <span class="assurance-muted">Synthetic loader is unavailable after
+      production evidence exists in this tenant.</span>
+    {% endif %}
+    {% if gateway_admin %}
+    <span id="gateway-demo-status" role="status" aria-live="polite"></span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="assurance-grid">
+    <section class="panel">
+      <h2>Policy and model bindings</h2>
+      {% if gateway_panel_errors.policies %}
+      <div class="assurance-alert" role="status">
+        {{ gateway_panel_errors.policies }} Other cockpit panels remain
+        independently available.
+      </div>
+      {% else %}
+      <div class="assurance-table"><table>
+        <caption>Current production and synthetic policy authority</caption>
+        <thead><tr><th>policy</th><th>model binding</th><th>frameworks</th><th>revision</th></tr></thead>
+        <tbody>{% for row in policies %}<tr>
+          <td><code>{{ row.policy_id|default(row.id, true) }}</code><br>
+            {{ row.settings.disclosure_text|default("Disclosure policy", true) }}</td>
+          <td><code>{{ row.model_sha256|default("unbound", true) }}</code><br>
+            <span class="assurance-muted">context:
+              <code>{{ row.context_sha256|default("unbound", true) }}</code>
+            </span></td>
+          <td>
+            {{ row.regulatory_bindings|default([], true)
+                |map(attribute="impact_id")|join(", ") or "none" }}
+          </td>
+          <td>{{ row.revision|default("—", true) }}</td>
+        </tr>{% else %}<tr><td colspan="4">
+          <div class="mv-empty assurance-empty">
+            <p class="mv-empty__title">No gateway policies recorded.</p>
+            <p class="mv-empty__body">Create and digest-bind a production policy,
+              or use the explicitly synthetic demo in an empty demo tenant.</p>
+            <a href="/docs">Open API reference</a>
+          </div>
+        </td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Readiness and gaps</h2>
+      {% if gateway_panel_errors.summary %}
+      <div class="assurance-alert" role="status">
+        Readiness could not be calculated safely. No readiness conclusion is
+        available.
+      </div>
+      {% else %}
+      <p><strong>Framework sources:</strong>
+        {{ gateway_summary.framework_sources|default([], true)|join(", ") or "none recorded" }}
+      </p>
+      <ul>
+        {% for gap in gateway_view.gaps %}
+          <li{% if gap.critical %} class="assurance-status-stale"{% endif %}>
+            {{ gap.label }} <code>{{ gap.code }}</code>
+          </li>
+        {% else %}
+          <li>No deterministic gateway gaps currently reported.</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Interaction receipts</h2>
+    <p class="assurance-muted">Receipts bind hashes and control metadata; raw
+      prompts and generated text are not persisted in this cockpit.</p>
+    {% if gateway_panel_errors.receipts %}
+    <div class="assurance-alert" role="status">
+      {{ gateway_panel_errors.receipts }} Policy and impact panels remain
+      independently available.
+    </div>
+    {% else %}
+    <div class="assurance-table"><table>
+      <caption>Most recent hash-only delivery receipts</caption>
+      <thead><tr><th>receipt</th><th>freshness</th><th>policy</th><th>model</th><th>issued</th></tr></thead>
+      <tbody>{% for row in receipts %}<tr>
+        <td><code>{{ row.receipt_id|default(row.id, true) }}</code></td>
+        <td>
+          {% set freshness = row.assurance.status|default("unknown", true) %}
+          <span class="assurance-status-{{ freshness }}">{{ freshness }}</span>
+          <br><span class="assurance-muted">signature:
+            {{ "verified" if row.signature_valid else "unverified" }}</span>
+          {% if row.assurance.reasons %}
+            <br><span class="assurance-muted">{{ row.assurance.reasons|join("; ") }}</span>
+          {% endif %}
+        </td>
+        <td><code>{{ row.policy_id|default("—", true) }}</code></td>
+        <td><code>{{ row.model_sha256|default("unbound", true) }}</code></td>
+        <td>{{ row.issued_display|default("—", true) }}</td>
+      </tr>{% else %}<tr><td colspan="5">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No interaction receipts recorded.</p>
+          <p class="mv-empty__body">After a production policy is bound, send one
+            delivery through the gateway to create the first hash-only receipt.</p>
+          <code>POST /api/v1/security/assurance/gateway/deliver</code>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Regulatory impacts and control links</h2>
+    {% if gateway_panel_errors.impacts %}
+    <div class="assurance-alert" role="status">
+      {{ gateway_panel_errors.impacts }} Policy and receipt panels remain
+      independently available.
+    </div>
+    {% else %}
+    <p class="assurance-muted">
+      Action-needed impacts are listed first. Showing
+      {{ impact_page.count|default(0, true) }} of
+      {{ impact_page.snapshot_total|default(0, true) }} records in this
+      stable result window.
+      {% if impact_page.next_cursor %}
+      More records are available through the paginated API.
+      {% endif %}
+    </p>
+    <div class="assurance-table"><table>
+      <caption>Cited regulatory impacts routed for human disposition</caption>
+      <thead><tr><th>impact</th><th>status</th><th>policies / assets</th><th>controls</th><th>citations</th></tr></thead>
+      <tbody>{% for row in regulatory_impacts %}<tr>
+        <td><code>{{ row.impact_id|default(row.id, true) }}</code><br>
+          <span class="assurance-muted">alert {{ row.alert_id }}</span></td>
+        <td>{{ row.status|default("pending_review", true) }}</td>
+        <td>
+          policies: {{ row.affected_policy_ids|default([], true)|join(", ") or "none" }}<br>
+          assets: {{ row.affected_asset_ids|default([], true)|join(", ") or "none" }}
+        </td>
+        <td>{{ row.control_ids|default([], true)|join(", ") or "none mapped" }}</td>
+        <td><ul class="assurance-citations">
+          {% for citation in row.citations|default([], true) %}
+            <li><a href="{{ citation.record_url|default(citation.url, true) }}"
+                   target="_blank" rel="noopener noreferrer">
+              {{ citation.official_citation|default(citation.source_name, true) }}
+            </a></li>
+          {% else %}
+            <li>No citation recorded.</li>
+          {% endfor %}
+        </ul></td>
+      </tr>{% else %}<tr><td colspan="5">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No regulatory impacts recorded.</p>
+          <p class="mv-empty__body">There is no cited impact awaiting disposition.
+            This is not a claim that no regulation applies.</p>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="panel">
+  <h2>Model Risk &amp; AI Assurance Officer</h2>
+  {% if not model_risk_enabled %}
+    <p>Switched off for this deployment. Ask an administrator to enable the
+      Model Risk Officer together with its evidence-graph dependency; governed
+      AI assets, evaluation evidence, and current findings will then be
+      tracked here.</p>
+  {% else %}
+    {% if model_risk_errors %}
+    <div class="assurance-alert" role="status">
+      One or more Model Risk stores are degraded. Available panels and counts
+      are still shown; no empty queue should be interpreted as assessed
+      coverage.
+      <ul>
+        {% for message in model_risk_errors.values() %}
+        <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <div class="assurance-stats" aria-label="Model risk program totals">
+      <div class="assurance-stat"><strong>{{ model_risk_totals.assets }}</strong><span>governed AI assets</span></div>
+      <div class="assurance-stat"><strong>{{ model_risk_totals.evidence }}</strong><span>evaluation records</span></div>
+      <div class="assurance-stat"><strong>{{ model_risk_totals.findings }}</strong><span>current findings</span></div>
+    </div>
+    <div class="assurance-table"><table>
+      <caption>Current model-risk findings requiring operator attention</caption>
+      <thead><tr><th>finding</th><th>severity</th><th>asset</th><th>citations</th></tr></thead>
+      <tbody>{% for row in findings %}<tr>
+        <td>{{ row.summary }}<br><code>{{ row.finding_type }}</code></td>
+        <td>{{ row.severity }}</td><td><code>{{ row.asset_id }}</code></td>
+        <td>{{ row.citations|length }}</td>
+      </tr>{% else %}<tr><td colspan="4">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No current model-risk findings.</p>
+          <p class="mv-empty__body">Add a governed AI asset and evaluation
+            evidence before treating the empty queue as assessed coverage.</p>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+  {% endif %}
+</section>
+
+<p><a class="btn" href="/security">Back to Security &amp; GRC</a></p>
+
+{% if gateway_enabled %}
+<script>
+(() => {
+  const button = document.getElementById("gateway-demo-seed");
+  const packetButton = document.getElementById("gateway-packet-download");
+  const status = document.getElementById("gateway-demo-status");
+  let packetRequestKey = null;
+  if (packetButton) packetButton.addEventListener("click", async () => {
+    packetButton.disabled = true;
+    packetButton.setAttribute("aria-busy", "true");
+    if (status) status.textContent = "Preparing the signed packet…";
+    try {
+      packetRequestKey = packetRequestKey || (
+        window.crypto && window.crypto.randomUUID
+          ? window.crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      );
+      const response = await fetch(
+        "/api/v1/security/assurance/gateway/assurance-packet",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {"Idempotency-Key": packetRequestKey}
+        }
+      );
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.detail || "Packet export failed");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "lightwork-ai-assurance-packet.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      if (status) status.textContent = "Signed packet downloaded.";
+      packetRequestKey = null;
+    } catch (error) {
+      if (status) status.textContent = error.message || "Packet export failed.";
+    } finally {
+      packetButton.disabled = false;
+      packetButton.removeAttribute("aria-busy");
+    }
+  });
+  if (!button || !status) return;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    status.textContent = "Creating synthetic local demo records…";
+    try {
+      const response = await fetch(
+        "/api/v1/security/assurance/gateway/demo-seed",
+        {method: "POST", credentials: "same-origin"}
+      );
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || "Demo seed failed");
+      status.textContent = "Synthetic demo loaded. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      status.textContent = error.message;
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,100 @@
+{# Department-workspace chassis, top half: the assessment worklist. One
+   chassis serves every department workspace (Privacy, Finance, ...); the page
+   passes `sessions` and `stats`. The old hero stat tiles moved into each
+   page's live executive board (GET /api/v1/dashboards/{department}). Pair
+   with _workspace_memory_catalog.html, which carries the bottom half + JS. #}
+<style>
+  /* Department workspace — the module view over assessment records. */
+  .pw-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .pw-risk { white-space: nowrap; }
+  .pw-risk .badge + .badge { margin-inline-start: 4px; }
+  .pw-age-warn { color: var(--warn); font-weight: var(--font-medium); }
+  .pw-cat { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .pw-cat .chip { border: 1px solid var(--border); border-radius: var(--radius-pill);
+                  padding: 0.3rem 0.8rem; font-size: var(--text-sm); background: var(--surface-2); }
+  .pw-cat .chip b { color: var(--brand); font-weight: var(--font-semibold); }
+  .pw-review-btn { padding: 0.35rem 0.85rem; background: var(--brand); color: var(--brand-fg);
+                   border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+                   font-size: 0.85rem; font-weight: var(--font-medium); }
+  .pw-review-btn:hover { background: var(--brand-hi); }
+</style>
+
+
+  <div class="section-head"><h2>Worklist</h2></div>
+  <div class="panel">
+    <div class="pw-filters" role="group" aria-label="Filter worklist">
+      <button class="btn btn--primary" data-filter="all" type="button">All ({{ stats.total }})</button>
+      <button class="btn" data-filter="pending_review" type="button">Needs review ({{ stats.pending }})</button>
+      <button class="btn" data-filter="needs_more" type="button">Awaiting answers ({{ stats.needs_more }})</button>
+      <button class="btn" data-filter="high" type="button">High residual ({{ stats.high_residual }})</button>
+      <button class="btn" data-filter="due" type="button">Due for re-review ({{ stats.review_due }})</button>
+      <button class="btn" data-filter="mine" type="button">Mine ({{ stats.mine }})</button>
+      <button class="btn" data-filter="unassigned" type="button">Unassigned ({{ stats.unassigned }})</button>
+    </div>
+    {% if sessions %}
+    <table id="pw-table">
+      <thead>
+        <tr>
+          <th scope="col">assessment</th><th scope="col">subject</th>
+          <th scope="col">risk (inherent → residual)</th>
+          <th scope="col">status</th><th scope="col">owner</th>
+          <th scope="col">follow-ups</th>
+          <th scope="col">age / next review</th><th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set rows = worklist if worklist is defined else sessions %}
+        {% for s in rows %}
+        <tr data-status="{{ s.status }}" data-residual="{{ s.residual_risk }}" data-due="{{ '1' if s.review_due else '' }}"
+            data-assignee="{{ s.assignee or '' }}" data-mine="{{ '1' if s.mine else '' }}"
+            data-revision="{{ s.revision }}">
+          <td><code>{{ s.id }}</code><br><span class="muted" style="font-size:var(--text-xs); text-transform:uppercase;">{{ s.type }}</span></td>
+          <td>{{ s.subject }}</td>
+          <td class="pw-risk">
+            <span class="badge {{ 'blocked' if s.inherent_risk == 'high' else 'warn' if s.inherent_risk == 'medium' else 'done' }}">{{ s.inherent_risk }}</span>
+            <span aria-hidden="true" class="muted">→</span>
+            <span class="badge {{ 'blocked' if s.residual_risk == 'high' else 'warn' if s.residual_risk == 'medium' else 'done' }}">{{ s.residual_risk }}</span>
+          </td>
+          <td>
+            {% if s.status == 'approved' %}
+              <span class="badge done">approved</span>
+            {% elif s.status == 'rejected' %}
+              <span class="badge blocked">rejected</span>
+            {% elif s.status == 'needs_more' %}
+              <span class="badge warn">awaiting answers</span>
+            {% else %}
+              <span class="badge info">needs review</span>
+            {% endif %}
+          </td>
+          <td class="pw-owner">
+            {% if s.assignee %}
+              <span class="badge {{ 'info' if s.mine else '' }}">{{ s.assignee }}</span>
+            {% else %}
+              <span class="muted">unassigned</span>
+            {% endif %}
+            <button class="pw-assign-btn" data-assessment="{{ s.id }}"
+                    data-current="{{ s.assignee or '' }}" type="button"
+                    title="Assign this assessment to a reviewer">assign</button>
+          </td>
+          <td>{{ s.open_followups or '—' }}</td>
+          <td {% if s.review_due or (s.status in ('pending_review', 'needs_more') and s.age_days is not none and s.age_days > 7) %}class="pw-age-warn"{% endif %}>
+            {% if s.review_in_days is not none %}
+              {{ ('re-review in ' ~ s.review_in_days ~ 'd') if s.review_in_days >= 0 else ('re-review ' ~ (0 - s.review_in_days) ~ 'd overdue') }}
+            {% else %}
+              {{ (s.age_days ~ 'd') if s.age_days is not none else '—' }}
+            {% endif %}</td>
+          <td><button class="pw-review-btn" data-assessment="{{ s.id }}" type="button">Review</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if rows | length < sessions | length %}
+      <p class="muted" style="font-size:var(--text-sm);">Showing the {{ rows | length }} most
+        actionable of {{ sessions | length }} records — open work and anything due for
+        re-review first. The stats above count everything.</p>
+    {% endif %}
+    {% else %}
+      <p class="muted">No assessments yet. They appear here the moment one is submitted —
+        from the intake portal, the assessor agent, or <code>maverick assess</code>.</p>
+    {% endif %}
+  </div>

@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Spend · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Spend page — scoped styles for the episode table's cost cells. */
+  .cost-cell { display: flex; flex-direction: column; gap: 3px; min-width: 84px; }
+  .cost-cell__bar { height: 3px; border-radius: var(--radius-pill); background: var(--brand); opacity: 0.5; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .toolbar h2 { margin: 0; }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Value & spend', 'Spend',
+               subtitle='Run economics, from the ledger',
+               lede='Cost, tokens, and per-run economics across completed
+                     episodes — read straight from this deployment\'s own run
+                     ledger, never estimated. Need the monthly statement?
+                     Open the <a href="/billing">Billing statement</a>.') %}
+    {{ state('Current state',
+             '$' ~ '{:,.2f}'.format(total.dollars) ~ ' total spent',
+             badge=total.runs ~ ' completed run' ~ ('' if total.runs == 1 else 's'),
+             badge_class='ok' if total.runs else 'idle',
+             copy='The same episodes power <a href="/savings">Savings</a> and
+                   the monthly statement — one ledger, three views.') }}
+  {% endcall %}
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+    <div class="bd-slicer" role="group" aria-label="Time range">
+      <button type="button" data-days="30" aria-pressed="false">30d</button>
+      <button type="button" data-days="90" class="on" aria-pressed="true">90d</button>
+      <button type="button" data-days="180" aria-pressed="false">180d</button>
+      <button type="button" data-days="365" aria-pressed="false">1y</button>
+    </div>
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Burn rate</h2>
+      <p class="viz-sub">Dollars through the ledger over time (weekly at longer ranges). Hover for cost and runs.</p>
+      <div id="bd-burn"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Run outcomes</h2>
+      <p class="viz-sub">How runs in this window ended.</p>
+      <div id="bd-outcomes"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>Cost per run</h2>
+      <p class="viz-sub">The most recent runs, oldest to newest — spikes are the expensive ones.</p>
+      <div id="bd-per-run"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Top goals by cost</h2>
+      <p class="viz-sub">Where the money actually went.</p>
+      <div id="bd-top-goals"></div>
+    </div>
+    <div class="panel viz-card" id="bd-by-platform-card" hidden>
+      <h2>External-agent spend</h2>
+      <p class="viz-sub">Reported by bring-your-own agents, by home platform.</p>
+      <div id="bd-by-platform"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <h2>Recent episodes</h2>
+    <a class="btn" href="/api/v1/cost.csv" download>⤓ Download CSV</a>
+  </div>
+  <div class="panel">
+    {% set _max = (episodes | map(attribute='cost_dollars') | max) if episodes else 0 %}
+    {% if episodes %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">id</th><th scope="col">goal</th><th scope="col">outcome</th><th scope="col">cost</th>
+          <th scope="col">in tok</th><th scope="col">out tok</th><th scope="col">tools</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in episodes %}
+          <tr>
+            <td><code>#{{ e.id }}</code></td>
+            <td>#{{ e.goal_id }}</td>
+            <td>
+              {% if e.outcome %}
+                <span class="badge {{ 'done' if e.outcome == 'success' else 'blocked' }}">{{ e.outcome }}</span>
+              {% else %}
+                <span class="badge active">running</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="cost-cell">
+                <span>${{ '%.4f'|format(e.cost_dollars) }}</span>
+                <span class="cost-cell__bar" style="width: {{ ((e.cost_dollars / _max * 100) if _max else 0) | round(1) }}%;"></span>
+              </div>
+            </td>
+            <td>{{ '{:,}'.format(e.input_tokens) }}</td>
+            <td>{{ '{:,}'.format(e.output_tokens) }}</td>
+            <td>{{ e.tool_calls }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="muted">No completed episodes yet.</p>
+    {% endif %}
+    <p class="muted" style="margin: var(--space-3) 0 0; font-size: var(--text-xs);">
+      Append <code>?month=YYYY-MM</code> to the CSV link for a single month.
+    </p>
+  </div>
+
+  <script src="/static/board.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var B = window.LWBoard;
+
+    function compact(n) {
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
+      return B.fmt(Math.round(n));
+    }
+
+    function render(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      k.appendChild(B.kpi({ label: 'Spent', value: D.totals.dollars,
+        format: B.money,
+        chip: { cur: D.totals.dollars, prev: D.prev.dollars, upIsBad: true,
+                format: B.money },
+        sub: 'last ' + D.days + ' days',
+        spark: D.daily.map(function (r) { return r.cost; }) }));
+      k.appendChild(B.kpi({ label: 'Completed runs', value: D.totals.runs,
+        chip: { cur: D.totals.runs, prev: D.prev.runs },
+        sub: 'last ' + D.days + ' days', sparkCls: 'ok',
+        spark: D.daily.map(function (r) { return r.runs; }) }));
+      k.appendChild(B.kpi({ label: 'Avg cost / run',
+        value: D.totals.runs ? D.totals.dollars / D.totals.runs : 0,
+        format: B.money,
+        sub: D.totals.tool_calls ? B.fmt(D.totals.tool_calls) + ' tool calls' : '' }));
+      k.appendChild(B.kpi({ label: 'Tokens',
+        value: D.totals.input_tokens + D.totals.output_tokens,
+        format: compact,
+        sub: compact(D.totals.input_tokens) + ' in · ' +
+             compact(D.totals.output_tokens) + ' out' }));
+
+      if (D.totals.runs || D.prev.runs) {
+        var weekly = D.days > 60;
+        B.area(document.getElementById('bd-burn'), {
+          data: weekly ? B.bucketWeekly(D.daily, ['cost', 'runs']) : D.daily,
+          x: 'd',
+          series: [{ key: 'cost', label: 'Cost', cls: 'brand' }],
+          yFmt: function (v) { return '$' + (v >= 10 ? Math.round(v) : v.toFixed(2)); },
+          aria: 'Spend per ' + (weekly ? 'week' : 'day') +
+                ' over the last ' + D.days + ' days.',
+          tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+          xTick: function (r, i, n) {
+            return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : '';
+          } });
+      } else {
+        B.empty(document.getElementById('bd-burn'),
+          'No completed episodes in this window — the burn chart draws from the first finished run.');
+      }
+
+      B.donut(document.getElementById('bd-outcomes'), {
+        segments: [
+          { label: 'Succeeded', value: D.outcomes.success, cls: 'ok' },
+          { label: 'Failed', value: D.outcomes.failed, cls: 'danger' },
+          { label: 'Running', value: D.outcomes.running, cls: 'brand' }],
+        centerSub: 'runs',
+        aria: 'Run outcomes: ' + D.outcomes.success + ' succeeded, ' +
+              D.outcomes.failed + ' failed, ' + D.outcomes.running + ' running.' });
+
+      if ((D.per_run || []).length) {
+        B.strip(document.getElementById('bd-per-run'),
+          D.per_run.slice().reverse().map(function (r) {
+            return { v: r.cost,
+                     title: '#' + r.id + ' · ' + B.money(r.cost) };
+          }), 'Cost of the ' + D.per_run.length + ' most recent runs, oldest on the left.');
+      } else {
+        B.empty(document.getElementById('bd-per-run'), 'No completed episodes yet.');
+      }
+
+      var tmax = 1;
+      (D.top_goals || []).forEach(function (r) { tmax = Math.max(tmax, r.cost); });
+      if ((D.top_goals || []).length) {
+        B.hbars(document.getElementById('bd-top-goals'),
+          D.top_goals.map(function (r) {
+            return { label: r.title, value_text: B.money(r.cost),
+                     pct: r.cost / tmax * 100,
+                     title: r.title + ' — ' + B.money(r.cost) + ' across ' +
+                            r.runs + ' run(s)' };
+          }), 'The most expensive goals in this window.');
+      } else {
+        B.empty(document.getElementById('bd-top-goals'), 'No costed goals in this window.');
+      }
+
+      if ((D.by_platform || []).length) {
+        document.getElementById('bd-by-platform-card').hidden = false;
+        var xmax = 1;
+        D.by_platform.forEach(function (r) { xmax = Math.max(xmax, r.cost); });
+        B.hbars(document.getElementById('bd-by-platform'),
+          D.by_platform.map(function (r) {
+            return { label: r.label, value_text: B.money(r.cost),
+                     pct: r.cost / xmax * 100,
+                     title: r.label + ' — ' + B.money(r.cost) + ' across ' +
+                            r.runs + ' run(s)' };
+          }), 'Spend reported by external agents, grouped by platform.');
+      }
+    }
+
+    B.attach({ board: 'spend', render: render });
+  })();
+  </script>
+{% endblock %}

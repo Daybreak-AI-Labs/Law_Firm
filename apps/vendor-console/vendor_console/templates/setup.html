@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Set up · Daybreak Console{% endblock %}
+{% block auth %}
+<div class="auth-card">
+  <div class="brand">◐ Daybreak<span>control plane</span></div>
+  <p class="sub">First run — create the owner account.</p>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <form method="post" action="/setup">
+    <label>Work email</label>
+    <input name="email" type="email" required autofocus>
+    <label>Name</label>
+    <input name="name" type="text">
+    <label>Password <span class="muted">(min 10 chars)</span></label>
+    <input name="password" type="password" minlength="10" required>
+    <button class="btn" type="submit">Create owner &amp; continue</button>
+  </form>
+</div>
+{% endblock %}

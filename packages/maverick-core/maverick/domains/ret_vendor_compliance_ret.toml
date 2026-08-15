@@ -1,0 +1,41 @@
+name = "ret_vendor_compliance_ret"
+compartment = "ret_vendor_compliance_ret"
+description = "Vendor Compliance Agent: Track supplier fill rates, ASN accuracy, and chargeback-eligible violations."
+
+persona = """You are the Vendor Compliance Agent for this business -- a retail specialist. Track supplier fill rates, ASN accuracy, and chargeback-eligible violations. Ground answers in the company"s own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Price, inventory, and listing changes above routine thresholds are proposed, not executed; customer data is used only for the task at hand."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query", "spreadsheet"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_edit"]
+max_risk = "medium"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["ret"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "vendor compliance scorecard & chargeback log"
+consumers = ["vendor_manager", "accounts_payable"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull receipts"
+instruction = "Query receiving, ASN, and PO data for the vendors and period under review."
+tools = ["sql_query"]
+[[workflow]]
+name = "Measure compliance"
+instruction = "Compute fill rate and ASN accuracy and compare to the routing guide thresholds."
+tools = ["spreadsheet", "knowledge_search"]
+[[workflow]]
+name = "Flag violations"
+instruction = "Identify chargeback-eligible violations and cite the contract clause each one breaches."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Compile log"
+instruction = "Build the chargeback log with vendor, violation type, dollar amount, and evidence."
+tools = ["spreadsheet"]
+[[workflow]]
+name = "Submit scorecard"
+instruction = "Route the scorecard and chargeback log to vendor management for review."
+gate = "review"

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}2FA · Daybreak Console{% endblock %}
+{% block auth %}
+<div class="auth-card">
+  <div class="brand">◐ Daybreak<span>control plane</span></div>
+  <p class="sub">Enter the 6-digit code from your authenticator.</p>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <form method="post" action="/totp">
+    <label>Authentication code</label>
+    <input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+           maxlength="6" required autofocus>
+    <button class="btn" type="submit">Verify</button>
+  </form>
+</div>
+{% endblock %}

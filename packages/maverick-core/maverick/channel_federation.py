@@ -1,0 +1,732 @@
+"""Channel federation — forward channel messages between Lightwork instances.
+
+Reuses the signed-envelope primitives from :mod:`maverick.federation_envelope`
+(one implementation; nothing duplicated). A forwarded message travels as::
+
+    {"schema": "maverick-channel-fed/1", "origin", "to", "created_at",
+     "channel", "user_id", "text", "pubkey", "key_id", "sig"}
+
+  - ``user_id`` is **pseudonymized before it leaves this host**: an HMAC-SHA256
+    of the real id under the per-pair ``secret`` from the peer's
+    ``[federation] channel_peers`` entry (``"fed-" + hex[:16]``). The same user
+    maps to a stable pseudonym per peer pair, and different pairs see different
+    pseudonyms. No secret configured = no enqueue (privacy fail-closed).
+  - ``to`` names the destination origin and is covered by the signature, so an
+    envelope captured in transit cannot be replayed at a *different* peer.
+
+Outbound: :class:`OutboundQueue` — a bounded on-disk queue (atomic 0600 JSON
+under ``data_dir``; oldest entries drop when full, counted) flushed through an
+**injected transport**: any ``send(envelope) -> None`` callable. Inbound: any
+iterable of envelopes fed to :func:`apply_inbound` / :func:`apply_many`, which
+verify the signature FAIL-CLOSED against the pinned key for the origin
+(``[federation] channel_peers``), check the envelope is addressed to us, reject
+a stale/future-dated or replayed envelope (signed ``created_at`` freshness
+window + per-signature replay-nonce cache, so a captured envelope can't be
+re-injected at this same peer), rate-limit per peer (token bucket, injected
+clock), and hand a :class:`FedMessage` with ``channel="fed:<origin>"`` to the
+normal channel handler (e.g. ``Server._handle_message``) — so federated traffic
+flows through the same shield scans, tenancy, and budget caps as any other
+channel.
+
+**The HTTP binding is the operator's.** This module deliberately ships no
+listener and opens no sockets; wire the transport however your deployment
+talks (mTLS reverse proxy, message bus, ssh pipe)::
+
+    # sender                                  # receiver (e.g. behind FastAPI)
+    q = OutboundQueue()                       applier = InboundApplier(handler)
+    enqueue(q, "ops-eu", ch, uid, text)       applier.apply(request_json)
+    flush(q, send=my_http_post)
+
+Config: ``[federation] channel_peers`` (pinned ``{origin, pubkey, secret}``
+entries) and ``[federation] channel_rate_per_min`` (default 30 per peer).
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import math
+import os
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+from .federation_envelope import (
+    FederationError,
+    local_origin,
+    peer_allowlist,
+    sign_envelope,
+    valid_origin,
+    verify_envelope,
+)
+
+log = logging.getLogger(__name__)
+
+SCHEMA = "maverick-channel-fed/1"
+MAX_TEXT_CHARS = 4000
+MAX_USER_ID_CHARS = 64
+DEFAULT_QUEUE_MAX = 256
+DEFAULT_RATE_PER_MIN = 30.0
+_MAX_BATCH = 1000
+# Inbound freshness window: reject an envelope whose signed ``created_at`` is
+# more than this far from now (stale or future-dated). Bounds how long a
+# captured envelope stays replayable; generous by default so an at-least-once
+# redelivery after a transient outage isn't dropped. Override via
+# ``[federation] channel_max_age_seconds`` / MAVERICK_FEDERATION_CHANNEL_MAX_AGE.
+DEFAULT_MAX_AGE_S = 3600.0
+_REPLAY_LEDGER_SCHEMA = "maverick-channel-replay/1"
+_RATE_LEDGER_SCHEMA = "maverick-channel-rate/1"
+_MAX_REPLAY_ENTRIES = 10_000
+_MAX_LEDGER_BYTES = 2_000_000
+_MAX_RATE_KEYS = 1000
+
+
+def pseudonymize(user_id: str, secret: str) -> str:
+    """Stable per-pair pseudonym for a channel user id. Raises without a secret."""
+    if not secret:
+        raise FederationError("channel federation requires a per-pair secret to "
+                              "pseudonymize user ids; refusing to forward raw ids")
+    mac = hmac.new(secret.encode("utf-8"), str(user_id).encode("utf-8"),
+                   hashlib.sha256).hexdigest()
+    return f"fed-{mac[:16]}"
+
+
+def make_envelope(
+    channel: str,
+    user_id: str,
+    text: str,
+    *,
+    peer: str,
+    secret: str,
+    origin: str | None = None,
+    now: float | None = None,
+) -> dict:
+    """Build + sign one forwarded-message envelope addressed to ``peer``."""
+    if not isinstance(channel, str) or not channel.strip():
+        raise FederationError("channel is required")
+    if not valid_origin(peer):
+        raise FederationError(f"peer origin {peer!r} is malformed")
+    from datetime import datetime, timezone
+    ts = time.time() if now is None else now
+    payload = {
+        "schema": SCHEMA,
+        "origin": origin or local_origin(),
+        "to": peer,
+        "created_at": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+        "channel": channel.strip()[:128],
+        "user_id": pseudonymize(user_id, secret),
+        "text": str(text)[:MAX_TEXT_CHARS],
+    }
+    return sign_envelope(payload)
+
+
+# ---------------------------------------------------------------------------
+# Outbound queue (bounded, on-disk, 0600)
+# ---------------------------------------------------------------------------
+
+class OutboundQueue:
+    """Bounded FIFO of signed envelopes awaiting transport.
+
+    One JSON file under ``data_dir`` (atomic replace, chmod 600 — the payloads
+    are user messages). When full, the oldest entry is dropped and counted in
+    the persisted ``dropped`` tally, so backpressure is visible, not silent.
+    """
+
+    def __init__(self, path: Path | None = None, max_len: int = DEFAULT_QUEUE_MAX):
+        if path is None:
+            from .paths import data_dir
+            path = data_dir() / "channel_federation_outbox.json"
+        self.path = Path(path)
+        self.max_len = max(1, int(max_len))
+        # Serializes a load-modify-save of the outbox in-process; the
+        # cross_process_lock in _locked() extends it across processes (the
+        # dashboard appends while serve flushes -- separate processes).
+        self._rmw_lock = threading.Lock()
+
+    def _locked(self):
+        from contextlib import ExitStack
+
+        from .file_lock import cross_process_lock
+        stack = ExitStack()
+        stack.enter_context(self._rmw_lock)
+        stack.enter_context(cross_process_lock(self.path, strict=True))
+        return stack
+
+    def _load(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"items": [], "dropped": 0}
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            return {"items": [], "dropped": 0}
+        data.setdefault("dropped", 0)
+        return data
+
+    def _save(self, data: dict) -> None:
+        # Unique temp + os.replace (0600): a fixed ".tmp" collides between a
+        # concurrent append and flush (one os.replace moves it out from under
+        # the other, dropping a write).
+        from .file_lock import atomic_write_text
+        atomic_write_text(self.path, json.dumps(data, ensure_ascii=False))
+
+    def append(self, envelope: dict) -> None:
+        # Whole load-modify-save under the lock: an append racing a flush would
+        # otherwise both load the same items, and the later save clobbers the
+        # other -- losing an enqueued envelope or resurrecting an already-sent
+        # one (a re-send that breaks at-least-once dedup).
+        with self._locked():
+            data = self._load()
+            data["items"].append(envelope)
+            while len(data["items"]) > self.max_len:
+                data["items"].pop(0)
+                data["dropped"] = int(data.get("dropped", 0)) + 1
+            self._save(data)
+
+    def __len__(self) -> int:
+        return len(self._load()["items"])
+
+    @property
+    def dropped(self) -> int:
+        return int(self._load().get("dropped", 0))
+
+
+def enqueue(
+    queue: OutboundQueue,
+    peer: str,
+    channel: str,
+    user_id: str,
+    text: str,
+    *,
+    peers: dict[str, dict] | None = None,
+    now: float | None = None,
+) -> dict:
+    """Pseudonymize, sign, and queue one message for ``peer``.
+
+    The peer must be configured in ``[federation] channel_peers`` with a
+    ``secret`` — otherwise this raises (never forwards a raw user id).
+    """
+    if peers is None:
+        peers = peer_allowlist("channel_peers")
+    entry = peers.get(peer)
+    if entry is None:
+        raise FederationError(f"peer {peer!r} is not in [federation] channel_peers")
+    env = make_envelope(channel, user_id, text, peer=peer,
+                        secret=str(entry.get("secret") or ""), now=now)
+    queue.append(env)
+    return env
+
+
+def flush(queue: OutboundQueue, send: Callable[[dict], None]) -> int:
+    """Drain the queue through the injected transport. Returns envelopes sent.
+
+    At-least-once: an envelope is only removed after ``send`` returns; a send
+    failure stops the flush and keeps the remainder (including the failed one)
+    queued for retry.
+    """
+    # Hold the queue lock across the whole drain so a concurrent append can't
+    # clobber the post-flush state (resurrecting a just-sent envelope) -- the
+    # load, the send loop, and the save are one atomic read-modify-save.
+    with queue._locked():
+        data = queue._load()
+        items = data["items"]
+        sent = 0
+        while items:
+            try:
+                send(items[0])
+            except Exception as e:
+                log.warning("channel federation: send failed after %d envelope(s): %s",
+                            sent, e)
+                break
+            items.pop(0)
+            sent += 1
+        queue._save(data)
+    return sent
+
+
+# ---------------------------------------------------------------------------
+# Inbound
+# ---------------------------------------------------------------------------
+
+class TokenBucket:
+    """Per-key token bucket over an injected monotonic clock."""
+
+    def __init__(self, rate_per_min: float = DEFAULT_RATE_PER_MIN,
+                 burst: float | None = None,
+                 clock: Callable[[], float] = time.monotonic):
+        self.rate = max(float(rate_per_min), 0.001) / 60.0  # tokens per second
+        self.burst = float(burst) if burst else max(float(rate_per_min), 1.0)
+        self.clock = clock
+        self._state: dict[str, tuple[float, float]] = {}  # key -> (tokens, last)
+
+    def allow(self, key: str) -> bool:
+        now = self.clock()
+        tokens, last = self._state.get(key, (self.burst, now))
+        effective_now = max(now, last)
+        tokens = min(self.burst, tokens + (effective_now - last) * self.rate)
+        if tokens < 1.0:
+            self._state[key] = (tokens, effective_now)
+            return False
+        self._state[key] = (tokens - 1.0, effective_now)
+        return True
+
+
+class PersistentTokenBucket(TokenBucket):
+    """Tenant-scoped token bucket shared by every inbound worker/process."""
+
+    def __init__(
+        self,
+        rate_per_min: float = DEFAULT_RATE_PER_MIN,
+        burst: float | None = None,
+        clock: Callable[[], float] = time.time,
+        path: Path | None = None,
+    ):
+        super().__init__(rate_per_min=rate_per_min, burst=burst, clock=clock)
+        if path is None:
+            from .paths import data_dir
+
+            path = data_dir("federation", "channel_rate.json")
+        self.path = Path(path)
+
+    def _load(self) -> dict[str, tuple[float, float]]:
+        from .file_lock import atomic_read_text
+
+        try:
+            if self.path.stat().st_size > _MAX_LEDGER_BYTES:
+                raise ValueError("rate ledger exceeds its bound")
+            payload = json.loads(atomic_read_text(self.path))
+        except FileNotFoundError:
+            return {}
+        if not isinstance(payload, dict) or payload.get("schema") != _RATE_LEDGER_SCHEMA:
+            raise ValueError("invalid rate ledger")
+        raw = payload.get("buckets")
+        if not isinstance(raw, dict) or len(raw) > _MAX_RATE_KEYS:
+            raise ValueError("invalid rate ledger buckets")
+        state: dict[str, tuple[float, float]] = {}
+        for key, value in raw.items():
+            if (
+                not isinstance(key, str)
+                or not isinstance(value, list)
+                or len(value) != 2
+                or isinstance(value[0], bool)
+                or isinstance(value[1], bool)
+            ):
+                raise ValueError("invalid rate ledger entry")
+            tokens, last = float(value[0]), float(value[1])
+            if not math.isfinite(tokens) or not math.isfinite(last):
+                raise ValueError("invalid rate ledger number")
+            state[key] = (max(0.0, min(self.burst, tokens)), last)
+        return state
+
+    def _save(self, state: dict[str, tuple[float, float]]) -> None:
+        from .file_lock import atomic_write_text
+
+        atomic_write_text(
+            self.path,
+            json.dumps({
+                "schema": _RATE_LEDGER_SCHEMA,
+                "buckets": {key: list(value) for key, value in state.items()},
+            }, sort_keys=True),
+        )
+
+    def allow(self, key: str) -> bool:
+        from .file_lock import cross_process_lock
+
+        try:
+            with cross_process_lock(self.path, strict=True):
+                state = self._load()
+                now = float(self.clock())
+                if not math.isfinite(now):
+                    return False
+                full_refill_seconds = self.burst / self.rate
+                for stale_key, (_tokens, stale_last) in list(state.items()):
+                    if (
+                        stale_key != key
+                        and now >= stale_last
+                        and now - stale_last >= full_refill_seconds
+                    ):
+                        state.pop(stale_key, None)
+                if key not in state and len(state) >= _MAX_RATE_KEYS:
+                    return False
+                tokens, last = state.get(key, (self.burst, now))
+                effective_now = max(now, last)
+                tokens = min(
+                    self.burst,
+                    tokens + (effective_now - last) * self.rate,
+                )
+                allowed = tokens >= 1.0
+                state[key] = (
+                    tokens - 1.0 if allowed else tokens,
+                    effective_now,
+                )
+                self._save(state)
+                return allowed
+        except (OSError, RuntimeError, ValueError):
+            log.error("channel federation: durable rate limiter unavailable")
+            return False
+
+
+def default_limiter(clock: Callable[[], float] = time.time) -> PersistentTokenBucket:
+    """A durable tenant-scoped limiter configured from federation settings."""
+    rate = DEFAULT_RATE_PER_MIN
+    try:
+        from .config import load_config
+        raw = ((load_config() or {}).get("federation") or {}).get("channel_rate_per_min")
+        if raw is not None:
+            rate = max(0.001, float(raw))
+    except Exception:  # pragma: no cover - config never blocks the limiter
+        pass
+    return PersistentTokenBucket(rate_per_min=rate, clock=clock)
+
+
+# How far into the future a signed envelope's created_at may be (clock skew
+# between peers). Larger future-dating is rejected so the replay-nonce cache
+# (pruned by arrival time) can't be outlived by a still-"fresh" envelope.
+_CLOCK_SKEW_TOL = 60.0
+
+
+def _default_max_age() -> float:
+    """Inbound freshness window from env / ``[federation] channel_max_age_seconds``."""
+    raw = os.environ.get("MAVERICK_FEDERATION_CHANNEL_MAX_AGE")
+    if raw is None or str(raw).strip() == "":
+        try:
+            from .config import load_config
+            val = ((load_config() or {}).get("federation") or {}).get(
+                "channel_max_age_seconds")
+            raw = None if val is None else str(val)
+        except Exception:  # pragma: no cover - config never blocks the default
+            raw = None
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_MAX_AGE_S
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return DEFAULT_MAX_AGE_S
+
+
+def _parse_iso_epoch(value: object) -> float | None:
+    """Parse an ISO-8601 ``created_at`` to epoch seconds; None if unparseable.
+
+    A naive timestamp is treated as UTC (``make_envelope`` always emits a
+    tz-aware UTC string, so this only matters for a malformed peer)."""
+    if not isinstance(value, str) or not value:
+        return None
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+@dataclass
+class FedMessage:
+    """The message handed to the normal channel handler.
+
+    Duck-type compatible with channel adapter messages (``.channel`` /
+    ``.user_id`` / ``.text``); ``channel`` is always ``"fed:<origin>"`` so
+    downstream policy can tell federated traffic apart.
+    """
+    channel: str
+    user_id: str
+    text: str
+
+
+class ReplayLedger:
+    """Atomic tenant-scoped replay claims that survive restarts and workers."""
+
+    def __init__(self, path: Path | None = None, *, max_entries: int = _MAX_REPLAY_ENTRIES):
+        if path is None:
+            from .paths import data_dir
+
+            path = data_dir("federation", "channel_replay.json")
+        self.path = Path(path)
+        self.max_entries = max(1, min(int(max_entries), _MAX_REPLAY_ENTRIES))
+
+    @staticmethod
+    def _key(sig: str) -> str:
+        return hashlib.sha256(sig.encode("utf-8")).hexdigest()
+
+    def _load(self) -> dict[str, float]:
+        from .file_lock import atomic_read_text
+
+        try:
+            if self.path.stat().st_size > _MAX_LEDGER_BYTES:
+                raise ValueError("replay ledger exceeds its bound")
+            payload = json.loads(atomic_read_text(self.path))
+        except FileNotFoundError:
+            return {}
+        if not isinstance(payload, dict) or payload.get("schema") != _REPLAY_LEDGER_SCHEMA:
+            raise ValueError("invalid replay ledger")
+        raw = payload.get("seen")
+        if not isinstance(raw, dict) or len(raw) > self.max_entries:
+            raise ValueError("invalid replay ledger entries")
+        seen: dict[str, float] = {}
+        for key, value in raw.items():
+            if (
+                not isinstance(key, str)
+                or len(key) != 64
+                or any(char not in "0123456789abcdef" for char in key)
+                or isinstance(value, bool)
+            ):
+                raise ValueError("invalid replay ledger entry")
+            timestamp = float(value)
+            if not math.isfinite(timestamp):
+                raise ValueError("invalid replay ledger timestamp")
+            seen[key] = timestamp
+        return seen
+
+    def _save(self, seen: dict[str, float]) -> None:
+        from .file_lock import atomic_write_text
+
+        atomic_write_text(
+            self.path,
+            json.dumps({"schema": _REPLAY_LEDGER_SCHEMA, "seen": seen}, sort_keys=True),
+        )
+
+    def claim(self, sig: str, *, now: float, expires_at: float) -> bool:
+        """Atomically claim ``sig``; True means another worker claimed it."""
+        from .file_lock import cross_process_lock
+
+        key = self._key(sig)
+        with cross_process_lock(self.path, strict=True):
+            seen = self._load()
+            seen = {item: expiry for item, expiry in seen.items() if expiry >= now}
+            if key in seen:
+                self._save(seen)
+                return True
+            if len(seen) >= self.max_entries:
+                raise ValueError("replay ledger capacity reached")
+            seen[key] = expires_at
+            self._save(seen)
+            return False
+
+    def release(self, sig: str) -> None:
+        """Release a failed handler claim so an at-least-once retry can run."""
+        from .file_lock import cross_process_lock
+
+        key = self._key(sig)
+        with cross_process_lock(self.path, strict=True):
+            seen = self._load()
+            if key in seen:
+                seen.pop(key, None)
+                self._save(seen)
+
+
+class InboundApplier:
+    """Verify-then-apply for inbound envelopes.
+
+    ``handler`` is the injected seam to the normal channel handling path — a
+    callable taking one :class:`FedMessage`. (For the async
+    ``Server._handle_message``, the operator wraps it with their loop's
+    scheduling; this module stays transport- and loop-agnostic.)
+    """
+
+    def __init__(
+        self,
+        handler: Callable[[FedMessage], object],
+        *,
+        peers: dict[str, dict] | None = None,
+        limiter: TokenBucket | None = None,
+        ingress_limiter: TokenBucket | None = None,
+        local: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        max_age_seconds: float | None = None,
+        wall_clock: Callable[[], float] = time.time,
+        replay_path: Path | None = None,
+    ):
+        self.handler = handler
+        self._peers = peers
+        limiter_clock = wall_clock if clock is time.monotonic else clock
+        self.limiter = limiter or default_limiter(limiter_clock)
+        self.ingress_limiter = ingress_limiter or default_limiter(limiter_clock)
+        self.local = local or local_origin()
+        self.max_age = (_default_max_age() if max_age_seconds is None
+                        else max(1.0, float(max_age_seconds)))
+        # Wall clock (not the limiter's monotonic clock) for the created_at
+        # freshness comparison; injectable for tests.
+        self._wall = wall_clock
+        # Replay-nonce cache: a verified envelope's signature is a unique nonce
+        # (created_at is inside the signed body). Age-pruned within the freshness
+        # window and lock-guarded so a threaded inbound binding stays correct.
+        self._seen_sigs: OrderedDict[str, float] = OrderedDict()
+        self._seen_lock = threading.Lock()
+        self._replay_ledger = ReplayLedger(replay_path)
+
+    def _replay_seen(
+        self, sig: str, now: float, *, expires_at: float | None = None,
+    ) -> bool:
+        """Check-and-remember a verified signature; True if already seen.
+
+        Prunes by AGE: an entry older than the freshness window can never be
+        replayed (its envelope would fail the freshness check), so evicting it is
+        safe and the live set is bounded by legitimate in-window peer volume."""
+        if not sig:
+            return False
+        expiry = now + self.max_age if expires_at is None else expires_at
+        replayed = self._replay_ledger.claim(
+            sig, now=now, expires_at=expiry,
+        )
+        with self._seen_lock:
+            while self._seen_sigs:
+                _oldest, stored_expiry = next(iter(self._seen_sigs.items()))
+                if stored_expiry >= now:
+                    break
+                self._seen_sigs.popitem(last=False)
+            if replayed:
+                return True
+            self._seen_sigs[sig] = expiry
+            return False
+
+    def _release_replay(self, sig: str) -> None:
+        if not sig:
+            return
+        with self._seen_lock:
+            self._seen_sigs.pop(sig, None)
+        self._replay_ledger.release(sig)
+
+    @property
+    def peers(self) -> dict[str, dict]:
+        return self._peers if self._peers is not None else peer_allowlist("channel_peers")
+
+    def apply(self, envelope: object) -> dict:
+        """Returns ``{"applied", "reason", "result"}``. Never raises on bad input."""
+        ok, reason = verify_envelope(envelope, expected_schema=SCHEMA, peers=self.peers)
+        if not ok:
+            log.warning("channel federation: rejected inbound envelope: %s", reason)
+            return {"applied": False, "reason": reason, "result": None}
+        if not isinstance(envelope, dict):  # defensive: honor the never-raises
+            return {"applied": False, "reason": "envelope is not an object",
+                    "result": None}
+        origin = envelope["origin"]
+        if envelope.get("to") != self.local:
+            return {"applied": False,
+                    "reason": f"envelope addressed to {envelope.get('to')!r}, not "
+                              f"{self.local!r} (replay across peers?)",
+                    "result": None}
+        # Agent Trust Plane: when engaged, the (signature-verified) origin must
+        # also be a registered, inbound-permitted agent — so the trust registry
+        # is the single allowlist, not just the [federation] channel_peers pins.
+        # No-op when disengaged (kernel rule 1).
+        from . import agent_trust
+        decision = agent_trust.decide_inbound(origin)
+        if decision.denied:
+            agent_trust.record_denied(origin, decision, direction="inbound")
+            return {"applied": False, "reason": decision.reason, "result": None}
+        channel = envelope.get("channel")
+        user_id = envelope.get("user_id")
+        text = envelope.get("text")
+        if not all(isinstance(v, str) and v for v in (channel, user_id, text)):
+            return {"applied": False, "reason": "missing channel/user_id/text",
+                    "result": None}
+        # Freshness: created_at is inside the signed body, so it can't be altered
+        # without breaking the signature. Reject a stale/future-dated envelope to
+        # bound how long a captured one stays replayable.
+        created = _parse_iso_epoch(envelope.get("created_at"))
+        now = self._wall()
+        # One-sided window, not abs(): the replay-nonce cache prunes by ARRIVAL
+        # time (now), so a future-dated envelope (created in the future but
+        # within max_age of now) would have its nonce pruned while it is still
+        # "fresh", reopening a replay window. Allow only a small clock-skew
+        # tolerance into the future; otherwise created must be in the past.
+        delta = None if created is None else now - created
+        if delta is None or delta > self.max_age or delta < -_CLOCK_SKEW_TOL:
+            return {"applied": False,
+                    "reason": "envelope is stale or future-dated", "result": None}
+        if not self.ingress_limiter.allow(f"ingress:{origin}"):
+            return {
+                "applied": False,
+                "reason": f"ingress rate limited (peer {origin})",
+                "result": None,
+            }
+        # Replay: reject a second sighting of this signature within the window.
+        # The `to` check only stops cross-peer replay; this stops a captured
+        # envelope being replayed at this same peer (and dedups at-least-once
+        # redeliveries without replaying ambiguous side effects). Checked AFTER
+        # the rate limiter and recorded only here, so a rate-limited message isn't
+        # recorded and its legitimate retry can run once the bucket refills.
+        try:
+            replayed = self._replay_seen(
+                str(envelope.get("sig") or ""),
+                now,
+                expires_at=float(created) + self.max_age,
+            )
+        except (OSError, RuntimeError, ValueError):
+            log.error("channel federation: durable replay protection unavailable")
+            return {
+                "applied": False,
+                "reason": "replay protection unavailable",
+                "result": None,
+            }
+        if replayed:
+            return {"applied": False, "reason": "replayed envelope", "result": None}
+        if not self.limiter.allow(origin):
+            sig = str(envelope.get("sig") or "")
+            try:
+                self._release_replay(sig)
+            except (OSError, RuntimeError, ValueError):
+                log.error("channel federation: failed to release rate-refused claim")
+            return {"applied": False, "reason": f"rate limited (peer {origin})",
+                    "result": None}
+        msg = FedMessage(
+            channel=f"fed:{origin}",
+            user_id=str(user_id)[:MAX_USER_ID_CHARS],
+            text=str(text)[:MAX_TEXT_CHARS],
+        )
+        # The nonce was recorded in _replay_seen above so concurrent/at-least-once
+        # redeliveries dedup. This is intentionally at-most-once across a hard
+        # process crash: replaying an ambiguously completed side effect would be
+        # less safe. A caught transient handler failure (DB busy, downstream
+        # timeout, shield not ready) is retryable: drop the just-recorded nonce
+        # so the peer's redelivery re-runs the handler.
+        try:
+            result = self.handler(msg)
+        except Exception as exc:  # noqa: BLE001 — honor the never-raises contract
+            sig = str(envelope.get("sig") or "")
+            if sig:
+                try:
+                    self._release_replay(sig)
+                except (OSError, RuntimeError, ValueError):
+                    log.error(
+                        "channel federation: failed replay-claim release after %s",
+                        type(exc).__name__,
+                    )
+            log.warning("channel federation: handler failed, nonce released "
+                        "for retry: %s", type(exc).__name__)
+            return {"applied": False, "reason": "handler error",
+                    "result": None}
+        return {"applied": True, "reason": "ok", "result": result}
+
+    def apply_many(self, envelopes: Iterable[object]) -> list[dict]:
+        """Apply a bounded batch from any injected receive iterable."""
+        out = []
+        for i, env in enumerate(envelopes):
+            if i >= _MAX_BATCH:
+                log.warning("channel federation: batch truncated at %d", _MAX_BATCH)
+                break
+            out.append(self.apply(env))
+        return out
+
+
+__all__ = [
+    "SCHEMA",
+    "MAX_TEXT_CHARS",
+    "DEFAULT_QUEUE_MAX",
+    "DEFAULT_RATE_PER_MIN",
+    "pseudonymize",
+    "make_envelope",
+    "OutboundQueue",
+    "enqueue",
+    "flush",
+    "TokenBucket",
+    "PersistentTokenBucket",
+    "default_limiter",
+    "FedMessage",
+    "ReplayLedger",
+    "InboundApplier",
+]

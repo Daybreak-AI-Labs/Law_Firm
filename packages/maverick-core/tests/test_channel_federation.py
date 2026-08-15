@@ -1,0 +1,483 @@
+"""Channel federation: pseudonymized, signed, rate-limited message forwarding.
+
+Offline: injected transport (lists), injected clock, isolated audit keys.
+"""
+from __future__ import annotations
+
+import json
+import os
+import stat
+from contextlib import contextmanager
+
+import pytest
+from maverick.channel_federation import (
+    MAX_TEXT_CHARS,
+    SCHEMA,
+    FedMessage,
+    InboundApplier,
+    OutboundQueue,
+    PersistentTokenBucket,
+    TokenBucket,
+    enqueue,
+    flush,
+    make_envelope,
+    pseudonymize,
+)
+from maverick.federation_envelope import FederationError
+
+SECRET = "per-pair-secret"
+
+
+def _peers(envelope=None, origin="peer-a", secret=SECRET):
+    entry = {"origin": origin, "secret": secret,
+             "pubkey": envelope["pubkey"] if envelope else "ab" * 32}
+    return {origin: entry}
+
+
+def _envelope(text="hello", user_id="alice", peer="home", **kw):
+    return make_envelope("telegram", user_id, text, peer=peer, secret=SECRET,
+                         origin=kw.pop("origin", "peer-a"), **kw)
+
+
+# ---------------------------------------------------------- pseudonymity ----
+
+def test_pseudonym_is_stable_secret_scoped_and_prefixed():
+    p1 = pseudonymize("alice", SECRET)
+    assert p1 == pseudonymize("alice", SECRET)
+    assert p1.startswith("fed-") and len(p1) == 20
+    assert p1 != pseudonymize("bob", SECRET)
+    assert p1 != pseudonymize("alice", "other-secret")
+
+
+def test_pseudonymize_requires_secret():
+    with pytest.raises(FederationError):
+        pseudonymize("alice", "")
+
+
+def test_envelope_never_carries_raw_user_id():
+    env = _envelope(user_id="alice@example.com")
+    assert "alice" not in json.dumps(env)
+    assert env["user_id"].startswith("fed-")
+    assert env["schema"] == SCHEMA and env["to"] == "home"
+
+
+def test_envelope_bounds_text():
+    env = _envelope(text="x" * (MAX_TEXT_CHARS + 500))
+    assert len(env["text"]) == MAX_TEXT_CHARS
+
+
+# ------------------------------------------------------------- outbound ----
+
+def test_queue_is_bounded_0600_and_counts_drops(tmp_path):
+    q = OutboundQueue(path=tmp_path / "outbox.json", max_len=2)
+    for i in range(4):
+        q.append({"n": i})
+    assert len(q) == 2
+    assert q.dropped == 2
+    assert q._load()["items"][0]["n"] == 2  # oldest dropped first
+    if os.name == "nt":
+        from maverick.file_lock import private_path_is_restricted
+
+        assert private_path_is_restricted(q.path, 0o600)
+    else:
+        assert stat.S_IMODE(os.stat(q.path).st_mode) == 0o600
+
+
+def test_security_ledgers_require_a_real_cross_process_lock(tmp_path, monkeypatch):
+    import maverick.channel_federation as channel_federation
+    import maverick.file_lock as file_lock
+
+    strict_flags: list[bool] = []
+
+    @contextmanager
+    def observed_lock(_target, *, strict=False):
+        strict_flags.append(strict)
+        yield
+
+    monkeypatch.setattr(file_lock, "cross_process_lock", observed_lock)
+    OutboundQueue(path=tmp_path / "outbox.json").append({"n": 1})
+    PersistentTokenBucket(
+        rate_per_min=60,
+        path=tmp_path / "rate.json",
+    ).allow("peer")
+    channel_federation.ReplayLedger(tmp_path / "replay.json").claim(
+        "sig", now=1.0, expires_at=2.0,
+    )
+
+    assert strict_flags == [True, True, True]
+
+
+def test_enqueue_requires_configured_peer_with_secret(tmp_path):
+    q = OutboundQueue(path=tmp_path / "outbox.json")
+    with pytest.raises(FederationError):
+        enqueue(q, "stranger", "telegram", "alice", "hi", peers={})
+    no_secret = {"peer-a": {"origin": "peer-a", "pubkey": "ab" * 32}}
+    with pytest.raises(FederationError):
+        enqueue(q, "peer-a", "telegram", "alice", "hi", peers=no_secret)
+    assert len(q) == 0
+
+
+def test_enqueue_and_flush_through_injected_transport(tmp_path):
+    q = OutboundQueue(path=tmp_path / "outbox.json")
+    enqueue(q, "peer-a", "telegram", "alice", "one", peers=_peers())
+    enqueue(q, "peer-a", "telegram", "alice", "two", peers=_peers())
+    sent: list[dict] = []
+    assert flush(q, send=sent.append) == 2
+    assert [e["text"] for e in sent] == ["one", "two"]
+    assert len(q) == 0
+
+
+def test_flush_keeps_remainder_on_transport_failure(tmp_path):
+    q = OutboundQueue(path=tmp_path / "outbox.json")
+    enqueue(q, "peer-a", "telegram", "alice", "one", peers=_peers())
+    enqueue(q, "peer-a", "telegram", "alice", "two", peers=_peers())
+
+    calls = []
+
+    def flaky(env):
+        calls.append(env)
+        if len(calls) == 2:
+            raise OSError("peer down")
+
+    assert flush(q, send=flaky) == 1
+    assert len(q) == 1  # the failed envelope is retained for retry
+    assert q._load()["items"][0]["text"] == "two"
+
+
+# -------------------------------------------------------------- inbound ----
+
+def _applier(handled, env, **kw):
+    kw.setdefault("peers", _peers(env))
+    kw.setdefault("local", "home")
+    kw.setdefault("limiter", TokenBucket(rate_per_min=600, clock=lambda: 0.0))
+    return InboundApplier(lambda m: handled.append(m) or "done", **kw)
+
+
+def test_inbound_round_trip_marks_fed_channel():
+    handled: list[FedMessage] = []
+    env = _envelope(text="ship it", user_id="alice")
+    out = _applier(handled, env).apply(env)
+    assert out["applied"] and out["result"] == "done"
+    (msg,) = handled
+    assert msg.channel == "fed:peer-a"
+    assert msg.text == "ship it"
+    assert msg.user_id == pseudonymize("alice", SECRET)
+
+
+def test_inbound_rejects_tamper_unknown_origin_and_missing_sig():
+    handled: list = []
+    env = _envelope()
+    tampered = {**env, "text": "evil"}
+    assert not _applier(handled, env).apply(tampered)["applied"]
+
+    unknown = InboundApplier(handled.append, peers={}, local="home",
+                             limiter=TokenBucket(clock=lambda: 0.0))
+    assert "trust list" in unknown.apply(env)["reason"]
+
+    unsigned = {k: v for k, v in env.items() if k != "sig"}
+    assert not _applier(handled, env).apply(unsigned)["applied"]
+    assert not _applier(handled, env).apply("garbage")["applied"]
+    assert handled == []
+
+
+def test_inbound_rejects_misdirected_envelope():
+    handled: list = []
+    env = _envelope(peer="someone-else")
+    out = _applier(handled, env).apply(env)
+    assert not out["applied"]
+    assert "addressed to" in out["reason"]
+    assert handled == []
+
+
+def test_inbound_rejects_without_crypto(monkeypatch):
+    handled: list = []
+    env = _envelope()
+    applier = _applier(handled, env)
+    import maverick.audit.signing as audit_signing
+    monkeypatch.setattr(audit_signing, "_have_crypto", lambda: False)
+    out = applier.apply(env)
+    assert not out["applied"] and "cryptography" in out["reason"]
+
+
+def test_rate_limit_per_peer_with_injected_clock():
+    handled: list = []
+    now = {"t": 0.0}
+    bucket = TokenBucket(rate_per_min=60, burst=2, clock=lambda: now["t"])
+    # Distinct envelopes (distinct signatures) so we exercise the rate limiter,
+    # not the replay guard. A rate-limited envelope must NOT be recorded as seen,
+    # so its retry succeeds once the bucket refills (checked below).
+    envs = [_envelope(text=f"msg-{i}") for i in range(3)]
+    applier = _applier(handled, envs[0], limiter=bucket)
+    assert applier.apply(envs[0])["applied"]
+    assert applier.apply(envs[1])["applied"]
+    out = applier.apply(envs[2])  # burst of 2 exhausted
+    assert not out["applied"] and "rate limited" in out["reason"]
+    now["t"] += 1.0  # 60/min -> one token per second; retry the dropped one
+    assert applier.apply(envs[2])["applied"]  # not poisoned by the rate-limit drop
+    assert len(handled) == 3
+
+
+def test_replay_flood_does_not_consume_fresh_message_quota():
+    handled = []
+    bucket = TokenBucket(rate_per_min=1, burst=2, clock=lambda: 0.0)
+    first = _envelope(text="first")
+    second = _envelope(text="second")
+    third = _envelope(text="third")
+    applier = _applier(handled, first, limiter=bucket)
+
+    assert applier.apply(first)["applied"]
+    assert applier.apply(first)["reason"] == "replayed envelope"
+    assert applier.apply(second)["applied"]
+    assert "rate limited" in applier.apply(third)["reason"]
+    assert len(handled) == 2
+
+
+def test_inbound_rejects_replayed_envelope():
+    """A captured envelope replayed at the SAME peer is rejected the second time
+    (the `to` check only stops cross-peer replay)."""
+    handled: list = []
+    env = _envelope(text="transfer funds")
+    applier = _applier(handled, env)
+    assert applier.apply(env)["applied"]          # first delivery handled
+    out = applier.apply(env)                       # exact replay
+    assert not out["applied"] and out["reason"] == "replayed envelope"
+    assert len(handled) == 1                        # handler ran exactly once
+
+
+def test_replay_claim_is_shared_across_applier_instances(tmp_path):
+    """A restart/second worker cannot re-apply the same signed message."""
+    handled = []
+    env = _envelope(text="transfer funds")
+    replay_path = tmp_path / "replay.json"
+    common = {
+        "peers": _peers(env),
+        "local": "home",
+        "replay_path": replay_path,
+    }
+    first = InboundApplier(
+        lambda msg: handled.append(msg),
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+        **common,
+    )
+    restarted = InboundApplier(
+        lambda msg: handled.append(msg),
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+        **common,
+    )
+
+    assert first.apply(env)["applied"]
+    replay = restarted.apply(env)
+
+    assert not replay["applied"] and replay["reason"] == "replayed envelope"
+    assert len(handled) == 1
+
+
+def test_corrupt_replay_ledger_fails_closed(tmp_path):
+    handled = []
+    env = _envelope()
+    replay_path = tmp_path / "replay.json"
+    replay_path.write_text("not-json", encoding="utf-8")
+    applier = InboundApplier(
+        handled.append,
+        peers=_peers(env),
+        local="home",
+        replay_path=replay_path,
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+    )
+
+    result = applier.apply(env)
+
+    assert not result["applied"]
+    assert result["reason"] == "replay protection unavailable"
+    assert handled == []
+
+
+def test_default_rate_state_can_be_shared_across_workers(tmp_path):
+    now = {"value": 1000.0}
+    path = tmp_path / "rate.json"
+    first = PersistentTokenBucket(
+        rate_per_min=60, burst=1, clock=lambda: now["value"], path=path,
+    )
+    second = PersistentTokenBucket(
+        rate_per_min=60, burst=1, clock=lambda: now["value"], path=path,
+    )
+
+    assert first.allow("peer-a")
+    assert not second.allow("peer-a")
+    now["value"] += 1.0
+    assert second.allow("peer-a")
+
+
+def test_persistent_rate_bucket_prunes_idle_keys_before_capacity(
+    tmp_path, monkeypatch,
+):
+    import maverick.channel_federation as channel_federation
+
+    monkeypatch.setattr(channel_federation, "_MAX_RATE_KEYS", 2)
+    now = {"value": 1000.0}
+    bucket = PersistentTokenBucket(
+        rate_per_min=60, burst=1, clock=lambda: now["value"],
+        path=tmp_path / "rate.json",
+    )
+    assert bucket.allow("a") and bucket.allow("b")
+    now["value"] += 1.0
+
+    assert bucket.allow("c")
+    assert len(bucket._load()) <= 2
+
+
+def test_persistent_rate_bucket_does_not_refill_on_clock_rollback(tmp_path):
+    now = {"value": 1000.0}
+    bucket = PersistentTokenBucket(
+        rate_per_min=60, burst=1, clock=lambda: now["value"],
+        path=tmp_path / "rate.json",
+    )
+    assert bucket.allow("peer")
+    now["value"] = 990.0
+    assert not bucket.allow("peer")
+    now["value"] = 1000.5
+    assert not bucket.allow("peer")
+    now["value"] = 1001.0
+    assert bucket.allow("peer")
+
+
+def test_inbound_rejects_stale_envelope():
+    """An envelope older than the freshness window is refused — bounds how long
+    a captured envelope stays replayable."""
+    handled: list = []
+    old_env = _envelope(text="old", now=1000.0)     # created_at far in the past
+    # wall_clock is well beyond the freshness window from created_at.
+    applier = _applier(handled, old_env, max_age_seconds=300.0,
+                       wall_clock=lambda: 1000.0 + 10_000)
+    out = applier.apply(old_env)
+    assert not out["applied"] and "stale" in out["reason"]
+    assert handled == []
+
+
+def test_inbound_rejects_future_dated_envelope():
+    handled: list = []
+    env = _envelope(text="from the future", now=50_000.0)
+    applier = _applier(handled, env, max_age_seconds=300.0,
+                       wall_clock=lambda: 1000.0)   # created_at is far ahead
+    out = applier.apply(env)
+    assert not out["applied"] and "future-dated" in out["reason"]
+
+
+def test_future_skew_replay_claim_survives_restart_until_signed_expiry(tmp_path):
+    handled = []
+    env = _envelope(text="future but tolerated", now=1060.0)
+    replay_path = tmp_path / "replay.json"
+    common = {
+        "peers": _peers(env), "local": "home",
+        "max_age_seconds": 300.0, "replay_path": replay_path,
+        "limiter": TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+    }
+    first = InboundApplier(
+        handled.append, wall_clock=lambda: 1000.0, **common,
+    )
+    restarted = InboundApplier(
+        handled.append, wall_clock=lambda: 1301.0, **common,
+    )
+
+    assert first.apply(env)["applied"]
+    replay = restarted.apply(env)
+
+    assert not replay["applied"] and replay["reason"] == "replayed envelope"
+    assert len(handled) == 1
+
+
+def test_replay_nonce_pruned_by_age():
+    """Once an envelope ages out of the window it's no longer in the replay
+    cache, so the cache doesn't grow without bound."""
+    handled: list = []
+    env = _envelope(text="hi", now=1000.0)
+    applier = _applier(handled, env, max_age_seconds=300.0,
+                       wall_clock=lambda: 1000.0)
+    assert applier.apply(env)["applied"]
+    assert env["sig"] in applier._seen_sigs
+    # A later, fresh envelope prunes the aged-out nonce.
+    later = _envelope(text="later", now=1000.0 + 10_000)
+    applier._wall = lambda: 1000.0 + 10_000
+    assert applier.apply(later)["applied"]
+    assert env["sig"] not in applier._seen_sigs
+
+
+def test_handler_failure_releases_nonce_so_retry_redelivers():
+    """A transient handler exception must NOT poison the replay cache: the
+    at-least-once redelivery has to re-run the handler instead of being dropped
+    as 'replayed envelope' (data loss). apply() also honors its never-raises
+    contract — the handler exception is reported, not propagated."""
+    env = _envelope(text="transfer funds")
+    calls = {"n": 0}
+
+    def flaky(msg):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("DB busy")
+        return "done"
+
+    applier = InboundApplier(
+        flaky, peers=_peers(env), local="home",
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0))
+
+    out = applier.apply(env)                       # handler raises on first try
+    assert out["applied"] is False
+    assert "handler error" in out["reason"]
+    assert env["sig"] not in applier._seen_sigs    # nonce released for retry
+
+    retry = applier.apply(env)                      # at-least-once redelivery
+    assert retry["applied"] and retry["result"] == "done"
+    assert calls["n"] == 2                          # handler re-ran, not dropped
+
+
+def test_handler_failure_releases_durable_claim_for_new_worker(tmp_path):
+    env = _envelope(text="retry me")
+    replay_path = tmp_path / "replay.json"
+    failing = InboundApplier(
+        lambda _msg: (_ for _ in ()).throw(RuntimeError("DB busy")),
+        peers=_peers(env), local="home", replay_path=replay_path,
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+    )
+    handled = []
+    replacement = InboundApplier(
+        lambda msg: handled.append(msg) or "done",
+        peers=_peers(env), local="home", replay_path=replay_path,
+        limiter=TokenBucket(rate_per_min=600, clock=lambda: 0.0),
+    )
+
+    assert not failing.apply(env)["applied"]
+    assert replacement.apply(env)["applied"]
+    assert len(handled) == 1
+
+
+def test_apply_many_iterates_injected_receive():
+    handled: list = []
+    env1 = _envelope(text="one")
+    env2 = _envelope(text="two")  # distinct sig so it isn't seen as a replay
+    results = _applier(handled, env1).apply_many(iter([env1, "junk", env2]))
+    assert [r["applied"] for r in results] == [True, False, True]
+
+
+def test_append_is_concurrency_safe(tmp_path):
+    """Concurrent appends do a load-modify-save; without the lock two writers
+    both load the same items and the second save clobbers the first -- an
+    enqueued envelope vanishes. All N must survive (queue large enough to not
+    bound)."""
+    import threading
+
+    q = OutboundQueue(path=tmp_path / "outbox.json", max_len=10_000)
+    n, per = 12, 30
+
+    def worker(w: int):
+        for i in range(per):
+            q.append({"w": w, "i": i})
+
+    threads = [threading.Thread(target=worker, args=(w,)) for w in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(q) == n * per
+    # No fixed-temp droppings from concurrent writers.
+    assert list(tmp_path.glob("*.tmp")) == []

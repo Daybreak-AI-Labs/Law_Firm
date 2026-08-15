@@ -1,0 +1,420 @@
+{% extends "base.html" %}
+{% block title %}Learning · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .lrn :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .lrn__section-h { font-size: var(--text-lg); margin: 0 0 var(--space-1); }
+  .lrn__section-sub { color: var(--muted); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+  .lrn__comp { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .lrn__row { display: flex; align-items: center; gap: var(--space-3); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); background: var(--surface-1); }
+  .lrn__row[data-on="true"] { border-left-color: var(--success); }
+  .lrn__row[data-on="false"] { border-left-color: var(--border-strong); }
+  .lrn__row-main { flex: 1 1 auto; min-width: 0; }
+  .lrn__row-label { font-weight: var(--font-medium); }
+  .lrn__row-desc { color: var(--muted); font-size: var(--text-sm); margin-top: 2px; }
+  .lrn__row-members { color: var(--muted); font-size: var(--text-xs); margin-top: 4px; }
+  .lrn__row-err { color: var(--danger); font-size: var(--text-xs); margin-top: 4px; }
+  .lrn__moat { border: 1px solid var(--brand-border); background: var(--brand-subtle); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-5); }
+  .lrn__moat strong { color: var(--brand); }
+  .lrn__enable-note { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-3); }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% call hero('Self-improving workforce', 'Learning',
+             subtitle='The asset that compounds',
+             lede='The judgement your AI workforce accumulates as it runs —
+                   grounded in your real outcomes, partitioned to your tenant,
+                   and exportable only as a signature you control. Every
+                   learning system on this page is switched on and off right
+                   here, in the app.') %}
+  {{ state('Current state',
+           snap.components_on ~ ' of ' ~ snap.components_total ~ ' systems on',
+           badge='all on' if snap.components_on == snap.components_total
+                 else ('partially on' if snap.components_on else 'all off'),
+           badge_class='ok' if snap.components_on == snap.components_total
+                       else ('warn' if snap.components_on else 'idle'),
+           copy='Every run can teach the workforce — from failures, from
+                 consolidation, and from the grounded outcomes of its own
+                 work. What it learns stays on this server.') }}
+{% endcall %}
+
+<div class="lrn">
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card">
+      <h2>Systems</h2>
+      <p class="viz-sub">Learning systems on vs off — switch each one below.</p>
+      <div id="bd-systems"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>Accumulated judgement</h2>
+      <p class="viz-sub">Read-only, from your Operating Record and learning stores — scoped to you.</p>
+      <div id="bd-acc"></div>
+    </div>
+  </div>
+
+  <div class="lrn__moat">
+    <strong>{{ snap.components_on }} of {{ snap.components_total }} learning systems are on.</strong>
+    Every run through Lightwork can teach the workforce — from failures, from consolidation, and from the
+    grounded outcomes of its own work. The more you turn on, the faster this asset compounds.
+    <div style="margin-top: var(--space-3); display:flex; gap: var(--space-3); align-items:center;">
+      <button type="button" id="lrn-enable" class="btn btn--primary">
+        {{ 'Turn all learning off' if snap.components_on == snap.components_total else 'Turn all learning on' }}
+      </button>
+      <span class="lrn__enable-note" id="lrn-enable-msg" aria-live="polite" style="margin-top:0;"></span>
+    </div>
+  </div>
+  <script>
+  (function () {
+    var btn = document.getElementById('lrn-enable');
+    if (!btn) return;
+    var allOn = {{ 'true' if snap.components_on == snap.components_total else 'false' }};
+    btn.addEventListener('click', async function () {
+      var msg = document.getElementById('lrn-enable-msg');
+      btn.disabled = true; msg.textContent = 'Applying…';
+      try {
+        var r = await fetch('/api/v1/learning', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !allOn }),
+        });
+        if (!r.ok) { msg.textContent = 'Could not update (permission?).'; btn.disabled = false; return; }
+        location.reload();   // re-render with the new on/off state
+      } catch (e) { msg.textContent = 'Could not reach the server.'; btn.disabled = false; }
+    });
+  })();
+  </script>
+
+  <section aria-labelledby="lrn-comp-h">
+    <div class="section-head"><h2 id="lrn-comp-h" class="lrn__section-h">Learning systems</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub">What each system does, in plain language — and a switch to turn it
+        on or off, right here. Changes apply immediately; turning a system off pauses it without
+        losing anything it has already learned.</p>
+      <ul class="lrn__comp" id="lrn-switches" aria-label="Learning system switches">
+        <li class="lrn__row"><div class="lrn__row-main"><div class="lrn__row-desc">Loading the system switches…</div></div></li>
+      </ul>
+      <p class="lrn__enable-note" id="lrn-switches-msg" role="status" aria-live="polite" style="margin-top: var(--space-2);"></p>
+
+      <h3 class="lrn__section-h" id="lrn-detail-h" style="margin-top: var(--space-4);">Everything the learning loop runs</h3>
+      <p class="lrn__section-sub">The fine-grained systems behind the switches above. Governed learning
+        is on by default; the “Turn all learning on/off” button controls them together.</p>
+      <ul class="lrn__comp" aria-labelledby="lrn-detail-h">
+        {% for c in snap.components %}
+        <li class="lrn__row" data-on="{{ 'true' if c.on else 'false' }}">
+          <span class="badge {{ 'active' if c.on else '' }}">{{ 'on' if c.on else 'off' }}</span>
+          <div class="lrn__row-main">
+            <div class="lrn__row-label">{{ c.label }}</div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="lrn__enable-note">Once outcome tracking is on, every human sign-off on a deliverable
+        automatically becomes feedback your workforce learns from — see
+        <a href="/workforce">Workforce</a> for what your teams have delivered, and
+        <a href="/learned">Learned</a> for capabilities picked up along the way.</p>
+    </div>
+  </section>
+  {# The per-component → switch-section map, derived from the shared registry
+     (each component's config section), so the switch rows can say which
+     systems they cover without surfacing config keys in the UI. #}
+  {% set _members = {} %}
+  {% for c in snap.components %}
+    {% set _sec = c.how.split(']', 1)[0][1:] %}
+    {% if _members.update({_sec: _members.get(_sec, []) + [c.label]}) %}{% endif %}
+  {% endfor %}
+  <script type="application/json" id="lrn-switch-members">{{ _members | tojson }}</script>
+  <script>
+  (function () {
+    // threat_hunt / env_hunt are switched from the Security page, not here.
+    var HIDDEN = { threat_hunt: true, env_hunt: true };
+    var list = document.getElementById('lrn-switches');
+    var msg = document.getElementById('lrn-switches-msg');
+    if (!list) return;
+    var members = {};
+    try {
+      members = JSON.parse(document.getElementById('lrn-switch-members').textContent) || {};
+    } catch (e) { /* advisory only */ }
+
+    function flip(sw, btn, err) {
+      btn.disabled = true; err.textContent = '';
+      fetch('/api/v1/features/switches', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section: sw.section, enabled: !sw.enabled }),
+      }).then(function (r) {
+        if (r.status === 403) {
+          throw new Error('Only an administrator can change this — ask yours to flip it.');
+        }
+        if (!r.ok) {
+          return r.json().catch(function () { return {}; }).then(function (b) {
+            throw new Error(b.detail || ('Could not update (' + r.status + ').'));
+          });
+        }
+        location.reload();   // re-render the whole page with the new state
+      }).catch(function (e) {
+        err.textContent = (e && e.message) || 'Could not reach the server.';
+        btn.disabled = false;
+      });
+    }
+
+    function row(sw) {
+      var li = document.createElement('li');
+      li.className = 'lrn__row';
+      li.setAttribute('data-on', sw.enabled ? 'true' : 'false');
+      var badge = document.createElement('span');
+      badge.className = 'badge' + (sw.enabled ? ' active' : '');
+      badge.textContent = sw.enabled ? 'on' : 'off';
+      var main = document.createElement('div');
+      main.className = 'lrn__row-main';
+      var label = document.createElement('div');
+      label.className = 'lrn__row-label';
+      label.textContent = sw.label;
+      main.appendChild(label);
+      var desc = document.createElement('div');
+      desc.className = 'lrn__row-desc';
+      desc.textContent = sw.description;
+      main.appendChild(desc);
+      var covered = members[sw.section];
+      if (covered && covered.length) {
+        var mem = document.createElement('div');
+        mem.className = 'lrn__row-members';
+        mem.textContent = 'Covers: ' + covered.join(' · ');
+        main.appendChild(mem);
+      }
+      var err = document.createElement('div');
+      err.className = 'lrn__row-err';
+      err.setAttribute('role', 'status');
+      main.appendChild(err);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn';
+      btn.textContent = sw.enabled ? 'Turn off' : 'Turn on';
+      btn.setAttribute('aria-pressed', sw.enabled ? 'true' : 'false');
+      btn.setAttribute('aria-label', (sw.enabled ? 'Turn off ' : 'Turn on ') + sw.label);
+      btn.addEventListener('click', function () { flip(sw, btn, err); });
+      li.appendChild(badge);
+      li.appendChild(main);
+      li.appendChild(btn);
+      return li;
+    }
+
+    fetch('/api/v1/features/switches').then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then(function (d) {
+      list.textContent = '';
+      (d.switches || []).forEach(function (sw) {
+        if (HIDDEN[sw.section]) return;
+        list.appendChild(row(sw));
+      });
+      if (!list.children.length) {
+        msg.textContent = 'This server reported no switchable systems.';
+      }
+    }).catch(function () {
+      msg.textContent = 'Could not load the system switches — reload to try again.';
+    });
+  })();
+  </script>
+
+  {% if snap.flow_autonomy %}
+  <section aria-labelledby="lrn-auto-h">
+    <div class="section-head"><h2 id="lrn-auto-h" class="lrn__section-h">Autonomous workflow self-improvement</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub" style="margin-bottom: var(--space-3);">
+        Kept separate from the button above on purpose: this lets your automations improve their own
+        <em>live</em> workflows — a heavier step than passive learning, so it’s its own opt-in.
+        Each rewrite is measured against real outcomes and versioned, so a change that hurts is undone.</p>
+      {% if not snap.flow_autonomy.engine_on %}
+      <p class="lrn__section-sub">Turn the flow engine on first — it runs your automations end to end,
+        and these self-improvement options unlock once it’s running.</p>
+      <button type="button" class="btn btn--primary" id="lrn-flows-on">Turn on the flow engine</button>
+      <span class="lrn__enable-note" id="lrn-flows-msg" role="status" aria-live="polite"></span>
+      <script>
+      (function () {
+        var btn = document.getElementById('lrn-flows-on');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          var msg = document.getElementById('lrn-flows-msg');
+          btn.disabled = true; msg.textContent = 'Turning on…';
+          fetch('/api/v1/features/switches', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section: 'flows', enabled: true }),
+          }).then(function (r) {
+            if (r.status === 403) {
+              throw new Error('Only an administrator can turn this on — ask yours to flip it.');
+            }
+            if (!r.ok) throw new Error('Could not turn the flow engine on (' + r.status + ').');
+            location.reload();
+          }).catch(function (e) {
+            msg.textContent = (e && e.message) || 'Could not reach the server.';
+            btn.disabled = false;
+          });
+        });
+      })();
+      </script>
+      {% else %}
+      <div style="display:flex; flex-direction:column; gap: var(--space-2);">
+        <button type="button" class="btn" id="lrn-auto-evolve" data-on="{{ 'true' if snap.flow_autonomy.auto_evolve else 'false' }}"
+                aria-pressed="{{ 'true' if snap.flow_autonomy.auto_evolve else 'false' }}">
+          {{ '✓ Auto-revert regressions is ON' if snap.flow_autonomy.auto_evolve else 'Turn on auto-revert regressions' }}
+        </button>
+        <span class="lrn__enable-note" style="margin-top:0;">Undo a self-rewrite the loop measures as a clear regression — the safety net.</span>
+        <button type="button" class="btn" id="lrn-auto-apply" data-on="{{ 'true' if snap.flow_autonomy.auto_apply else 'false' }}"
+                aria-pressed="{{ 'true' if snap.flow_autonomy.auto_apply else 'false' }}"
+                {{ 'disabled' if not snap.flow_autonomy.auto_evolve else '' }}>
+          {{ '✓ Auto-apply improvements is ON' if snap.flow_autonomy.auto_apply else 'Turn on auto-apply improvements' }}
+        </button>
+        <span class="lrn__enable-note" style="margin-top:0;">Apply a proven improvement forward without a human. Needs auto-revert on (its safety net).</span>
+        <span class="lrn__enable-note" id="lrn-auto-msg" aria-live="polite" style="margin-top:0;"></span>
+      </div>
+      <script>
+      (function () {
+        function wire(id, field) {
+          var btn = document.getElementById(id);
+          if (!btn) return;
+          btn.addEventListener('click', async function () {
+            var msg = document.getElementById('lrn-auto-msg');
+            var next = btn.getAttribute('data-on') !== 'true';
+            var body = {}; body[field] = next;
+            btn.disabled = true; msg.textContent = 'Applying…';
+            try {
+              var r = await fetch('/api/v1/learning/flow-autonomy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              });
+              if (!r.ok) { msg.textContent = 'Could not update (permission?).'; btn.disabled = false; return; }
+              location.reload();
+            } catch (e) { msg.textContent = 'Could not reach the server.'; btn.disabled = false; }
+          });
+        }
+        wire('lrn-auto-evolve', 'auto_evolve');
+        wire('lrn-auto-apply', 'auto_apply');
+      })();
+      </script>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if snap.dgm %}
+  <section aria-labelledby="lrn-dgm-h">
+    <div class="section-head"><h2 id="lrn-dgm-h" class="lrn__section-h">DGM code-evolution research</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub" style="margin-bottom: var(--space-3);">
+        Separate from governed learning and <strong>off by default</strong>. When armed, DGM may propose,
+        sandbox-evaluate, and archive bounded code candidates. It cannot deploy or adopt code.</p>
+      <p style="margin:0 0 var(--space-3);">
+        <span class="badge {{ 'active' if snap.dgm.state == 'ready' else '' }}">
+          {{ 'ready for operator-run cycles' if snap.dgm.state == 'ready' else ('armed but blocked' if snap.dgm.state == 'blocked' else 'off') }}
+        </span>
+      </p>
+      {% if snap.dgm.blockers %}
+      <ul class="muted" style="font-size: var(--text-sm); margin-top:0;">
+        {% for blocker in snap.dgm.blockers %}<li>{{ blocker.message }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      <button type="button" class="btn" id="lrn-dgm"
+              data-on="{{ 'true' if snap.dgm.requested else 'false' }}"
+              {{ 'disabled' if snap.dgm.control_managed else '' }}>
+        {{ 'Turn DGM research off' if snap.dgm.requested else 'Turn DGM research on' }}
+      </button>
+      {% if snap.dgm.control_managed %}
+      <span class="lrn__enable-note">Managed by higher-precedence deployment policy (<code>{{ snap.dgm.managed_by }}</code>).</span>
+      {% endif %}
+      <span class="lrn__enable-note" id="lrn-dgm-msg" aria-live="polite"></span>
+      <script>
+      (function () {
+        var btn = document.getElementById('lrn-dgm');
+        if (!btn) return;
+        btn.addEventListener('click', async function () {
+          var msg = document.getElementById('lrn-dgm-msg');
+          var next = btn.getAttribute('data-on') !== 'true';
+          if (next && !window.confirm(
+            'Enable research-only DGM? It may propose and sandbox-evaluate code, but cannot deploy it.'
+          )) return;
+          btn.disabled = true; msg.textContent = 'Applying…';
+          try {
+            var r = await fetch('/api/v1/learning/dgm', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                enabled: next,
+                acknowledge_research_only: next,
+              }),
+            });
+            if (!r.ok) {
+              var body = await r.json().catch(function () { return {}; });
+              msg.textContent = body.detail || 'Could not update DGM control.';
+              btn.disabled = false; return;
+            }
+            location.reload();
+          } catch (e) {
+            msg.textContent = 'Could not reach the server.'; btn.disabled = false;
+          }
+        });
+      })();
+      </script>
+    </div>
+  </section>
+  {% endif %}
+</div>
+
+<script src="/static/board.js"></script>
+<script>
+(function () {
+  'use strict';
+  var B = window.LWBoard;
+
+  function render(D) {
+    var acc = D.accumulated || {};
+    var learned = acc.learned_capabilities || 0;
+    var grounded = acc.grounded_outcomes || 0;
+
+    var k = document.getElementById('bd-kpis');
+    k.textContent = '';
+    k.appendChild(B.kpi({ label: 'Learning systems on', value: D.components_on,
+      sub: 'of ' + D.components_total + ' systems' }));
+    k.appendChild(B.kpi({ label: 'Decisions recorded', value: acc.decisions }));
+    k.appendChild(B.kpi({ label: 'Human decisions', value: acc.human_decisions,
+      sub: 'approvals: ' + B.fmt(acc.approvals) }));
+    k.appendChild(B.kpi({ label: 'Learned capabilities', value: learned,
+      sub: B.fmt(grounded) + ' grounded outcomes' }));
+
+    B.donut(document.getElementById('bd-systems'), {
+      segments: [
+        { label: 'On', value: D.components_on, cls: 'ok' },
+        { label: 'Off', value: D.components_total - D.components_on,
+          cls: 'idle' }],
+      center: D.components_on,
+      centerSub: 'of ' + D.components_total,
+      aria: 'Learning systems: ' + D.components_on + ' on of ' +
+            D.components_total + ' total.' });
+
+    var rows = [
+      { label: 'Decisions', value: acc.decisions || 0 },
+      { label: 'Human decisions', value: acc.human_decisions || 0 },
+      { label: 'Approvals', value: acc.approvals || 0 },
+      { label: 'Learned capabilities', value: learned },
+      { label: 'Grounded outcomes', value: grounded }];
+    if ((acc.flow_self_improvements || 0) > 0) {
+      rows.push({ label: 'Flow self-improvements',
+                  value: acc.flow_self_improvements, cls: 'info' });
+    }
+    var max = 1;
+    rows.forEach(function (r) { max = Math.max(max, r.value); });
+    B.hbars(document.getElementById('bd-acc'),
+      rows.map(function (r) {
+        return { label: r.label, value_text: B.fmt(r.value),
+                 pct: r.value / max * 100, cls: r.cls,
+                 title: r.label + ' — ' + B.fmt(r.value) };
+      }), 'What the workforce has accumulated, scaled to the largest count.');
+  }
+
+  B.attach({ board: 'learning', endpoint: '/api/v1/learning', render: render });
+})();
+</script>
+{% endblock %}

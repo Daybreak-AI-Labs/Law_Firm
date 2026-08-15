@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Billing · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Page-scoped; built from the design-system tokens. */
+  .bill-bars { display: flex; align-items: flex-end; gap: 4px; height: 140px; margin-top: var(--space-3); }
+  .bill-bars__col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+  .bill-bars__bar { width: 100%; min-height: 2px; background: linear-gradient(180deg, var(--brand-hi), var(--brand)); border-radius: 3px 3px 0 0; }
+  .bill-axis { display: flex; justify-content: space-between; margin-top: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .toolbar h2 { margin: 0; }
+</style>
+
+<h1 class="page-title">Billing</h1>
+<p class="page-subtitle">
+  Statement for tenant <code>{{ tenant }}</code> — accrued charges from priced runs, bucketed by month.
+</p>
+
+<div class="toolbar">
+  <div class="section-head"><h2>Current period — {{ current.period }}</h2></div>
+  <a class="btn btn--primary" href="/billing?format=csv&period={{ current.period }}" download>⤓ Download invoice (CSV)</a>
+</div>
+<div class="grid">
+  <div class="stat">
+    <div class="num">${{ '%.4f'|format(current.cost) }}</div>
+    <div class="label">accrued charges</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ current.runs }}</div>
+    <div class="label">billable runs</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ '{:,}'.format(current.input_tokens + current.output_tokens) }}</div>
+    <div class="label">tokens</div>
+  </div>
+  <div class="stat">
+    <div class="num">
+      {% if delta_pct is not none %}
+        <span class="badge {{ 'failure' if delta_pct > 0 else 'done' }}">{{ '+' if delta_pct >= 0 else '' }}{{ delta_pct }}%</span>
+      {% else %}—{% endif %}
+    </div>
+    <div class="label">period over period{% if previous %} (vs {{ previous.period }}){% endif %}</div>
+  </div>
+</div>
+
+<div class="section-head"><h2>Spend trend</h2></div>
+<div class="panel">
+  {% if series %}
+    {% set _max = (series | map(attribute='cost') | max) or 0 %}
+    <div class="bill-bars" role="img"
+         aria-label="Charges for the last {{ series|length }} periods, oldest on the left.">
+      {% for p in series | reverse %}
+        <div class="bill-bars__col" title="{{ p.period }} · ${{ '%.4f'|format(p.cost) }} · {{ p.runs }} runs">
+          <div class="bill-bars__bar" style="height: {{ ((p.cost / _max * 100) if _max else 0) | round(1) }}%;"></div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="bill-axis">
+      <span>{{ series[-1].period if series else '' }}</span>
+      <span>{{ series[0].period if series else '' }}</span>
+    </div>
+  {% else %}
+    <p class="muted">No priced runs yet — charges appear here once goals run and accrue cost.</p>
+  {% endif %}
+</div>
+
+<div class="section-head"><h2>Statements by period</h2></div>
+<div class="panel">
+  {% if series %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">period</th><th scope="col">charges</th>
+        <th scope="col">runs</th><th scope="col">tokens</th><th scope="col">invoice</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in series %}
+        <tr>
+          <td><code>{{ p.period }}</code></td>
+          <td>${{ '%.4f'|format(p.cost) }}</td>
+          <td>{{ p.runs }}</td>
+          <td>{{ '{:,}'.format(p.input_tokens + p.output_tokens) }}</td>
+          <td><a href="/billing?format=csv&period={{ p.period }}" download>CSV</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No statements yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

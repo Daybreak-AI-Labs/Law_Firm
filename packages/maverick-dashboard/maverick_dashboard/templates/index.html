@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}Overview · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Your AI workforce', 'Overview',
+               subtitle='The operating picture',
+               lede='Everything your workforce is doing right now — goals in
+                     flight, work delivered, and anything waiting on you.
+                     Start new work from <a href="/chat">chat</a>, or manage
+                     the teams on <a href="/workforce">Workforce</a>.') %}
+    {{ state('Current state',
+             counts.total ~ ' goal' ~ ('' if counts.total == 1 else 's') ~ ' on record',
+             badge=(counts.active ~ ' active') if counts.active else 'idle',
+             badge_class='ok' if counts.active else 'idle',
+             copy=counts.done ~ ' delivered · ' ~ counts.blocked ~ ' blocked.
+                   Every goal runs inside the budget and guardrails you
+                   set.') }}
+  {% endcall %}
+
+  {% if counts.total == 0 %}
+    <div class="panel empty">
+      <h2 class="empty__title">Start your first goal</h2>
+      <p class="muted" style="max-width: 540px; margin: 0 auto 1.75rem;">
+        Describe the outcome you want. Lightwork plans the work across a team
+        of AI agents, runs it within your budget, and streams results back here.
+      </p>
+      <form method="post" action="/chat/send" style="display: flex; gap: 0.5rem; max-width: 580px; margin: 0 auto; flex-wrap: wrap;">
+        <input type="text" name="title" required autofocus
+               aria-label="Describe a goal for Lightwork to run"
+               placeholder="Plan a 2-week trip to Japan"
+               class="input" style="flex: 1 1 320px;" />
+        <button type="submit" class="btn btn--primary">
+          Start goal
+        </button>
+      </form>
+      <p id="goal-error" role="alert" aria-live="assertive"
+         style="display: none; margin: 0.75rem auto 0; max-width: 580px; color: var(--danger); font-size: 0.85rem;"></p>
+      <p class="muted" style="margin-top: 1.5rem; font-size: 0.8rem;">
+        Or open the <a href="/chat">chat</a>, see <a href="/tools">available tools</a>,
+        or browse <a href="/skills">skills</a>.
+      </p>
+    </div>
+  {% else %}
+    <div class="bd-toolbar">
+      <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+        <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+      <div class="bd-slicer" role="group" aria-label="Time range">
+        <button type="button" data-days="30" aria-pressed="false">30d</button>
+        <button type="button" data-days="90" class="on" aria-pressed="true">90d</button>
+        <button type="button" data-days="180" aria-pressed="false">180d</button>
+        <button type="button" data-days="365" aria-pressed="false">1y</button>
+      </div>
+    </div>
+
+    <div class="bd-kpis" id="bd-kpis"></div>
+
+    <div class="viz-grid">
+      <div class="panel viz-card viz-card--wide">
+        <h2>Momentum</h2>
+        <p class="viz-sub">Goals started vs delivered over time (weekly at longer ranges). Hover for exact numbers.</p>
+        <div id="bd-momentum"></div>
+      </div>
+      <div class="panel viz-card">
+        <h2>Where goals stand</h2>
+        <p class="viz-sub">Every goal on record. Click a slice to filter the recent list.</p>
+        <div id="bd-mix"></div>
+      </div>
+      <div class="panel viz-card viz-card--wide">
+        <h2>Recent goals <span class="bd-chip flat" id="bd-recent-filter" hidden></span></h2>
+        <p class="viz-sub">The latest work, newest first.</p>
+        <div id="bd-recent"></div>
+        <p class="muted" style="margin: var(--space-3) 0 0;">
+          <a href="/goals">All goals →</a> · <a href="/spend">Spend →</a>
+        </p>
+      </div>
+      <div class="panel viz-card">
+        <h2>By department</h2>
+        <p class="viz-sub">Where the work lands, from the Operating Record.</p>
+        <div id="bd-domains"></div>
+      </div>
+    </div>
+
+    <div class="section-head"><h2>Business facts</h2></div>
+    <div class="panel">
+      {% if facts %}
+        {% for k, v in facts.items() %}
+          <p><strong>{{ k }}</strong> <span class="muted">— {{ v }}</span></p>
+        {% endfor %}
+      {% else %}
+        <p class="muted">Nothing recorded yet. Facts are details Lightwork remembers about your business — add them on the <a href="/facts">Facts</a> page.</p>
+      {% endif %}
+    </div>
+
+    <div class="section-head"><h2>Top skills</h2></div>
+    <div class="panel">
+      {% if skills %}
+        {% for s in skills %}
+          <p><strong>{{ s.name }}</strong> <span class="muted">· {{ s.triggers|length }} trigger(s)</span></p>
+        {% endfor %}
+      {% else %}
+        <p class="muted">No skills yet. Lightwork turns finished work into reusable skills — they appear after the first multi-step goal completes.</p>
+      {% endif %}
+    </div>
+
+    <script src="/static/board.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      var B = window.LWBoard, DATA = null, statusFilter = '';
+
+      function rel(ts) {
+        var secs = Math.floor(Date.now() / 1000 - ts);
+        if (secs < 60) return 'just now';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+        return Math.floor(secs / 86400) + 'd ago';
+      }
+
+      function renderRecent() {
+        var box = document.getElementById('bd-recent');
+        var chip = document.getElementById('bd-recent-filter');
+        chip.hidden = !statusFilter;
+        chip.textContent = statusFilter ? statusFilter + ' ✕' : '';
+        chip.onclick = function () { statusFilter = ''; renderRecent(); };
+        chip.classList.toggle('bd-clickable', !!statusFilter);
+        var rows = (DATA.recent || []).filter(function (g) {
+          return !statusFilter || g.status === statusFilter;
+        });
+        if (!rows.length) {
+          B.empty(box, statusFilter
+            ? 'No recent goals with status "' + statusFilter + '".'
+            : 'No goals yet.');
+          return;
+        }
+        box.textContent = '';
+        var table = document.createElement('table');
+        var thead = document.createElement('thead');
+        thead.innerHTML = '<tr><th scope="col">Nº</th><th scope="col">Status</th>' +
+          '<th scope="col">Title</th><th scope="col">Updated</th></tr>';
+        table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        rows.forEach(function (g) {
+          var tr = document.createElement('tr');
+          var td1 = document.createElement('td');
+          var code = document.createElement('code');
+          code.textContent = '#' + g.id;
+          td1.appendChild(code);
+          var td2 = document.createElement('td');
+          var badge = B.el('span', 'badge ' + g.status, g.status);
+          td2.appendChild(badge);
+          var td3 = document.createElement('td');
+          var a = document.createElement('a');
+          a.href = '/chat/goal/' + g.id;
+          a.style.color = 'var(--text)';
+          a.style.textDecoration = 'none';
+          a.textContent = g.title;
+          td3.appendChild(a);
+          var td4 = B.el('td', 'muted', rel(g.updated_at));
+          td4.title = new Date(g.updated_at * 1000).toLocaleString();
+          tr.appendChild(td1); tr.appendChild(td2);
+          tr.appendChild(td3); tr.appendChild(td4);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        box.appendChild(table);
+      }
+
+      function render(D) {
+        DATA = D;
+        var k = document.getElementById('bd-kpis');
+        k.textContent = '';
+        k.appendChild(B.kpi({ label: 'Total goals', value: D.totals.total,
+          sub: 'all time on record',
+          spark: D.daily.map(function (r) { return r.started; }) }));
+        k.appendChild(B.kpi({ label: 'Active now', value: D.totals.active,
+          sub: D.totals.active ? 'running under budget caps' : 'nothing in flight' }));
+        k.appendChild(B.kpi({ label: 'Delivered', value: D.window.delivered,
+          chip: { cur: D.window.delivered, prev: D.window.delivered_prev },
+          sub: 'in the last ' + D.days + ' days', sparkCls: 'ok',
+          spark: D.daily.map(function (r) { return r.delivered; }) }));
+        k.appendChild(B.kpi({ label: 'Blocked', value: D.totals.blocked,
+          sub: D.totals.blocked ? 'needs a human look' : 'nothing stuck' }));
+
+        var weekly = D.days > 60;
+        B.area(document.getElementById('bd-momentum'), {
+          data: weekly ? B.bucketWeekly(D.daily, ['started', 'delivered']) : D.daily,
+          x: 'd',
+          series: [{ key: 'started', label: 'Started', cls: 'brand' },
+                   { key: 'delivered', label: 'Delivered', cls: 'ok' }],
+          aria: 'Goals started and delivered per ' + (weekly ? 'week' : 'day') +
+                ' over the last ' + D.days + ' days.',
+          tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+          xTick: function (r, i, n) {
+            return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : '';
+          } });
+
+        B.donut(document.getElementById('bd-mix'), {
+          segments: [
+            { label: 'Done', value: D.totals.done, cls: 'ok', status: 'done' },
+            { label: 'Active', value: D.totals.active, cls: 'brand', status: 'active' },
+            { label: 'Blocked', value: D.totals.blocked, cls: 'danger', status: 'blocked' },
+            { label: 'Queued',
+              value: D.totals.total - D.totals.done - D.totals.active - D.totals.blocked,
+              cls: 'idle', status: 'pending' }],
+          center: D.totals.total, centerSub: 'goals',
+          aria: 'Goal mix: ' + D.totals.done + ' done, ' + D.totals.active +
+                ' active, ' + D.totals.blocked + ' blocked of ' +
+                D.totals.total + ' total.',
+          onSlice: function (seg) {
+            statusFilter = statusFilter === seg.status ? '' : seg.status;
+            renderRecent();
+          } });
+
+        var dmax = 1;
+        (D.domains || []).forEach(function (r) { dmax = Math.max(dmax, r.total); });
+        if ((D.domains || []).length) {
+          B.hbars(document.getElementById('bd-domains'),
+            D.domains.map(function (r) {
+              return { label: r.label, value_text: r.done + ' of ' + r.total,
+                       pct: r.done / dmax * 100, pct_bg: r.total / dmax * 100,
+                       title: r.label + ' — ' + r.done + ' delivered of ' + r.total };
+            }), 'Goals by department: delivered against taken on.');
+        } else {
+          B.empty(document.getElementById('bd-domains'), 'No departmental work yet.');
+        }
+        renderRecent();
+      }
+
+      B.attach({ board: 'overview', render: render });
+    })();
+    </script>
+  {% endif %}
+{% endblock %}

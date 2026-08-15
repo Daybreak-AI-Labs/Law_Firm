@@ -1,0 +1,6624 @@
+"""FastAPI dashboard for Lightwork.
+
+v0.1.6: BackgroundTask runner moved to maverick.runner; this file just
+imports it. Eliminates the duplicate that lived in app.py + api.py +
+mcp/server.py.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hmac
+import ipaddress
+import json
+import logging
+import os
+import re
+import threading
+import time
+from collections import deque
+from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
+from fastapi.templating import Jinja2Templates
+from maverick import a2a
+from maverick.oidc import VerifiedPrincipal
+from maverick.runtime_overrides import RuntimeOverridesSecurityError
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from . import auth_metrics as _auth_metrics
+from . import health_routes as _health_routes
+from ._shared import (
+    _any_provider_key_set,
+    _get_sse_semaphore,
+    _world,
+    require_provider_or_400,
+)
+from ._shared import _world_cache as _world_cache  # re-export: tests clear app._world_cache
+from .api import router as api_router
+from .auth import (
+    SELF_AUTH_WEBHOOK_PATHS,
+    AutomationAuthorizationError,
+    assert_goal_access,
+    auth_genuinely_off,
+    caller_principal,
+    caller_role,
+    caller_suites,
+    can_access_goal,
+    can_access_goal_principal,
+    execution_user_id_from_request,
+    goal_owner_filter,
+    has_permission,
+    non_static_auth_configured,
+    require_permission,
+    require_principal_in_request_context,
+    require_suite,
+    require_websocket_principal_in_context,
+    stored_automation_identity,
+    websocket_caller_principal,
+)
+from .health_routes import (
+    health_response as _health_response,
+)
+from .health_routes import (
+    metrics_response as _metrics_response,
+)
+from .health_routes import (
+    readiness_response as _readiness_response,
+)
+from .oidc_login import router as oidc_login_router
+
+_MAX_USER_SPEND_METRIC_SERIES = _health_routes.MAX_USER_SPEND_METRIC_SERIES
+_USER_SPEND_OVERFLOW_LABEL = _health_routes.USER_SPEND_OVERFLOW_LABEL
+
+log = logging.getLogger(__name__)
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def _format_datetime(ts) -> str:
+    """Jinja filter: float epoch -> 'HH:MM:SS'."""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return str(ts)
+
+
+templates.env.filters["datetime"] = _format_datetime
+# Make `theme` available unconditionally so templates rendered without
+# a Request object (rare; legacy paths) still resolve `theme or 'dark'`.
+templates.env.globals.setdefault("theme", "dark")
+templates.env.globals.setdefault("font", "default")
+templates.env.globals.setdefault("lang", "en")
+templates.env.globals.setdefault("density", "comfortable")
+templates.env.globals.setdefault("custom_theme_css", "")
+templates.env.globals.setdefault("custom_theme_names", [])
+templates.env.globals.setdefault("dir", "ltr")
+from .i18n import t as _i18n_t  # noqa: E402
+from .themes import custom_themes, theme_css  # noqa: E402
+
+templates.env.globals.setdefault("t", lambda key: _i18n_t(key, "en"))
+
+_VALID_THEMES = {"dark", "light", "solarized", "hicontrast"}
+_VALID_FONTS = {"default", "dyslexic"}
+_VALID_DENSITIES = {"comfortable", "compact"}
+
+
+def _valid_theme_names() -> set[str]:
+    """Built-in themes plus the operator's validated ``[dashboard] themes``."""
+    return _VALID_THEMES | set(custom_themes())
+
+
+def _resolve_pref(
+    request: Request, *, param: str, cookie: str, valid, default: str,
+    config_key: str | None = None,
+) -> str:
+    """Resolve a UI preference via the shared query-param → cookie →
+    [dashboard] config → default ladder, accepting only values in ``valid``.
+    ``config_key=None`` skips the config step (cookie-only prefs)."""
+    q = (request.query_params.get(param) or "").strip().lower()
+    if q in valid:
+        return q
+    c = (request.cookies.get(cookie) or "").strip().lower()
+    if c in valid:
+        return c
+    if config_key is not None:
+        try:
+            from maverick.config import load_config
+            cfg = (load_config() or {}).get("dashboard") or {}
+            v = (cfg.get(config_key) or "").strip().lower()
+            if v in valid:
+                return v
+        except Exception:
+            pass
+    return default
+
+
+def _resolve_theme(request: Request) -> str:
+    """Pick the theme from ``?theme=`` query param, cookie, config, then dark."""
+    return _resolve_pref(
+        request, param="theme", cookie="mvk_theme", valid=_valid_theme_names(),
+        config_key="theme", default="dark",
+    )
+
+
+def resolve_density(request: Request) -> str:
+    """UI density: ``?density=`` → ``mvk_density`` cookie → ``[dashboard]
+    density`` config → comfortable. Default-off: ``comfortable`` is the
+    existing layout; ``compact`` opts in to the denser one."""
+    return _resolve_pref(
+        request, param="density", cookie="mvk_density", valid=_VALID_DENSITIES,
+        config_key="density", default="comfortable",
+    )
+
+
+def _resolve_font(request: Request) -> str:
+    """Font preference: ``?font=`` → cookie → default. Independent axis from
+    the theme so high-contrast + dyslexia-friendly compose."""
+    return _resolve_pref(
+        request, param="font", cookie="mvk_font", valid=_VALID_FONTS,
+        default="default",
+    )
+
+
+# Context processor: every template gets the `theme` variable for the
+# body class + the theme switcher links, the `font` accessibility axis,
+# and the chrome-i18n helpers (`lang`, `t`).
+def _theme_context(request: Request) -> dict:
+    from .i18n import dir_for, resolve_lang
+    from .i18n import t as _t
+    lang = resolve_lang(request)
+    custom = custom_themes()
+    return {
+        "theme": _resolve_theme(request),
+        "font": _resolve_font(request),
+        "density": resolve_density(request),
+        "custom_theme_css": theme_css(custom),
+        "custom_theme_names": sorted(custom),
+        "lang": lang,
+        "dir": dir_for(lang),
+        "t": lambda key: _t(key, lang),
+    }
+
+
+# Register the per-request context processor with Starlette so every
+# TemplateResponse picks up the resolved theme automatically.
+templates.context_processors.append(_theme_context)
+
+
+# Context processor: every template gets `nav_groups` -- the sidebar filtered
+# to the pages the caller's RBAC role may see (defaults + the admin's Settings
+# overrides; see maverick_dashboard.ui_visibility). Auth off -> full nav,
+# exactly as before.
+def _nav_context(request: Request) -> dict:
+    from . import ui_visibility
+    try:
+        role = caller_role(request)
+    except Exception:  # pragma: no cover -- nav must never break a render
+        role = None
+    groups = ui_visibility.nav_groups(role)
+    # The topbar's Settings gear follows the same policy as the sidebar entry.
+    show_settings = any(
+        link["href"] == "/settings" for g in groups for link in g["links"]
+    )
+    return {"nav_groups": groups, "show_settings_link": show_settings}
+
+
+templates.context_processors.append(_nav_context)
+# Requestless renders (rare; legacy paths) still get a complete sidebar.
+from . import ui_visibility as _ui_visibility  # noqa: E402
+
+templates.env.globals.setdefault("nav_groups", _ui_visibility.nav_groups(None))
+
+
+def _set_theme_cookie(response, theme: str) -> None:
+    """Persist the theme choice as a cookie so it sticks across page loads."""
+    if theme in _valid_theme_names():
+        response.set_cookie(
+            "mvk_theme", theme,
+            max_age=30 * 24 * 3600,  # 30 days
+            samesite="lax",
+            httponly=False,  # the switcher links are visible to JS anyway
+        )
+
+
+def _require_auth_enabled() -> bool:
+    """Opt-in guard: refuse to serve the dashboard with no auth configured.
+    ``MAVERICK_DASHBOARD_REQUIRE_AUTH`` env wins over ``[dashboard] require_auth``;
+    off by default so the single-tenant local flow is unchanged."""
+    env = os.environ.get("MAVERICK_DASHBOARD_REQUIRE_AUTH", "").strip().lower()
+    try:
+        from maverick.config import config_source_errors, load_config
+
+        config = load_config() or {}
+        if config_source_errors():
+            return True
+    except Exception:
+        # A malformed/unreadable config may conceal ``require_auth = true``.
+        # Treat ambiguity as required so startup cannot silently enable local
+        # administrator access.
+        return True
+    if not isinstance(config, dict):
+        return True
+    if env:
+        if env in {"1", "true", "yes", "on"}:
+            return True
+        if env in {"0", "false", "no", "off"}:
+            return False
+        return True
+    if "dashboard" not in config:
+        dashboard = {}
+    else:
+        dashboard = config["dashboard"]
+    if not isinstance(dashboard, dict):
+        return True
+    configured = dashboard.get("require_auth", False)
+    return configured if isinstance(configured, bool) else True
+
+
+def _assert_dashboard_auth_configured() -> None:
+    """When ``require_auth`` is set, refuse to boot if NO auth mechanism is
+    configured (token, OIDC, proxy SSO, invites, or complete SAML), so an operator
+    who asked for auth can never accidentally serve the (loopback) control
+    surface unauthenticated. No-op unless ``require_auth`` is explicitly on, so
+    a fresh single-tenant install is never locked out."""
+    if not _require_auth_enabled():
+        return
+    if os.environ.get("MAVERICK_DASHBOARD_TOKEN"):
+        return
+    try:
+        from maverick.oidc import oidc_enabled
+        if oidc_enabled():
+            return
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        from maverick.proxy_auth import proxy_auth_enabled
+        if proxy_auth_enabled():
+            return
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        # Email-invite local sessions count as a configured mechanism: with
+        # require_auth on, only a verified invite-minted session (or one of the
+        # modes above) passes the middleware — everything else 401s.
+        from .invites import invites_enabled
+        if invites_enabled():
+            return
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        # SAML uses the same signed browser session as OIDC, so a complete SAML
+        # configuration is a first-class authentication mechanism too.
+        from .saml import _session_secret, saml_enabled
+        if saml_enabled() and _session_secret():
+            return
+    except Exception:  # pragma: no cover
+        pass
+    raise RuntimeError(
+        "[dashboard] require_auth is set, but no auth mechanism is configured. "
+        "Set MAVERICK_DASHBOARD_TOKEN, enable OIDC ([auth.oidc]), enable "
+        "reverse-proxy SSO ([auth.proxy]), enable SAML ([auth.saml]), or enable "
+        "email invites ([dashboard] invites) -- refusing to serve the dashboard "
+        "unauthenticated."
+    )
+
+
+# ---- background automation (event polling + scheduled dreaming) -------------
+# Runs in the dashboard lifespan, NOT the core worker: event triggers are a
+# dashboard-owned store the core worker (a separate process) can't reach. Driven
+# by maverick-core's JobQueue/Worker -- durable, retrying, exactly-once (the
+# flock is gone) -- via maverick_dashboard.automation_queue. Per-trigger polling
+# cadence + scheduled dreaming are recurring cron jobs; fired goals are durable
+# run_goal jobs with retry + dead-letter. TestClient skips the lifespan, so this
+# never runs under tests; both halves are OFF by default (their own enabled()).
+
+
+async def _install_automation_scheduler() -> None:
+    """Start the JobQueue-backed automation worker when event triggers OR
+    dreaming is enabled. No-op under TestClient and when both are off."""
+    try:
+        from maverick_dashboard import automation_queue
+        await run_in_threadpool(automation_queue.start)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("automation worker not started")
+
+
+async def _stop_automation_scheduler() -> None:
+    try:
+        from maverick_dashboard import automation_queue
+        await run_in_threadpool(automation_queue.stop)
+    except Exception:  # pragma: no cover
+        pass
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Application lifespan: run startup tasks, then yield to serve.
+
+    Replaces the deprecated ``@app.on_event("startup")`` handlers. The two
+    startup steps (orphan-goal reclaim, queue-dispatcher install) run in their
+    original registration order; their bodies each guard with try/except so a
+    failure never blocks startup.
+
+    On shutdown we drain in-flight goals (bounded) so a rolling upgrade / pod
+    eviction lets running goals finish instead of hard-killing them mid-LLM-call
+    (which bills for discarded work and can wedge a goal 'running').
+
+    One exception to "never blocks startup": when the deployment has opted into
+    a mandatory enterprise boundary (MAVERICK_REQUIRE_ENTERPRISE=1 /
+    ``[enterprise] require = true``), the preflight is allowed to raise and abort
+    startup -- that is the point of a deploy gate. It is a silent no-op
+    otherwise, so the default fail-open posture is unchanged (kernel rule 1).
+    """
+    from maverick.deployment import require_enterprise_or_die
+    require_enterprise_or_die()
+    from maverick.residency import require_residency_or_die
+    require_residency_or_die()  # strict region pin (#41); no-op unless opted in
+    # Exactly one control plane may write a data root. Until now that was
+    # enforced only by a `helm template` guard, which a raw kubectl apply,
+    # `compose up --scale`, or a second local `maverick dashboard` walks past
+    # -- and the failure is silent: two writers interleave valid records into
+    # hash-chained ledgers that assume one author. This raises, deliberately:
+    # a replica that refuses to start is a visible outage, while a corrupted
+    # audit chain is discovered months later by whoever needs it most.
+    from maverick.control_plane_lease import acquire as _acquire_control_plane
+    _acquire_control_plane(role="dashboard")
+    _assert_dashboard_auth_configured()
+    # Loud warning if reverse-proxy SSO is on but no upstream is trusted
+    # (neither trusted_proxies pinned nor trust_loopback explicitly set) --
+    # the forwarded identity header is then refused from every peer.
+    try:
+        from maverick.proxy_auth import warn_if_untrusted_proxy_config
+        warn_if_untrusted_proxy_config()
+    except Exception:  # pragma: no cover -- a warning must never block startup
+        pass
+    await _reclaim_orphans()
+    await _install_queue_dispatcher()
+    await _install_automation_scheduler()
+    try:
+        from maverick_dashboard.security_api import start_hunter_scheduler
+
+        await run_in_threadpool(start_hunter_scheduler)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("security hunter scheduler not started")
+    try:
+        from maverick_dashboard.finance_scheduler import start_finance_scheduler
+
+        await run_in_threadpool(start_finance_scheduler)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("finance operations scheduler not started")
+    # Connected-entitlement auto-refresh: a deployment with [license] api_url
+    # configured polls the vendor console so an upgrade/downgrade issued there
+    # lands within ~a minute — no redeploy, no manual refresh. No-op (returns
+    # None) without an API URL or with refresh_interval_seconds = 0, so tests
+    # and offline/air-gapped boxes are untouched. Fail-open by construction:
+    # the loop never raises and a failed poll leaves the license file in charge.
+    try:
+        from maverick.entitlements import start_refresher
+        await run_in_threadpool(start_refresher)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("license auto-refresh not started")
+    # Voice warm-up: fetch/load the local STT model in the background so the
+    # first mic click transcribes instead of 503ing into browser fallback.
+    # A plain daemon thread, NOT run_in_threadpool: the first-run model
+    # download can take minutes and must never delay startup. Fail-open —
+    # requests degrade to the normal backend chain if warm-up loses.
+    try:
+        from maverick.tools.voice import warm_up_local_stt
+
+        from .api import _voice_commands_enabled
+        if _voice_commands_enabled():
+            threading.Thread(
+                target=warm_up_local_stt, name="voice-stt-warmup", daemon=True,
+            ).start()
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("voice STT warm-up not started")
+    yield
+    try:
+        from maverick.entitlements import stop_refresher
+        await run_in_threadpool(stop_refresher)
+    except Exception:  # pragma: no cover - shutdown must never raise
+        pass
+    try:
+        from maverick_dashboard.security_api import stop_hunter_scheduler
+
+        await run_in_threadpool(stop_hunter_scheduler)
+    except Exception:  # pragma: no cover - shutdown must never raise
+        pass
+    try:
+        from maverick_dashboard.finance_scheduler import stop_finance_scheduler
+
+        await run_in_threadpool(stop_finance_scheduler)
+    except Exception:  # pragma: no cover - shutdown must never raise
+        pass
+    await _stop_automation_scheduler()
+    # Graceful drain: give running goals a bounded window to finish. Bounded by
+    # MAVERICK_DRAIN_TIMEOUT (default 25s, under the typical 30s
+    # terminationGracePeriod so the kubelet's SIGKILL doesn't pre-empt it). Runs
+    # off the event loop (the drain polls a threading primitive); best-effort --
+    # never raise on the way down.
+    try:
+        from maverick.runner import drain_inflight
+        timeout = float(os.environ.get("MAVERICK_DRAIN_TIMEOUT", "25") or 25)
+        left = await run_in_threadpool(drain_inflight, timeout)
+        if left:
+            log.warning(
+                "shutdown: %d goal(s) still in-flight after %.0fs drain timeout", left, timeout
+            )
+    except Exception:  # pragma: no cover - shutdown must never raise
+        pass
+
+
+def enforce_page_visibility(
+    request: Request = None,  # type: ignore[assignment]
+) -> None:
+    """App-level dependency: 403 a UI page hidden for the caller's RBAC role.
+
+    Runs AFTER ``require_principal`` (dependency order), so the verified
+    principal is already on ``request.state``. Visibility (defaults + the
+    admin's Settings overrides) governs registered page paths and their
+    subpaths only -- /api, webhooks, share links, auth and probe endpoints are
+    unregistered and untouched. Auth off (no principal -> role None) is a
+    no-op, preserving single-user local mode; hiding the nav entry alone would
+    be cosmetic, this makes the hidden page unreachable too.
+    """
+    if request is None:  # WebSocket connection -- page policy doesn't apply
+        return
+    from . import ui_visibility
+    page = ui_visibility.page_for(request.url.path)
+    if page is None:
+        return
+    role = caller_role(request)
+    if role is None or ui_visibility.is_visible(page, role):
+        return
+    raise HTTPException(status_code=403, detail="this page is not enabled for your role")
+
+
+app = FastAPI(
+    title="Lightwork Dashboard + REST API",
+    description="Local browser UI plus REST API for programmatic access.",
+    version="0.1.0",
+    # Global authentication dependency, applied to every route. It composes
+    # proxy/OIDC/SAML/invite sessions and the static dashboard bearer, while
+    # preserving same-origin loopback mode only when authentication is genuinely
+    # off. `enforce_page_visibility` runs second so role-based page policy sees
+    # the established principal.
+    dependencies=[
+        Depends(require_principal_in_request_context),
+        Depends(enforce_page_visibility),
+    ],
+    lifespan=_lifespan,
+)
+app.include_router(api_router)
+# Admin pages (/settings + /users): their own router module -- the first
+# slice of decomposing this file by nav group. See maverick_dashboard.admin_pages.
+from .admin_pages import router as admin_pages_router  # noqa: E402
+
+app.include_router(admin_pages_router)
+# Ekko Work Discovery: a human review/control surface only.  Endpoint
+# collectors do not enter through HTTP; they write through the local core
+# daemon's owner/device/tenant-scoped store.
+from .ekko_routes import router as ekko_router  # noqa: E402
+
+app.include_router(ekko_router)
+# Built-in OIDC browser-login routes (/auth/login, /auth/callback, /auth/logout).
+# Each route self-gates on maverick.oidc.login_enabled() and 404s when the login
+# flow isn't fully configured, so including the router unconditionally is inert
+# off by default. See maverick_dashboard.oidc_login.
+app.include_router(oidc_login_router)
+# Email invite links (/auth/invite/{token}): single-use onboarding links an
+# admin mints on /users. Self-gates on [dashboard] invites (default off), so
+# including it unconditionally is inert. See maverick_dashboard.invite_routes.
+from .invite_routes import router as invite_router  # noqa: E402
+
+app.include_router(invite_router)
+# SCIM 2.0 user provisioning (/scim/v2). Self-gates on MAVERICK_SCIM_TOKEN and
+# 404s when unset, so including it is inert off by default. It carries its own
+# static IdP bearer, so the /scim/ prefix is exempted from the dashboard-token
+# middleware and the OIDC gate below.
+from .scim import router as scim_router  # noqa: E402
+
+app.include_router(scim_router)
+# SAML 2.0 SP browser SSO (/saml/...). 404s until [auth.saml] is configured, so
+# including it is inert off by default. The IdP POSTs the assertion to the ACS
+# with no dashboard bearer, so the /saml/ prefix is exempted from the
+# dashboard-token middleware and the OIDC gate (it's how a browser gets a session).
+from .saml import router as saml_router  # noqa: E402
+
+app.include_router(saml_router)
+# Bring-your-own-agent gateway (/api/v1/external/...): agents on OTHER
+# platforms report runs and ask for action screening with their per-agent
+# rest bearer. Self-gates on [external_agents] enable (404 off) and the Gold
+# entitlement, so including it unconditionally is inert. The prefix is
+# self-authenticating (see _AUTH_EXEMPT rationale for /a2a/v1).
+from .external_gateway import router as external_gateway_router  # noqa: E402
+
+app.include_router(external_gateway_router)
+a2a.mount(app)
+
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data: https:; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "object-src 'none'"
+)
+
+_DEFAULT_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "object-src 'none'"
+)
+
+# The plan-tree page pulls Cytoscape.js from jsdelivr (SRI-pinned in the
+# template). Allow that one host on script-src for this page only; every
+# other directive stays as locked-down as _DEFAULT_CSP. connect-src stays
+# 'self' — the live poll only ever fetches our own /api/v1 endpoint.
+_PLAN_TREE_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "object-src 'none'"
+)
+
+# /goals/{id}/plan — the only page that loads the Cytoscape CDN script.
+_PLAN_TREE_PATH_RE = re.compile(r"^/goals/\d+/plan/?$")
+
+
+def _persist_pref_cookie(request, response, *, param, cookie, valid, max_age) -> None:
+    """Set a preference cookie when ``?param=`` is a valid value. Shared by the
+    font/density/lang persistence (the theme uses its own _set_theme_cookie)."""
+    v = request.query_params.get(param)
+    if v and v.lower() in valid:
+        response.set_cookie(cookie, v.lower(), max_age=max_age,
+                            samesite="lax", httponly=False)
+
+
+@app.middleware("http")
+async def persist_theme(request: Request, call_next):
+    """If ?theme= / ?font= / ?density= / ?lang= is in the URL, set a cookie so it sticks."""
+    response = await call_next(request)
+    q = request.query_params.get("theme")
+    if q and q.lower() in _valid_theme_names():
+        _set_theme_cookie(response, q.lower())
+    from .i18n import LANGS
+    _persist_pref_cookie(request, response, param="font", cookie="mvk_font",
+                         valid=_VALID_FONTS, max_age=30 * 24 * 3600)
+    _persist_pref_cookie(request, response, param="density", cookie="mvk_density",
+                         valid=_VALID_DENSITIES, max_age=30 * 24 * 3600)
+    _persist_pref_cookie(request, response, param="lang", cookie="mvk_lang",
+                         valid=LANGS, max_age=365 * 24 * 3600)
+    return response
+
+
+async def _reclaim_orphans() -> None:
+    """Mark goals stuck in active/pending as blocked after a crash.
+
+    Without this, SIGKILL/OOM mid-run strands rows in 'active' forever
+    and `active_goal()` returns a ghost. Council finding (Tier 0).
+    """
+    try:
+        wm = _world()  # honor the configured backend (SQLite or Postgres)
+        n = wm.reclaim_orphan_goals()
+        if n:
+            log.warning("reclaimed %d orphan goal(s) from prior crash", n)
+    except Exception:
+        log.exception("orphan reclaim failed on startup")
+
+
+async def _install_queue_dispatcher() -> None:
+    """Install an out-of-process goal dispatcher if one is configured.
+
+    ``[queue] backend`` selects the arq/Redis QueueDispatcher; ``[grpc_dispatch]
+    target`` selects the gRPC remote-worker dispatcher. Both make this (producer)
+    process hand goals to a worker pool instead of running them in-process. The
+    queue takes precedence when both are set (they share the single dispatcher
+    slot); the gRPC dispatcher is only attempted when the queue didn't install.
+    No-op for the default in-process install."""
+    try:
+        from maverick.queue_dispatcher import install_from_config
+        if install_from_config():
+            log.info("queue dispatcher installed: goals run out-of-process")
+            return
+    except Exception:
+        # The queue installer pins a rejecting dispatcher before raising. Keep
+        # that fail-closed state; a gRPC fallback would silently overwrite it.
+        log.exception("queue dispatcher install failed; dispatch remains fail-closed")
+        return
+    # gRPC dispatch had a complete install_from_config() that nothing called, so
+    # [grpc_dispatch] target was silently ignored and goals kept running
+    # in-process. Wire it in as the fallback out-of-process path.
+    try:
+        from maverick.grpc_dispatcher import install_from_config as install_grpc
+        if install_grpc():
+            log.info("gRPC dispatcher installed: goals run on a remote worker")
+    except Exception:
+        log.exception("gRPC dispatcher install failed (running in-process)")
+
+_AUTH_EXEMPT = {
+    "/healthz", "/livez", "/readyz",
+    "/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect",
+    "/.well-known/agent-card.json", "/.well-known/agent.json",
+    # The A2A task endpoint enforces its own shared/per-agent bearer and trust
+    # plane. Requiring the unrelated dashboard bearer here would either block
+    # valid A2A identities or pressure operators to reuse one credential across
+    # two trust domains.
+    "/a2a/v1",
+    # /webhook/start authenticates with its own HMAC signature instead of
+    # the dashboard bearer / same-origin checks (external senders have
+    # neither), so it must bypass the centralized middleware.
+    *SELF_AUTH_WEBHOOK_PATHS,
+    # The exact HMAC webhook paths are shared with the global dependency. A
+    # future /webhook/* route is authenticated by default until explicitly
+    # added to that reviewed set.
+    # Built-in OIDC browser-login endpoints: they bootstrap a session and carry
+    # their own flow-level security (state/PKCE/signed cookies). They must be
+    # reachable by a browser that has no dashboard token yet; each self-gates on
+    # login_enabled() and 404s when the login flow is off.
+    "/auth/login",
+    "/auth/callback",
+    "/auth/logout",
+    "/auth/error",
+    # The brand logo is a public, non-sensitive image; the public share view
+    # (itself auth-exempt) references it, so an unauthenticated recipient must
+    # be able to load it.
+    "/static/daybreak-logo.jpg",
+}
+
+
+# Inbound webhook bodies are intentionally small JSON payloads.  Enforce
+# this before HMAC verification so unauthenticated callers cannot force the
+# dashboard to buffer or hash arbitrarily large request bodies.
+_MAX_WEBHOOK_BODY_BYTES = 256 * 1024
+_MAX_SKILL_VALIDATE_BODY_BYTES = 256 * 1024
+_MAX_SAVED_VIEW_BODY_BYTES = 32 * 1024
+_MAX_SECURITY_HUNTER_HTTP_BODY_BYTES = 17 * 1024 * 1024
+_MAX_FINANCE_DEFAULT_BODY_BYTES = 256 * 1024
+_MAX_FINANCE_REGULATORY_BODY_BYTES = 7 * 1024 * 1024
+_MAX_FINANCE_AML_LIST_BODY_BYTES = 20 * 1024 * 1024
+_MAX_FINANCE_ANOMALY_BODY_BYTES = 32 * 1024 * 1024
+_MAX_EVIDENCE_GATEWAY_BODY_BYTES = 3 * 1024 * 1024
+_MAX_EVIDENCE_GATEWAY_DELIVERY_BODY_BYTES = 34 * 1024 * 1024
+_EVIDENCE_GATEWAY_PREFIX = "/api/v1/security/assurance/gateway/"
+_SECURITY_HUNTER_BODY_PATHS = {
+    "/api/v1/security/threats/scan",
+    "/api/v1/security/soc/ingest",
+}
+_FINANCE_LARGE_BODY_LIMITS = {
+    "/api/v1/finance-operations/regulatory/feeds/ingest": (
+        _MAX_FINANCE_REGULATORY_BODY_BYTES
+    ),
+    "/api/v1/finance-operations/aml/lists/ingest": _MAX_FINANCE_AML_LIST_BODY_BYTES,
+    "/api/v1/finance-operations/anomalies/scan": _MAX_FINANCE_ANOMALY_BODY_BYTES,
+}
+
+
+async def _read_limited_request_body(
+    request: Request,
+    *,
+    max_bytes: int,
+    too_large_detail: str,
+) -> bytes:
+    """Read a request body with a hard size cap.
+
+    ``Content-Length`` lets us reject obviously oversized requests before
+    reading any body bytes.  For chunked or otherwise lengthless requests,
+    stream incrementally and abort as soon as the cap is exceeded instead of
+    using ``request.body()``, which buffers the entire body before returning.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid Content-Length") from None
+        if declared > max_bytes:
+            raise HTTPException(status_code=413, detail=too_large_detail)
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=413, detail=too_large_detail)
+    return bytes(body)
+
+
+@app.middleware("http")
+async def bound_security_hunter_body(request: Request, call_next):
+    """Cap hunter JSON before FastAPI/Pydantic parses nested telemetry."""
+    if request.method != "POST" or request.url.path not in _SECURITY_HUNTER_BODY_PATHS:
+        return await call_next(request)
+    try:
+        body = await _read_limited_request_body(
+            request,
+            max_bytes=_MAX_SECURITY_HUNTER_HTTP_BODY_BYTES,
+            too_large_detail="security hunter request body too large",
+        )
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    delivered = False
+
+    async def replay_receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    # BaseHTTPMiddleware wraps this Request and consults its cached-body marker;
+    # setting only ``_receive`` after consuming the stream makes that wrapper
+    # emit an empty body. Populate both seams so downstream validation receives
+    # the exact bounded bytes once.
+    request._body = body  # noqa: SLF001 - bounded ASGI body replay
+    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def bound_finance_operations_body(request: Request, call_next):
+    """Cap finance JSON before Starlette/Pydantic buffers nested records."""
+    path = request.url.path
+    if (
+        request.method != "POST"
+        or not path.startswith("/api/v1/finance-operations/")
+    ):
+        return await call_next(request)
+    maximum = _FINANCE_LARGE_BODY_LIMITS.get(path, _MAX_FINANCE_DEFAULT_BODY_BYTES)
+    try:
+        body = await _read_limited_request_body(
+            request,
+            max_bytes=maximum,
+            too_large_detail="finance operations request body too large",
+        )
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    delivered = False
+
+    async def replay_receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    request._body = body  # noqa: SLF001 - bounded ASGI body replay
+    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def bound_evidence_gateway_body(request: Request, call_next):
+    """Bound gateway JSON before Starlette/Pydantic buffers evidence inputs."""
+
+    path = request.url.path
+    if (
+        request.method not in {"POST", "PUT"}
+        or not path.startswith(_EVIDENCE_GATEWAY_PREFIX)
+    ):
+        return await call_next(request)
+    maximum = (
+        _MAX_EVIDENCE_GATEWAY_DELIVERY_BODY_BYTES
+        if path == f"{_EVIDENCE_GATEWAY_PREFIX}deliver"
+        else _MAX_EVIDENCE_GATEWAY_BODY_BYTES
+    )
+    try:
+        body = await _read_limited_request_body(
+            request,
+            max_bytes=maximum,
+            too_large_detail="AI evidence gateway request body too large",
+        )
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    delivered = False
+
+    async def replay_receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    request._body = body  # noqa: SLF001 - bounded ASGI body replay
+    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
+    return await call_next(request)
+
+
+async def _read_limited_webhook_body(request: Request) -> bytes:
+    """Read a webhook request body with a hard size cap."""
+    return await _read_limited_request_body(
+        request,
+        max_bytes=_MAX_WEBHOOK_BODY_BYTES,
+        too_large_detail="webhook body too large",
+    )
+
+
+async def _read_limited_skill_validator_body(request: Request) -> bytes:
+    """Read a skill-validator request body with a hard size cap."""
+    return await _read_limited_request_body(
+        request,
+        max_bytes=_MAX_SKILL_VALIDATE_BODY_BYTES,
+        too_large_detail="skill too large (max 256 KiB)",
+    )
+
+
+async def _verify_maverick_webhook(request: Request) -> dict:
+    """Verify a Lightwork-format inbound webhook (HMAC over body+timestamp) and
+    return the parsed JSON object. Shared by /webhook/start and /webhook/run,
+    which had byte-identical preambles. Raises HTTPException (401 unconfigured,
+    403 bad signature, 400 bad body) and enforces a configured LLM provider."""
+    from maverick.webhooks import inbound_secret, verify_signature
+
+    secret = inbound_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Inbound webhooks aren't set up yet — an administrator must "
+                "configure a signing secret (a [webhooks] secret in the server "
+                "configuration, or the MAVERICK_WEBHOOK_SECRET environment "
+                "variable)."
+            ),
+        )
+    signature = request.headers.get("X-Maverick-Signature") or ""
+    timestamp = request.headers.get("X-Maverick-Timestamp") or ""
+    if not signature or not timestamp:
+        raise HTTPException(status_code=403, detail="bad webhook signature")
+    body = await _read_limited_webhook_body(request)
+    if not verify_signature(body, signature, secret, timestamp=timestamp):
+        raise HTTPException(status_code=403, detail="bad webhook signature")
+
+    # NOTE: replay beyond a single byte-identical capture is bounded by the
+    # freshness window (verify_signature enforces max_age on the signed
+    # timestamp). We deliberately do NOT add signature-level dedup here: an HMAC
+    # over (timestamp, body) can't distinguish an attacker's byte replay from a
+    # legitimate rapid identical fire (same trigger, same second, no `data`), so
+    # dedup would drop valid duplicate fires. Tightening this further needs a
+    # client-supplied delivery id to dedup on (as the GitHub/GitLab routes do),
+    # which is a webhook-format change, not a drop-in here.
+    require_provider_or_400()
+    try:
+        payload = json.loads(body or b"{}")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    return payload
+
+
+def _webhook_duplicate_delivery(route: str, payload: dict) -> bool:
+    """True if this signed webhook carries a delivery ``id`` we've already
+    processed within the freshness window (an at-most-once guard the caller
+    opts into by stamping ``{"id": "..."}``). Returns False when no id is
+    given, so id-less callers keep the current at-least-once behaviour. The id
+    is namespaced per ``route`` so a /webhook/start id can't mask a /webhook/run
+    one. Never raises -- a degraded dedup store must not drop a webhook."""
+    delivery_id = str(payload.get("id") or "").strip()[:200]
+    if not delivery_id:
+        return False
+    from maverick.webhooks import _default_max_age
+    return _issue_webhook_replay_seen(f"webhook-{route}:{delivery_id}", _default_max_age())
+
+# Safe methods skip the CSRF check (browsers send Origin/Referer
+# inconsistently on GETs from address bars and bookmarks).
+_CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _is_same_origin(request: Request) -> bool:
+    """Allow only same-origin browser submissions for mutating form POSTs.
+
+    Fails closed when no Origin or Referer is present on a mutating
+    request. The previous fail-open branch ("Non-browser/API clients
+    commonly omit both headers") was a soft-CSRF: any tab on the same
+    machine could fire a no-cors fetch with both headers stripped and
+    have it accepted. Real API clients send Authorization headers and
+    are exempted by the bearer-auth middleware before they reach here.
+    """
+    if request.method in _CSRF_SAFE_METHODS:
+        return True
+    expected = request.url.netloc
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.netloc == expected:
+            return True
+        return False
+    return False
+
+
+def _require_same_origin(request: Request) -> None:
+    """Reject a cross-site mutating form POST (403). Shared CSRF guard inlined by
+    ~20 form handlers."""
+    if not _is_same_origin(request):
+        raise HTTPException(
+            status_code=403,
+            detail="cross-site form post blocked — for your security, changes "
+                   "must be made from the Lightwork page itself. Reload the "
+                   "dashboard and try again.",
+        )
+
+
+def _is_loopback_client(host: str) -> bool:
+    """True for in-process/loopback callers (safe to serve without a token)."""
+    if not host:
+        return False
+    # Starlette's in-process TestClient reports host="testclient"; a real
+    # network peer can never present that (request.client.host is the
+    # socket peer, set by the server, not user-controllable).
+    if host in ("localhost", "testclient"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_loopback_request_host(request: Request) -> bool:
+    """True when the user-controlled Host header names a loopback host.
+
+    No-token mode is intentionally limited to local dashboards.  Checking only
+    the socket peer is not enough for browser requests: a DNS-rebinding page can
+    connect to 127.0.0.1 while preserving an attacker-controlled Host/Origin
+    pair, which would otherwise satisfy Host-derived same-origin checks.
+    """
+    host = (request.url.hostname or "").rstrip(".").lower()
+    if host in ("localhost", "testserver"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+# Standard headers a reverse proxy adds when forwarding a request.
+_PROXY_FORWARD_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _is_proxied(request: Request) -> bool:
+    """True if a reverse proxy forwarded this request.
+
+    In no-token mode the dashboard trusts the loopback peer
+    (``request.client.host``). A reverse proxy on the same host connects over
+    loopback, so a deploy that fronts the app with a public proxy but forgets
+    to set ``MAVERICK_DASHBOARD_TOKEN`` on the app process would serve the
+    control surface unauthenticated to the internet — the loopback peer is the
+    proxy, not the real remote client. Treat any standard forwarding header as
+    proof a proxy is in front and fall through to the token requirement (fail
+    closed). Reading these headers only ever makes auth STRICTER, so a forged
+    header cannot grant access — at worst a direct caller locks itself out by
+    sending one.
+    """
+    return any(request.headers.get(h) for h in _PROXY_FORWARD_HEADERS)
+
+
+def _configured_oidc_bearer_present(request: Request) -> bool:
+    """Whether this request explicitly presents a bearer to enabled OIDC.
+
+    Such API credentials do not use ambient browser authority, so they do not
+    need an Origin/Referer. The global auth dependency remains authoritative:
+    it verifies the token (and rejects an invalid one) before any cookie/proxy
+    identity can be selected.
+    """
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer ") or not authorization[7:].strip():
+        return False
+    try:
+        from . import auth as auth_boundary
+
+        return auth_boundary.oidc_enabled()
+    except Exception:
+        return False
+
+
+@app.middleware("http")
+async def bearer_auth(request: Request, call_next):
+    expected = os.environ.get("MAVERICK_DASHBOARD_TOKEN")
+    if (request.url.path in _AUTH_EXEMPT or request.url.path.startswith("/share/")
+            or request.url.path.startswith("/scim/")
+            or request.url.path.startswith("/form/")
+            or request.url.path.startswith("/saml/")
+            or request.url.path.startswith("/auth/invite/")
+            # BYOA gateway: per-agent rest bearer from the trust registry is
+            # the credential (external_gateway.py); the trailing slash keeps
+            # the ADMIN surface /api/v1/external-agents under dashboard auth.
+            or request.url.path.startswith("/api/v1/external/")):
+        # /share/<token> self-authenticates with its signed, revocable token
+        # (verified in the route, which 404s an invalid/expired/revoked one) --
+        # an external recipient has no dashboard bearer, like the webhook paths.
+        # /auth/invite/<token> is the same shape: the invitee has no credential
+        # yet; the single-use token IS the auth, verified (and same-origin-
+        # gated on the consuming POST) in the route, which 404s when invites
+        # are disabled.
+        return await call_next(request)
+    if not expected:
+        # Any configured identity mechanism disables legacy loopback-as-admin,
+        # even when the separate startup assertion ``dashboard.require_auth``
+        # is unset. The global dependency verifies proxy, OIDC, SAML, or invite
+        # identity and fails closed on unreadable auth configuration.
+        # Resolve through the module so identity-policy changes made by a
+        # deployment/test harness cannot leave this long-lived middleware with
+        # a stale function binding.
+        from . import auth as auth_boundary
+
+        if not auth_boundary.auth_genuinely_off():
+            explicit_oidc_bearer = _configured_oidc_bearer_present(request)
+            if (
+                not explicit_oidc_bearer
+                and not _is_same_origin(request)
+                and _allowed_extension_origin(request) is None
+            ):
+                return JSONResponse(
+                    {"detail": "cross-site request blocked - for your security, "
+                               "changes must be made from the Lightwork page "
+                               "itself. Reload the dashboard and try again."},
+                    status_code=403,
+                )
+            return await call_next(request)
+        # Client-bound / enterprise: loopback-trust (no-token) mode is DISABLED.
+        # In a hosted/regulated deployment any process sharing the loopback
+        # namespace (a sidecar, a co-located container, an SSRF pivot to
+        # 127.0.0.1) must never become an unauthenticated admin — require a
+        # token (or OIDC) explicitly.
+        try:
+            from maverick.client import client_binding_enforced
+            if client_binding_enforced():
+                _auth_metrics.record_auth_failure("client_binding")
+                return JSONResponse(
+                    {"detail": "Sign-in is required on this deployment — an "
+                               "administrator must configure dashboard "
+                               "authentication for enterprise / client-binding "
+                               "mode (set MAVERICK_DASHBOARD_TOKEN, or enable "
+                               "OIDC)."},
+                    status_code=401,
+                )
+        except Exception:  # pragma: no cover - never break auth on a read error
+            pass
+        # No token configured: serve loopback only. An operator who binds
+        # --host 0.0.0.0 without setting a token must NOT silently expose
+        # run history, spend, and the control surface unauthenticated to
+        # the network. Set MAVERICK_DASHBOARD_TOKEN to allow remote access.
+        client_host = request.client.host if request.client else ""
+        if (
+            _is_loopback_client(client_host)
+            and _is_loopback_request_host(request)
+            and not _is_proxied(request)
+        ):
+            # Loopback is served without a bearer, so a malicious page open in
+            # the user's browser could otherwise drive mutating endpoints via an
+            # ambient cross-site request (CSRF): cancel/resume goals, disable
+            # safety tools, arm the killswitch, purge caches. Gate unsafe methods
+            # behind the same-origin check centrally (the one /chat/send already
+            # enforces per-route) so every current and future /api/v1 mutation is
+            # covered. Token mode needs no such check — a cross-site page cannot
+            # attach the Authorization header.
+            # The bundled WebExtension is the one sanctioned cross-origin
+            # caller: its Origin is chrome-extension://… and it is accepted
+            # only behind the operator's explicit opt-in (see extension_cors).
+            if not _is_same_origin(request) and _allowed_extension_origin(request) is None:
+                return JSONResponse(
+                    {"detail": "cross-site request blocked — for your security, "
+                               "changes must be made from the Lightwork page "
+                               "itself. Reload the dashboard and try again."},
+                    status_code=403,
+                )
+            return await call_next(request)
+        # A VERIFIED invite-minted session is a real credential: accept it for
+        # remote access in no-token mode (same-origin-gated like every other
+        # cookie mode), so an invites-only deployment works over the network
+        # without extra config. Anonymous remote requests still 401 below.
+        try:
+            from .invites import invites_enabled, local_session_principal
+            if invites_enabled() and local_session_principal(request) is not None:
+                if not _is_same_origin(request) and _allowed_extension_origin(request) is None:
+                    return JSONResponse(
+                        {"detail": "cross-site request blocked — for your "
+                                   "security, changes must be made from the "
+                                   "Lightwork page itself. Reload the "
+                                   "dashboard and try again."},
+                        status_code=403,
+                    )
+                return await call_next(request)
+        except Exception:  # pragma: no cover - invites must never open access
+            pass
+        _auth_metrics.record_auth_failure("remote_no_token")
+        return JSONResponse(
+            {"detail": "Remote access to this dashboard requires an access "
+                       "token — an administrator must configure one for "
+                       "non-loopback or proxied access (set "
+                       "MAVERICK_DASHBOARD_TOKEN)."},
+            status_code=401,
+        )
+    auth = request.headers.get("authorization", "")
+    header_token = auth[7:] if auth.startswith("Bearer ") else ""
+    # ``?token=`` query auth was removed: it leaks the bearer through
+    # browser history, Referer headers on outbound link clicks, uvicorn
+    # access logs, and any logging proxy in front. Require the
+    # ``Authorization: Bearer`` header.
+    if header_token and hmac.compare_digest(header_token.encode(), expected.encode()):
+        return await call_next(request)
+    if auth:
+        # A non-static bearer may be an OIDC token in a mixed deployment. Let
+        # the global dependency verify it; malformed/invalid credentials never
+        # fall back to proxy or cookie identity there.
+        if _configured_oidc_bearer_present(request):
+            return await call_next(request)
+        _auth_metrics.record_auth_failure("bad_token")
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    if non_static_auth_configured():
+        # The static operator token composes with proxy/OIDC/SAML/invite browser
+        # identities. Ambient authority remains CSRF-gated; the dependency then
+        # verifies the actual identity and rejects a missing/invalid session.
+        if (
+            not _is_same_origin(request)
+            and _allowed_extension_origin(request) is None
+        ):
+            return JSONResponse(
+                {"detail": "cross-site request blocked - for your security, "
+                           "changes must be made from the Lightwork page "
+                           "itself. Reload the dashboard and try again."},
+                status_code=403,
+            )
+        return await call_next(request)
+    # The bad/missing-bearer case — the credential-stuffing signal an alert
+    # rule watches (a flood here means someone is probing the token).
+    _auth_metrics.record_auth_failure("bad_token")
+    return JSONResponse({"detail": "unauthorized"}, status_code=401)
+
+
+def _wants_html(request: Request) -> bool:
+    """True when the client prefers HTML (browser nav) over JSON (API)."""
+    accept = (request.headers.get("accept") or "").lower()
+    if request.url.path.startswith(("/api/", "/openapi", "/healthz", "/livez", "/readyz", "/metrics")):
+        return False
+    return "text/html" in accept or "*/*" in accept
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Branded HTML for browser 404s; JSON for API callers."""
+    if exc.status_code == 404 and _wants_html(request):
+        return templates.TemplateResponse(
+            request, "404.html",
+            {"path": request.url.path},
+            status_code=404,
+        )
+    return JSONResponse(
+        {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """422 for browser nav becomes 400 with the branded error page."""
+    if _wants_html(request):
+        return templates.TemplateResponse(
+            request, "500.html",
+            {"path": request.url.path},
+            status_code=400,
+        )
+    # exc.errors() can embed the raw request body (bytes) in 'input' when the
+    # client sent a wrong/garbage Content-Type; json.dumps can't serialize bytes,
+    # so a 422 turned into an opaque 500. jsonable_encoder coerces bytes -> str.
+    from fastapi.encoders import jsonable_encoder
+    errors = jsonable_encoder(exc.errors())
+    if request.url.path.startswith(_EVIDENCE_GATEWAY_PREFIX):
+        for error in errors:
+            if isinstance(error, dict) and "input" in error:
+                error["input"] = "[redacted]"
+    return JSONResponse({"detail": errors}, status_code=422)
+
+
+@app.exception_handler(OverflowError)
+async def overflow_exception_handler(request: Request, exc: OverflowError):
+    """An out-of-range integer path param (e.g. goal_id > 2**63-1) can't be a real
+    row -- SQLite raises OverflowError binding it. Treat it as not-found rather
+    than letting it fall through to a 500 (user-testing finding)."""
+    if _wants_html(request):
+        return templates.TemplateResponse(
+            request, "404.html", {"path": request.url.path}, status_code=404,
+        )
+    return JSONResponse({"detail": "not found"}, status_code=404)
+
+
+@app.exception_handler(RuntimeOverridesSecurityError)
+async def runtime_policy_exception_handler(
+    request: Request,
+    exc: RuntimeOverridesSecurityError,
+):
+    """Make a fail-closed operator-policy stop actionable without leaking paths."""
+    log.error(
+        "operator runtime policy is unavailable on %s: %s",
+        request.url.path,
+        exc,
+    )
+    if _wants_html(request):
+        return templates.TemplateResponse(
+            request,
+            "500.html",
+            {"path": request.url.path, "policy_error": True},
+            status_code=503,
+        )
+    return JSONResponse(
+        {
+            "detail": (
+                "operator policy is unavailable; restore or repair "
+                "runtime-overrides.toml before retrying"
+            ),
+            "code": "operator_policy_unavailable",
+        },
+        status_code=503,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catch-all so we never serve the default white "Internal Server Error"."""
+    log.exception("unhandled dashboard exception on %s", request.url.path)
+    if _wants_html(request):
+        return templates.TemplateResponse(
+            request, "500.html",
+            {"path": request.url.path},
+            status_code=500,
+        )
+    return JSONResponse({"detail": "internal server error"}, status_code=500)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Apply baseline browser-security headers to every response.
+
+    These are cheap, well-supported, and close a class of attacks
+    (clickjacking, MIME sniffing, Referer leakage, cross-origin
+    exfiltration) the dashboard had no defense against before.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # "same-origin", NOT "no-referrer": under no-referrer the Fetch spec makes
+    # browsers send "Origin: null" on same-origin form POST navigations, which
+    # the CSRF guard (_is_same_origin) must reject — so every native form save
+    # in the dashboard 403'd in a real browser ("cross-site request blocked")
+    # while fetch()-based saves (mode "cors" keeps the real Origin) and tests
+    # (explicit Origin header) still passed. same-origin keeps the privacy win
+    # (no Referer leaks to external sites) and restores Origin/Referer on
+    # first-party requests.
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Cross-Origin-Opener-Policy", "same-origin",
+    )
+    # Drop the ambient-capability attack surface. microphone=(self) because
+    # the chat pages capture voice in-browser (getUserMedia); camera,
+    # geolocation, and payment are never used, so deny them outright.
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "geolocation=(), camera=(), payment=(), microphone=(self)",
+    )
+    # no-store on everything by default so authenticated HTML and sensitive
+    # JSON aren't left in the browser's back/forward cache or a shared proxy
+    # after logout. setdefault preserves the explicit caching the static-asset
+    # and SSE routes already set (public max-age / no-cache).
+    response.headers.setdefault("Cache-Control", "no-store")
+    # HSTS only when the request actually arrived over TLS (directly or via a
+    # terminating proxy) — never on plain-HTTP loopback dev, which HSTS would
+    # otherwise pin to https and break.
+    if (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+    ):
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains",
+        )
+    # Content-Security-Policy. The templates use first-party inline
+    # <style>, <script>, and style="" attributes, so script/style-src
+    # need 'unsafe-inline' for now (a nonce-based tightening is tracked
+    # tech debt). The value still hardens the dashboard meaningfully:
+    #   - default/connect/script/style 'self' → injected JS can't fetch()
+    #     to an external exfil endpoint or pull a remote script
+    #   - frame-ancestors 'none' → reinforces X-Frame-Options (clickjack)
+    #   - form-action 'self' → an injected <form> can't POST off-origin
+    #   - object-src 'none', base-uri 'none' → kill plugin + <base> tricks
+    # This matters because the dashboard renders agent-produced text;
+    # if any of it ever reaches an HTML sink, CSP is the backstop.
+    path = request.url.path
+    if path in {"/docs", "/redoc"}:
+        csp = _DOCS_CSP
+    elif _PLAN_TREE_PATH_RE.match(path):
+        csp = _PLAN_TREE_CSP
+    else:
+        csp = _DEFAULT_CSP
+    response.headers.setdefault("Content-Security-Policy", csp)
+    return response
+
+
+# ----- browser-extension CORS gate (extensions/browser) -----
+# The bundled WebExtension is a cross-origin caller: its popup/service-worker
+# fetches arrive with an Origin of chrome-extension://<id> (moz-extension://
+# <uuid> on Firefox). Browsers need CORS approval for it to read responses,
+# and the no-token CSRF gate in bearer_auth would otherwise 403 its POSTs.
+# This allowance is OPT-IN and fail-closed: until the operator sets
+# `[dashboard] allow_extension = true` (or MAVERICK_DASHBOARD_ALLOW_EXTENSION=1)
+# AND configures MAVERICK_DASHBOARD_TOKEN, no CORS header is ever emitted and
+# extension origins stay blocked. Requiring a bearer token keeps extension
+# support from turning no-token loopback mode into an ambient trust boundary for
+# any installed browser extension. The allowance is scoped to extension origins
+# only — a web origin (https://…) never matches, so the same-origin posture for
+# ordinary sites is unchanged.
+_EXTENSION_ORIGIN_RE = re.compile(r"^(?:chrome|moz)-extension://[a-zA-Z0-9-]+$")
+
+
+def _extension_cors_enabled() -> bool:
+    """Operator opt-in for the bundled WebExtension. Fail-closed default."""
+    if os.environ.get("MAVERICK_DASHBOARD_ALLOW_EXTENSION") == "1":
+        return True
+    try:
+        from maverick.config import load_config
+        return bool(((load_config() or {}).get("dashboard") or {}).get("allow_extension"))
+    except Exception:
+        return False
+
+
+def _allowed_extension_origin(request: Request) -> str | None:
+    """The request's Origin, iff extension CORS is enabled and token-gated."""
+    origin = request.headers.get("origin") or ""
+    if (
+        os.environ.get("MAVERICK_DASHBOARD_TOKEN")
+        and _EXTENSION_ORIGIN_RE.match(origin)
+        and _extension_cors_enabled()
+    ):
+        return origin
+    return None
+
+
+@app.middleware("http")
+async def extension_cors(request: Request, call_next):
+    """CORS for the bundled WebExtension only (opt-in; see above).
+
+    Registered after the other middlewares, so it is OUTERMOST: preflights
+    are answered before bearer_auth (a preflight carries no Authorization
+    header by design and grants nothing by itself), and the CORS header is
+    added to every response for an allowed origin — including 401s, so the
+    popup can read the error instead of a blocked-by-CORS blank.
+    """
+    origin = _allowed_extension_origin(request)
+    if origin is None:
+        return await call_next(request)
+    if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+        return PlainTextResponse("", status_code=204, headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        })
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = origin
+    vary = response.headers.get("Vary")
+    if not vary:
+        response.headers["Vary"] = "Origin"
+    elif "origin" not in vary.lower():
+        response.headers["Vary"] = f"{vary}, Origin"
+    return response
+
+
+@app.middleware("http")
+async def tenant_pinning(request: Request, call_next):
+    """Reset any per-request tenant pin established by authentication.
+
+    The actual pin is set inside ``require_principal`` after FastAPI has resolved
+    the verified caller but before route handlers run. This outer middleware owns
+    cleanup so the ContextVar token never leaks across requests/tasks.
+    """
+    try:
+        return await call_next(request)
+    finally:
+        token = getattr(request.state, "tenant_pin_token", None)
+        if token is not None:
+            try:
+                from maverick.paths import reset_tenant
+                reset_tenant(token)
+            except Exception:  # pragma: no cover
+                pass
+
+
+# ----- goal-creation rate limit -----
+# Council safety-seat (round 1): nothing throttled /chat/send or
+# POST /api/v1/goals. A runaway loop or a flood of same-origin posts
+# could spawn unbounded goals, each costing real money. This is an
+# in-process sliding-window limiter (no new dependency) shared by all
+# goal-creating routes. Caps are generous and configurable.
+#
+# Exposed-deployment hardening: the window used to be one process-wide
+# deque shared across every caller AND the HMAC webhooks, so a single
+# noisy client (or a webhook flood) 429'd everyone. Key the per-client
+# window per principal/source (client IP, or a webhook source label) and
+# keep a separate global ceiling so the process still can't be driven to
+# spawn unbounded paid goals in aggregate.
+_goal_times: dict[str, deque[float]] = {}
+_goal_times_global: deque[float] = deque()
+_goal_rl_lock = threading.Lock()
+
+
+def _max_goals_per_min() -> int:
+    try:
+        return max(1, int(os.environ.get("MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN", "30")))
+    except ValueError:
+        return 30
+
+
+def _max_goals_global_per_min() -> int:
+    # Process-wide ceiling across all clients; defaults to 10x the per-client
+    # cap so one client can't starve others yet a distributed flood is still
+    # bounded.
+    try:
+        return max(1, int(os.environ.get(
+            "MAVERICK_DASHBOARD_MAX_GOALS_GLOBAL_PER_MIN",
+            str(_max_goals_per_min() * 10),
+        )))
+    except ValueError:
+        return _max_goals_per_min() * 10
+
+
+def _rate_limit_key(request: Request | None, source: str | None = None) -> str:
+    """Identify the principal/source for rate-limiting.
+
+    Prefer the authenticated principal when one is established (so a reverse
+    proxy that collapses every user onto one client IP doesn't lump them into
+    a single bucket), falling back to the client IP otherwise. HMAC webhooks
+    pass an explicit ``source`` label since their callers share no useful
+    client identity.
+    """
+    if source:
+        return f"source:{source}"
+    principal = caller_principal(request) if request else None
+    if principal:
+        return f"principal:{principal}"
+    host = request.client.host if (request and request.client) else "unknown"
+    return f"ip:{host}"
+
+
+# Synthetic bucket for the process-wide ceiling in the shared store.
+_RL_GLOBAL_KEY = "__rl_goal_global__"
+
+
+def _shared_rate_limit_check(key: str, cap: int, global_cap: int) -> bool:
+    """Cross-replica goal-creation rate check, backed by the shared world store.
+
+    The in-process windows below only bound ONE replica, so N replicas admit N x
+    the cap. When Postgres (the HA backend) is configured, count admitted events
+    in the shared ``rate_events`` table across a 60s wall-clock window (shared
+    across replicas, unlike the in-process monotonic clock) and record this one.
+    Returns True when it admitted the request, raises ``HTTPException(429)`` when
+    a cap is exceeded, and returns False when there is no shared backend / it is
+    unavailable (the caller then applies the in-process limiter). A small
+    over-admission race is acceptable for a spend backstop -- it is not a hard
+    security boundary."""
+    try:
+        from maverick.world_model_backends import is_postgres_configured
+        if not is_postgres_configured():
+            return False
+        w = _world()
+        result = w.reserve_rate_events(key, cap, _RL_GLOBAL_KEY, global_cap, time.time())
+        if result == "global":
+            raise HTTPException(
+                status_code=429,
+                detail=f"goal rate limit reached ({global_cap}/min total). Try again shortly.",
+                headers={"Retry-After": "60"},
+            )
+        if result == "key":
+            raise HTTPException(
+                status_code=429,
+                detail=f"goal rate limit reached ({cap}/min). Try again shortly.",
+                headers={"Retry-After": "60"},
+            )
+        return True
+    except HTTPException:
+        raise
+    except Exception:  # pragma: no cover - never fail the request closed on a store blip
+        log.warning("shared rate limiter unavailable, using in-process window")
+        return False
+
+
+def check_goal_rate_limit(
+    request: Request | None = None, *, source: str | None = None
+) -> None:
+    """Raise HTTPException(429) if the goal-creation rate exceeds a cap.
+
+    Two 60-second sliding windows are enforced: a per-client window keyed
+    by principal/source (so one noisy client can't 429 everyone) and a
+    process-wide global ceiling (so a distributed flood still can't spawn
+    unbounded paid goals). On the Postgres (HA) backend these windows are
+    shared across replicas (see :func:`_shared_rate_limit_check`); otherwise
+    they are the per-process windows below.
+    """
+    key = _rate_limit_key(request, source)
+    cap = _max_goals_per_min()
+    global_cap = _max_goals_global_per_min()
+    if _shared_rate_limit_check(key, cap, global_cap):
+        return
+    now = time.monotonic()
+    cutoff = now - 60.0
+    with _goal_rl_lock:
+        # Global ceiling first.
+        while _goal_times_global and _goal_times_global[0] < cutoff:
+            _goal_times_global.popleft()
+        if len(_goal_times_global) >= global_cap:
+            retry = int(60 - (now - _goal_times_global[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=f"goal rate limit reached ({global_cap}/min total). "
+                       f"Try again in {retry}s.",
+                headers={"Retry-After": str(max(1, retry))},
+            )
+
+        window = _goal_times.get(key)
+        if window is None:
+            window = _goal_times[key] = deque()
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= cap:
+            retry = int(60 - (now - window[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=f"goal rate limit reached ({cap}/min). Try again in {retry}s.",
+                headers={"Retry-After": str(max(1, retry))},
+            )
+
+        # Sweep EVERY other key's window of expired entries, then drop the ones
+        # that became empty. The old check only collected ALREADY-empty deques,
+        # but a key whose lone entry expired and whose IP/principal never recurs
+        # was never pruned (its deque kept len 1, so `not w` stayed False) -- so
+        # a stream of distinct one-shot keys (many principals / direct client
+        # IPs) grew the dict without bound. Bounded by the number of keys active
+        # within the window now.
+        for stale_key in list(_goal_times):
+            if stale_key == key:
+                continue
+            w = _goal_times[stale_key]
+            while w and w[0] < cutoff:
+                w.popleft()
+            if not w:
+                del _goal_times[stale_key]
+
+        window.append(now)
+        _goal_times_global.append(now)
+
+
+# ----- SSE stream concurrency cap -----
+# Council security finding (exposed-deployment hardening): each open SSE
+# stream spawns a 300s task polling SQLite every 0.5s. Thousands of
+# EventSource opens exhaust file descriptors and the event loop. The cap now
+# lives in _shared so app and api share ONE process-wide semaphore (was a
+# verbatim copy in each module -> two independent caps). Imported above.
+
+
+def _load_skills():
+    from maverick.skills import load_skills
+    return load_skills()
+
+
+@app.get("/demo", response_class=HTMLResponse)
+async def public_demo(request: Request) -> HTMLResponse:
+    """Redacted public-demo page for the reference demo-cluster proxy.
+
+    The demo proxy exposes this route to the internet. Keep it intentionally
+    narrow: render only goals owned by the seeded ``demo`` principal and never
+    include facts, spend, audit logs, tool configuration, or other operator
+    state that authenticated dashboard GET endpoints may expose.
+    """
+    from html import escape
+
+    goals = _world().list_goals(owner="demo", limit=50, order="desc")
+    cards = []
+    for goal in goals:
+        status = escape(str(getattr(goal, "status", "")))
+        title = escape(str(getattr(goal, "title", "")))
+        description = escape(str(getattr(goal, "description", "") or ""))
+        result = escape(str(getattr(goal, "result", "") or ""))
+        cards.append(
+            "<article class='card'>"
+            f"<p class='status'>{status}</p>"
+            f"<h2>{title}</h2>"
+            f"<p>{description}</p>"
+            f"<p><strong>Result:</strong> {result}</p>"
+            "</article>"
+        )
+    body = "".join(cards) or "<p class='empty'>No seeded demo goals are available yet.</p>"
+    return HTMLResponse(
+        "<!doctype html>"
+        "<html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Lightwork public demo</title>"
+        "<style>"
+        ":root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;"
+        "background:#0d1117;color:#e6edf3}"
+        "body{margin:0;padding:2rem;max-width:1100px;margin-inline:auto}"
+        "header{margin-bottom:2rem}.eyebrow,.status{color:#2ea043;"
+        "text-transform:uppercase;letter-spacing:.08em;font-size:.8rem}"
+        ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}"
+        ".card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:1rem}"
+        ".empty{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:1rem}"
+        "a{color:#58a6ff}"
+        "</style></head><body>"
+        "<header><p class='eyebrow'>read-only public snapshot</p>"
+        "<h1>Lightwork demo</h1>"
+        "<p>This page intentionally shows only seeded demo-owned finished runs. "
+        "Operator state, audit logs, spend, facts, plugins, permissions, and "
+        "the rest of the authenticated dashboard are not proxied publicly.</p>"
+        "</header><main class='grid'>"
+        f"{body}"
+        "</main></body></html>"
+    )
+
+
+@app.get("/overview", response_class=HTMLResponse)
+async def overview(request: Request) -> HTMLResponse:
+    w = _world()
+    # Use SQL aggregation instead of pulling every goal into Python. Owner-scope
+    # the rollup to the caller (auth-off/admin -> all; see goal_owner_filter).
+    owner = goal_owner_filter(request)
+    if owner is None:
+        rows = w.conn.execute(
+            "SELECT status, COUNT(*) FROM goals GROUP BY status"
+        ).fetchall()
+    else:
+        rows = w.conn.execute(
+            "SELECT status, COUNT(*) FROM goals WHERE owner = ? GROUP BY status",
+            (owner,),
+        ).fetchall()
+    by_status = {r[0]: int(r[1]) for r in rows}
+    counts = {
+        "total":   sum(by_status.values()),
+        "active":  by_status.get("active", 0),
+        "done":    by_status.get("done", 0),
+        "blocked": by_status.get("blocked", 0),
+    }
+    # The executive board (charts, KPI deltas, recent list) renders client-side
+    # from GET /api/v1/dashboards/overview; the page only needs the hero counts.
+    facts = w.get_facts()
+    skills = _load_skills()
+    return templates.TemplateResponse(
+        request, "index.html",
+        {"counts": counts, "facts": facts, "skills": skills[:10]},
+    )
+
+
+@app.get("/redact", response_class=HTMLResponse)
+async def redact_page(request: Request) -> HTMLResponse:
+    """Granular redaction UI (preview/select/scrub via /api/v1/redact/preview)."""
+    return templates.TemplateResponse(request, "redact.html", {})
+
+
+@app.get("/workforce", response_class=HTMLResponse)
+async def workforce_page(request: Request) -> HTMLResponse:
+    """The workforce: specialist packs as departments, with delivery outcomes.
+
+    Presents the 1,000+ packs as buyable teams (charter + headcount), a
+    firm-wide delivery rollup from the Operating Record, and the catalog counts.
+    Per-department governed reviews load from /api/v1/departments/{key}/review.
+    """
+    from maverick.departments import department_entitled, list_departments
+    from maverick.marketplace.storefront import connector_marketplace
+    from maverick.operating_record import assemble
+    from maverick.outcomes import firm_totals
+
+    from .auth import scope_to_suites
+
+    w = _world()
+    # Job-function scoping: mirror GET /api/v1/departments — a caller with a
+    # department grant sees only their departments.
+    depts = scope_to_suites(request, list_departments(),
+                            suite_of=lambda d: d.key, keep_none=False)
+    owner = goal_owner_filter(request)
+    firm = firm_totals(assemble(w, owner=owner)).to_dict()
+    # The delivery/spend/leader charts render client-side from
+    # GET /api/v1/dashboards/workforce.
+    return templates.TemplateResponse(
+        request, "workforce.html",
+        {
+            "departments": depts,
+            "entitlements": {d.key: department_entitled(d.key) for d in depts},
+            "firm": firm,
+            "pack_total": sum(d.headcount for d in depts),
+            "connector_total": connector_marketplace()["total"],
+        },
+    )
+
+
+@app.get("/learning", response_class=HTMLResponse)
+async def learning_page(request: Request) -> HTMLResponse:
+    """The learning moat: which learning systems are on, and the durable,
+    per-tenant judgement the workforce has accumulated (Operating Record +
+    grounded outcomes + self-taught capabilities). Read-only; same numbers as
+    /api/v1/learning."""
+    from .api import _learning_snapshot
+    return templates.TemplateResponse(
+        request, "learning.html", {"snap": _learning_snapshot(request)},
+    )
+
+
+@app.get("/perf", response_class=HTMLResponse)
+async def perf_page(request: Request) -> HTMLResponse:
+    """Public perf dashboard: SLA + benchmark history (data via /api/v1/perf)."""
+    return templates.TemplateResponse(request, "perf.html", {})
+
+
+@app.get("/goals", response_class=HTMLResponse)
+async def goals_page(request: Request) -> HTMLResponse:
+    goals = _world().list_goals(owner=goal_owner_filter(request), limit=200, order="desc")
+    return templates.TemplateResponse(request, "goals.html", {"goals": goals})
+
+
+@app.get("/projects", response_class=HTMLResponse)
+async def projects_page(request: Request) -> HTMLResponse:
+    """Projects ("matters") -- workspaces grouping related goals."""
+    projects = _world().list_projects(owner=goal_owner_filter(request))
+    return templates.TemplateResponse(request, "projects.html", {"projects": projects})
+
+
+@app.post("/projects")
+async def projects_create(request: Request, name: str = Form(...),
+                          description: str = Form(""), domain: str = Form("")) -> RedirectResponse:
+    """Create a project, then redirect to it. Same-origin; owned by the caller."""
+    _require_same_origin(request)
+    if not name.strip():
+        raise HTTPException(status_code=422, detail="a project needs a name")
+    pid = _world().create_project(
+        name.strip(), description=description.strip(),
+        owner=goal_owner_filter(request) or "", domain=domain.strip())
+    return RedirectResponse(f"/projects/{pid}", status_code=303)
+
+
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+async def project_detail(request: Request, project_id: int) -> HTMLResponse:
+    w = _world()
+    project = w.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    # Owner-scoped like goals: a project you don't own 404s rather than leaks.
+    owner = goal_owner_filter(request)
+    if owner is not None and project["owner"] not in ("", owner):
+        raise HTTPException(status_code=404, detail="no such project")
+    goals = w.list_goals(project_id=project_id, order="desc")
+    return templates.TemplateResponse(
+        request, "project_detail.html",
+        {"project": project, "goals": goals, "counts": w.project_status_counts(project_id)})
+
+
+@app.post("/chat/goal/{goal_id}/project")
+async def goal_set_project(request: Request, goal_id: int,
+                           project_id: str = Form("")) -> RedirectResponse:
+    """File a goal under a project (empty value clears it). Same-origin; the
+    caller must be able to access the goal."""
+    _require_same_origin(request)
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    pid = int(project_id) if project_id.strip() else None
+    w.set_goal_project(goal_id, pid)
+    return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
+
+
+@app.get("/styles", response_class=HTMLResponse)
+async def styles_page(request: Request) -> HTMLResponse:
+    """Output styles -- the response style applied to every run."""
+    from maverick.styles import active_style_name, all_styles
+    items = [{"name": n, "guidance": g} for n, g in sorted(all_styles().items())]
+    return templates.TemplateResponse(
+        request, "output_styles.html",
+        {"styles": items, "active": active_style_name()})
+
+
+@app.post("/styles/set")
+async def styles_set(request: Request, name: str = Form("")) -> RedirectResponse:
+    """Set the active output style (empty value clears it). Same-origin; the
+    operator role (it changes how every agent responds)."""
+    _require_same_origin(request)
+    require_permission(request, "operate")
+    from maverick import runtime_overrides
+    n = (name or "").strip()
+    try:
+        runtime_overrides.set_style(n) if n else runtime_overrides.clear_style()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/styles", status_code=303)
+
+
+def _deliverable_specs() -> list[dict]:
+    """The packs that declare a deliverable -- the rows of the persona inbox.
+
+    A pack earns a spec once its output contract names a deliverable or its
+    consumers; packs that only emit prose stay out of the inbox (they're plain
+    runs on ``/goals``). Fail-soft to an empty list so the page never 500s if
+    the factory layer is unavailable."""
+    try:
+        from maverick.domain import available_domains, enforced_gate, suite_for
+    except Exception:  # pragma: no cover -- factory layer unavailable
+        return []
+    specs: list[dict] = []
+    for name, prof in sorted(available_domains().items()):
+        out = prof.output
+        if not (out.deliverable or out.consumers):
+            continue
+        specs.append({
+            "domain": name,
+            "deliverable": out.deliverable or name,
+            "shape": out.shape,
+            "consumers": list(out.consumers),
+            "cadence": out.cadence,
+            "gate": enforced_gate(prof),
+            "suite": suite_for(name),
+        })
+    return specs
+
+
+@app.get("/deliverables", response_class=HTMLResponse)
+async def deliverables_page(request: Request, role: str = "") -> HTMLResponse:
+    """The persona inbox: runs grouped by the deliverable their pack declares,
+    scoped to the role that consumes them -- "my forecasts", "assessments
+    awaiting my sign-off" -- instead of the flat ``/goals`` stream.
+
+    With no explicit ``?role=``, defaults to the caller's own persona roles
+    (``[personas]`` config) so a logged-in analyst lands on their deliverables;
+    ``?role=all`` widens to everything, ``?role=<r>`` picks a single role."""
+    from .auth import scope_to_suites
+    from .deliverables import build_inbox, persona_roles_for
+    # Job-function scoping: a scoped caller's inbox lists only their
+    # departments' deliverable specs (plus generic packs), matching /agents.
+    specs = scope_to_suites(request, _deliverable_specs(),
+                            suite_of=lambda s: s.get("suite"))
+    owner = goal_owner_filter(request)
+    runs_by_domain: dict[str, list] = {}
+    for s in specs:
+        try:
+            runs_by_domain[s["domain"]] = _world().list_goals(
+                domain=s["domain"], owner=owner, limit=5, order="desc")
+        except Exception:  # pragma: no cover -- a bad domain query never breaks the page
+            runs_by_domain[s["domain"]] = []
+    ids = [g.id for runs in runs_by_domain.values() for g in runs]
+    try:
+        signoffs = _world().signoffs_for_goals(ids)
+    except Exception:  # pragma: no cover -- never break the page on the sign-off lookup
+        signoffs = {}
+    # Explicit chip wins; "all" forces the full view; otherwise default to mine.
+    selected = role if role and role != "all" else None
+    mine = set(persona_roles_for(caller_principal(request)))
+    default_mine = mine if (not selected and role != "all") else None
+    model = build_inbox(specs, runs_by_domain, selected, signoffs, mine=default_mine)
+    return templates.TemplateResponse(request, "deliverables.html", model)
+
+
+@app.get("/tenants", response_class=HTMLResponse)
+async def tenants_page(request: Request) -> HTMLResponse:
+    """Operator console: the provisioned-tenant roster (status / plan / quota).
+
+    Cross-tenant control-plane data, so it is admin-only: the RBAC "admin"
+    permission gates the route outright (matching the page's visibility floor),
+    and a store-assigned admin role counts the same as a config-pinned
+    bootstrap admin. Fail-soft to an empty roster so a missing registry never
+    500s the console.
+    """
+    require_permission(request, "admin")
+    try:
+        from maverick.tenant.registry import list_tenants
+        tenants = list_tenants()
+    except Exception:  # pragma: no cover -- never 500 the console
+        tenants = []
+    return templates.TemplateResponse(
+        request, "tenants.html", {"tenants": tenants, "is_admin": True},
+    )
+
+
+def _tenant_overview_rows() -> list[dict]:
+    """Per-tenant rollup for the multi-tenant view: goals by status (from the
+    tenant's configured world backend), today's spend, suspended flag.
+
+    Fail-soft per tenant: an unreadable world DB or spend ledger yields zero
+    counts/spend, never a 500. On SQLite a tenant whose world.db doesn't exist
+    yet reports empty counts rather than materializing the DB. Postgres has no
+    local sentinel file, so it is always queried under an explicit tenant
+    scope through the canonical backend selector.
+    """
+    from maverick.tenant.registry import list_tenants, tenant_spend_today
+    from maverick.world_model_backends import is_postgres_configured
+
+    postgres = is_postgres_configured()
+    rows: list[dict] = []
+    for t in list_tenants():
+        counts: dict[str, int] = {}
+        try:
+            from maverick.workspace import Workspace
+            db = Workspace(t.id).db_path
+            if postgres or db.exists():
+                from maverick.paths import tenant_scope
+                from maverick.world_model import close_world_if_owned, open_world
+
+                with tenant_scope(tenant=t.id):
+                    wm = open_world()
+                    try:
+                        # Aggregate in the selected backend. Do not decrypt and
+                        # materialize every goal just to render a histogram.
+                        counts = wm.goal_status_counts()
+                    finally:
+                        close_world_if_owned(wm)
+        except Exception:  # pragma: no cover -- one bad tenant DB never 500s
+            counts = {}
+        try:
+            spend = float(tenant_spend_today(t.id))
+        except Exception:  # pragma: no cover -- spend read never blocks the view
+            spend = 0.0
+        rows.append({
+            "id": t.id,
+            "display_name": t.display_name,
+            "plan": t.plan,
+            "status": t.status,
+            "suspended": not t.active,
+            "goals": counts,
+            "total_goals": sum(counts.values()),
+            "spend_today": round(spend, 4),
+            "max_daily_dollars": t.max_daily_dollars,
+        })
+    return rows
+
+
+@app.get("/tenants/overview", response_class=HTMLResponse)
+async def tenants_overview_page(request: Request) -> HTMLResponse:
+    """Multi-tenant view: per-tenant goal/spend rollup for the operator.
+
+    Admin-only exactly like ``/tenants`` (cross-tenant control-plane data):
+    the RBAC "admin" permission gates the route outright. Fail-soft to an
+    empty roster so a missing registry never 500s the console.
+    """
+    require_permission(request, "admin")
+    try:
+        rows = _tenant_overview_rows()
+    except Exception:  # pragma: no cover -- never 500 the console
+        rows = []
+    return templates.TemplateResponse(
+        request, "tenants_overview.html", {"rows": rows, "is_admin": True},
+    )
+
+
+@app.get("/api/v1/tenants/overview")
+async def tenants_overview_api(request: Request) -> JSONResponse:
+    """JSON face of the multi-tenant view. Admin-only like ``/tenants`` (the
+    RBAC "admin" permission, so store-assigned admins count too)."""
+    require_permission(request, "admin")
+    try:
+        rows = _tenant_overview_rows()
+    except Exception:  # pragma: no cover -- never 500 the console
+        rows = []
+    return JSONResponse({"tenants": rows})
+
+
+@app.get("/skills", response_class=HTMLResponse)
+async def skills_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "skills.html", {"skills": _load_skills()})
+
+
+@app.get("/learned", response_class=HTMLResponse)
+async def learned_page(request: Request) -> HTMLResponse:
+    """Self-learning observability: the learned-capability ledger + the
+    on-disk generated tools, with a remove action per generated tool (#427)."""
+    from .api import _learned_snapshot
+    return templates.TemplateResponse(
+        request, "learned.html",
+        _learned_snapshot(include_pending_items=has_permission(request, "admin")),
+    )
+
+
+@app.get("/facts", response_class=HTMLResponse)
+async def facts_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "facts.html", {"facts": _world().get_facts()})
+
+
+@app.get("/spend", response_class=HTMLResponse)
+async def spend_page(request: Request) -> HTMLResponse:
+    # The burn/outcome/top-goal charts render client-side from
+    # GET /api/v1/dashboards/spend; the page keeps the episode table + hero.
+    w = _world()
+    return templates.TemplateResponse(
+        request, "spend.html",
+        {"episodes": w.list_episodes(limit=50), "total": w.total_spend()},
+    )
+
+
+# One assessment engine, one workspace chassis per department: each
+# department page filters the same records/templates to its own types.
+PRIVACY_ASSESSMENT_TYPES = frozenset(
+    {"pia", "dpia", "lia", "ccpa", "aira", "vendor_risk", "tia"})
+FINANCE_ASSESSMENT_TYPES = frozenset(
+    {"sox_control", "fraud_risk", "itgc", "credit_risk", "close_readiness"})
+SECURITY_ASSESSMENT_TYPES = frozenset({
+    "soc2", "iso27001", "nist_csf", "nist_800_53", "cis_v8",
+    "pci_dss", "hipaa", "cmmc_l2", "fedramp_moderate",
+})
+
+
+def _workspace_ctx(department: str, viewer: str = "") -> dict:
+    """Chassis context for a department workspace: the worklist (risk pair,
+    aging, follow-ups), hero stats, precedent memory, and catalog — filtered
+    to the department's assessment types (built-ins plus any custom
+    templates authored for this department).
+
+    ``viewer`` is the signed-in principal; rows they own are flagged ``mine``
+    so the worklist can answer "what is on my desk?" rather than only "what is
+    outstanding?"."""
+    import time as _time
+
+    from maverick.assessment import (
+        custom_template_records,
+        list_saved,
+        list_templates,
+    )
+
+    base = {
+        "finance": FINANCE_ASSESSMENT_TYPES,
+        "privacy": PRIVACY_ASSESSMENT_TYPES,
+        "security": SECURITY_ASSESSMENT_TYPES,
+    }.get(department, frozenset())
+    customs = custom_template_records()
+    types = set(base) | {
+        t for t, rec in customs.items()
+        if rec.get("department", "privacy") == department}
+
+    sessions = [s for s in list_saved() if s.get("type") in types]
+    now = _time.time()
+    me = (viewer or "").strip()
+    for s in sessions:
+        created = float(s.get("created_at") or 0)
+        s["age_days"] = int((now - created) // 86400) if created else None
+        nra = s.get("next_review_at")
+        # Days until the scheduled re-review (negative = overdue).
+        s["review_in_days"] = (int((float(nra) - now) // 86400)
+                               if nra else None)
+        # Only a real signed-in principal owns rows. In auth-off single-user
+        # mode `me` is empty, and an empty assignee must NOT then read as
+        # "mine" -- that would make every unassigned record look owned.
+        s["mine"] = bool(me) and s.get("assignee") == me
+    open_rows = [s for s in sessions
+                 if s.get("status") in ("pending_review", "needs_more")]
+    stats = {
+        "total": len(sessions),
+        "pending": sum(1 for s in sessions
+                       if s.get("status") == "pending_review"),
+        "needs_more": sum(1 for s in sessions
+                          if s.get("status") == "needs_more"),
+        "high_residual": sum(1 for s in sessions
+                             if s.get("residual_risk") == "high"),
+        "review_due": sum(1 for s in sessions if s.get("review_due")),
+        "mine": sum(1 for s in sessions if s.get("mine")),
+        "unassigned": sum(1 for s in sessions if not s.get("assignee")),
+        "oldest_open_days": (max((s["age_days"] or 0) for s in open_rows)
+                            if open_rows else None),
+    }
+    # At program volume (hundreds of records a year) the worklist stays
+    # sharp: actionable rows first (open work + anything due for
+    # re-review), then settled records by recency, capped — the hero stats
+    # always count everything.
+    def _rank(s: dict) -> tuple:
+        actionable = (s.get("status") in ("pending_review", "needs_more")
+                      or s.get("review_due"))
+        return (0 if actionable else 1, -(s.get("created_at") or 0))
+
+    worklist = sorted(sessions, key=_rank)[:250]
+    return {
+        "sessions": sessions,
+        "worklist": worklist,
+        "stats": stats,
+        "department": department,
+        # Precedents: what the memory recalls from — recent completions.
+        "precedents": sessions[:8],
+        "templates": [{"type": t.type, "title": t.title,
+                       "framework": t.framework,
+                       "questions": len(t.questions),
+                       "custom": t.type in customs}
+                      for t in list_templates() if t.type in types],
+    }
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page(request: Request) -> HTMLResponse:
+    """The Privacy workspace: the module view over the privacy team's
+    assessment records — worklist with the inherent→residual pair, aging,
+    open follow-ups, the precedent memory, the framework catalog, and the
+    privacy ops record types (DPA reviews, AI registry, RoPA, DSARs).
+
+    Operate-gated like /approvals: assessment records carry answer bodies and
+    reviewer threads, a tier above viewer summaries.
+    """
+    require_permission(request, "operate")
+    import time as _time
+
+    ctx = _workspace_ctx("privacy", viewer=caller_principal(request) or "")
+    # The record types — the data plane behind the [privacy_ops] knob. The
+    # page still works without them.
+    from maverick import privacy_ops
+    records = {"enabled": privacy_ops.enabled(), "kind": "privacy",
+               "dpa": [], "ai": [], "ropa": [], "dsar": [], "incidents": [],
+               "paper": []}
+    if records["enabled"]:
+        records["dpa"] = privacy_ops.list_dpa_reviews()
+        records["ai"] = privacy_ops.list_ai_systems()
+        records["ropa"] = privacy_ops.list_ropa()
+        records["dsar"] = privacy_ops.list_dsars()
+        records["incidents"] = privacy_ops.list_incidents()
+        records["paper"] = privacy_ops.list_paper_reviews()
+        for rows in (records["dpa"], records["ai"], records["ropa"],
+                     records["dsar"], records["incidents"],
+                     records["paper"]):
+            for r in rows:
+                created = float(r.get("created_at") or 0)
+                r["created"] = (_time.strftime("%Y-%m-%d",
+                                               _time.localtime(created))
+                                if created else "—")
+        records["dsar_open"] = sum(
+            1 for r in records["dsar"]
+            if r.get("status") in ("open", "awaiting_erasure"))
+        records["dsar_overdue"] = sum(
+            1 for r in records["dsar"] if r.get("overdue"))
+        records["incidents_open"] = sum(
+            1 for r in records["incidents"]
+            if r.get("status") in ("open", "notify"))
+        records["incidents_breached"] = sum(
+            1 for r in records["incidents"] if r.get("clock_breached"))
+    ctx["records"] = records
+    return templates.TemplateResponse(request, "privacy.html", ctx)
+
+
+@app.get("/privacy/board", response_class=HTMLResponse)
+async def privacy_board_page(request: Request) -> HTMLResponse:
+    """The privacy command center: the whole program on one live board --
+    KPI tiles with deltas, the risk mix and burn-down, 12 months of
+    throughput, DSAR SLA runway, transfer safeguards, AI Act tiers, and
+    posture gauges, with click-to-cross-filter. Same operate floor as the
+    workspace; the numbers arrive from GET /api/v1/privacy/board."""
+    require_permission(request, "operate")
+    return templates.TemplateResponse(request, "privacy_board.html", {})
+
+
+@app.get("/privacy/report", response_class=HTMLResponse)
+async def privacy_report_page(request: Request) -> HTMLResponse:
+    """The privacy program report: a print-friendly board pack over every
+    register. Same operate floor as the workspace it summarizes."""
+    require_permission(request, "operate")
+    import time as _time
+
+    from maverick import privacy_ops
+    if not privacy_ops.enabled():
+        raise HTTPException(status_code=404,
+                            detail="privacy ops are disabled")
+    report = privacy_ops.program_report()
+    report["generated"] = _time.strftime(
+        "%Y-%m-%d %H:%M", _time.localtime(report["generated_at"]))
+    return templates.TemplateResponse(request, "privacy_report.html",
+                                      {"r": report})
+
+
+@app.get("/security", response_class=HTMLResponse)
+async def security_page(request: Request) -> HTMLResponse:
+    """Security & GRC department workspace over assessments and durable
+    control-program records. Record contents are operate-tier data."""
+    require_permission(request, "operate")
+    from maverick import security_ops
+
+    ctx = _workspace_ctx("security", viewer=caller_principal(request) or "")
+    records = {
+        "enabled": security_ops.enabled(),
+        "kind": "security",
+        "controls": [],
+        "evidence": [],
+        "risks": [],
+        "poams": [],
+        "vendors": [],
+        "policies": [],
+        "incidents": [],
+        "audits": [],
+    }
+    report: dict = {}
+    framework_labels = (
+        ("soc2", "SOC 2"),
+        ("iso27001", "ISO 27001"),
+        ("nist_csf", "NIST CSF 2.0"),
+        ("nist_800_53", "NIST 800-53"),
+        ("cis_v8", "CIS v8.1"),
+        ("pci_dss", "PCI DSS 4.0.1"),
+        ("hipaa", "HIPAA"),
+        ("cmmc_l2", "CMMC L2"),
+        ("fedramp_moderate", "FedRAMP Class C"),
+    )
+    insights = {
+        "coverage_percent": 0.0,
+        "framework_coverage": [],
+        "control_status": {},
+        "open_poams": [],
+        "exceptions_due": [],
+        "crosswalk_links": 0,
+        "crosswalk_frameworks": [
+            {"key": key, "label": label} for key, label in framework_labels
+        ],
+        "crosswalk_matrix": [],
+    }
+    if records["enabled"]:
+        records.update({
+            "controls": security_ops.list_controls(),
+            "evidence": security_ops.list_evidence(),
+            "risks": security_ops.list_risks(),
+            "poams": security_ops.list_poams(),
+            "vendors": security_ops.list_vendor_assessments(),
+            "policies": security_ops.list_policies(),
+            "incidents": security_ops.list_incidents(),
+            "audits": security_ops.list_audit_engagements(),
+        })
+        report = security_ops.program_report()
+        for control in records["controls"]:
+            status = str(control.get("implementation_status") or "unknown")
+            insights["control_status"][status] = (
+                insights["control_status"].get(status, 0) + 1
+            )
+            mappings = control.get("crosswalk") or control.get("mappings") or []
+            insights["crosswalk_links"] += len(mappings) if isinstance(
+                mappings, (list, tuple, dict)
+            ) else 0
+        overall_readiness = security_ops.readiness_report()
+        insights["coverage_percent"] = overall_readiness["coverage_percent"]
+        insights["framework_coverage"] = [
+            {
+                **security_ops.readiness_report(key),
+                "label": label,
+            }
+            for key, label in framework_labels
+        ]
+        insights["crosswalk_matrix"] = security_ops.control_crosswalk()
+        insights["open_poams"] = [
+            row for row in records["poams"]
+            if row.get("status") not in {"closed", "complete", "accepted"}
+        ][:10]
+        insights["exceptions_due"] = [
+            row for row in records["risks"]
+            if row.get("exception_due") or row.get("exception_expired")
+        ][:10]
+    ctx.update({"records": records, "program": report, "insights": insights})
+    return templates.TemplateResponse(request, "security.html", ctx)
+
+
+@app.get("/security/report", response_class=HTMLResponse)
+async def security_report_page(request: Request) -> HTMLResponse:
+    """Print-friendly security readiness and board report."""
+    require_permission(request, "operate")
+    from maverick import security_ops
+
+    if not security_ops.enabled():
+        raise HTTPException(status_code=404, detail="security ops are disabled")
+    report = security_ops.program_report()
+    generated_at = report.get("generated_at")
+    if isinstance(generated_at, (int, float)):
+        report["generated"] = time.strftime(
+            "%Y-%m-%d %H:%M %Z", time.localtime(generated_at)
+        )
+    else:
+        report["generated"] = "unknown"
+    # The click-through must carry substance: each control with what it does,
+    # its governed status, scope decision, owner, and the reviewed evidence
+    # cited behind that status (joined here so the template stays dumb).
+    evidence_index = {
+        str(row.get("id")): row for row in security_ops.list_evidence()
+    }
+    control_rows = []
+    for row in sorted(
+        security_ops.list_controls(),
+        key=lambda item: (
+            str(item.get("framework") or ""),
+            str(item.get("control_id") or item.get("id") or ""),
+        ),
+    ):
+        cited = []
+        for evidence_id in row.get("evidence_ids") or []:
+            evidence = evidence_index.get(str(evidence_id)) or {}
+            cited.append({
+                "id": evidence_id,
+                "title": evidence.get("title") or evidence_id,
+                "status": evidence.get("status") or "unknown",
+                "source": evidence.get("source") or "",
+            })
+        control_rows.append({**row, "cited_evidence": cited})
+    return templates.TemplateResponse(
+        request,
+        "security_report.html",
+        {"r": report, "controls": control_rows},
+    )
+
+
+@app.get("/security/assurance", response_class=HTMLResponse)
+async def model_risk_assurance_page(request: Request) -> HTMLResponse:
+    """Governed AI evidence gateway and model-risk operator cockpit."""
+    require_permission(request, "operate")
+    from maverick import ai_evidence_gateway, model_risk_assurance
+
+    from .auth import has_global_permission
+
+    model_risk_enabled = model_risk_assurance.enabled()
+    model_risk_errors: dict[str, str] = {}
+    if model_risk_enabled:
+        model_results = await asyncio.gather(
+            run_in_threadpool(model_risk_assurance.list_inventory),
+            run_in_threadpool(model_risk_assurance.list_evidence),
+            run_in_threadpool(model_risk_assurance.findings),
+            return_exceptions=True,
+        )
+        assets, evidence, findings = [], [], []
+        for label, result in zip(
+            ("assets", "evidence", "findings"),
+            model_results,
+            strict=True,
+        ):
+            if isinstance(result, Exception):
+                model_risk_errors[label] = (
+                    f"Model-risk {label} are temporarily unavailable."
+                )
+            elif label == "assets":
+                assets = result
+            elif label == "evidence":
+                evidence = result
+            else:
+                findings = result
+    else:
+        assets, evidence, findings = [], [], []
+
+    gateway_enabled = ai_evidence_gateway.enabled()
+    gateway_error = ""
+    gateway_error_action = ""
+    gateway_panel_errors: dict[str, str] = {}
+    gateway_summary: dict[str, Any] = {}
+    policies: list[dict[str, Any]] = []
+    receipts: list[dict[str, Any]] = []
+    regulatory_impacts: list[dict[str, Any]] = []
+    impact_page: dict[str, Any] = {
+        "next_cursor": None,
+        "snapshot_total": 0,
+        "count": 0,
+        "status": None,
+        "pending_first": True,
+    }
+    if gateway_enabled:
+        gateway_results = await asyncio.gather(
+            run_in_threadpool(ai_evidence_gateway.summary),
+            run_in_threadpool(ai_evidence_gateway.list_policies),
+            run_in_threadpool(
+                ai_evidence_gateway.list_interaction_receipts,
+                limit=100,
+            ),
+            run_in_threadpool(
+                ai_evidence_gateway.list_regulatory_impacts_page,
+                limit=100,
+                pending_first=True,
+            ),
+            return_exceptions=True,
+        )
+        summary_result, policy_result, receipt_result, impact_result = (
+            gateway_results
+        )
+        if isinstance(summary_result, Exception):
+            exc = summary_result
+            if (
+                type(exc).__name__ == "EvidenceGatewayStateError"
+                and str(exc)
+                == "AI evidence gateway records require an explicit tenant scope"
+            ):
+                gateway_error = (
+                    "Select a company or tenant before loading evidence. "
+                    "No records were read."
+                )
+                gateway_error_action = (
+                    "Set [client] id in the Lightwork configuration or set "
+                    "MAVERICK_TENANT, then restart the dashboard."
+                )
+            else:
+                gateway_error = (
+                    "Gateway records could not be loaded safely. "
+                    "No readiness conclusion is available."
+                )
+                gateway_error_action = (
+                    "Use the built-in health checks on the Get started page "
+                    "to identify the blocker, then reload this cockpit."
+                )
+            gateway_panel_errors["summary"] = gateway_error
+        else:
+            gateway_summary = summary_result
+        if isinstance(policy_result, Exception):
+            gateway_panel_errors["policies"] = (
+                "Policy and model bindings are temporarily unavailable."
+            )
+        else:
+            policies = policy_result
+        if isinstance(receipt_result, Exception):
+            gateway_panel_errors["receipts"] = (
+                "Interaction receipts are temporarily unavailable."
+            )
+        else:
+            receipts = receipt_result
+        if isinstance(impact_result, Exception):
+            gateway_panel_errors["impacts"] = (
+                "Regulatory impacts are temporarily unavailable."
+            )
+        else:
+            impact_page = impact_result
+            regulatory_impacts = list(impact_page["items"])
+    from .operator_cockpit import display_timestamp, gateway_view
+
+    receipt_rows = []
+    for receipt in receipts[:100]:
+        row = dict(receipt)
+        row["issued_display"] = display_timestamp(
+            row.get("issued_at") or row.get("created_at")
+        )
+        receipt_rows.append(row)
+
+    view = gateway_view(
+        gateway_summary,
+        policies,
+        receipts,
+        regulatory_impacts,
+    )
+    # Product surface: the cockpit never shows CLI invocations. The synthetic
+    # next action's copyable code is a CLI command, so it renders as prose only.
+    if "maverick" in str(view["next_action"].get("code", "")).lower():
+        view["next_action"]["code"] = ""
+
+    return templates.TemplateResponse(
+        request,
+        "model_risk_assurance.html",
+        {
+            "model_risk_enabled": model_risk_enabled,
+            "model_risk_totals": {
+                "assets": len(assets),
+                "evidence": len(evidence),
+                "findings": len(findings),
+            },
+            "findings": findings[:20],
+            "model_risk_errors": model_risk_errors,
+            "gateway_enabled": gateway_enabled,
+            "gateway_error": gateway_error,
+            "gateway_error_action": gateway_error_action,
+            "gateway_panel_errors": gateway_panel_errors,
+            "gateway_summary": gateway_summary,
+            "policies": policies[:100],
+            "receipts": receipt_rows,
+            "regulatory_impacts": regulatory_impacts[:100],
+            "impact_page": impact_page,
+            "gateway_view": view,
+            "gateway_admin": has_global_permission(request, "admin"),
+        },
+    )
+
+
+@app.get("/security/threats", response_class=HTMLResponse)
+async def platform_threats_page(request: Request) -> HTMLResponse:
+    """Internal Lightwork platform threat-hunter console."""
+    require_permission(request, "operate")
+    from maverick import platform_hunt
+
+    return templates.TemplateResponse(
+        request, "security_threats.html", {"enabled": platform_hunt.enabled()}
+    )
+
+
+@app.get("/security/soc", response_class=HTMLResponse)
+async def environment_threats_page(request: Request) -> HTMLResponse:
+    """Customer-environment defensive SOC hunter console."""
+    require_permission(request, "operate")
+    from maverick import env_hunt
+
+    return templates.TemplateResponse(
+        request,
+        "security_soc.html",
+        {
+            "enabled": env_hunt.enabled(),
+            "response_execution": env_hunt.response_execution_enabled(),
+        },
+    )
+
+
+@app.get("/finance/board", response_class=HTMLResponse)
+async def finance_board_page(request: Request) -> HTMLResponse:
+    """The finance command center: the board chassis parameterized to the
+    finance department — control tests, close readiness, SoD lint, the
+    coverage posture (never an audit opinion), the license renewal runway,
+    and the learning loop over finance decisions. Data from
+    GET /api/v1/finance/board."""
+    require_permission(request, "operate")
+    return templates.TemplateResponse(request, "finance_board.html", {})
+
+
+@app.get("/finance", response_class=HTMLResponse)
+async def finance_page(request: Request) -> HTMLResponse:
+    """The Finance workspace: the same chassis over the finance team's
+    assessment types — SOX controls, fraud risk, ITGC, credit risk, and
+    close readiness — with the shared review pop-out."""
+    require_permission(request, "operate")
+    require_suite(request, "finance")
+    operations = {
+        "enabled": False,
+        "degraded": False,
+        "error_type": "",
+        "regulatory_alerts": [],
+        "licensing_packs": [],
+        "anomaly_cases": [],
+        "aml_cases": [],
+        "aml_list_versions": 0,
+        "control_cycles": [],
+    }
+    try:
+        from dataclasses import asdict
+
+        from maverick.finance import aml_screening, control_testing
+        from maverick.finance.anomaly_engine import FinanceAnomalyCaseQueue
+        from maverick.finance.licensing import load_licensing_pack
+        from maverick.finance.regulatory_change import RegulatoryChangeEngine
+        from maverick.paths import data_dir
+
+        operations["enabled"] = aml_screening.enabled()
+        if operations["enabled"]:
+            engine = RegulatoryChangeEngine(
+                data_dir("finance_operations", "regulatory_change.sqlite3")
+            )
+            operations["regulatory_alerts"] = [
+                asdict(row) for row in engine.list_alerts(limit=20)
+            ]
+            operations["licensing_packs"] = [
+                {
+                    "vertical": pack.vertical,
+                    "title": pack.title,
+                    "version": pack.version,
+                    "as_of": pack.as_of,
+                    "jurisdictions": len(pack.requirements),
+                    "source_check_required": sum(
+                        row.determination == "source_check_required"
+                        for row in pack.requirements
+                    ),
+                    "content_sha256": pack.content_sha256,
+                }
+                for pack in (
+                    load_licensing_pack("money_transmitter"),
+                    load_licensing_pack("insurance_producer"),
+                )
+            ]
+            operations["anomaly_cases"] = [
+                {
+                    "id": row.get("id"),
+                    "finding_id": row.get("finding_id"),
+                    "rule_id": (row.get("finding") or {}).get("rule_id"),
+                    "severity": row.get("severity"),
+                    "status": row.get("status"),
+                    "revision": row.get("revision"),
+                }
+                for row in FinanceAnomalyCaseQueue().list_cases(limit=20)
+            ]
+            aml_cases = aml_screening.list_cases(limit=20)
+            operations["aml_cases"] = [
+                {
+                    "id": row.get("id"),
+                    "status": row.get("status"),
+                    "hit_count": len(row.get("hits") or []),
+                    "revision": row.get("revision"),
+                }
+                for row in aml_cases
+            ]
+            operations["aml_list_versions"] = len(
+                aml_screening.list_versions(limit=10_001)
+            )
+            operations["control_cycles"] = [
+                {
+                    "id": row.get("id"),
+                    "status": row.get("status"),
+                    "engagement_id": row.get("engagement_id"),
+                    "observed_at": row.get("observed_at"),
+                }
+                for row in control_testing.list_cycles(limit=20)
+            ]
+    except Exception as exc:  # failure-policy: visible_degradation
+        operations["degraded"] = True
+        operations["error_type"] = type(exc).__name__
+        log.warning("finance workspace operations summary degraded: %s", type(exc).__name__)
+    context = _workspace_ctx("finance", viewer=caller_principal(request) or "")
+    context["operations"] = operations
+    return templates.TemplateResponse(
+        request, "finance.html", context)
+
+
+@app.get("/savings", response_class=HTMLResponse)
+async def savings_page(request: Request, days: int = 90) -> HTMLResponse:
+    """The value dashboard: money saved vs the typical human cost, computed
+    from real completed work and the client's OWN cost/value inputs (their
+    hourly rate + human hours per task, editable right on the page)."""
+    from maverick import savings as savings_mod
+    from maverick.config import get_value
+    days = max(1, min(days, 730))
+    cfg = get_value()
+    report = savings_mod.compute(_world(), window_days=days, cfg=cfg)
+    return templates.TemplateResponse(request, "savings.html", {
+        "days": days,
+        "cfg": cfg,
+        "report": savings_mod.to_dict(report),
+    })
+
+
+@app.get("/billing")
+async def billing_page(request: Request, format: str = "", period: str = ""):
+    """Tenant billing statement: accrued charges for the current period, a
+    period-over-period trend, and an itemized CSV invoice.
+
+    Charges are the priced runs (episodes) bucketed by month. The active
+    tenant / client id labels the statement (the world is tenant-scoped).
+    ``?format=csv&period=YYYY-MM`` downloads the itemized invoice for a month.
+    """
+    from datetime import datetime, timezone
+
+    w = _world()
+    episodes = w.list_episodes(limit=10_000)
+    months: dict[str, dict] = {}
+    for e in episodes:
+        if not e.ended_at:
+            continue
+        m = datetime.fromtimestamp(e.started_at, timezone.utc).strftime("%Y-%m")
+        b = months.setdefault(m, {"period": m, "cost": 0.0, "input_tokens": 0,
+                                  "output_tokens": 0, "runs": 0})
+        b["cost"] += e.cost_dollars
+        b["input_tokens"] += e.input_tokens
+        b["output_tokens"] += e.output_tokens
+        b["runs"] += 1
+    for b in months.values():
+        b["cost"] = round(b["cost"], 6)
+
+    try:
+        from maverick.client import client_id
+        from maverick.paths import current_tenant
+        tenant = current_tenant() or client_id() or "default"
+    except Exception:
+        tenant = "default"
+
+    if format == "csv":
+        sel = period or datetime.now(timezone.utc).strftime("%Y-%m")
+        rows = ["episode_id,goal_id,started_at,ended_at,outcome,"
+                "cost_dollars,input_tokens,output_tokens,tool_calls"]
+        for e in episodes:
+            if not e.ended_at:
+                continue
+            started = datetime.fromtimestamp(e.started_at, timezone.utc)
+            if started.strftime("%Y-%m") != sel:
+                continue
+            ended = datetime.fromtimestamp(e.ended_at, timezone.utc).isoformat()
+            rows.append(
+                f"{e.id},{e.goal_id},{started.isoformat()},{ended},"
+                f"{e.outcome or ''},{e.cost_dollars:.6f},"
+                f"{e.input_tokens},{e.output_tokens},{e.tool_calls}")
+        return PlainTextResponse(
+            "\n".join(rows) + "\n", media_type="text/csv",
+            headers={"Content-Disposition":
+                     f'attachment; filename="invoice-{tenant}-{sel}.csv"'})
+
+    cur = datetime.now(timezone.utc).strftime("%Y-%m")
+    current = months.get(cur, {"period": cur, "cost": 0.0, "input_tokens": 0,
+                               "output_tokens": 0, "runs": 0})
+    prev_keys = sorted([m for m in months if m < cur], reverse=True)
+    previous = months.get(prev_keys[0]) if prev_keys else None
+    delta_pct = None
+    if previous and previous["cost"] > 0:
+        delta_pct = round(
+            (current["cost"] - previous["cost"]) / previous["cost"] * 100, 1)
+    series = [months[k] for k in sorted(months, reverse=True)][:12]
+    return templates.TemplateResponse(request, "billing.html", {
+        "tenant": tenant, "current": current, "previous": previous,
+        "delta_pct": delta_pct, "series": series,
+    })
+
+
+@app.get("/providers", response_class=HTMLResponse)
+async def providers_page(request: Request) -> HTMLResponse:
+    from maverick.provider_health import get as _health
+    return templates.TemplateResponse(
+        request, "providers.html", {"rows": _health().snapshot()},
+    )
+
+
+# ----- Control surface pages (council pass) -----
+
+
+def safe_audit_day(day: str | None) -> str | None:
+    """Validate a ``?day=`` value as YYYY-MM-DD before it reaches the
+    audit log's path builder.
+
+    The audit log resolves ``day`` to ``audit_dir/{day}.ndjson``; an
+    unvalidated value like ``../../../etc/foo`` would escape the audit
+    directory. Anything that isn't a bare date is rejected to ``None``
+    (today), neutralizing path traversal at the HTTP boundary.
+    """
+    # Delegate to the core's canonical validator so the HTTP boundary and the
+    # CLI stay in lockstep: it enforces the anchored shape (path-safety) AND a
+    # real calendar date, so a typo like 2026-13-99 falls back to today rather
+    # than resolving to a nonexistent day-file.
+    from maverick.audit.events import is_valid_day
+    if is_valid_day(day):
+        return day
+    return None
+
+
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_page(request: Request) -> HTMLResponse:
+    """Tail of the local audit log."""
+    # Gate on ``audit`` to match the ``/api/v1/audit/tail`` twin -- otherwise a
+    # view-only caller reads the full audit log via the HTML page despite the
+    # API denying them.
+    require_permission(request, "audit")
+    from maverick.audit import default_audit_log
+    try:
+        n = max(1, min(int(request.query_params.get("n") or 200), 1000))
+    except (TypeError, ValueError):
+        n = 200
+    day = safe_audit_day(request.query_params.get("day"))
+    events = default_audit_log().tail(n, day=day)
+    # Distinct kinds in this tail (for the filter dropdown), computed before
+    # filtering so every available kind stays selectable; then optionally
+    # narrow to one kind (e.g. shield_block, tool_call).
+    kinds = sorted({str(e.get("kind")) for e in events if e.get("kind")})
+    kind = (request.query_params.get("kind") or "").strip()
+    if kind:
+        events = [e for e in events if e.get("kind") == kind]
+    return templates.TemplateResponse(
+        request, "audit.html",
+        {"events": events, "n": n, "day": day, "kind": kind, "kinds": kinds},
+    )
+
+
+@app.get("/partner", response_class=HTMLResponse)
+async def partner_page(request: Request) -> HTMLResponse:
+    """The partner fleet console: every client deployment this partner
+    operates -- health, latency, agent version, white-label theme, and the
+    summed value ledgers. Reading is operate-tier; adding/removing tenants
+    (which carry probe URLs + optional tokens) is admin via the API."""
+    require_permission(request, "operate")
+    return templates.TemplateResponse(request, "partner.html", {})
+
+
+@app.get("/audit/binder", response_class=HTMLResponse)
+async def audit_binder_page(request: Request, days: int = 90) -> HTMLResponse:
+    """The audit binder: a print-friendly, regulator-grade evidence pack --
+    signed-chain verification, approvals with identity and quorum, the
+    assessment register with revisions and decisions, the privacy registers,
+    and the acceptance-learning KPIs. Audit-gated like /audit; the product
+    generates its own workpapers."""
+    require_permission(request, "audit")
+    import time as _time
+
+    from starlette.concurrency import run_in_threadpool as _rit
+
+    from .api import _binder_payload
+    b = await _rit(_binder_payload, max(1, min(days, 730)))
+    b["generated"] = _time.strftime("%Y-%m-%d %H:%M UTC",
+                                    _time.gmtime(b["generated_at"]))
+    return templates.TemplateResponse(request, "audit_binder.html",
+                                      {"b": b, "days": b["window_days"]})
+
+
+@app.get("/replay", response_class=HTMLResponse)
+async def replay_page(request: Request) -> HTMLResponse:
+    """Flight recorder: reconstruct a run's action timeline from the signed
+    audit log, verify the tamper-evident chain, and offer an evidence export.
+
+    With no ``?goal=<id>`` it lists recent runs (owner-scoped) to pick from.
+    """
+    from maverick.world_model import close_world_if_owned, open_world
+
+    from .control_plane import build_replay
+    raw = (request.query_params.get("goal") or "").strip()
+    goal_id = int(raw) if raw.isdigit() else None
+    w = open_world()
+    try:
+        if goal_id is None:
+            goals = w.list_goals(
+                limit=50, order="desc", owner=goal_owner_filter(request)
+            )
+            return templates.TemplateResponse(
+                request,
+                "replay.html",
+                {"goal": None, "goals": goals, "replay": None},
+            )
+        goal = w.get_goal(goal_id)
+        if goal is None:
+            raise HTTPException(status_code=404, detail="no such goal")
+        assert_goal_access(request, goal)
+        replay = build_replay(goal_id, window=(goal.created_at, goal.updated_at))
+        return templates.TemplateResponse(
+            request, "replay.html", {"goal": goal, "goals": None, "replay": replay},
+        )
+    finally:
+        try:
+            close_world_if_owned(w)
+        except Exception:  # pragma: no cover -- best-effort response teardown
+            pass
+
+
+@app.get("/trust", response_class=HTMLResponse)
+async def trust_page(request: Request) -> HTMLResponse:
+    """Agent Trust Plane: the cross-agent permission graph -- every external
+    agent allowed to interact, with its tool/risk/budget ceilings + lifecycle."""
+    from .control_plane import trust_overview
+    return templates.TemplateResponse(request, "trust.html", trust_overview())
+
+
+@app.get("/external-agents", response_class=HTMLResponse)
+async def external_agents_page(request: Request) -> HTMLResponse:
+    """Bring-your-own-agent console: enroll agents built on other platforms
+    (Agentforce, Bedrock, Copilot Studio, custom), mint their credentials,
+    and watch their governed runs/spend land on the Operating Record."""
+    from maverick import external_agents as xa
+    return templates.TemplateResponse(request, "external_agents.html", {
+        "enabled": xa.enabled(),
+        "status": xa.status(),
+        "agents": xa.roster(),
+        "platforms": xa.PLATFORMS,
+        "surfaces": xa.TOKEN_SURFACES,
+    })
+
+
+@app.get("/external-agents/{agent_id}", response_class=HTMLResponse)
+async def external_agent_scorecard(request: Request,
+                                   agent_id: str) -> HTMLResponse:
+    """One external agent's scorecard: ceilings, spend vs budget, run
+    history on the Operating Record, and governance state (containment,
+    wall violations, credentials)."""
+    from maverick import external_agents as xa
+    try:
+        detail = xa.agent_detail(agent_id)
+    except xa.ExternalAgentsError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return templates.TemplateResponse(request, "external_agent_detail.html",
+                                      {"a": detail})
+
+
+@app.get("/discovery", response_class=HTMLResponse)
+async def discovery_page(request: Request) -> HTMLResponse:
+    """Inventory every governable surface the deployment exposes (tools, MCP
+    servers, providers, channels, external agents)."""
+    from .control_plane import discovery_overview
+    return templates.TemplateResponse(request, "discovery.html", {"discovery": discovery_overview()})
+
+
+@app.get("/simulate", response_class=HTMLResponse)
+async def simulate_page(request: Request) -> HTMLResponse:
+    """Dry-run a proposed action: its risk + whether it would be gated, no run."""
+    from .control_plane import simulate_action
+    surface = request.query_params.get("surface") or ""
+    action = request.query_params.get("action") or ""
+    target = request.query_params.get("target") or ""
+    result = simulate_action(surface, action, target) if surface else None
+    return templates.TemplateResponse(request, "simulate.html", {
+        "surface": surface, "action": action, "target": target, "result": result,
+    })
+
+
+@app.get("/compartments", response_class=HTMLResponse)
+async def compartments_page(request: Request) -> HTMLResponse:
+    """The agent factory's roster: each domain pack and the bulkhead it runs in.
+
+    Reads the discoverable domain packs (built-in + onboarded) so an operator
+    can see which sealed agents exist and the capability envelope each runs
+    under -- the compartments a Rung-2 seal acts on."""
+    try:
+        from maverick.domain import available_domains, suite_for
+
+        from .auth import scope_to_suites
+        # Job-function scoping: a scoped caller sees only their departments'
+        # sealed agents and capability envelopes, matching /agents (this page
+        # otherwise leaks every department's pack config).
+        domains = scope_to_suites(
+            request, sorted(available_domains().values(), key=lambda d: d.name),
+            suite_of=lambda d: suite_for(d.name))
+    except Exception:  # never 500 the page if the factory layer is unavailable
+        domains = []
+    return templates.TemplateResponse(request, "compartments.html", {"domains": domains})
+
+
+@app.get("/agents", response_class=HTMLResponse)
+async def agents_page(request: Request) -> HTMLResponse:
+    """The per-client agent editor: browse every pack and customize one for this
+    deployment. ``?name=`` opens that agent's editor (persona, tools, risk, and
+    its workflow playbook); saving writes a tenant override that inherits the
+    built-in base and patches only what changed. Read-only when [features]
+    pack_editing is off. The roster + the selected agent's merged view are
+    rendered server-side; the page JS only drives the save/validate/reset
+    calls to /api/v1/agents."""
+    agents: list = []
+    selected = None
+    editable = True
+    # ``?new=1`` opens a blank builder for a brand-new, from-scratch custom agent
+    # (no built-in base): the save posts to /api/v1/agents/<the id you type>, which
+    # coerces a standalone pack. ``?name=`` still tailors an existing specialist.
+    creating = request.query_params.get("new") in ("1", "true", "yes")
+    try:
+        from maverick.config import get_features
+        from maverick.domain import suite_for
+        from maverick.domain_edit import list_agents, resolved_view
+
+        from .auth import scope_to_suites, suite_allowed
+        editable = bool(get_features().get("pack_editing", True))
+        # Job-function scoping: mirror GET /api/v1/agents — a caller with a
+        # department grant browses their departments' specialists plus generic
+        # packs; a non-granted selection renders nothing rather than its config.
+        agents = scope_to_suites(request, list_agents(),
+                                 suite_of=lambda a: a.get("suite"))
+        name = request.query_params.get("name")
+        if name and suite_allowed(request, suite_for(name)):
+            selected = resolved_view(name)
+            creating = False  # editing an existing agent wins over the new form
+    except Exception:  # never 500 the page if the factory layer is unavailable
+        agents = []
+    return templates.TemplateResponse(
+        request, "agents.html",
+        {"agents": agents, "selected": selected, "editable": editable,
+         "creating": creating},
+    )
+
+
+@app.get("/assessments", response_class=HTMLResponse)
+async def assessments_page(request: Request) -> HTMLResponse:
+    """Govern → Assessments: the privacy / security / AI-risk register. Every
+    agent and flow can be auto-assessed from its declared capability surface,
+    reviewed and signed off per lens, and re-assessed when it changes. The
+    register + templates load client-side from /api/v1/assessments; the page
+    provides the subject pickers (agents + flows) for drafting a new one."""
+    agents: list = []
+    flows: list = []
+    try:
+        from maverick.domain_edit import list_agents
+
+        from .auth import scope_to_suites
+        # Job-function scoping: the subject picker offers only the caller's
+        # departments' specialists, matching the scoped /agents roster (else a
+        # picked-but-403'd pack drives mixed failures mid-assessment).
+        agents = scope_to_suites(
+            request,
+            [{"name": a["name"], "suite": a.get("suite")} for a in list_agents()],
+            suite_of=lambda a: a.get("suite"))
+    except Exception:  # never 500 the page if the factory layer is unavailable
+        agents = []
+    try:
+        from maverick import flow as _flow
+        if _flow.enabled():
+            from maverick.flow import store as _flow_store
+            flows = [{"id": f.get("id"), "name": f.get("name") or f.get("id")}
+                     for f in _flow_store.list_flow_summaries()]
+    except Exception:  # pragma: no cover -- flow engine optional
+        flows = []
+    return templates.TemplateResponse(
+        request, "assessments.html", {"agents": agents, "flows": flows},
+    )
+
+
+def model_picker_options() -> list[tuple[str, str]]:
+    """Every model a picker may offer, as ``(spec, provider_label)``: the built-in
+    catalogue, plus any ``[models] catalog`` the admin added, capped to the admin
+    allow-list when one is set. Shared by the Settings and Roles model pickers so
+    the two never drift."""
+    import re as _re
+
+    from maverick.llm import catalog_specs
+    from maverick.runtime_overrides import allowed_models
+    options = list(catalog_specs())
+    seen = {s for s, _ in options}
+    try:  # admins extend the picker via [models] catalog in config.toml
+        from maverick.config import load_config
+        for spec in (load_config().get("models", {}) or {}).get("catalog") or []:
+            s = str(spec).strip()
+            if s and s not in seen and _re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", s):
+                options.append((s, "Custom (config)"))
+                seen.add(s)
+    except Exception:  # pragma: no cover -- config read fails soft
+        pass
+    allow = allowed_models()
+    if allow:
+        label_by_spec = dict(options)
+        return [(s, label_by_spec.get(s, "Allowed")) for s in sorted(allow)]
+    return options
+
+
+@app.get("/roles", response_class=HTMLResponse)
+async def roles_page(request: Request) -> HTMLResponse:
+    """The per-client roles editor: each core role (orchestrator, coder, ...)
+    with an editable system-prompt addendum AND an editable per-role model
+    (picked from the catalogue) + reasoning effort. ``?role=`` opens that role.
+    The addendum is appended to the role's base template at spawn. Read-only
+    when [features] role_editing is off."""
+    roles: list = []
+    selected = None
+    editable = True
+    model_options: list[tuple[str, str]] = []
+    try:
+        from maverick.config import get_features
+        from maverick.role_edit import list_roles, resolved_role
+        editable = bool(get_features().get("role_editing", True))
+        roles = list_roles()
+        role = request.query_params.get("role")
+        if role:
+            selected = resolved_role(role)
+        model_options = model_picker_options()
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception:  # never 500 the page if the role layer is unavailable
+        roles = []
+    return templates.TemplateResponse(
+        request, "roles.html",
+        {"roles": roles, "selected": selected, "editable": editable,
+         "model_options": model_options},
+    )
+
+
+_OVERSIGHT_KINDS = frozenset({
+    "governance_denied", "shield_block", "capability_denied",
+    "egress_blocked", "consent_result", "halt",
+})
+
+
+def _is_intervention(e: dict) -> bool:
+    """True iff an audit event is a control-plane intervention.
+
+    A ``consent_result`` only counts when it denied/timed out -- an approval is
+    not an intervention.
+    """
+    kind = e.get("kind")
+    if kind == "consent_result":
+        return str(e.get("decision") or "").lower() in {"deny", "timeout"}
+    return kind in _OVERSIGHT_KINDS
+
+
+def _intervention_detail(e: dict) -> str:
+    """A one-line, human summary of an intervention, by kind."""
+    kind = e.get("kind")
+    if kind == "shield_block":
+        return f"{e.get('stage') or '?'}: {e.get('reason') or ''}".strip()
+    if kind == "capability_denied":
+        return f"tool={e.get('tool') or '?'} principal={e.get('principal') or '?'}"
+    if kind == "egress_blocked":
+        return f"provider={e.get('provider') or '?'}"
+    if kind == "consent_result":
+        return f"{e.get('decision') or '?'}: {e.get('action') or ''}".strip()
+    if kind == "halt":
+        return f"{e.get('source') or '?'}: {e.get('detail') or ''}".strip()
+    # governance_denied (and any future kind): the reason, plus which policy
+    # rule fired so the operator can see why it was held.
+    detail = str(e.get("reason") or e.get("detail") or e.get("tool") or "")
+    rule = e.get("rule")
+    if kind == "governance_denied" and rule:
+        detail = f"{detail} [{rule}]".strip()
+    return detail
+
+
+def _audit_event_visible_to_caller(
+    e: dict,
+    *,
+    principal: str | None,
+    owner_filter: str | None,
+    world,
+    goal_owner_cache: dict[int, str | None],
+) -> bool:
+    """Return whether an oversight audit row is visible to this dashboard user.
+
+    ``owner_filter is None`` is the dashboard's established bypass for auth-off
+    single-user mode and admins.  Authenticated non-admins only see events tied
+    to one of their goals, or ownerless events whose explicit user principal is
+    theirs.  Unknown/malformed ownership markers fail closed so the global audit
+    log cannot leak cross-tenant guardrail metadata.
+    """
+    if owner_filter is None:
+        return True
+    if principal is None:
+        return False
+
+    raw_goal_id = e.get("goal_id")
+    if raw_goal_id not in (None, ""):
+        try:
+            goal_id = int(raw_goal_id)
+        except (TypeError, ValueError):
+            return False
+        if goal_id not in goal_owner_cache:
+            try:
+                goal = world.get_goal(goal_id)
+                goal_owner_cache[goal_id] = getattr(goal, "owner", None) if goal else None
+            except Exception:
+                goal_owner_cache[goal_id] = None
+        return goal_owner_cache[goal_id] == owner_filter
+
+    return str(e.get("principal") or "") == principal
+
+
+@app.get("/oversight", response_class=HTMLResponse)
+async def oversight_page(request: Request) -> HTMLResponse:
+    """Operator mission-control: every control-plane intervention in one pane.
+
+    Unifies what each guardrail did to the fleet -- org-policy DENY /
+    REQUIRE_HUMAN (governance, EU AI Act Art 14), shield blocks, capability
+    denials, the enterprise egress lock, consent denials, and killswitch halts
+    -- next to the live halt state, the pending human-approval queue, and the
+    count of active agents. The per-guardrail pages (/safety, /approvals,
+    /audit, /fleets) remain the deep dives; this is the at-a-glance roll-up.
+    Fail-soft: an unreadable audit log yields empty panels, never a 500.
+    """
+    from collections import Counter, deque
+
+    from maverick.audit import default_audit_log
+    try:
+        n = max(1, min(int(request.query_params.get("n") or 1000), 5000))
+    except (TypeError, ValueError):
+        n = 1000
+    day = safe_audit_day(request.query_params.get("day"))
+    since = safe_audit_day(request.query_params.get("since"))
+    until = safe_audit_day(request.query_params.get("until"))
+    ranged = bool(since or until)
+    w = _world()
+    owner_filter = goal_owner_filter(request)
+    principal = caller_principal(request)
+    goal_owner_cache: dict[int, str | None] = {}
+
+    # Counts span the whole window; the trail keeps only the newest 150 (a
+    # bounded deque), so a wide incident-review range stays cheap in memory.
+    by_kind: Counter = Counter()
+    recent: deque = deque(maxlen=150)
+    total = 0
+    if ranged:
+        # Incident review: an inclusive [since, until] window across day-files,
+        # reusing the export reader's lexical date filter (open-ended if one
+        # bound is unset). Bound the file scan on a very wide window.
+        from maverick.audit.export import iter_audit_events
+        scanned = 0
+        try:
+            for e in iter_audit_events(since=since, until=until):
+                scanned += 1
+                if scanned > 200_000:
+                    break
+                if _is_intervention(e) and _audit_event_visible_to_caller(
+                    e, principal=principal, owner_filter=owner_filter,
+                    world=w, goal_owner_cache=goal_owner_cache,
+                ):
+                    by_kind[str(e.get("kind"))] += 1
+                    total += 1
+                    recent.append(e)
+        except Exception:  # pragma: no cover - never 500 the console on a log error
+            pass
+    else:
+        try:
+            raw = default_audit_log().tail(n, day=day)
+        except Exception:  # pragma: no cover - never 500 the console on a log error
+            raw = []
+        for e in raw:
+            if _is_intervention(e) and _audit_event_visible_to_caller(
+                e, principal=principal, owner_filter=owner_filter,
+                world=w, goal_owner_cache=goal_owner_cache,
+            ):
+                by_kind[str(e.get("kind"))] += 1
+                total += 1
+                recent.append(e)
+
+    rows = [
+        {
+            "ts": e.get("ts"),
+            "kind": e.get("kind"),
+            "agent": e.get("agent") or "-",
+            "goal_id": e.get("goal_id"),
+            "detail": _intervention_detail(e),
+        }
+        for e in reversed(recent)
+    ]
+
+    try:
+        from maverick.killswitch import is_active
+        halted = bool(is_active())
+    except Exception:
+        halted = False
+
+    try:
+        approvals = list(w.pending_approvals())
+    except Exception:
+        approvals = []
+    sources = {a.id: _approval_source(a.provenance) for a in approvals}
+    try:
+        active = len(w.list_goals(status="active", owner=owner_filter))
+    except Exception:
+        active = 0
+
+    return templates.TemplateResponse(
+        request, "oversight.html",
+        {
+            "events": rows,
+            "by_kind": dict(by_kind),
+            "total": total,
+            "ranged": ranged,
+            "since": since,
+            "until": until,
+            "halted": halted,
+            "approvals": approvals,
+            "sources": sources,
+            "pending": len(approvals),
+            "active": active,
+            "n": n,
+            "day": day,
+        },
+    )
+
+
+@app.get("/run-tree", response_class=HTMLResponse)
+async def run_tree_page(request: Request) -> HTMLResponse:
+    """Counterfactual review: the runs that were forked, and their branches.
+
+    Read-only. Forking happens on the run itself; this is where a reviewer
+    reads what the agent chose against what the alternative did, under one
+    root. Owner-scoped like the goal listings, and fail-soft: an unreadable
+    lineage sidecar renders the empty state, never a 500.
+    """
+    from maverick import session_tree
+    owner_filter = goal_owner_filter(request)
+    rows = session_tree.roots(limit=200)
+    if owner_filter is not None:
+        rows = [r for r in rows if r["owner"] == owner_filter]
+    selected = request.query_params.get("goal")
+    try:
+        goal_id = int(selected) if selected else (rows[0]["goal_id"] if rows else 0)
+    except (TypeError, ValueError):
+        goal_id = 0
+    tree = session_tree.tree(goal_id) if goal_id else {}
+    if tree and owner_filter is not None and tree.get("owner") != owner_filter:
+        tree = {}
+    try:
+        from maverick.config import get_session_tree
+        cfg = get_session_tree()
+    except Exception:  # pragma: no cover - unreadable config => documented defaults
+        cfg = {"enable": False, "max_depth": 10}
+    return templates.TemplateResponse(
+        request, "run_tree.html",
+        {"enabled": bool(cfg.get("enable")), "max_depth": cfg.get("max_depth"),
+         "roots": rows, "tree": tree},
+    )
+
+
+@app.get("/safety", response_class=HTMLResponse)
+async def safety_page(request: Request) -> HTMLResponse:
+    """Shield activity: what the safety layer blocked, by stage and reason."""
+    from collections import Counter
+
+    from maverick.audit import default_audit_log
+    try:
+        n = max(1, min(int(request.query_params.get("n") or 1000), 5000))
+    except (TypeError, ValueError):
+        n = 1000
+    day = safe_audit_day(request.query_params.get("day"))
+    blocks = [
+        e for e in default_audit_log().tail(n, day=day)
+        if e.get("kind") == "shield_block"
+    ]
+    by_stage = Counter((e.get("stage") or "unknown") for e in blocks)
+    top_reasons = Counter((e.get("reason") or "unknown") for e in blocks).most_common(10)
+    recent = list(reversed(blocks))[:100]
+    return templates.TemplateResponse(
+        request, "safety.html",
+        {
+            "total": len(blocks),
+            "by_stage": dict(by_stage),
+            "top_reasons": top_reasons,
+            "events": recent,
+            "n": n,
+            "day": day,
+        },
+    )
+
+
+def _compliance_view(framework: str) -> dict:
+    """Build the control-coverage view for the /compliance page + export.
+
+    Reuses ``maverick.compliance.compliance_report()`` (the same source the
+    ``maverick compliance`` CLI maps to GDPR + EU AI Act + US frameworks) and
+    applies the ``?framework=eu|us|all`` filter the CLI uses. Fail-soft: if the
+    core import or the report raises, return an empty view so the page renders an
+    empty state instead of 500ing. ``framework`` is normalised to one of
+    ``eu``/``us``/``all`` (default ``all``).
+    """
+    framework = framework if framework in {"eu", "us", "all"} else "all"
+    try:
+        from maverick.compliance import COMPLIANCE_DISCLAIMER, compliance_report
+        checks = compliance_report()
+    except Exception:  # pragma: no cover - never 500 the console if core is absent
+        return {"framework": framework, "groups": {}, "summary": {}, "disclaimer": ""}
+    if framework != "all":
+        checks = [c for c in checks if c.framework == framework]
+    # Group by framework bucket ("eu"/"us") for labelled tables on the page.
+    labels = {"eu": "EU AI Act / GDPR", "us": "NIST AI RMF + US state/sector law"}
+    groups: dict[str, dict] = {}
+    for c in checks:
+        bucket = groups.setdefault(
+            c.framework, {"label": labels.get(c.framework, c.framework), "rows": []}
+        )
+        bucket["rows"].append(c)
+    summary = {
+        "active": sum(1 for c in checks if c.status == "active"),
+        "action_needed": sum(1 for c in checks if c.status == "action_needed"),
+        "total": len(checks),
+    }
+    return {
+        "framework": framework,
+        "groups": groups,
+        "summary": summary,
+        "disclaimer": COMPLIANCE_DISCLAIMER,
+    }
+
+
+@app.get("/compliance", response_class=HTMLResponse)
+async def compliance_page(request: Request) -> HTMLResponse:
+    """Auditor-ready control-coverage report (GDPR + EU AI Act + US frameworks).
+
+    Org/system-level posture (like /safety), grouped by framework. The
+    ``?framework=eu|us|all`` query param mirrors ``maverick compliance``.
+    Control coverage only -- not a legal attestation. Fail-soft to an empty
+    state so a missing core install never 500s the console.
+    """
+    view = _compliance_view(request.query_params.get("framework") or "all")
+    return templates.TemplateResponse(request, "compliance.html", view)
+
+
+@app.get("/plugins", response_class=HTMLResponse)
+async def plugins_page(request: Request) -> HTMLResponse:
+    """Discovered + enabled plugins."""
+    try:
+        from maverick.plugins import _allowed_plugin_names, _entry_points
+        from maverick.runtime_overrides import plugin_overlay
+    except Exception:
+        return templates.TemplateResponse(
+            request, "plugins.html",
+            {"groups": {}, "allowlist_active": False, "error": "plugin discovery failed"},
+        )
+    allow = _allowed_plugin_names()
+    on, off = plugin_overlay()
+    groups: dict[str, list[dict]] = {}
+    for label, group in (
+        ("tools",    "maverick.tools"),
+        ("channels", "maverick.channels"),
+        ("skills",   "maverick.skills"),
+        ("personas", "maverick.personas"),
+    ):
+        items: list[dict] = []
+        try:
+            for ep in _entry_points(group):
+                items.append({
+                    "name": ep.name,
+                    "module": getattr(ep, "value", str(ep)),
+                    "enabled": allow is None or ep.name in allow,
+                    "forced": "on" if ep.name in on else "off" if ep.name in off else None,
+                })
+        except Exception:
+            pass
+        groups[label] = items
+    try:
+        from maverick.plugins import installable_plugins
+        installable = installable_plugins()
+    except Exception:  # pragma: no cover -- never break the page
+        installable = []
+    install_enabled = os.environ.get("MAVERICK_ALLOW_PLUGIN_INSTALL", "").lower() in {"1", "true", "yes"}
+    return templates.TemplateResponse(
+        request, "plugins.html",
+        {"groups": groups, "allowlist_active": allow is not None, "error": None,
+         "installable": installable, "install_enabled": install_enabled},
+    )
+
+
+@app.post("/plugins/toggle")
+async def plugins_toggle(request: Request, name: str = Form(...),
+                         action: str = Form(...)) -> RedirectResponse:
+    """Enable / disable / reset a plugin from the dashboard. Writes the runtime
+    overlay, never config.toml. Enabling loads the plugin's code on the next goal."""
+    _require_same_origin(request)
+    # Enabling a plugin loads its code on the next goal -- a control-plane
+    # change as privileged as /plugins/install (which requires admin). Gate it
+    # the same way so a viewer/operator can't alter what code the agent loads.
+    require_permission(request, "admin")
+    from maverick.runtime_overrides import (
+        disable_plugin,
+        enable_plugin,
+        reset_plugin,
+    )
+    fn = {"enable": enable_plugin, "disable": disable_plugin,
+          "reset": reset_plugin}.get(action)
+    if fn is None:
+        raise HTTPException(status_code=400, detail="unknown action")
+    try:
+        fn(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid plugin name") from exc
+    return RedirectResponse("/plugins", status_code=303)
+
+
+@app.post("/plugins/install")
+async def plugins_install(request: Request, name: str = Form(...)) -> RedirectResponse:
+    """Install a plugin *package* the operator pre-approved in ``[plugins]
+    installable``, then redirect back so its slots show up to enable.
+
+    Sensitive (runs ``pip install``), so it's quad-gated: same-origin, an
+    explicit ``MAVERICK_ALLOW_PLUGIN_INSTALL`` opt-in, the admin role, and the
+    install allowlist (``install_plugin`` rejects anything not on it). Only the
+    allowlisted package names are ever accepted -- never free-text input."""
+    _require_same_origin(request)
+    if os.environ.get("MAVERICK_ALLOW_PLUGIN_INSTALL", "").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(
+            status_code=403,
+            detail=("Installing plugins from the dashboard is disabled on this "
+                    "server — an administrator can opt in (set "
+                    "MAVERICK_ALLOW_PLUGIN_INSTALL=1)."),
+        )
+    require_permission(request, "admin")
+    from maverick.plugins import install_plugin
+    try:
+        install_plugin(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/plugins", status_code=303)
+
+
+@app.get("/mcp", response_class=HTMLResponse)
+async def mcp_page(request: Request, saved: str = "") -> HTMLResponse:
+    """MCP servers: config.toml entries (read-only here) plus dashboard-added
+    servers (overlay, removable). Admins add a new server from the form below —
+    no config.toml editing needed."""
+    require_permission(request, "admin")
+    try:
+        from maverick.config import load_config
+        cfg_servers = (load_config() or {}).get("mcp_servers") or {}
+    except Exception:
+        cfg_servers = {}
+    try:
+        from maverick.runtime_overrides import mcp_overlay
+        overlay = mcp_overlay()
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception:
+        overlay = {}
+
+    def _row(name: str, s: dict, source: str) -> dict:
+        return {
+            "name": name,
+            "transport": "http" if s.get("url") else "stdio",
+            "command": s.get("command") or "",
+            "args": s.get("args") or [],
+            "url": s.get("url") or "",
+            "source": source,
+            "removable": source == "dashboard",
+        }
+    rows = [_row(n, s, "config") for n, s in cfg_servers.items()
+            if isinstance(s, dict)]
+    # overlay servers not shadowed by config (config wins, matching the kernel)
+    rows += [_row(n, s, "dashboard") for n, s in overlay.items()
+             if n not in cfg_servers]
+    saved_msg = {"add": "MCP server added.", "remove": "MCP server removed."}.get(saved, "")
+    return templates.TemplateResponse(
+        request, "mcp.html", {"servers": rows, "saved": saved_msg},
+    )
+
+
+def _parse_kv_lines(text: str) -> dict[str, str]:
+    """Parse ``KEY=VALUE`` lines (env / headers from the MCP add form) into a
+    dict, skipping blanks and lines without an ``=``."""
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.strip():
+            out[k.strip()] = v.strip()
+    return out
+
+
+@app.post("/mcp/add")
+async def mcp_add(request: Request) -> RedirectResponse:
+    """Add a dashboard-managed MCP server from the form. Builds a stdio
+    (command/args/env) or http (url/headers/auth) spec and stores it in the
+    runtime overlay; the kernel validates + unions it on the next goal."""
+    _require_same_origin(request)
+    require_permission(request, "admin")
+    from maverick.runtime_overrides import add_mcp_server
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    transport = (form.get("transport") or "stdio").strip()
+    spec: dict = {}
+    if transport == "http":
+        url = (form.get("url") or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="a URL is required for an http server")
+        spec["url"] = url
+        token = (form.get("auth_token") or "").strip()
+        if token:
+            spec["auth_token"] = token
+        headers = _parse_kv_lines(form.get("headers") or "")
+        if headers:
+            spec["headers"] = headers
+    else:
+        command = (form.get("command") or "").strip()
+        if not command:
+            raise HTTPException(status_code=400, detail="a command is required for a stdio server")
+        spec["command"] = command
+        args = [a.strip() for a in (form.get("args") or "").splitlines() if a.strip()]
+        if args:
+            spec["args"] = args
+        env = _parse_kv_lines(form.get("env") or "")
+        if env:
+            spec["env"] = env
+    try:
+        add_mcp_server(name, spec)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid MCP server: {exc}") from exc
+    return RedirectResponse("/mcp?saved=add", status_code=303)
+
+
+@app.post("/mcp/remove")
+async def mcp_remove(request: Request, name: str = Form(...)) -> RedirectResponse:
+    """Remove a dashboard-added MCP server (config.toml servers are untouched)."""
+    _require_same_origin(request)
+    require_permission(request, "admin")
+    from maverick.runtime_overrides import remove_mcp_server
+    remove_mcp_server((name or "").strip())
+    return RedirectResponse("/mcp?saved=remove", status_code=303)
+
+
+@app.get("/tools", response_class=HTMLResponse)
+async def tools_page(request: Request) -> HTMLResponse:
+    """Tools the agent currently has registered (post-ACL, post-rate-limit)."""
+    tools: list[dict] = []
+    error = None
+    try:
+        from maverick.sandbox import build_sandbox
+        from maverick.tools import base_registry
+        wm = _world()  # honor the configured backend (SQLite or Postgres)
+        sb = build_sandbox()
+        reg = base_registry(world=wm, sandbox=sb)
+        tools = [{"name": t.name, "description": (t.description or "")[:240]}
+                 for t in sorted(reg.all(), key=lambda x: x.name)]
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+    return templates.TemplateResponse(
+        request, "tools.html", {"tools": tools, "error": error},
+    )
+
+
+def _permissions_snapshot() -> dict:
+    """Aggregate everything the agent is currently allowed to do.
+
+    Read-only view assembled from config + the live registry + the
+    dashboard's runtime overrides. Powers the /permissions page and
+    GET /api/v1/permissions.
+    """
+    snap: dict = {
+        "tools": [], "capabilities": {}, "channels": [], "sandbox": {},
+        "budget": {}, "network": "open", "plugins": [], "providers": [],
+        "retention": {}, "overlay_denied": [], "error": None,
+        "sandbox_warning": None,
+    }
+    try:
+        from maverick.config import load_config
+        cfg = load_config() or {}
+    except Exception as e:
+        snap["error"] = f"config read failed: {type(e).__name__}: {e}"
+        cfg = {}
+
+    snap["capabilities"] = cfg.get("capabilities") or {}
+    snap["budget"] = cfg.get("budget") or {}
+    snap["retention"] = cfg.get("retention") or {}
+    snap["sandbox"] = cfg.get("sandbox") or {}
+    # Security surface: the default 'local' sandbox runs model-driven shell on
+    # the host with no filesystem/network isolation (secret env vars are
+    # scrubbed, but it is not a container). Make the posture explicit on the
+    # /permissions page + API instead of leaving it silent.
+    _sb_backend = str(snap["sandbox"].get("backend") or "local").strip().lower()
+    if _sb_backend == "local":
+        snap["sandbox_warning"] = (
+            "Sandbox backend is 'local': the agent's shell runs on this host "
+            "with no filesystem/network isolation. Use the docker or podman "
+            "backend for untrusted goals."
+        )
+    snap["providers"] = sorted((cfg.get("providers") or {}).keys())
+    snap["channels"] = [
+        {"name": n, "enabled": bool(c.get("enabled", True))}
+        for n, c in (cfg.get("channels") or {}).items()
+    ]
+    sec = cfg.get("security") or {}
+    snap["network"] = (sec.get("network_policy") or "open")
+
+    try:
+        from maverick.runtime_overrides import denied_tools as _overlay
+        snap["overlay_denied"] = sorted(_overlay())
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception:
+        snap["overlay_denied"] = []
+
+    # Live registry = the true set of tools after ACL + rate-limit +
+    # overlay filtering. A tool present here is genuinely callable.
+    try:
+        from maverick.sandbox import build_sandbox
+        from maverick.tools import base_registry
+        wm = _world()  # honor the configured backend (SQLite or Postgres)
+        reg = base_registry(world=wm, sandbox=build_sandbox())
+        enabled = {t.name for t in reg.all()}
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception as e:
+        snap["error"] = (snap["error"] or "") + f" registry: {type(e).__name__}: {e}"
+        enabled = set()
+    # Show enabled tools + the overlay-denied ones (so the user can re-enable).
+    names = sorted(enabled | set(snap["overlay_denied"]))
+    snap["tools"] = [
+        {"name": n, "enabled": n in enabled} for n in names
+    ]
+
+    try:
+        from maverick.plugins import installed_plugins
+        snap["plugins"] = installed_plugins()
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception:
+        snap["plugins"] = {}
+    return snap
+
+
+@app.get("/permissions", response_class=HTMLResponse)
+async def permissions_page(request: Request) -> HTMLResponse:
+    """What Lightwork can do — tools, capabilities, channels, data flow."""
+    return templates.TemplateResponse(
+        request, "permissions.html", {"perm": _permissions_snapshot()},
+    )
+
+
+# The audit kind a governance verdict records when it blocks or parks an
+# action (see maverick.governance + the kernel tool path). Referenced as a
+# literal so the dashboard reads the log even on a kernel build that predates
+# the EventKind constant; resolved from the constant when it exists.
+def _governance_event_kind() -> str:
+    try:
+        from maverick.audit import EventKind
+        return getattr(EventKind, "GOVERNANCE_DENIED", "governance_denied")
+    except Exception:  # pragma: no cover - audit module always importable
+        return "governance_denied"
+
+
+def _approval_source(provenance: str | None) -> str | None:
+    """Label trusted governance/Art-14 approvals, else ``None``.
+
+    Approval ``detail`` is free-form operator context and may include
+    model-, user-, or remote-server-controlled text. Only the explicit
+    trusted ``provenance`` field may drive source labels in the decision UI.
+    """
+    if provenance == "governance":
+        return "governance · Art 14"
+    if provenance == "external_agents":
+        return "external agent · BYOA gateway"
+    if provenance == "harness_refine":
+        # The agent is asking to change its OWN operating instructions.
+        # An approver must be able to see that at a glance, not read it as
+        # an ordinary task approval.
+        return "self-refinement · changes the agent's instructions"
+    return None
+
+@app.get("/approvals", response_class=HTMLResponse)
+async def approvals_page(request: Request) -> HTMLResponse:
+    """Pending high-risk actions awaiting approve/deny.
+
+    Populated when an agent runs with ``MAVERICK_CONSENT_MODE=dashboard``:
+    ``safety.consent.require_consent`` parks each gated action here and
+    polls for the decision this page writes back. Governance ``REQUIRE_HUMAN``
+    holds (EU AI Act Art 14) arrive with trusted provenance metadata;
+    ``_approval_source`` labels them so an operator can distinguish a policy
+    hold from a plain consent one without trusting free-form detail text.
+
+    Gated on ``operate`` to match the ``/api/v1/approvals`` twin: the queue has
+    no per-user owner and may carry another user's goal content in ``detail``,
+    so a view-only caller must not read it via the HTML page either.
+    """
+    require_permission(request, "operate")
+    approvals = _world().pending_approvals()
+    sources = {a.id: _approval_source(a.provenance) for a in approvals}
+    return templates.TemplateResponse(
+        request, "approvals.html",
+        {"approvals": approvals, "sources": sources},
+    )
+
+
+def _recent_governance_holds(limit: int = 10) -> list[dict]:
+    """The most recent governance oversight events for the operator console.
+
+    Reuses the audit reader behind ``/audit`` (today's NDJSON tail), filtered to
+    governance verdicts (``GOVERNANCE_DENIED``) and returned newest-first. These
+    are the Art-14 / Art-12 record of every org-policy block + human-oversight
+    hold. Fail-soft: a missing/unreadable log yields an empty panel, never a 500.
+    """
+    try:
+        from maverick.audit import default_audit_log
+        kind = _governance_event_kind()
+        events = [
+            e for e in default_audit_log().tail(500)
+            if e.get("kind") == kind
+        ]
+    except Exception:  # pragma: no cover - never 500 the console on a log error
+        return []
+    return list(reversed(events))[:limit]
+
+
+def _fleet_recent_runs(
+    fleet_name: str, *, owner: str | None = None, limit: int = 12
+) -> list[dict]:
+    """A fleet's recent agent runs for the operator console (newest-first).
+
+    Mirrors ``maverick fleet status``: reads the per-fleet run index
+    (``maverick.fleet.load_runs``) and resolves each run's goal via the
+    dashboard world to recover its ``status`` + ``title``. When ``owner`` is
+    set, only goals owned by that principal are rendered, so a stale run index
+    from a deleted same-name fleet cannot be attached to a new owner's roster.
+    Returns at most ``limit`` rows of ``{agent, goal_id, title, status, ts}``.
+    Fail-soft: a missing/garbled index or a vanished goal yields an
+    empty/partial list, never a 500.
+    """
+    try:
+        from maverick.fleet import load_runs
+        runs = load_runs(fleet_name)
+    except Exception:  # pragma: no cover - never 500 the console on a read error
+        return []
+    w = _world()
+    rows: list[dict] = []
+    # Newest-first, capped after owner filtering: the index is oldest-first.
+    for r in reversed(runs):
+        if len(rows) >= limit:
+            break
+        gid = r.get("goal_id")
+        goal = None
+        try:
+            if isinstance(gid, int):
+                goal = w.get_goal(gid)
+        except Exception:  # pragma: no cover - a bad row must not break the page
+            goal = None
+        if owner is not None and (goal is None or getattr(goal, "owner", "") != owner):
+            continue
+        rows.append({
+            "agent": r.get("agent") or "—",
+            "goal_id": gid,
+            "title": goal.title if goal else "",
+            "status": goal.status if goal else "missing",
+            "ts": r.get("ts"),
+        })
+    return rows
+
+
+@app.get("/fleets", response_class=HTMLResponse)
+async def fleets_page(request: Request) -> HTMLResponse:
+    """Operator console: the per-employee agent fleets + their oversight.
+
+    Layer C of the enterprise control plane (see
+    ``docs/enterprise/architecture.md``): lists each fleet (owner + role-scoped
+    roster) alongside the recent governance oversight trail and a link to the
+    pending human-approval queue -- the EU AI Act Art 14 human-oversight surface.
+    """
+    try:
+        from maverick.fleet import list_fleets
+        fleets = list_fleets()
+    except Exception:  # pragma: no cover - never 500 the console if the registry errors
+        fleets = []
+    # Owner-scope the roster to the caller (auth-off/admin -> all).
+    owner = goal_owner_filter(request)
+    if owner is not None:
+        fleets = [f for f in fleets if f.owner == owner]
+    # Per-fleet recent runs (newest-first), scoped to the fleets already shown.
+    runs_by_fleet = {f.name: _fleet_recent_runs(f.name, owner=owner) for f in fleets}
+    return templates.TemplateResponse(
+        request, "fleets.html",
+        {
+            "fleets": fleets,
+            "runs_by_fleet": runs_by_fleet,
+            "holds": _recent_governance_holds(),
+            "pending_count": len(_world().pending_approvals()),
+        },
+    )
+
+
+@app.get("/cache", response_class=HTMLResponse)
+async def cache_page(request: Request) -> HTMLResponse:
+    """In-process cache stats + purge buttons."""
+    from maverick.cache import stats
+    return templates.TemplateResponse(
+        request, "cache.html", {"stats": stats()},
+    )
+
+
+@app.get("/store", response_class=HTMLResponse)
+async def store_page(request: Request) -> HTMLResponse:
+    """Skill Store: browse + install catalog skills without a terminal."""
+    from maverick.catalog import load_catalog
+    try:
+        entries = [e.to_dict() for e in load_catalog("skills")]
+    except Exception:
+        entries = []
+    installed = {s.name for s in _load_skills()}
+    return templates.TemplateResponse(
+        request, "store.html", {"entries": entries, "installed": installed},
+    )
+
+
+def template_market_entries() -> list[dict]:
+    """The goal-template catalog (user-installed + bundled), annotated with the
+    operator's own star ratings from the marketplace ratings ledger.
+
+    Powers the /templates page and GET /api/v1/templates. Offline + fail-soft:
+    a template that no longer parses is skipped; a missing ratings ledger
+    means everything shows unrated.
+    """
+    from maverick.marketplace.ratings import RatingsLedger, stars_bar
+    from maverick.templates import list_templates, load_template
+    try:
+        ratings = RatingsLedger().all_ratings("templates")
+    except Exception:  # pragma: no cover -- ratings never block the catalog
+        ratings = {}
+    entries: list[dict] = []
+    for name in list_templates():
+        try:
+            tpl = load_template(name)
+        except (OSError, ValueError, FileNotFoundError):
+            continue
+        mine = ratings.get(name) or {}
+        stars = mine.get("stars")
+        entries.append({
+            "name": name,
+            "title": tpl.title,
+            "params": list(tpl.params),
+            "body": tpl.body[:2000],
+            "stars": stars,
+            "rating_bar": stars_bar(float(stars), 0) if stars else "unrated",
+        })
+    return entries
+
+
+@app.get("/templates", response_class=HTMLResponse)
+async def templates_market_page(request: Request) -> HTMLResponse:
+    """Visual goal-templates marketplace: browse the catalog with ratings and
+    one-click "use template" (prefills the chat form via query params — the
+    goal never auto-starts)."""
+    from maverick.config import get_features
+    feats = get_features()
+    return templates.TemplateResponse(
+        request, "templates_market.html",
+        {
+            "entries": template_market_entries(),
+            "scheduling_enabled": feats.get("scheduling", True),
+            "triggers_enabled": feats.get("triggers", True),
+        },
+    )
+
+
+@app.get("/channels", response_class=HTMLResponse)
+async def channels_page(request: Request, saved: str = "") -> HTMLResponse:
+    """Channels: manage the common ones (enable + credentials) from the form
+    sections, plus a read-only, secret-redacted view of everything configured.
+    Saved to the dashboard overlay, never config.toml; effective on the next
+    `maverick serve`."""
+    require_permission(request, "admin")
+    sensitive_markers = (
+        "token", "secret", "password", "passwd", "api_key", "apikey", "auth",
+        "credential", "cookie", "session",
+    )
+
+    def _display_channels(channels: dict) -> dict:
+        out: dict = {}
+        for name, cfg in (channels or {}).items():
+            if not isinstance(cfg, dict):
+                out[name] = {"enabled": bool(cfg)}
+                continue
+            safe_cfg: dict = {}
+            for key, value in cfg.items():
+                key_l = str(key).lower()
+                if any(marker in key_l for marker in sensitive_markers):
+                    safe_cfg[key] = "[redacted]"
+                else:
+                    safe_cfg[key] = value
+            out[name] = safe_cfg
+        return out
+
+    try:
+        from maverick.config import load_config
+        channels = _display_channels((load_config() or {}).get("channels") or {})
+    except Exception:
+        channels = {}
+    from maverick_dashboard import settings_store
+    managed = settings_store.channels_state()
+    saved_msg = {"save": "Channel updated.", "clear": "Channel reset."}.get(saved, "")
+    return templates.TemplateResponse(
+        request, "channels.html",
+        {"channels": channels, "managed": managed, "saved": saved_msg},
+    )
+
+
+@app.post("/channels/save")
+async def channels_save(request: Request) -> RedirectResponse:
+    """Enable/disable a channel and set its credentials from the form. Stored in
+    the dashboard overlay (dashboard-config.toml), never config.toml; blank
+    fields keep the current value so a toggle never wipes a hidden secret."""
+    _require_same_origin(request)
+    require_permission(request, "admin")
+    from maverick_dashboard import settings_store
+    form = await request.form()
+    name = (form.get("channel") or "").strip()
+    enabled = form.get("enabled") is not None  # checkbox present == on
+    values = {k: v for k, v in form.items() if k not in ("channel", "enabled")}
+    try:
+        settings_store.set_channel(name, enabled, values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/channels?saved=save", status_code=303)
+
+
+@app.post("/channels/clear")
+async def channels_clear(request: Request, channel: str = Form(...)) -> RedirectResponse:
+    """Remove a channel's dashboard overlay (reverts to config.toml / env)."""
+    _require_same_origin(request)
+    require_permission(request, "admin")
+    from maverick_dashboard import settings_store
+    try:
+        settings_store.clear_channel((channel or "").strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/channels?saved=clear", status_code=303)
+
+
+@app.get("/api/v1/providers")
+async def providers_api() -> JSONResponse:
+    from maverick.provider_health import get as _health
+    return JSONResponse({"providers": _health().snapshot()})
+
+
+@app.websocket("/ws/v1/runs/{goal_id}/events")
+async def run_events_firehose(
+    websocket: WebSocket,
+    goal_id: int,
+    principal: VerifiedPrincipal | None = Depends(require_websocket_principal_in_context),
+) -> None:
+    """Run-events firehose: stream a goal's events over WebSocket as they land.
+
+    Sends each event as one JSON message ``{id, agent, kind, content, ts}``;
+    a final ``{kind: "status", content: <terminal>}`` message closes the
+    stream when the goal finishes. Auth mirrors the HTTP policy (Authorization
+    header in token mode; loopback-only otherwise), checked before accept.
+    Resume with ``?since_id=``."""
+    import asyncio as _asyncio
+
+    from fastapi import WebSocketDisconnect
+
+    from .auth import websocket_authorized
+    if not websocket_authorized(websocket, principal):
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    try:
+        since = int(websocket.query_params.get("since_id", 0))
+    except (TypeError, ValueError):
+        since = 0
+    w = _world()
+    g = await run_in_threadpool(w.get_goal, goal_id)
+    if g is None:
+        await websocket.send_json({"error": "no such goal"})
+        await websocket.close(code=4404)
+        return
+    if not can_access_goal_principal(websocket_caller_principal(principal), g):
+        await websocket.send_json({"error": "no such goal"})
+        await websocket.close(code=4404)
+        return
+    # Cap concurrent firehoses (shared with the SSE cap) so many open tabs can't
+    # exhaust FDs/tasks, and bound each stream's lifetime — mirrors the SSE
+    # route, which previously had both guards while this one had neither.
+    sem = _get_sse_semaphore()
+    if sem.locked():
+        await websocket.send_json({"error": "too many concurrent streams; retry shortly"})
+        await websocket.close(code=1013)  # "try again later"
+        return
+    await sem.acquire()
+    MAX_STREAM_SECONDS = 300
+    started = _asyncio.get_running_loop().time()
+    terminal = {"done", "completed", "failed", "error", "cancelled"}
+    try:
+        last = since
+        while True:
+            # Offload the blocking, lock-held SQLite reads off the event loop.
+            for e in await run_in_threadpool(
+                    w.goal_events, goal_id, since_id=last, limit=500):
+                last = e.id
+                await websocket.send_json({
+                    "id": e.id, "agent": e.agent, "kind": e.kind,
+                    "content": e.content, "ts": e.ts,
+                })
+            g = await run_in_threadpool(w.get_goal, goal_id)
+            if g is None or g.status in terminal:
+                await websocket.send_json({
+                    "id": last + 1, "agent": "system", "kind": "status",
+                    "content": (g.status if g else "deleted"), "ts": time.time(),
+                })
+                break
+            if (_asyncio.get_running_loop().time() - started) >= MAX_STREAM_SECONDS:
+                await websocket.send_json({
+                    "id": last + 1, "agent": "system", "kind": "status",
+                    "content": "stream lifetime exceeded; reconnect to resume",
+                    "ts": time.time(),
+                })
+                break
+            await _asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        return
+    finally:
+        sem.release()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/v1/goals/{goal_id}/cost-preview")
+async def goal_cost_preview(request: Request, goal_id: int, iterations: int = 1) -> JSONResponse:
+    """Inline cost preview: project a pending goal's cost before running it.
+
+    Treats the goal description as one step per non-empty line (or the whole
+    text as one step), projects tokens/dollars via maverick.cost.projection,
+    and reports the OK/TIGHT/OVER verdict against the configured default
+    budget."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.budget import Budget
+    from maverick.cost.projection import compare_against_budget, project_plan
+    text = (g.description or g.title or "").strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    steps = [{"text": ln} for ln in (lines or [text])]
+    projection = project_plan(steps, iterations=max(1, min(int(iterations), 10)))
+    budget_dollars = Budget().max_dollars
+    verdict = compare_against_budget(projection, budget_dollars)
+    return JSONResponse({
+        "goal_id": goal_id,
+        "steps": len(steps),
+        "total_tokens": projection.total_tokens,
+        "total_dollars": round(projection.total_dollars, 4),
+        "budget_dollars": budget_dollars,
+        "verdict": verdict.verdict,
+        "recommendation": verdict.recommendation,
+    })
+
+
+@app.get("/api/v1/goals/{goal_id}/cost-breakdown")
+async def goal_cost_breakdown(request: Request, goal_id: int) -> JSONResponse:
+    """'Why this cost' drill-down: a run's spend split by agent role/outcome.
+
+    Buckets the goal's episodes (cost, tokens, count) so the dollar figure on
+    the dashboard decomposes into who spent it and on what."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    buckets: dict[str, dict] = {}
+    total = 0.0
+    for ep in w.list_episodes(limit=10_000, goal_id=goal_id):
+        key = str(getattr(ep, "outcome", "") or "episode")
+        b = buckets.setdefault(key, {"episodes": 0, "dollars": 0.0,
+                                     "in_tokens": 0, "out_tokens": 0})
+        cost = float(getattr(ep, "cost_dollars", 0) or 0)
+        b["episodes"] += 1
+        b["dollars"] += cost
+        b["in_tokens"] += int(getattr(ep, "input_tokens", 0) or 0)
+        b["out_tokens"] += int(getattr(ep, "output_tokens", 0) or 0)
+        total += cost
+    rows = [{"bucket": k, **{kk: (round(vv, 4) if kk == "dollars" else vv)
+                             for kk, vv in v.items()}}
+            for k, v in sorted(buckets.items(), key=lambda kv: -kv[1]["dollars"])]
+    return JSONResponse({"goal_id": goal_id, "total_dollars": round(total, 4),
+                         "buckets": rows})
+
+
+@app.get("/api/v1/cost/anomalies")
+async def cost_anomalies(
+    request: Request, threshold_sigma: float = 3.0, limit: int = 500,
+) -> JSONResponse:
+    """Cost anomaly alerts: goals whose spend is a statistical outlier.
+
+    Computes per-goal spend over the recent episode window and flags goals
+    above mean + threshold_sigma * stdev (min 3 goals before anything can
+    flag). The data behind a dashboard alert badge.
+
+    Owner-scoped: an authenticated non-admin sees anomalies only among their own
+    goals (auth-off / admin see all), so other tenants' goal ids and exact spend
+    don't leak -- the same scoping ``/api/v1/cost/by-tag`` applies."""
+    import statistics
+
+    w = _world()
+    limit = max(1, min(int(limit), 10_000))
+    owner = goal_owner_filter(request)
+    owned: set[int] | None = None
+    if owner is not None:
+        owned = {g.id for g in w.list_goals(owner=owner, limit=10_000, order="desc")}
+    by_goal: dict[int, float] = {}
+    for ep in w.list_episodes(limit=limit):
+        gid = getattr(ep, "goal_id", None)
+        if gid is None:
+            continue
+        if owned is not None and gid not in owned:
+            continue
+        by_goal[gid] = by_goal.get(gid, 0.0) + float(getattr(ep, "cost_dollars", 0) or 0)
+    spends = [s for s in by_goal.values() if s > 0]
+    if len(spends) < 3:
+        return JSONResponse({"anomalies": [], "goals_considered": len(by_goal),
+                             "note": "need >=3 priced goals to baseline"})
+    mean = statistics.fmean(spends)
+    stdev = statistics.pstdev(spends)
+    cut = mean + max(0.5, float(threshold_sigma)) * stdev
+    anomalies = [
+        {"goal_id": gid, "dollars": round(s, 4),
+         "x_mean": round(s / mean, 1) if mean else None}
+        for gid, s in sorted(by_goal.items(), key=lambda kv: -kv[1])
+        if s > cut and stdev > 0
+    ]
+    return JSONResponse({
+        "anomalies": anomalies, "goals_considered": len(by_goal),
+        "mean_dollars": round(mean, 4), "cutoff_dollars": round(cut, 4),
+    })
+
+
+@app.post("/api/v1/skills/validate")
+async def skills_validate(request: Request) -> JSONResponse:
+    """Skill validator service: lint a SKILL.md body without installing it.
+
+    POST the raw SKILL.md text (text/plain or markdown); responds
+    ``{ok, errors, warnings}`` from the same linter `maverick skill validate`
+    runs locally — so a marketplace author can validate from CI or an editor
+    against a self-hosted instance. Size-capped; nothing is persisted."""
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+
+    from maverick.skills import validate_skill_file
+
+    body = await _read_limited_skill_validator_body(request)
+    if not body:
+        raise HTTPException(status_code=400, detail="POST the SKILL.md body")
+    with _tempfile.TemporaryDirectory(prefix="mvk-skill-validate-") as td:
+        p = _Path(td) / "SKILL.md"
+        p.write_bytes(body)
+        result = validate_skill_file(p)
+    return JSONResponse({
+        "ok": result.ok, "errors": result.errors, "warnings": result.warnings,
+    })
+
+
+@app.get("/api/v1/pins")
+async def pins_list(request: Request) -> JSONResponse:
+    """Pinned watch list for the calling principal (most-recently-pinned first)."""
+    from maverick.ux_store import shared as _ux
+    return JSONResponse({"pins": _ux().pins(caller_principal(request))})
+
+
+@app.post("/api/v1/pins/{goal_id}")
+async def pins_add(request: Request, goal_id: int) -> JSONResponse:
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.ux_store import shared as _ux
+    return JSONResponse({"pins": _ux().pin(caller_principal(request), goal_id)})
+
+
+@app.delete("/api/v1/pins/{goal_id}")
+async def pins_remove(request: Request, goal_id: int) -> JSONResponse:
+    from maverick.ux_store import shared as _ux
+    return JSONResponse({"pins": _ux().unpin(caller_principal(request), goal_id)})
+
+
+@app.get("/api/v1/views")
+async def views_list(request: Request) -> JSONResponse:
+    """Saved dashboard views (named filter/query-param sets) for the caller."""
+    from maverick.ux_store import shared as _ux
+    return JSONResponse({"views": _ux().views(caller_principal(request))})
+
+
+@app.post("/api/v1/views/{name}")
+async def views_save(request: Request, name: str) -> JSONResponse:
+    from maverick.ux_store import shared as _ux
+    try:
+        raw_body = await _read_limited_request_body(
+            request,
+            max_bytes=_MAX_SAVED_VIEW_BODY_BYTES,
+            too_large_detail="saved view body too large",
+        )
+        body = json.loads(raw_body or b"{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be a JSON object of params") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object of params")
+    try:
+        _ux().save_view(caller_principal(request), name, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JSONResponse({"saved": name}, status_code=201)
+
+
+@app.delete("/api/v1/views/{name}")
+async def views_delete(request: Request, name: str) -> JSONResponse:
+    from maverick.ux_store import shared as _ux
+    if not _ux().delete_view(caller_principal(request), name):
+        raise HTTPException(status_code=404, detail="no such view")
+    return JSONResponse({"deleted": name})
+
+
+@app.get("/api/v1/gallery")
+async def gallery_list(request: Request) -> JSONResponse:
+    """Run gallery: the deployment's featured runs, enriched with live goal
+    state and links to the tutorial/explain exports."""
+    from maverick.ux_store import shared as _ux
+    w = _world()
+    runs = []
+    for entry in _ux().gallery():
+        g = w.get_goal(entry["goal_id"])
+        if g is None or not can_access_goal(request, g):
+            continue
+        runs.append({
+            **entry,
+            "title": (g.title or "")[:120],
+            "status": g.status,
+            "tutorial": f"/api/v1/goals/{entry['goal_id']}/tutorial.md",
+            "explain": f"/api/v1/goals/{entry['goal_id']}/explain",
+        })
+    return JSONResponse({"gallery": runs})
+
+
+@app.post("/api/v1/gallery/{goal_id}")
+async def gallery_add(request: Request, goal_id: int) -> JSONResponse:
+    # The gallery is a deployment-wide showcase, not per-user personalization,
+    # so publishing to it takes "operate" (viewers can read it but not curate).
+    require_permission(request, "operate")
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    blurb = str((body or {}).get("blurb") or "")
+    from maverick.ux_store import shared as _ux
+    try:
+        entry = _ux().gallery_add(goal_id, blurb=blurb,
+                                  curator=caller_principal(request))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JSONResponse(entry, status_code=201)
+
+
+@app.delete("/api/v1/gallery/{goal_id}")
+async def gallery_remove(request: Request, goal_id: int) -> JSONResponse:
+    require_permission(request, "operate")
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.ux_store import shared as _ux
+    if not _ux().gallery_remove(goal_id):
+        raise HTTPException(status_code=404, detail="not in the gallery")
+    return JSONResponse({"removed": goal_id})
+
+
+@app.get("/api/v1/goals/{goal_id}/annotations")
+async def annotations_list(request: Request, goal_id: int) -> JSONResponse:
+    """Trace annotations: human notes pinned to replay-trace steps (seq)."""
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.ux_store import shared as _ux
+    return JSONResponse({"annotations": _ux().annotations(goal_id)})
+
+
+@app.post("/api/v1/goals/{goal_id}/annotations")
+async def annotations_add(request: Request, goal_id: int) -> JSONResponse:
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be JSON {seq, note}") from None
+    if not isinstance(body, dict) or "seq" not in body or not body.get("note"):
+        raise HTTPException(status_code=400, detail="body must be JSON {seq, note}")
+    from maverick.ux_store import shared as _ux
+    try:
+        entry = _ux().annotate(goal_id, int(body["seq"]), str(body["note"]),
+                               author=caller_principal(request))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JSONResponse(entry, status_code=201)
+
+
+@app.get("/api/v1/goals/{goal_id}/anomalies")
+async def goal_anomalies(request: Request, goal_id: int, history: int = 50) -> JSONResponse:
+    """Cross-run anomaly signals for one run vs the deployment baseline."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.cross_run_anomaly import MIN_BASELINE_RUNS, detect
+    anomalies = detect(w, goal_id, history=max(5, min(int(history), 500)),
+                       owner=goal_owner_filter(request))
+    return JSONResponse({
+        "goal_id": goal_id,
+        "anomalies": [{"kind": a.kind, "severity": a.severity, "detail": a.detail}
+                      for a in anomalies],
+        "note": (f"baseline needs >= {MIN_BASELINE_RUNS} terminal runs before "
+                 "anything can flag"),
+    })
+
+
+@app.get("/api/v1/goals/{goal_id}/tutorial.md")
+async def goal_tutorial(request: Request, goal_id: int) -> PlainTextResponse:
+    """Run-as-tutorial export: the run rendered as step-by-step markdown."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.tutorial_export import tutorial_markdown
+    events = w.goal_events(goal_id, limit=5000)
+    md = tutorial_markdown(g, events)
+    return PlainTextResponse(content=md, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/api/v1/goals/{goal_id}/replay-storyboard")
+async def goal_replay_storyboard(request: Request, goal_id: int) -> JSONResponse:
+    """Replay-to-MP4 storyboard: the ordered captioned frames + durations and
+    the exact ffmpeg command an operator runs to encode the video.
+
+    The deterministic, offline half of replay-to-MP4 (the encode needs ffmpeg
+    and is done out-of-band or via the CLI). Secret/PII-scrubbed."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from pathlib import Path as _Path
+
+    from maverick.replay.video import ffmpeg_command, storyboard
+    # Feed the world's goal events (the live trail) rather than the audit-log
+    # files replay_video reads by default, so the storyboard reflects this run.
+    events = [{"kind": e.kind, "ts": e.ts, "agent": e.agent, "content": e.content}
+              for e in w.goal_events(goal_id, limit=5000)]
+    frames = storyboard(goal_id, events=events)
+    cmd = ffmpeg_command(_Path("frames.ffconcat"), _Path(f"replay-{goal_id}.mp4"))
+    return JSONResponse({
+        "goal_id": goal_id,
+        "frames": [{"index": f.index, "kind": f.kind, "caption": f.caption,
+                    "seconds": f.seconds} for f in frames],
+        "total_seconds": round(sum(f.seconds for f in frames), 2),
+        "ffmpeg_command": cmd,
+    })
+
+
+@app.get("/api/v1/goals/{goal_id}/explain")
+async def goal_explain(request: Request, goal_id: int) -> JSONResponse:
+    """Plain-language narrative of a run (deterministic, no LLM)."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.plain_language import explain
+    events = w.goal_events(goal_id, limit=2000)
+    return JSONResponse({"goal_id": goal_id, "explanation": explain(g, events)})
+
+
+@app.get("/api/v1/runs/compare")
+async def runs_compare(request: Request, ids: str) -> JSONResponse:
+    """Multi-run dashboard: side-by-side summary of up to 8 runs."""
+    try:
+        goal_ids = [int(x) for x in ids.split(",") if x.strip()][:8]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be comma-separated integers") from None
+    if not goal_ids:
+        raise HTTPException(status_code=400, detail="ids is required")
+    w = _world()
+    runs = []
+    for gid in goal_ids:
+        g = w.get_goal(gid)
+        if g is None:
+            # Opaque detail (no id) so "does not exist" is indistinguishable from
+            # assert_goal_access's "exists but forbidden" -- otherwise the two
+            # different messages re-introduce a cross-tenant existence oracle.
+            raise HTTPException(status_code=404, detail="no such goal")
+        assert_goal_access(request, g)
+        events = w.goal_events(gid, limit=10_000)
+        errors = sum(1 for e in events if e.kind == "error")
+        runs.append({
+            "goal_id": gid,
+            "title": (g.title or "")[:120],
+            "status": g.status,
+            "events": len(events),
+            "errors": errors,
+            "created_at": getattr(g, "created_at", None),
+        })
+    return JSONResponse({"runs": runs})
+
+
+@app.get("/api/v1/cost/by-tag")
+async def cost_by_tag_api(
+    request: Request,
+    tag_field: str = "tag",
+    limit: int = 500,
+) -> JSONResponse:
+    """Cost-attribution API: spend split by tag (team / project / cost-center).
+
+    Buckets the priced episodes by their tag (episode field, else the goal's
+    metadata/tags) via ``maverick.cost.by_tag`` and returns
+    ``{buckets: [{tag, cost, in_tok, out_tok, runs}, ...]}`` sorted by spend. The JSON face of ``maverick status --cost``'s tag split,
+    for chargeback exports and BI pulls. Behind the dashboard's normal auth."""
+    from maverick.cost.by_tag import gather, split_by_tag
+
+    limit = max(1, min(int(limit), 10_000))
+    w = _world()
+    owner = goal_owner_filter(request)
+    goal_ids = None
+    if owner is not None:
+        goal_ids = [
+            g.id for g in w.list_goals(owner=owner, limit=10_000, order="desc")
+        ]
+    buckets = split_by_tag(
+        gather(w, tag_field=tag_field, limit=limit, goal_ids=goal_ids)
+    )
+    return JSONResponse({"tag_field": tag_field, "buckets": buckets})
+
+
+@app.get("/api/v1/shield/calibration")
+async def shield_calibration_api() -> JSONResponse:
+    """Shield calibration data for the oversight console.
+
+    Threshold sweep (recall / precision / fp-rate per block threshold) plus
+    per-rule hit counts over the red-team corpus — the shipped one, or an
+    operator's own via ``MAVERICK_REDTEAM_CORPUS``. Behind the dashboard's
+    normal auth (not in the exempt list)."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    try:
+        from maverick_shield.redteam import calibration_report, load_corpus
+    except ImportError as exc:
+        raise HTTPException(status_code=501, detail="maverick-shield is not installed") from exc
+    corpus_env = _os.environ.get("MAVERICK_REDTEAM_CORPUS", "").strip()
+    try:
+        cases = load_corpus(_Path(corpus_env) if corpus_env else None)
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"corpus error: {e}") from e
+    return JSONResponse(calibration_report(cases))
+
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_page(request: Request) -> HTMLResponse:
+    recent = _world().list_goals(owner=goal_owner_filter(request), limit=10, order="desc")
+    # "Use template" on /templates links here with ?title=&description= to
+    # prefill the form (never auto-start; the user reviews, edits, submits).
+    prefill_title = (request.query_params.get("title") or "")[:200]
+    prefill_description = (request.query_params.get("description") or "")[:8000]
+    return templates.TemplateResponse(
+        request, "chat.html",
+        {"recent": recent, "prefill_title": prefill_title,
+         "prefill_description": prefill_description},
+    )
+
+
+# The dashboard lands on the chat page (the primary working surface), so the
+# bare root renders it too; the overview/stats view lives at /overview. This is
+# a distinct handler rather than a second decorator on chat_page so the route
+# name stays unique (duplicate names collide as OpenAPI operationIds).
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request) -> HTMLResponse:
+    return await chat_page(request)
+
+
+@app.post("/chat/send")
+async def chat_send(
+    request: Request,
+    bg: BackgroundTasks,
+    title: str = Form(...),
+    description: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+) -> RedirectResponse:
+    _require_same_origin(request)
+    require_permission(request, "operate")
+    require_provider_or_400()
+    check_goal_rate_limit(request)
+    title = (title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="goal text is required")
+    w = _world()
+    # The optional "Add details" textarea gives the agent a real brief; fall
+    # back to the title when empty (prior behavior was description == title).
+    description = (description or "").strip()
+    goal_id = w.create_goal(
+        title[:200], (description or title)[:8000],
+        owner=caller_principal(request) or "",
+    )
+    # Persist any uploaded files as goal attachments. The agent reaches them
+    # via its list_attachments + read_file tools (images are also delivered as
+    # vision blocks). Size/mime caps + on-disk storage live in
+    # maverick.attachments.store; we just record each one against the goal.
+    real_files = [f for f in files if f and (f.filename or "").strip()]
+    if real_files:
+        from maverick import attachments as _att
+        total = 0
+        for f in real_files:
+            data = await f.read()
+            if not data:
+                continue  # an unfilled file input still posts an empty part
+            try:
+                rec = _att.store(
+                    goal_id, f.filename,
+                    f.content_type or "application/octet-stream",
+                    data, existing_total=total,
+                )
+            except _att.AttachmentRejected as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Attachment '{f.filename}': {exc}",
+                ) from exc
+            w.add_attachment(goal_id, rec.filename, rec.mime, rec.size_bytes,
+                             rec.sha256, str(rec.path))
+            total += rec.size_bytes
+        # Text companions (audio/video transcripts, extracted Office-doc
+        # text) BEFORE the goal runs, so they embed on the agent's first
+        # message. Background tasks run sequentially in add order;
+        # generate_companions is best-effort and never raises.
+        bg.add_task(_att.generate_companions, w, goal_id)
+    # Use the shared runner so this path gets the same concurrency cap,
+    # budget defaults, and error handling as the REST API and MCP server.
+    from maverick.runner import run_goal_in_background_async
+    allowed_suites = caller_suites(request)
+    user_id = execution_user_id_from_request(request)
+    if user_id:
+        bg.add_task(
+            run_goal_in_background_async, goal_id,
+            channel="dashboard", user_id=user_id, allowed_suites=allowed_suites,
+        )
+    else:
+        bg.add_task(
+            run_goal_in_background_async,
+            goal_id,
+            allowed_suites=allowed_suites,
+        )
+    return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
+
+
+@app.post("/webhook/start")
+async def webhook_start(request: Request, bg: BackgroundTasks) -> JSONResponse:
+    """Generic inbound webhook: create a goal from an HMAC-signed POST.
+
+    Body is JSON ``{title, description?, budget?, id?}`` (an optional ``id``
+    gives at-most-once delivery: a repeat within the freshness window 409s).
+    The request must carry
+    an ``X-Maverick-Signature: sha256=<hex>`` header computed over the
+    timestamp + raw body with the configured ``[webhooks] secret`` (see
+    ``maverick.webhooks``), plus an ``X-Maverick-Timestamp`` header. Returns
+    ``{"goal_id": <int>}`` on success.
+
+    Auth: this route is exempt from the dashboard bearer / same-origin
+    middleware (see ``_AUTH_EXEMPT``); the HMAC signature is the only
+    credential. We fail closed -- a missing/empty secret yields 401.
+
+    Replay defence (Lightwork-CONTROLLED format): the signature binds the
+    ``X-Maverick-Timestamp``; a request whose timestamp is outside the
+    configured freshness window (``[webhooks] max_age_seconds``) is rejected,
+    so a captured signed request can't be replayed to re-spend budget.
+    """
+    payload = await _verify_maverick_webhook(request)
+
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    description = str(payload.get("description") or "")
+
+    # Opt-in exactly-once via a caller-stamped delivery id (see webhook_run).
+    if _webhook_duplicate_delivery("start", payload):
+        raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
+
+    check_goal_rate_limit(request, source="webhook")
+    w = _world()
+    # HMAC webhooks carry no OIDC principal, so this resolves to "" (unowned):
+    # reachable only by no-auth/admin callers, never another tenant.
+    goal_id = w.create_goal(
+        title[:200], description[:8000], owner=caller_principal(request) or "",
+    )
+
+    from maverick.runner import DEFAULT_MAX_DOLLARS, run_goal_in_background_async
+    budget = payload.get("budget")
+    max_dollars = None
+    if budget is not None:
+        try:
+            max_dollars = float(budget)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="budget must be a number") from None
+        # Clamp to the same ceiling the REST route enforces. The shared runner
+        # treats max_dollars as the highest-precedence override with no cap of
+        # its own, so an unclamped webhook value (negative, or arbitrarily
+        # large) would defeat the budget ceiling -- budget caps are not
+        # optional, even on an externally reachable signed endpoint.
+        max_dollars = min(max(max_dollars, 0.0), DEFAULT_MAX_DOLLARS)
+    bg.add_task(run_goal_in_background_async, goal_id, max_dollars)
+    return JSONResponse({"goal_id": goal_id}, status_code=201)
+
+
+@contextmanager
+def _stored_trigger_tenant(trigger: dict):
+    """Pin a trigger fire to its creation namespace and recheck admission."""
+    tenant = str(trigger.get("tenant") or "").strip()
+    if tenant:
+        from maverick.tenant.registry import (
+            TenantRegistryError,
+            TenantSuspended,
+            assert_tenant_active,
+        )
+
+        try:
+            assert_tenant_active(tenant)
+        except TenantSuspended as exc:
+            raise HTTPException(status_code=404, detail="trigger unavailable") from exc
+        except TenantRegistryError as exc:
+            raise HTTPException(
+                status_code=503, detail="trigger authorization unavailable") from exc
+    from maverick.paths import reset_tenant, set_tenant
+
+    token = set_tenant(tenant or None)
+    try:
+        yield tenant
+    finally:
+        reset_tenant(token)
+
+
+def _stored_trigger_identity(trigger: dict) -> tuple[str, str | None, frozenset[str] | None]:
+    """Revalidate a request-less trigger owner's current execution authority."""
+    try:
+        return stored_automation_identity(str(trigger.get("owner") or ""))
+    except AutomationAuthorizationError as exc:
+        raise HTTPException(
+            status_code=409, detail="trigger owner is unavailable"
+        ) from exc
+
+
+async def _run_trigger_goal_in_tenant(
+    goal_id: int,
+    max_dollars: float | None,
+    max_wall: float | None,
+    *,
+    tenant: str,
+    owner: str,
+    allowed_suites: frozenset[str] | None,
+) -> None:
+    """Restore durable trigger identity for the post-response goal runner."""
+    from maverick.paths import reset_tenant, set_tenant
+    from maverick.runner import run_goal_in_background_async
+
+    if tenant:
+        from maverick.tenant.registry import assert_tenant_active
+
+        assert_tenant_active(tenant)
+    current_owner, current_user_id, current_suites = stored_automation_identity(owner)
+    if allowed_suites is None:
+        run_suites = current_suites
+    elif current_suites is None:
+        run_suites = allowed_suites
+    else:
+        run_suites = allowed_suites & current_suites
+    token = set_tenant(tenant or None)
+    try:
+        await run_goal_in_background_async(
+            goal_id,
+            max_dollars,
+            max_wall,
+            channel="api" if current_user_id else None,
+            user_id=current_user_id,
+            concurrency_principal=current_owner or None,
+            allowed_suites=run_suites,
+        )
+    finally:
+        reset_tenant(token)
+
+
+def _fire_stored_trigger(
+    request: Request,
+    bg: BackgroundTasks,
+    payload: dict,
+    name: str,
+    trigger: dict,
+) -> JSONResponse:
+    """Fire a trigger under its durable tenant, owner, and current grants."""
+    with _stored_trigger_tenant(trigger) as tenant:
+        owner, user_id, allowed_suites = _stored_trigger_identity(trigger)
+        if trigger.get("flow"):
+            from maverick import flow as flow_mod
+
+            if not flow_mod.enabled():
+                raise HTTPException(status_code=409, detail="the flow engine is off")
+            from maverick.flow import store as flow_store
+
+            try:
+                published = flow_store.load_published_bundle(trigger["flow"])
+            except flow_store.FlowSnapshotError as exc:
+                raise HTTPException(
+                    status_code=409, detail="trigger flow unavailable"
+                ) from exc
+            if published is None:
+                raise HTTPException(status_code=409, detail="trigger flow unavailable")
+            flow, release = published
+            expected_owner = str(trigger.get("flow_owner") or "")
+            expected_revision = str(trigger.get("flow_revision") or "")
+            if not expected_revision and not auth_genuinely_off():
+                raise HTTPException(status_code=409, detail="trigger flow binding is stale")
+            if expected_revision and (
+                flow.owner != expected_owner
+                or str(release.get("release_id") or "") != expected_revision
+            ):
+                raise HTTPException(status_code=409, detail="trigger flow binding is stale")
+            check_goal_rate_limit(request, source="webhook")
+            inbound_data = payload.get("data")
+            run_data = (
+                {str(k): v for k, v in inbound_data.items()}
+                if isinstance(inbound_data, dict)
+                else {}
+            )
+            delivery = str(payload.get("id") or "").strip()
+            idem = f"webhook:{name}:{delivery}" if delivery else ""
+            from maverick_dashboard import automation_queue as aq
+
+            try:
+                run_id = aq.enqueue_published_flow_run(
+                    trigger["flow"],
+                    run_data,
+                    owner=owner,
+                    idem_key=idem,
+                    channel="api" if user_id else None,
+                    user_id=user_id,
+                    allowed_suites=allowed_suites,
+                    expected_revision=expected_revision,
+                )
+            except flow_store.FlowSnapshotError as exc:
+                raise HTTPException(
+                    status_code=409, detail="trigger flow binding is unavailable"
+                ) from exc
+            return JSONResponse(
+                {"run_id": run_id, "trigger": name, "flow": trigger["flow"]},
+                status_code=201,
+            )
+
+        try:
+            from maverick_dashboard import triggers_store
+
+            tpl = triggers_store.bound_template(trigger)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409, detail="trigger template binding is unavailable"
+            ) from exc
+        declared = set(tpl.params)
+        params = dict(trigger.get("params") or {})
+        inbound = payload.get("data")
+        if isinstance(inbound, dict):
+            for key, value in inbound.items():
+                if key in declared:
+                    params[str(key)] = str(value)[:2000]
+        try:
+            title, description = tpl.render(**params)
+        except ValueError as exc:
+            from maverick.secrets import scrub
+
+            detail = scrub(str(exc))[:500] or "template parameters are invalid"
+            raise HTTPException(status_code=400, detail=detail) from exc
+
+        check_goal_rate_limit(request, source="webhook")
+        world = _world()
+        goal_id = world.create_goal(
+            title[:200], description[:8000], owner=owner)
+        world.record_goal_origin(goal_id, "trigger", name)
+        max_dollars = min(float(tpl.budget_dollars), 100.0)
+        max_wall = min(float(tpl.budget_wall_seconds), 86400.0)
+        bg.add_task(
+            _run_trigger_goal_in_tenant,
+            goal_id,
+            max_dollars,
+            max_wall,
+            tenant=tenant,
+            owner=owner,
+            allowed_suites=allowed_suites,
+        )
+        return JSONResponse(
+            {"goal_id": goal_id, "trigger": name}, status_code=201)
+
+
+@app.post("/webhook/run")
+async def webhook_run(request: Request, bg: BackgroundTasks) -> JSONResponse:  # noqa: C901
+    """Fire a registered trigger: render its saved template and run it as a goal.
+
+    Body is JSON ``{"trigger": "<name>", "data"?: {...}, "id"?: "<delivery-id>"}``.
+    Authenticated by the same HMAC signature as ``/webhook/start``
+    (``X-Maverick-Signature`` over the ``X-Maverick-Timestamp`` + raw body, with
+    the ``[webhooks]`` secret) and the same replay-freshness window. We fail
+    closed -- a missing secret yields 401. An optional ``id`` gives at-most-once
+    delivery: a repeat of that id within the window is rejected (409).
+
+    This is deliberately NARROWER than ``/webhook/start``: it runs only a
+    template an operator registered via the dashboard (with operator-set default
+    params), never arbitrary text. ``data`` may override only the template's
+    *declared* params (undeclared keys are ignored, values are length-bounded),
+    so an external caller can fill declared slots but cannot inject new ones.
+
+    Gated by ``[features] triggers``; 404s when triggers are disabled.
+    """
+    # Verify the HMAC signature BEFORE consulting the feature flag: checking the
+    # flag first lets an unauthenticated caller distinguish "triggers disabled"
+    # (404) from "triggers on" (401/403) as a config probe. Auth first, then gate.
+    payload = await _verify_maverick_webhook(request)
+
+    from maverick.config import get_features
+    if not get_features().get("triggers", True):
+        raise HTTPException(status_code=404, detail="triggers are disabled")
+
+    # Event resume: {"resume": "<run_id>", "data": {...}} continues a flow run
+    # paused on a wait_event node -- the external callback the node was waiting
+    # for. Same HMAC credential; the data merges into the run before it continues.
+    resume_id = str(payload.get("resume") or "").strip()
+    if resume_id:
+        # Same guards as the trigger paths below: reject a replayed delivery id
+        # and apply the webhook rate limit, so a holder of the secret can't flood
+        # resume enqueues by varying the timestamp/body.
+        if _webhook_duplicate_delivery("run", payload):
+            raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
+        from maverick import flow as flow_mod
+        if not flow_mod.enabled():
+            raise HTTPException(status_code=409, detail="the flow engine is off")
+        from maverick.flow import store as flow_store
+        # The webhook HMAC covers the full payload, so an explicit tenant claim
+        # is authenticated.  Scope lookup and the queued continuation to that
+        # same tenant; without it a tenant run must never fall through to a
+        # same-id object in the shared namespace.
+        resume_tenant = str(payload.get("tenant") or "").strip()
+        tenant_token = None
+        if resume_tenant:
+            from maverick.tenant.registry import assert_tenant_active
+            try:
+                assert_tenant_active(resume_tenant)
+            except (KeyError, PermissionError) as exc:
+                raise HTTPException(status_code=404, detail="tenant unavailable") from exc
+            from maverick.paths import set_tenant
+            tenant_token = set_tenant(resume_tenant)
+        try:
+            run = flow_store.load_run(resume_id)
+        finally:
+            if tenant_token is not None:
+                from maverick.paths import reset_tenant
+                reset_tenant(tenant_token)
+        if run is None:
+            raise HTTPException(status_code=404, detail="no such run")
+        if run.status != "paused_event":
+            raise HTTPException(
+                status_code=409,
+                detail=f"run is not waiting for an event (status {run.status})")
+        check_goal_rate_limit(request, source="webhook")
+        inbound_evt = payload.get("data")
+        inputs = ({str(k): v for k, v in inbound_evt.items()}
+                  if isinstance(inbound_evt, dict) else {})
+        from maverick_dashboard import automation_queue as aq
+        try:
+            aq.enqueue_flow_resume(
+                run.flow_id,
+                run.run_id,
+                owner=run.owner,
+                inputs=inputs,
+                tenant=resume_tenant,
+            )
+        except flow_store.FlowSnapshotError as exc:
+            raise HTTPException(
+                status_code=409, detail="run release is no longer active"
+            ) from exc
+        return JSONResponse({"run_id": run.run_id, "status": "resuming"},
+                            status_code=202)
+
+    name = str(payload.get("trigger") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="trigger is required")
+
+    # Optional exactly-once: when the caller stamps a delivery ``id``, reject a
+    # replay of that id within the freshness window (409). Unlike byte-level
+    # signature dedup this does NOT penalise a legitimate rapid identical fire --
+    # those carry distinct ids (or none, in which case no dedup applies).
+    if _webhook_duplicate_delivery("run", payload):
+        raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
+
+    from maverick_dashboard import triggers_store
+    trig = triggers_store.get_trigger(name)
+    if trig is None:
+        raise HTTPException(status_code=404, detail="unknown trigger")
+
+    return _fire_stored_trigger(request, bg, payload, name, trig)
+
+
+def _flow_approve_page(title: str, message: str, *, status: int = 200,
+                       form_token: str = "") -> HTMLResponse:
+    """A minimal self-contained confirmation/result page for the signed approval
+    link. When ``form_token`` is set it renders a confirm button that POSTs back
+    (so a link-prefetcher that merely GETs the URL never actuates the decision)."""
+    from html import escape
+    form = ""
+    if form_token:
+        form = (f'<form method="post" action="/flow/approve">'
+                f'<input type="hidden" name="token" value="{escape(form_token)}">'
+                f'<button type="submit" style="font-size:16px;padding:10px 22px;'
+                f'border-radius:8px;border:1px solid #888;cursor:pointer;">Confirm</button>'
+                f'</form>')
+    html = (f"<!doctype html><meta charset=utf-8><meta name=viewport "
+            f'content="width=device-width,initial-scale=1">'
+            f"<title>{escape(title)}</title>"
+            f'<div style="font-family:system-ui,sans-serif;max-width:520px;margin:60px auto;'
+            f'padding:0 20px;text-align:center;">'
+            f"<h2>{escape(title)}</h2><p>{escape(message)}</p>{form}</div>")
+    return HTMLResponse(html, status_code=status)
+
+
+def _load_paused_approval_run(token: str):
+    """Verify a signed approval ``token`` and return ``(run, decision)`` when it
+    points at a run currently paused on an approval; else ``(None, reason)``."""
+    from maverick.flow import store
+    from maverick.flow.approvals import verify_token
+    claim = verify_token(token)
+    if not claim:
+        return None, "This approval link is invalid or has expired.", ""
+    tenant = str(claim.get("tenant") or "")
+    tenant_token = None
+    if tenant:
+        try:
+            from maverick.tenant.registry import assert_tenant_active
+            assert_tenant_active(tenant)
+        except Exception:
+            return None, "That tenant is not active.", tenant
+        from maverick.paths import set_tenant
+        tenant_token = set_tenant(tenant)
+    try:
+        run = store.load_run(claim["run_id"])
+    finally:
+        if tenant_token is not None:
+            from maverick.paths import reset_tenant
+            reset_tenant(tenant_token)
+    if run is None:
+        return None, "That flow run no longer exists.", tenant
+    if run.status != "paused_approval":
+        return None, f"This run is no longer awaiting approval (status: {run.status}).", tenant
+    if (str(run.cursor or "") != claim.get("cursor")
+            or str(run.prompt or "") != claim.get("prompt")
+            or float(run.updated or 0.0) != float(claim.get("updated", -1.0))):
+        return None, "This approval link is for an older approval step.", tenant
+    if (str((run.human or {}).get("assignee") or "") != claim.get("assignee", "")
+            or str(run.owner or "") != claim.get("owner", "")):
+        return None, "This approval link is for a different approver scope.", tenant
+    return run, claim["decision"], tenant
+
+
+def _approval_link_actor(request: Request, run) -> str:
+    """Return a provable authorized actor for a signed link, or fail closed."""
+    require_permission(request, "operate")
+    principal = str(caller_principal(request) or "").strip()
+    if not principal:
+        raise HTTPException(
+            status_code=403,
+            detail="sign in with an attributable identity to decide this approval",
+        )
+    aliases = {principal.casefold()}
+    if principal.casefold().startswith("user:") and principal[5:]:
+        subject = principal[5:].casefold()
+        aliases.update({subject, f"@{subject}"})
+    assignee = str((run.human or {}).get("assignee") or "").strip().casefold()
+    if assignee and assignee not in aliases:
+        raise HTTPException(status_code=403, detail="this approval is assigned to someone else")
+    if not assignee and run.owner and principal != run.owner:
+        raise HTTPException(status_code=403, detail="this approval belongs to another user")
+    return principal
+
+
+@app.get("/flow/approve", response_class=HTMLResponse)
+async def flow_approve_confirm(request: Request, token: str = "") -> HTMLResponse:
+    """Show a one-click confirmation for a signed approve/reject link. The state
+    change happens on the POST (below), not this GET, so an email/link scanner
+    that pre-fetches the URL cannot silently actuate a decision. The token binds
+    the pause while dashboard authentication proves the approver identity."""
+    from maverick import flow
+    if not flow.enabled():
+        raise HTTPException(status_code=404, detail="the flow engine is off")
+    run, decision, _tenant = _load_paused_approval_run(token)
+    if run is None:
+        return _flow_approve_page("Approval unavailable", decision, status=410)
+    try:
+        _approval_link_actor(request, run)
+    except HTTPException as exc:
+        return _flow_approve_page(
+            "Approval unavailable", str(exc.detail), status=exc.status_code,
+        )
+    verb = "approve" if decision == "approved" else "reject"
+    name = run.flow_id
+    return _flow_approve_page(
+        f"Confirm: {verb} this flow?",
+        f"“{name}” is paused: {run.prompt or 'awaiting your decision'}. "
+        f"Click Confirm to {verb} and resume it.",
+        form_token=token)
+
+
+@app.post("/flow/approve", response_class=HTMLResponse)
+async def flow_approve_submit(request: Request, token: str = Form("")) -> HTMLResponse:
+    """Actuate a signed approve/reject link: resume the paused run with the
+    decision the token carries. Idempotent -- a second click finds the run no
+    longer paused and reports that instead of re-resuming."""
+    from maverick import flow
+    if not flow.enabled():
+        raise HTTPException(status_code=404, detail="the flow engine is off")
+    run, decision, tenant = _load_paused_approval_run(token)
+    if run is None:
+        return _flow_approve_page("Approval unavailable", decision, status=410)
+    try:
+        decided_by = _approval_link_actor(request, run)
+    except HTTPException as exc:
+        return _flow_approve_page(
+            "Approval unavailable", str(exc.detail), status=exc.status_code,
+        )
+    from maverick.flow import store as flow_store
+
+    from maverick_dashboard import automation_queue as aq
+    try:
+        aq.enqueue_flow_resume(
+            run.flow_id, run.run_id, decision, run.owner, tenant=tenant,
+            decided_by=decided_by,
+        )
+    except flow_store.FlowSnapshotError:
+        return _flow_approve_page(
+            "Approval unavailable",
+            "This flow release is no longer active.",
+            status=410,
+        )
+    verb = "approved" if decision == "approved" else "rejected"
+    return _flow_approve_page("Thanks — recorded",
+                              f"You {verb} “{run.flow_id}”. It is resuming now; "
+                              f"you can close this page.")
+
+
+@app.post("/form/{token}")
+async def form_submit(request: Request, token: str) -> JSONResponse:
+    """Record a hosted-form submission under ``token`` so a ``form`` event trigger
+    fires a flow with the submitted fields as data. Public by design (a form is
+    meant to be filled by anyone with the link); the unguessable ``token`` in the
+    path is the addressing secret, the body is size/field-bounded, and firing is
+    rate-limited. Gated on event triggers being enabled (404 otherwise)."""
+    from maverick import automation_events
+    if not automation_events.enabled():
+        raise HTTPException(status_code=404, detail="event triggers are disabled")
+    fields: dict = {}
+    ctype = request.headers.get("content-type", "")
+    if "application/json" in ctype:
+        body = await _read_limited_webhook_body(request)   # bounded read (shared cap)
+        import json as _json
+        try:
+            parsed = _json.loads(body or b"{}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="invalid JSON body") from e
+        if isinstance(parsed, dict):
+            fields = parsed
+    else:
+        # urlencoded / multipart form post -- read the stream once via the form
+        # parser (its own size limits apply); don't pre-read the body above.
+        form = await request.form()
+        fields = {k: str(v) for k, v in form.items()}
+    check_goal_rate_limit(request, source="form")
+    from maverick import form_store
+    seq = form_store.append(token, fields)
+    return JSONResponse({"ok": True, "seq": seq}, status_code=201)
+
+
+@app.post("/webhook/linear")
+async def webhook_linear(request: Request, bg: BackgroundTasks) -> JSONResponse:
+    """Linear issue-assigned webhook -> goal. Signature in ``Linear-Signature``."""
+    return await _handle_issue_webhook("linear", "Linear-Signature", request, bg)
+
+
+@app.post("/webhook/jira")
+async def webhook_jira(request: Request, bg: BackgroundTasks) -> JSONResponse:
+    """Jira issue-assigned webhook -> goal. Signature in ``X-Hub-Signature``."""
+    return await _handle_issue_webhook("jira", "X-Hub-Signature", request, bg)
+
+
+@app.post("/webhook/github")
+async def webhook_github(request: Request, bg: BackgroundTasks) -> JSONResponse:
+    """GitHub App webhook -> issue→PR. A labeled/`/maverick`-commented issue
+    drives a swarm that clones the repo, fixes it, and opens a PR
+    (``maverick.github_app``). HMAC-verified via ``X-Hub-Signature-256`` against
+    ``MAVERICK_GH_APP_WEBHOOK_SECRET`` (fails closed)."""
+    import json as _json
+    import os as _os
+
+    from maverick.github_app import parse_webhook, process_issue, verify_signature
+    from maverick.issue_webhooks import canonical_signature, replay_window_seconds
+
+    signature = request.headers.get("X-Hub-Signature-256")
+    body = await _read_limited_webhook_body(request)
+    secret = _os.environ.get("MAVERICK_GH_APP_WEBHOOK_SECRET", "")
+    if not verify_signature(body, signature, secret):
+        return JSONResponse({"detail": "invalid signature"}, status_code=401)
+    try:
+        payload = parse_webhook(request.headers.get("X-GitHub-Event", ""), _json.loads(body))
+    except (ValueError, TypeError):
+        return JSONResponse({"detail": "bad payload"}, status_code=400)
+    if payload is None:
+        return JSONResponse({"status": "ignored"})
+
+    # GitHub signs only the raw body, not a freshness timestamp.  Require its
+    # delivery id for operator traceability, but key replay rejection on the
+    # canonical body HMAC so a captured delivery cannot be resent with a
+    # different X-GitHub-Delivery value to re-run the paid issue→PR workflow.
+    if not (request.headers.get("X-GitHub-Delivery") or "").strip():
+        return JSONResponse({"detail": "missing delivery id"}, status_code=403)
+    dedup_signature = canonical_signature(signature)
+    if not dedup_signature:
+        return JSONResponse({"detail": "bad webhook signature"}, status_code=403)
+    if _issue_webhook_replay_seen(dedup_signature, replay_window_seconds()):
+        return JSONResponse({"detail": "duplicate webhook delivery"}, status_code=409)
+
+    check_goal_rate_limit(request, source="webhook:github")
+
+    async def _run() -> None:
+        try:
+            await process_issue(payload)
+        except Exception:  # pragma: no cover -- never crash the worker
+            log.exception("github_app: issue→PR run failed")
+
+    bg.add_task(_run)
+    return JSONResponse({"status": "accepted", "issue": payload.issue_number})
+
+
+@app.post("/webhook/gitlab")
+async def webhook_gitlab(request: Request, bg: BackgroundTasks) -> JSONResponse:
+    """GitLab issue-assigned webhook -> goal.
+
+    GitLab authenticates with a shared ``X-Gitlab-Token`` (no body HMAC), so
+    this route verifies that token (constant-time, fail-closed) and keys
+    replay-dedup on the required ``X-Gitlab-Event-UUID`` delivery id instead
+    of a body signature.
+    """
+    import os as _os
+
+    from maverick.issue_webhooks import (
+        build_brief,
+        parse_issue_event,
+        replay_window_seconds,
+        verify_gitlab_token,
+    )
+
+    secret = _os.environ.get("MAVERICK_GITLAB_WEBHOOK_TOKEN", "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=401,
+            detail=("GitLab webhooks aren't set up yet — an administrator must "
+                    "configure the shared webhook token (the "
+                    "MAVERICK_GITLAB_WEBHOOK_TOKEN environment variable)."),
+        )
+    if not verify_gitlab_token(request.headers.get("X-Gitlab-Token"), secret):
+        raise HTTPException(status_code=403, detail="bad webhook token")
+    body = await _read_limited_webhook_body(request)
+    try:
+        payload = json.loads(body or b"{}")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+
+    event = parse_issue_event("gitlab", payload)
+    if event is None:
+        return JSONResponse({"ignored": True}, status_code=200)
+
+    # GitLab sends no signed timestamp; the per-delivery UUID is the dedup key.
+    delivery = (request.headers.get("X-Gitlab-Event-UUID") or "").strip()
+    if not delivery:
+        raise HTTPException(status_code=403, detail="missing delivery id")
+    if _issue_webhook_replay_seen(f"gitlab:{delivery}", replay_window_seconds()):
+        raise HTTPException(status_code=409, detail="duplicate webhook delivery")
+
+    require_provider_or_400()
+    check_goal_rate_limit(request, source="webhook:gitlab")
+    w = _world()
+    title = f"{event.issue_id}: {event.title}".strip()
+    goal_id = w.create_goal(title[:200], build_brief(event)[:8000], owner="")
+    from maverick.runner import run_goal_in_background_async
+    bg.add_task(run_goal_in_background_async, goal_id, None)
+    return JSONResponse({"goal_id": goal_id}, status_code=201)
+
+
+# Replay dedup for inbound issue webhooks, keyed on the request's HMAC signature
+# (unique per signed body), so a captured delivery replayed within the freshness
+# window is rejected. Backed by the SHARED world store when Postgres is
+# configured (HA / multi-replica) so a replay can't slip through on a sibling
+# replica; falls back to the per-process window for the default single-process /
+# SQLite deployment. Same first-writer-wins primitive used for channel dedup and
+# the OIDC replay guard.
+_issue_webhook_seen: dict[str, float] = {}
+_issue_webhook_seen_lock = threading.Lock()
+_ISSUE_WEBHOOK_SEEN_MAX = 4096
+_ISSUE_WEBHOOK_CHANNEL = "__issue_webhook__"
+
+
+def _shared_issue_webhook_seen(signature: str) -> bool | None:
+    """Record/check ``signature`` in the shared store when Postgres (HA) is
+    configured. Returns True if already seen (replay), False on first delivery,
+    or None when there is no shared backend / it is unavailable (caller falls
+    back to the in-process window). Never raises -- a degraded store must not
+    drop webhooks; the HMAC + freshness checks still hold."""
+    try:
+        from maverick.world_model_backends import is_postgres_configured
+        if not is_postgres_configured():
+            return None
+        # True == first writer (not previously seen) -> NOT a replay.
+        first = bool(_world().mark_message_processed(_ISSUE_WEBHOOK_CHANNEL, signature))
+        return not first
+    except Exception:  # pragma: no cover - shared dedup must never drop a webhook
+        log.warning("issue webhook dedup: shared store unavailable, using in-process window")
+        return None
+
+
+def _issue_webhook_replay_seen(signature: str, ttl_seconds: int) -> bool:
+    """True if ``signature`` was already delivered within ``ttl_seconds``.
+
+    Prefers the shared store (cross-replica) when Postgres is configured;
+    otherwise records the signature in the per-process window and evicts
+    expired/overflow entries. The first delivery returns False (and is
+    recorded); a replay returns True.
+    """
+    shared = _shared_issue_webhook_seen(signature)
+    if shared is not None:
+        return shared
+    now = time.time()
+    with _issue_webhook_seen_lock:
+        for k, t in list(_issue_webhook_seen.items()):
+            if t < now - ttl_seconds:
+                _issue_webhook_seen.pop(k, None)
+        if signature in _issue_webhook_seen:
+            return True
+        _issue_webhook_seen[signature] = now
+        if len(_issue_webhook_seen) > _ISSUE_WEBHOOK_SEEN_MAX:
+            # Hard cap: drop the oldest half so a flood can't grow unbounded.
+            for k in sorted(_issue_webhook_seen, key=_issue_webhook_seen.get)[
+                : len(_issue_webhook_seen) // 2
+            ]:
+                _issue_webhook_seen.pop(k, None)
+        return False
+
+
+async def _handle_issue_webhook(
+    provider: str, sig_header: str, request: Request, bg: BackgroundTasks,
+) -> JSONResponse:
+    """Shared handler for inbound issue-assigned webhooks (Linear/Jira).
+
+    HMAC-signed like ``/webhook/start`` (fail-closed: no secret -> 401, bad
+    signature -> 403). When the payload isn't an issue assigned to the
+    configured bot, acknowledge with ``{"ignored": true}`` instead of
+    spawning a goal. On a real assignment, create a goal from the issue and
+    enqueue the run, returning ``{"goal_id": <int>}``.
+    """
+    from maverick.issue_webhooks import (
+        build_brief,
+        canonical_signature,
+        is_fresh,
+        parse_issue_event,
+        replay_window_seconds,
+        verify_signature,
+    )
+    from maverick.webhooks import inbound_secret
+
+    secret = inbound_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Inbound webhooks aren't set up yet — an administrator must "
+                "configure a signing secret (a [webhooks] secret in the server "
+                "configuration, or the MAVERICK_WEBHOOK_SECRET environment "
+                "variable)."
+            ),
+        )
+    signature = request.headers.get(sig_header) or ""
+    if not signature:
+        raise HTTPException(status_code=403, detail="bad webhook signature")
+    body = await _read_limited_webhook_body(request)
+    if not verify_signature(body, signature, secret):
+        raise HTTPException(status_code=403, detail="bad webhook signature")
+
+    try:
+        payload = json.loads(body or b"{}")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+
+    event = parse_issue_event(provider, payload)
+    if event is None:
+        # Wrong event type, unassigned, or assigned to someone other than the
+        # bot -- acknowledge without driving the swarm.
+        return JSONResponse({"ignored": True}, status_code=200)
+
+    # Replay defence for actionable (goal-spawning) events -- parity with
+    # /webhook/start. Linear/Jira sign only the body, but it carries an
+    # authenticated webhookTimestamp/timestamp we age-check, and the signature
+    # is a per-delivery dedup key. A captured signed event must not be able to
+    # re-create and re-run a paid goal indefinitely.
+    if not is_fresh(provider, payload):
+        raise HTTPException(status_code=403, detail="stale or undated webhook")
+    dedup_signature = canonical_signature(signature)
+    if not dedup_signature:
+        raise HTTPException(status_code=403, detail="bad webhook signature")
+    if _issue_webhook_replay_seen(dedup_signature, replay_window_seconds()):
+        raise HTTPException(status_code=409, detail="duplicate webhook delivery")
+
+    require_provider_or_400()
+    check_goal_rate_limit(request, source=f"webhook:{provider}")
+    w = _world()
+    title = f"{event.issue_id}: {event.title}".strip()
+    # Webhook-driven goal: no authenticated principal -> unowned ("").
+    goal_id = w.create_goal(title[:200], build_brief(event)[:8000], owner="")
+    from maverick.runner import run_goal_in_background_async
+    bg.add_task(run_goal_in_background_async, goal_id, None)
+    return JSONResponse({"goal_id": goal_id}, status_code=201)
+
+
+def _goal_deliverable(g):
+    """A goal's result rendered as the deliverable its pack declares.
+
+    Returns ``(contract, rendered)`` -- the pack's output contract (label /
+    consumers / cadence / gate) and the result parsed per its ``shape`` -- or
+    ``(None, None)`` for a generic/ungated prose goal or when the factory layer
+    is unavailable. A terminal-gated prose pack still returns its contract so
+    the reviewer gets a sign-off panel even when an AI-generated playbook did
+    not also generate a structured output contract."""
+    try:
+        from maverick.deliverable import render_deliverable
+        from maverick.domain import available_domains, enforced_gate
+        prof = available_domains().get(g.domain) if g.domain else None
+        if prof is None:
+            return None, None
+        rendered = render_deliverable(prof.output.shape, g.result)
+        gate = enforced_gate(prof)
+        if not rendered.structured and not gate:
+            return None, None
+        out = prof.output
+        contract = {"shape": out.shape, "deliverable": out.deliverable,
+                    "consumers": list(out.consumers), "cadence": out.cadence,
+                    "gate": gate}
+        return contract, rendered
+    except Exception:  # never 500 the goal page if the factory layer is unavailable
+        return None, None
+
+
+@app.get("/chat/goal/{goal_id}", response_class=HTMLResponse)
+async def chat_goal(request: Request, goal_id: int) -> HTMLResponse:
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    contract, rendered = _goal_deliverable(g)
+    # The current sign-off, only for a gated deliverable (the panel that lets a
+    # human certify it and hand it off). None elsewhere -> no panel.
+    signoff = None
+    if contract and contract.get("gate"):
+        try:
+            signoff = w.signoff_for(goal_id)
+        except Exception:  # pragma: no cover -- never 500 the goal page
+            signoff = None
+    artifacts = _goal_artifacts(w, goal_id)
+    try:
+        projects = w.list_projects(owner=goal_owner_filter(request))
+    except Exception:  # pragma: no cover -- never 500 the goal page
+        projects = []
+    try:
+        share_links = [s for s in w.share_links_for_goal(goal_id) if s["active"]]
+    except Exception:  # pragma: no cover -- never 500 the goal page
+        share_links = []
+    return templates.TemplateResponse(
+        request, "chat_goal.html",
+        {"goal": g, "deliverable": contract, "rendered": rendered,
+         "signoff": signoff, "artifacts": artifacts, "projects": projects,
+         "share_links": share_links},
+    )
+
+
+def _goal_artifacts(w, goal_id: int) -> list[dict]:
+    """A goal's latest artifacts, each pre-rendered by kind: a ``table`` artifact
+    parses to a grid (reusing the deliverable renderer), everything else falls
+    back to text. ``[]`` if the goal has none (the panel then doesn't render)."""
+    try:
+        from maverick.deliverable import render_deliverable
+        out: list[dict] = []
+        for a in w.latest_artifacts(goal_id):
+            shape = "table" if a.get("kind") == "table" else "prose"
+            r = render_deliverable(shape, a.get("content"))
+            out.append({**a, "table": r.table, "prose": r.prose})
+        return out
+    except Exception:  # pragma: no cover -- never 500 the goal page
+        return []
+
+
+@app.get("/share/{token}", response_class=HTMLResponse)
+async def shared_goal(request: Request, token: str) -> HTMLResponse:
+    """Public, read-only view of a goal's deliverable behind a share token.
+
+    Auth-exempt (the token IS the credential): an unknown, revoked, or expired
+    token 404s with no detail. Renders only the title + deliverable + artifacts
+    -- never the worklog, spend, controls, or nav."""
+    w = _world()
+    goal_id = w.resolve_share_link(token)
+    if goal_id is None:
+        raise HTTPException(status_code=404, detail="this share link is invalid, revoked, or expired")
+    g = w.get_goal(goal_id)
+    if g is None:  # pragma: no cover -- link resolved but goal gone
+        raise HTTPException(status_code=404, detail="not found")
+    # Resolve-time authorization matters as much as mint-time authorization:
+    # an edit/rerun/rejection invalidates approval but cannot recall a token
+    # already copied. Fail closed without revealing whether a gate exists.
+    if g.status != "done":
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        from maverick.domain import (
+            available_domains,
+            deliverable_release_allowed,
+        )
+        prof = available_domains().get(g.domain) if g.domain else None
+        if g.domain and prof is None:
+            # A removed/renamed pack is unavailable policy, not an ungated
+            # pack. Existing copied tokens must fail closed.
+            raise HTTPException(status_code=404, detail="not found")
+        if prof is not None and not deliverable_release_allowed(
+            prof, w.signoff_for(goal_id),
+        ):
+            raise HTTPException(status_code=404, detail="not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A gate lookup failure must not turn a token into an ungoverned public
+        # export. Unknown/no-domain goals remain shareable through the normal
+        # path; known factory failures fail closed here.
+        if g.domain:
+            raise HTTPException(status_code=404, detail="not found") from exc
+    contract, rendered = _goal_deliverable(g)
+    artifacts = _goal_artifacts(w, goal_id)
+    # Re-check after materializing the composite payload. If an artifact or
+    # result changed between the first authorization read and these reads, its
+    # transaction revoked sign-off; never render that mixed-version snapshot.
+    if prof is not None:
+        try:
+            if not deliverable_release_allowed(prof, w.signoff_for(goal_id)):
+                raise HTTPException(status_code=404, detail="not found")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="not found") from exc
+    return templates.TemplateResponse(
+        request, "shared_goal.html",
+        {"goal": g, "deliverable": contract, "rendered": rendered, "artifacts": artifacts})
+
+
+@app.get("/api/goal/{goal_id}")
+async def api_goal_legacy(request: Request, goal_id: int) -> dict:
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    return {"id": g.id, "status": g.status, "title": g.title, "result": g.result or ""}
+
+
+def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
+    """Assemble the plan tree rooted at ``goal_id`` in two queries.
+
+    Previous implementation was true N+1: ``_children`` ran one query
+    per node, each with a correlated cost subquery. Depth-6 tree
+    fanned out to thousands of SQL calls. This rewrite uses a single
+    recursive CTE for the descendant set + one aggregate JOIN for
+    costs, then assembles the tree in Python.
+    """
+    root = world.get_goal(goal_id)
+    if root is None:
+        return {}
+
+    per_parent_cap = 50
+    rows = world.conn.execute(
+        """
+        WITH RECURSIVE descendants(id, parent_id, title, status, depth, created_at) AS (
+          SELECT id, parent_id, title, status, 0, created_at
+            FROM goals WHERE id = ?
+          UNION ALL
+          SELECT child.id, child.parent_id, child.title, child.status, d.depth + 1, child.created_at
+            FROM descendants d
+            JOIN goals child
+              ON child.id IN (
+                SELECT g.id
+                  FROM goals g
+                 WHERE g.parent_id = d.id
+                 ORDER BY g.created_at ASC, g.id ASC
+                 LIMIT ?
+              )
+           WHERE d.depth < ?
+        ),
+        episode_totals AS (
+          SELECT e.goal_id, SUM(e.cost_dollars) AS dollars
+            FROM episodes e
+            JOIN descendants d ON d.id = e.goal_id
+           GROUP BY e.goal_id
+        )
+        SELECT d.id, d.parent_id, d.title, d.status, d.depth,
+               COALESCE(e.dollars, 0) AS dollars
+          FROM descendants d
+          LEFT JOIN episode_totals e ON e.goal_id = d.id
+         ORDER BY d.depth ASC, d.created_at ASC, d.id ASC
+        """,
+        (goal_id, per_parent_cap, depth_cap),
+    ).fetchall()
+
+    # This tree reads goals.title via raw SQL, so decrypt it the same way the
+    # WorldModel accessors do when at-rest encryption seals the column.
+    from maverick.world_model import _dec_field
+
+    nodes: dict[int, dict] = {}
+    for r in rows:
+        nodes[r["id"]] = {
+            "id":        r["id"],
+            "parent_id": r["parent_id"],
+            "title":     _dec_field(r["title"]),
+            "status":    r["status"],
+            "dollars":   float(r["dollars"] or 0.0),
+            "children":  [],
+        }
+    # Assemble children lists. Per-parent fan-out cap stays at 50 to
+    # match the prior LIMIT (truncates noisy fan-outs in the UI).
+    for n in nodes.values():
+        parent = nodes.get(n["parent_id"])
+        if parent is not None and parent["id"] != n["id"]:
+            if len(parent["children"]) < per_parent_cap:
+                parent["children"].append(n)
+    root_node = nodes.get(goal_id)
+    if root_node is None:
+        return {
+            "id": root.id, "parent_id": root.parent_id,
+            "title": root.title, "status": root.status,
+            "dollars": 0.0, "children": [],
+        }
+    return root_node
+
+
+@app.get("/api/v1/goals/{goal_id}/tree")
+async def api_plan_tree(request: Request, goal_id: int) -> dict:
+    """Plan-tree JSON: root + recursive children with status + cost."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    return _build_plan_tree(w, goal_id)
+
+
+@app.get("/api/v1/goals/{goal_id}/minimap", response_class=PlainTextResponse)
+async def goal_minimap(request: Request, goal_id: int, depth: int = 3) -> PlainTextResponse:
+    """Plan-tree minimap: the goal's subtree as compact one-line-per-node text.
+
+    Pure render via ``maverick.plan_minimap`` (status glyphs, depth
+    indentation, collapsed counts beyond the ``?depth=`` budget).
+    """
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    from maverick.plan_minimap import render_minimap
+    try:
+        depth = max(0, min(int(depth), 8))
+    except (TypeError, ValueError):
+        depth = 3
+    text = render_minimap(w, goal_id, max_depth=depth)
+    return PlainTextResponse(text + "\n", media_type="text/plain; charset=utf-8")
+
+
+def _render_tree_html(node: dict) -> str:
+    """Pre-render the plan-tree as nested <ul><li> HTML.
+
+    Avoids Jinja's recursive-macro limitation (dict args aren't hashable
+    for the autoescape cache). Escapes user-controlled fields with html
+    escape to keep titles safe.
+    """
+    import html as _html
+
+    def _esc(s) -> str:
+        # quote=True so the value is safe in attribute context too — the
+        # status string is interpolated into class="badge {status}".
+        # Status is enum-bounded today, but a future writer shouldn't be
+        # one missing quote away from attribute-injection.
+        return _html.escape(str(s), quote=True) if s is not None else ""
+
+    def _render(n: dict) -> str:
+        dollars_html = (
+            f' <span class="cost">${n["dollars"]:.4f}</span>'
+            if n.get("dollars") else ""
+        )
+        node_html = (
+            f'<a class="node" href="/goals#{n["id"]}">'
+            f'<span class="nid">#{_esc(n["id"])}</span> '
+            f'<span class="badge {_esc(n["status"])}">{_esc(n["status"])}</span> '
+            f'<span class="title">{_esc(n.get("title") or "(untitled)")}</span>'
+            f"{dollars_html}"
+            f"</a>"
+        )
+        children = n.get("children") or []
+        if not children:
+            return f"<li>{node_html}</li>"
+        children_html = "".join(_render(c) for c in children)
+        return f"<li>{node_html}<ul>{children_html}</ul></li>"
+
+    return f"<ul>{_render(node)}</ul>"
+
+
+@app.get("/goals/{goal_id}/plan", response_class=HTMLResponse)
+async def plan_tree_page(request: Request, goal_id: int) -> HTMLResponse:
+    """HTML plan-tree visualization."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    root = _build_plan_tree(w, goal_id)
+    tree_html = _render_tree_html(root)
+    return templates.TemplateResponse(
+        request, "plan_tree.html",
+        {"goal": g, "root": root, "tree_html": tree_html},
+    )
+
+
+@app.get("/goals/{goal_id}/trajectory", response_class=HTMLResponse)
+async def trajectory_page(request: Request, goal_id: int) -> HTMLResponse:
+    """Trajectory replay: timeline of every event with a scrubber."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    events = w.goal_events(goal_id, limit=10_000)
+    return templates.TemplateResponse(
+        request, "trajectory.html",
+        {"goal": g, "events": events},
+    )
+
+
+@app.get("/goals/{goal_id}/errors", response_class=HTMLResponse)
+async def errors_page(request: Request, goal_id: int) -> HTMLResponse:
+    """Error inspector: every failed turn for a goal, with full content."""
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    errors = [e for e in w.goal_events(goal_id, limit=10_000) if e.kind == "error"]
+    return templates.TemplateResponse(
+        request, "errors.html",
+        {"goal": g, "errors": errors},
+    )
+
+
+@app.get("/api/v1/cost.csv")
+async def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
+    """CSV rollup of episode spend, streamed.
+
+    Council perf finding: prior version fetched up to 100k episodes
+    into memory, then filtered by month in Python before writing the
+    CSV to a StringIO. Now: stream rows directly from the DB, with the
+    month filter pushed to SQL.
+
+    ``month`` filter: YYYY-MM (e.g. 2026-04). Omit for lifetime.
+    Columns: episode_id, goal_id, started_at, ended_at, outcome,
+    dollars, in_tokens, out_tokens, tool_calls.
+    """
+    import csv
+    import datetime as _dt
+    import io as _io
+
+    w = _world()
+    # Owner-scope the export: an authenticated non-admin gets only their own
+    # episodes (auth-off / admin get everything, the historical behaviour), so
+    # this chargeback CSV can't leak every tenant's spend ledger. Mirrors the
+    # owner scoping on /api/v1/cost/by-tag.
+    owner = goal_owner_filter(request)
+    start_ts: float | None = None
+    end_ts: float | None = None
+    if month:
+        try:
+            start = _dt.datetime.strptime(month, "%Y-%m").replace(
+                tzinfo=_dt.timezone.utc
+            )
+            # episodes.started_at is a UTC epoch, so build the window in UTC --
+            # a naive strptime().timestamp() interprets midnight in the server's
+            # LOCAL zone, shifting the month boundary by the UTC offset (the CSV
+            # then drops/keeps the wrong rows for anyone not running in UTC).
+            # Roll over by calendar month, not +31 days, which over-counts the
+            # short months (e.g. Feb would leak early-March rows).
+            if start.month == 12:
+                nxt = start.replace(year=start.year + 1, month=1)
+            else:
+                nxt = start.replace(month=start.month + 1)
+        except ValueError:
+            # Don't echo strptime's internals (e.g. "unconverted data remains").
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM (e.g. 2026-04)") from None
+        start_ts = start.timestamp()
+        end_ts = nxt.timestamp()
+
+    def generate():
+        buf = _io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "episode_id", "goal_id", "started_at", "ended_at", "outcome",
+            "dollars", "input_tokens", "output_tokens", "tool_calls",
+        ])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        sql = (
+            "SELECT id, goal_id, started_at, ended_at, outcome, "
+            "cost_dollars, input_tokens, output_tokens, tool_calls "
+            "FROM episodes"
+        )
+        conds: list[str] = []
+        plist: list = []
+        if start_ts is not None:
+            conds.append("started_at >= ? AND started_at < ?")
+            plist += [start_ts, end_ts]
+        if owner is not None:
+            # Subquery (not a 10k-element IN list) avoids SQLite's bound-variable
+            # limit and scopes the stream to the caller's goals.
+            conds.append("goal_id IN (SELECT id FROM goals WHERE owner = ?)")
+            plist.append(owner)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY id"
+        params = tuple(plist)
+
+        # outcome is a sealed column when at-rest encryption is on; this CSV reads
+        # it via raw SQL, so decrypt it like the WorldModel accessors do.
+        from maverick.world_model import _dec_field
+        for row in w.conn.execute(sql, params):
+            writer.writerow([
+                row["id"], row["goal_id"],
+                row["started_at"], row["ended_at"] or "",
+                _dec_field(row["outcome"]) or "",
+                f"{(row['cost_dollars'] or 0):.6f}",
+                row["input_tokens"], row["output_tokens"], row["tool_calls"],
+            ])
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    fname = f"maverick-cost-{month}.csv" if month else "maverick-cost-all.csv"
+    return StreamingResponse(
+        generate(), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/api/goal/{goal_id}/events")
+async def api_goal_events_legacy(
+    request: Request, goal_id: int, since: int = 0, limit: int = 200,
+) -> dict:
+    w = _world()
+    g = w.get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+    limit = max(1, min(limit, 500))
+    events = w.goal_events(goal_id, since_id=since, limit=limit)
+    return {
+        "status": g.status,
+        "result": g.result or "",
+        "next_id": events[-1].id if events else since,
+        "events": [
+            {"id": e.id, "agent": e.agent, "kind": e.kind,
+             "content": e.content, "ts": e.ts}
+            for e in events
+        ],
+    }
+
+
+_SSE_MAX_BATCH = 200  # events per poll read (module-level so tests can shrink it)
+
+
+@app.get("/api/goal/{goal_id}/events/stream")
+async def api_goal_events_stream(request: Request, goal_id: int, since: int = 0) -> StreamingResponse:
+    """Server-Sent Events stream of new goal events.
+
+    Council perf-seat fix: client polled this route every 2s (visible
+    tab) / 5s (hidden tab) over the lifetime of every open goal page,
+    burning 30 req/min/tab idle on a goal that finished an hour ago.
+    SSE holds one TCP connection open, server polls SQLite at 0.5s
+    cadence, yields ``data: {json}\\n\\n`` only when there's something
+    new. EventSource on the client reconnects automatically and goes
+    silent the moment status flips to done/cancelled/failed.
+
+    Terminal statuses close the stream with a final event so the
+    client knows it can stop listening (EventSource normally retries
+    forever).
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    w = _world()
+    g = await run_in_threadpool(w.get_goal, goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, g)
+
+    # Cap concurrent streams so thousands of EventSource opens can't exhaust
+    # FDs/tasks. Acquire non-blocking and return 503 when full; release in the
+    # generator's finally so a disconnect (CancelledError) frees a slot.
+    sem = _get_sse_semaphore()
+    if sem.locked():
+        raise HTTPException(
+            status_code=503,
+            detail="too many concurrent event streams; retry shortly",
+            headers={"Retry-After": "5"},
+        )
+    await sem.acquire()
+
+    TERMINAL = ("done", "cancelled", "failed")
+    POLL_INTERVAL = 0.5            # server-side cadence
+    MAX_POLL_INTERVAL = 5.0        # cap idle backoff to reduce DB churn
+    IDLE_HEARTBEAT_EVERY = 30      # send a comment line so proxies don't time out
+    MAX_STREAM_SECONDS = 300       # lifetime cap per SSE stream
+    MAX_BATCH = _SSE_MAX_BATCH
+
+    # EventSource reconnects on its own (a network blip, a proxy timeout,
+    # or our MAX_STREAM_SECONDS cap). Without resume support it would
+    # restart from ``?since=`` and replay the whole log as duplicates;
+    # honor Last-Event-ID so a reconnect resumes exactly where it left off.
+    resume_from = since
+    last_event_id = request.headers.get("last-event-id")
+    if last_event_id:
+        try:
+            resume_from = max(resume_from, int(last_event_id))
+        except ValueError:
+            pass
+
+    async def generate():
+        started = _asyncio.get_running_loop().time()
+        sid = resume_from
+        idle_ticks = 0
+        poll_interval = POLL_INTERVAL
+        # Advertise the reconnect delay (ms) to the client.
+        yield "retry: 3000\n\n"
+        # Initial flush: anything already on the board since `since`.
+        try:
+            while True:
+                if (_asyncio.get_running_loop().time() - started) >= MAX_STREAM_SECONDS:
+                    yield "event: timeout\ndata: {\"detail\": \"stream lifetime exceeded\"}\n\n"
+                    return
+                # Offload the blocking, lock-held SQLite reads so this 0.5s
+                # poll loop doesn't run them on the event loop (which would
+                # stall every other request/stream while the query holds the
+                # world-DB lock).
+                events = await run_in_threadpool(
+                    w.goal_events, goal_id, since_id=sid, limit=MAX_BATCH)
+                g = await run_in_threadpool(w.get_goal, goal_id)
+                if g is None:
+                    yield "event: error\ndata: {\"detail\": \"goal vanished\"}\n\n"
+                    return
+                if events:
+                    sid = events[-1].id
+                    payload = {
+                        "status": g.status,
+                        "result": g.result or "",
+                        "next_id": sid,
+                        "events": [
+                            {"id": e.id, "agent": e.agent, "kind": e.kind,
+                             "content": e.content, "ts": e.ts}
+                            for e in events
+                        ],
+                    }
+                    yield f"id: {sid}\ndata: {_json.dumps(payload)}\n\n"
+                    idle_ticks = 0
+                    poll_interval = POLL_INTERVAL
+                else:
+                    idle_ticks += 1
+                    if idle_ticks * POLL_INTERVAL >= IDLE_HEARTBEAT_EVERY:
+                        # SSE comment line; ignored by EventSource but keeps
+                        # intermediaries from closing the connection.
+                        yield ": heartbeat\n\n"
+                        idle_ticks = 0
+                    poll_interval = min(MAX_POLL_INTERVAL, poll_interval * 1.5)
+                if g.status in TERMINAL:
+                    if len(events) < MAX_BATCH:
+                        payload = {
+                            "status": g.status,
+                            "result": g.result or "",
+                            "next_id": sid,
+                            "events": [],
+                            "terminal": True,
+                        }
+                        yield f"id: {sid}\nevent: terminal\ndata: {_json.dumps(payload)}\n\n"
+                        return
+                    # A full batch means more backlog may remain: keep draining
+                    # (without sleeping) and end only once a read comes up short.
+                    continue
+                await _asyncio.sleep(poll_interval)
+        except _asyncio.CancelledError:
+            return
+        finally:
+            # Always free the stream slot, whether we ended on a terminal
+            # status, the lifetime cap, or a client disconnect.
+            sem.release()
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # nginx/caddy: disable response buffering
+        },
+    )
+
+
+# ----- roadmap cluster: graph editor / goal builder / embed / benchmarks /
+#       walkthroughs / 3D plan tree -----
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/static/lightwork-analytics.js")
+async def embed_analytics_js() -> FileResponse:
+    """The embeddable ``<lightwork-analytics>`` web component (plain JS, no
+    framework). See the file's header comment for the same-origin + token
+    caveats; /embed-demo shows it running."""
+    return FileResponse(
+        _STATIC_DIR / "lightwork-analytics.js",
+        media_type="application/javascript; charset=utf-8",
+    )
+
+
+@app.get("/static/maverick-analytics.js")
+async def embed_analytics_js_legacy() -> FileResponse:
+    """Pre-rebrand URL for the analytics component. Pages that embedded the
+    script before the Lightwork rebrand keep working; the file itself also
+    registers the old <maverick-analytics> tag as an alias."""
+    return FileResponse(
+        _STATIC_DIR / "lightwork-analytics.js",
+        media_type="application/javascript; charset=utf-8",
+    )
+
+
+@app.get("/static/lightwork.css")
+async def shell_stylesheet() -> FileResponse:
+    """The dashboard shell's design system, extracted from base.html so the
+    template stays markup. Short-lived cache: the browser revalidates cheaply
+    but a dashboard upgrade restyles without a hard refresh."""
+    return FileResponse(
+        _STATIC_DIR / "lightwork.css",
+        media_type="text/css; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/static/board.js")
+async def board_engine_js() -> FileResponse:
+    """The shared executive-board engine (KPI tiles, area/donut/bar charts,
+    slicer + live refresh) behind Overview, Spend, and Workforce."""
+    return FileResponse(
+        _STATIC_DIR / "board.js",
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/static/lightwork-ui.js")
+async def shell_behaviors_js() -> FileResponse:
+    """The shell behaviors (mvToast/mvConfirm/mvForm primitives, halt pill,
+    sidebar + preferences) extracted from base.html; loaded at the end of
+    <body> on every page."""
+    return FileResponse(
+        _STATIC_DIR / "lightwork-ui.js",
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/static/lightwork-voice.js")
+async def natural_voice_js() -> FileResponse:
+    """The natural-voice layer: ranked speech voices, humanized text, and
+    sentence-chunked delivery for every browser read-aloud fallback — the
+    bare default utterance is what makes an agent sound robotic."""
+    return FileResponse(
+        _STATIC_DIR / "lightwork-voice.js",
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/static/daybreak-logo.jpg")
+async def brand_logo() -> FileResponse:
+    """The Daybreak Labs brand logo, served same-origin for the sidebar brand,
+    the favicon, and the public share view. Auth-exempt by nature (a brand
+    image), cached a day."""
+    return FileResponse(
+        _STATIC_DIR / "daybreak-logo.jpg",
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/graph-editor", response_class=HTMLResponse)
+async def graph_editor_page(request: Request) -> HTMLResponse:
+    """Visual graph editor: the goal forest as an editable SVG node graph.
+
+    Layout comes from the server (GET /api/v1/goal-tree); the page JS only
+    draws and posts edits (retitle / re-parent / add child)."""
+    from .goal_tree import forest_html, goal_nodes
+    nodes = goal_nodes(_world(), owner=goal_owner_filter(request))
+    return templates.TemplateResponse(
+        request, "graph_editor.html",
+        {"node_count": len(nodes), "fallback_html": forest_html(nodes)},
+    )
+
+
+@app.get("/goal-builder", response_class=HTMLResponse)
+async def goal_builder_page(request: Request) -> HTMLResponse:
+    """Drag-and-drop goal builder: compose a brief from blocks, then run it."""
+    return templates.TemplateResponse(request, "goal_builder.html", {})
+
+
+@app.get("/workflow-builder", response_class=HTMLResponse)
+async def workflow_builder_page(request: Request, template: str | None = None,
+                                edit: str | None = None,
+                                edit_agent: str | None = None) -> HTMLResponse:
+    """AI workflow builder: draft a reusable workflow from a brief or an
+    uploaded document, edit it, then save it as a runnable template.
+
+    ``?template=<name>`` deep-links from the Templates page: jump straight to
+    automating an existing saved template (schedule / webhook trigger) without
+    re-drafting it. ``?edit=<name>`` rehydrates the full template editor so Save
+    overwrites it; ``?edit_agent=<name>`` rehydrates the playbook editor for an
+    existing agent (round-tripping override fields the builder can't show, so
+    editing can't silently clear them). An unknown name yields no prefill."""
+    from maverick.config import get_features
+    feats = get_features()
+    prefill = None
+    edit_prefill = None
+    edit_agent_prefill = None
+    # Drafting an unsaved first pass needs only ``operate``; reading or saving
+    # an existing pack remains the admin-only control-plane boundary. Compute
+    # this before loading the requested agent so a non-admin deep-link cannot
+    # receive pack internals embedded in page JavaScript.
+    from .api import pack_editing_denial
+    pack_editing_allowed = pack_editing_denial(request) is None
+    edit_agent_denied = str(edit_agent or "") if edit_agent and not pack_editing_allowed else ""
+    if edit_agent and pack_editing_allowed:
+        from maverick.domain_edit import read_override, resolved_view
+        try:
+            view = resolved_view(edit_agent)
+        except Exception:
+            view = None
+        if view:
+            try:
+                raw = read_override(edit_agent) or {}
+            except Exception:
+                raw = {}
+            # Preserve the explicitly-overridden fields the builder doesn't
+            # expose, so a save (which replaces the override) can't drop them.
+            preserve = {k: raw[k] for k in ("knowledge_sources", "models",
+                                            "compartment", "extends") if k in raw}
+            edit_agent_prefill = {
+                "name": view.get("name", edit_agent),
+                "description": view.get("description", ""),
+                "persona": view.get("persona", ""),
+                "allow_tools": view.get("allow_tools", []),
+                "deny_tools": view.get("deny_tools", []),
+                "max_risk": view.get("max_risk", "medium"),
+                "workflow": view.get("workflow", []),
+                "preserve": preserve,
+            }
+    elif edit:
+        from maverick.templates import load_template
+        try:
+            t = load_template(edit)
+            edit_prefill = {"name": t.name, "title": t.title, "body": t.body,
+                            "params": list(t.params), "budget_dollars": t.budget_dollars,
+                            # Carry the wall-seconds cap so a save round-trip can't
+                            # silently reset it to the schema default (3600).
+                            "budget_wall_seconds": t.budget_wall_seconds,
+                            "generation": t.generation}
+        except (ValueError, FileNotFoundError):
+            edit_prefill = None
+    elif template:
+        from maverick.templates import load_template
+        try:
+            tpl = load_template(template)
+            prefill = {"name": tpl.name, "params": list(tpl.params), "title": tpl.title}
+        except (ValueError, FileNotFoundError):
+            prefill = None
+    return templates.TemplateResponse(
+        request, "workflow_builder.html",
+        {
+            "scheduling_enabled": feats.get("scheduling", True),
+            "triggers_enabled": feats.get("triggers", True),
+            "pack_editing_allowed": pack_editing_allowed,
+            "prefill": prefill,
+            "edit_prefill": edit_prefill,
+            "edit_agent_prefill": edit_agent_prefill,
+            "edit_agent_denied": edit_agent_denied,
+        },
+    )
+
+
+@app.get("/start", response_class=HTMLResponse)
+async def get_started_page(request: Request) -> HTMLResponse:
+    """First-run guide: a live checklist from zero to a running AI workforce.
+    Each step reflects real workspace state (provider configured? a workflow or
+    agent built? anything run or automated?) so it self-completes as you go."""
+    from .onboarding_state import build
+
+    state = build(_world())
+    return templates.TemplateResponse(
+        request, "get_started.html",
+        state,
+    )
+
+
+@app.get("/workflows", response_class=HTMLResponse)
+async def workflows_index_page(request: Request) -> HTMLResponse:
+    """Your saved workflows: templates you authored + agent playbooks you built,
+    with quick edit / automate actions. The builder is reached via 'New'. (This
+    is the management index; /templates remains the browse-the-catalog page.)"""
+    from maverick.config import get_features
+    from maverick.templates import load_template, user_templates_dir
+    feats = get_features()
+    tpls: list[dict] = []
+    try:
+        names = sorted(p.stem for p in user_templates_dir().glob("*.md"))
+    except OSError:
+        names = []
+    for name in names:
+        try:
+            t = load_template(name)
+            tpls.append({"name": t.name, "title": t.title, "params": list(t.params)})
+        except (ValueError, FileNotFoundError):
+            continue
+    try:
+        from maverick.domain_edit import list_agents
+        playbooks = [a for a in list_agents()
+                     if a.get("is_override") and a.get("has_workflow")]
+    except Exception:
+        playbooks = []
+    # Unify the surface: saved flow graphs live here too, not on a separate page.
+    flows: list[dict] = []
+    flows_enabled = False
+    try:
+        from maverick import flow as _flow
+        flows_enabled = _flow.enabled()
+        if flows_enabled:
+            from maverick.flow import store as _flow_store
+            flows = _flow_store.list_flow_summaries()
+    except Exception:  # pragma: no cover -- never block the page on the flow engine
+        flows = []
+    return templates.TemplateResponse(
+        request, "workflows_index.html",
+        {
+            "templates": tpls,
+            "playbooks": playbooks,
+            "flows": flows,
+            "flows_enabled": flows_enabled,
+            "scheduling_enabled": feats.get("scheduling", True),
+            "triggers_enabled": feats.get("triggers", True),
+        },
+    )
+
+
+@app.get("/flows/analytics", response_class=HTMLResponse)
+async def flow_analytics_page(request: Request) -> HTMLResponse:
+    """Per-flow run analytics (volume, success rate, duration p50/p95, top
+    errors). Data comes from /api/v1/flows/analytics client-side."""
+    return templates.TemplateResponse(request, "flow_analytics.html", {})
+
+
+@app.get("/connections", response_class=HTMLResponse)
+async def connections_page(request: Request) -> HTMLResponse:
+    """Manage named SaaS connections (base URL + sealed token) so connectors can
+    be wired without env vars. CRUD + reachability test go through
+    /api/v1/connections; the feature gate is enforced there."""
+    return templates.TemplateResponse(request, "connections.html", {})
+
+
+@app.get("/flows/designer", response_class=HTMLResponse)
+@app.get("/flows/designer/{flow_id}", response_class=HTMLResponse)
+async def flow_designer_page(request: Request, flow_id: str = "",
+                             from_template: str = "") -> HTMLResponse:
+    """The visual flow designer -- a canvas node editor + the natural-language
+    drafter + the copilot chat. Talks to the /api/v1/flows endpoints; the
+    flow-engine gate is enforced there, so the page renders even when flows are
+    off (empty canvas).
+
+    ``?from_template=<name>`` opens a saved TEMPLATE as its equivalent
+    single-agent flow (the IR's degenerate case) -- the bridge from the text
+    workflow builder into the graph designer: start from what you had, then add
+    branches/approvals/loops around it."""
+    seed_flow = None
+    if from_template:
+        try:
+            from maverick.templates import load_template
+            tpl = load_template(from_template)
+            from maverick.flow.ir import single_agent_flow
+            body = getattr(tpl, "body", "") or getattr(tpl, "title", "") or from_template
+            seed = single_agent_flow("", tpl.title or from_template, str(body)[:8000])
+            seed_flow = seed.to_dict()
+        except (ValueError, FileNotFoundError):
+            seed_flow = None    # unknown template -> a blank canvas, not a 500
+    return templates.TemplateResponse(
+        request, "flow_designer.html",
+        {"flow_id": flow_id, "seed_flow": seed_flow})
+
+
+@app.get("/flows/{flow_id}/runs/{run_id}", response_class=HTMLResponse)
+async def flow_run_page(request: Request, flow_id: str, run_id: str) -> HTMLResponse:
+    """The run viewer: one flow run's node-by-node timeline, inputs/outputs
+    (redacted), and the recovery actions (approve/reject, retry, retry from the
+    failed step). Data comes from /api/v1/flows/runs/{run_id} client-side, so
+    owner-scoping and the flow-engine gate are enforced by the API."""
+    return templates.TemplateResponse(
+        request, "flow_run.html", {"flow_id": flow_id, "run_id": run_id})
+
+
+@app.get("/automations", response_class=HTMLResponse)
+async def automations_page(request: Request) -> HTMLResponse:
+    """One place to see and manage every automation: cron schedules and inbound
+    webhook triggers. The page lists the existing /api/v1/schedules and
+    /api/v1/triggers; each section is hidden when its [features] knob is off."""
+    from maverick.config import get_features
+    feats = get_features()
+    try:
+        from maverick.automation_import import enabled as _import_enabled
+        import_enabled = _import_enabled()
+    except Exception:  # pragma: no cover -- never block the page on the feature
+        import_enabled = False
+    try:
+        from maverick.automation_events import enabled as _events_enabled
+        event_triggers_enabled = _events_enabled()
+    except Exception:  # pragma: no cover
+        event_triggers_enabled = False
+    # Real inventory counts for the page hero, owner-scoped exactly like the
+    # /api/v1 lists the page renders from (fail-soft: an unreadable store just
+    # counts as zero, never a 500).
+    owner = goal_owner_filter(request)
+    schedule_count = trigger_count = event_trigger_count = 0
+    try:
+        from maverick.job_queue import JobQueue
+        schedule_count = sum(
+            1 for j in JobQueue().list(status="pending")
+            if (j.payload or {}).get("__cron__")
+            and (owner is None or (j.payload or {}).get("owner") == owner))
+    except Exception:  # pragma: no cover - the hero count is best-effort
+        pass
+    try:
+        from . import triggers_store
+        trigger_count = sum(
+            1 for t in triggers_store.list_triggers()
+            if owner is None or t.get("owner", "") == owner)
+    except Exception:  # pragma: no cover - the hero count is best-effort
+        pass
+    try:
+        from maverick.paths import current_tenant_id
+
+        from . import event_triggers_store
+        tenant = current_tenant_id() or ""
+        event_trigger_count = sum(
+            1 for t in event_triggers_store.list_triggers()
+            if t.get("tenant", "") == tenant
+            and (owner is None or t.get("owner", "") == owner))
+    except Exception:  # pragma: no cover - the hero count is best-effort
+        pass
+    return templates.TemplateResponse(
+        request, "automations.html",
+        {
+            "scheduling_enabled": feats.get("scheduling", True),
+            "triggers_enabled": feats.get("triggers", True),
+            "import_enabled": import_enabled,
+            "event_triggers_enabled": event_triggers_enabled,
+            "schedule_count": schedule_count,
+            "trigger_count": trigger_count,
+            "event_trigger_count": event_trigger_count,
+        },
+    )
+
+
+@app.get("/embed-demo", response_class=HTMLResponse)
+async def embed_demo_page(request: Request) -> HTMLResponse:
+    """Demo + honest usage notes for the <maverick-analytics> web component."""
+    return templates.TemplateResponse(request, "embed_demo.html", {})
+
+
+def _sparkline_points(values: list[float], width: int = 160, height: int = 36,
+                      pad: int = 3) -> str:
+    """SVG polyline ``points`` for a score series (server-side sparkline)."""
+    if not values:
+        return ""
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    n = len(values)
+    pts = []
+    for i, v in enumerate(values):
+        x = pad + (width - 2 * pad) * (i / (n - 1) if n > 1 else 0.5)
+        y = pad + (height - 2 * pad) * (1 - (v - lo) / span)
+        pts.append(f"{x:.1f},{y:.1f}")
+    return " ".join(pts)
+
+
+@app.get("/benchmarks", response_class=HTMLResponse)
+async def benchmarks_page(request: Request) -> HTMLResponse:
+    """Continuous-benchmark history: this deployment's recorded runs only.
+
+    Per-suite trend sparklines + a comparison table over the real
+    ``~/.maverick/benchmarks/history.json`` store. No competitor numbers are
+    shown or invented here — see docs/comparison.md for the qualitative
+    comparison."""
+    from .api import _benchmark_snapshot
+    snap = _benchmark_snapshot()
+    for s in snap["suites"]:
+        s["spark"] = _sparkline_points([e["score"] for e in s["entries"]])
+    return templates.TemplateResponse(request, "benchmarks.html", snap)
+
+
+@app.get("/walkthroughs", response_class=HTMLResponse)
+async def walkthroughs_page(request: Request) -> HTMLResponse:
+    """Locally exported run walkthrough videos (no external hosting).
+
+    Lists the MP4s under the walkthroughs dir with native <video> embeds and
+    a captions track when the export produced one. The export itself is
+    POST /api/v1/goals/{id}/walkthrough (replay-to-MP4 machinery)."""
+    from .api import _walkthroughs_dir
+    d = _walkthroughs_dir()
+    items = []
+    if d.is_dir():
+        for p in sorted(d.glob("*.mp4"), key=lambda q: q.stat().st_mtime,
+                        reverse=True):
+            try:
+                goal_id = _walkthrough_goal_id(p.name)
+            except HTTPException:
+                continue
+            g = _world().get_goal(goal_id)
+            if g is None or not can_access_goal(request, g):
+                continue
+            captions = p.with_suffix(".vtt")
+            items.append({
+                "name": p.name,
+                "size_mb": round(p.stat().st_size / 1_048_576, 2),
+                "mtime": p.stat().st_mtime,
+                "captions": captions.name if captions.exists() else None,
+                "goal_id": goal_id,
+            })
+    # NB: not named "dir" — the context processor injects the page's text
+    # direction under that key (RTL support) and would shadow it.
+    return templates.TemplateResponse(
+        request, "walkthroughs.html", {"items": items, "artifact_dir": str(d)},
+    )
+
+
+_WALKTHROUGH_NAME_RE = re.compile(r"^goal-(\d+)\.(mp4|vtt)$")
+
+
+def _walkthrough_goal_id(name: str) -> int:
+    """Return the goal id encoded in a supported walkthrough artifact name."""
+    m = _WALKTHROUGH_NAME_RE.fullmatch(name)
+    if not m:
+        raise HTTPException(status_code=400, detail="invalid walkthrough name")
+    return int(m.group(1))
+
+
+def _assert_walkthrough_access(request: Request, name: str) -> int:
+    """Ensure the caller can access the goal-derived walkthrough artifact."""
+    goal_id = _walkthrough_goal_id(name)
+    g = _world().get_goal(goal_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail="no such walkthrough")
+    assert_goal_access(request, g)
+    return goal_id
+
+
+@app.get("/walkthroughs/media/{name}")
+async def walkthrough_media(request: Request, name: str) -> FileResponse:
+    """Serve one exported walkthrough artifact after checking goal access."""
+    from .api import _walkthroughs_dir
+    _assert_walkthrough_access(request, name)
+    path = _walkthroughs_dir() / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no such walkthrough")
+    media = "video/mp4" if name.endswith(".mp4") else "text/vtt"
+    return FileResponse(path, media_type=media)
+
+
+@app.get("/plan-tree-3d", response_class=HTMLResponse)
+async def plan_tree_3d_page(request: Request) -> HTMLResponse:
+    """The goal forest in 3D (vanilla WebGL; no three.js, no CDN).
+
+    Progressive enhancement: without WebGL (or JS) the server-rendered text
+    tree IS the page — it is also always present in a <details> for screen
+    readers. WebXR shows an "Enter VR" button only when the browser reports
+    support."""
+    from .goal_tree import forest_html, goal_nodes
+    nodes = goal_nodes(_world(), owner=goal_owner_filter(request))
+    return templates.TemplateResponse(
+        request, "plan_tree_3d.html",
+        {"node_count": len(nodes), "fallback_html": forest_html(nodes)},
+    )
+
+
+@app.get("/livez")
+async def livez() -> dict:
+    """Process is alive (TCP-accept liveness only)."""
+    return {"status": "ok"}
+
+
+def _readiness_deep_checks() -> tuple[bool, dict[str, str]]:
+    """Compatibility export for the extracted operational probe service."""
+    return _health_routes.readiness_deep_checks()
+
+
+def _health_should_redact() -> bool:
+    """Compatibility export for the extracted probe disclosure policy."""
+    return _health_routes.health_should_redact()
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    """Deep health: DB writable, LLM provider key present, runner alive."""
+    return await _health_response(
+        world_provider=_world,
+        provider_key_set=_any_provider_key_set,
+    )
+
+
+@app.get("/readyz")
+async def readyz() -> JSONResponse:
+    """Ready to serve traffic: the /healthz checks PLUS the deep readiness
+    checks (client binding, shield-required, agent-trust registry) so a
+    k8s/LB never routes to a pod that is up but configured to refuse all work.
+    """
+    return await _readiness_response(
+        world_provider=_world,
+        provider_key_set=_any_provider_key_set,
+    )
+
+
+def _bounded_user_spend_series(
+    spend_by_principal: dict[str, float],
+) -> list[tuple[str, float]]:
+    """Compatibility export for the extracted metric-cardinality helper."""
+    return _health_routes.bounded_user_spend_series(spend_by_principal)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics(request: Request) -> PlainTextResponse:
+    """Prometheus text format. Gated by the same bearer as /api/v1."""
+    return await _metrics_response(
+        request,
+        world_provider=_world,
+        owner_filter=goal_owner_filter,
+    )
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Lightwork dashboard")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+
+    if not _is_loopback_host(args.host) and not os.environ.get("MAVERICK_DASHBOARD_TOKEN"):
+        raise SystemExit(
+            "Refusing to bind dashboard to a non-loopback host without "
+            "MAVERICK_DASHBOARD_TOKEN set."
+        )
+
+    # Apply Lightwork's shared logging config (JSON via MAVERICK_LOG_FORMAT=json,
+    # correlation-id context filter, secret scrubbing) at the real process
+    # entrypoint — not in the lifespan, so the in-process TestClient never
+    # reconfigures global logging. The most network-exposed process otherwise
+    # inherited raw uvicorn logging with none of the CLI's hygiene.
+    try:
+        from maverick.logging_config import configure_logging
+        configure_logging()
+    except Exception:  # pragma: no cover - logging setup never blocks startup
+        pass
+
+    # Validate config at startup: a typo'd section/key silently falls back to a
+    # default (e.g. an uncapped budget), so surface it now instead of only via
+    # `maverick config-lint`. Warn-only unless MAVERICK_CONFIG_STRICT=1.
+    try:
+        from maverick.config_lint import warn_config_at_startup
+        warn_config_at_startup()
+    except SystemExit:
+        raise
+    except Exception:  # pragma: no cover - linting never blocks a non-strict start
+        pass
+
+    import uvicorn
+    # JSON logging consistency: uvicorn installs its OWN plaintext access/error
+    # formatters by default, so even after configure_logging() switches the root
+    # handler to JSON the access lines stayed plaintext -- a mixed JSON+text
+    # stream that breaks strict ingestion (Loki/CloudWatch). In JSON mode pass
+    # log_config=None so uvicorn doesn't reconfigure those loggers; they then
+    # propagate to the JSON root handler. In text mode omit the kwarg entirely so
+    # uvicorn keeps its colored default for the local-dev experience.
+    _json_logs = os.environ.get("MAVERICK_LOG_FORMAT", "text").strip().lower() == "json"
+    if _json_logs:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                    log_config=None)
+    else:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

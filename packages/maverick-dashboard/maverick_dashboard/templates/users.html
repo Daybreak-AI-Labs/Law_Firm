@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}Users · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Administration', 'Users &amp; roles',
+               subtitle='Access, one roster',
+               lede='Who can use this workspace and what each person is
+                     allowed to do. A new authenticated user starts as
+                     <code>' ~ default_role ~ '</code> until you change it
+                     here.') %}
+    {{ state('Current state',
+             users | length ~ ' user' ~ ('' if users | length == 1 else 's') ~ ' assigned',
+             badge='SSO on' if auth_on else 'sign-in off',
+             badge_class='ok' if auth_on else 'warn',
+             copy=bootstrap_admins | length ~ ' permanent administrator'
+                  ~ ('' if bootstrap_admins | length == 1 else 's') ~ ' pinned
+                  by the deployment owner. Department access below scopes
+                  which departments each person works with.') }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel" role="status"
+       style="border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4);">
+    <strong>Saved.</strong> {{ saved }}
+  </div>
+  {% endif %}
+
+  {% if not auth_on %}
+  <div class="panel" style="border-color: color-mix(in srgb, var(--warn) 40%, transparent);">
+    <p class="muted" style="margin: 0;"><strong>Sign-in is off.</strong> Roles only take effect once your
+      company sign-in (SSO) is enabled — right now everyone on this machine is an
+      administrator. You can stage assignments here now; they apply when sign-in is turned on.</p>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>What each role can do</h2></div>
+  <div class="panel">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--space-3);">
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3);">
+        <p style="margin: 0 0 var(--space-1);"><span class="badge active">admin</span></p>
+        <p class="muted" style="margin: 0; font-size: var(--text-sm);">
+          Runs the platform. Manages users and roles, settings, provider keys
+          and secrets — plus everything an operator and an auditor can do.
+        </p>
+      </div>
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3);">
+        <p style="margin: 0 0 var(--space-1);"><span class="badge running">operator</span></p>
+        <p class="muted" style="margin: 0; font-size: var(--text-sm);">
+          Does the work. Starts and cancels runs, approves or denies actions
+          waiting for a decision, and uses tools. Can't change settings or
+          manage users.
+        </p>
+      </div>
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3);">
+        <p style="margin: 0 0 var(--space-1);"><span class="badge pending">auditor</span></p>
+        <p class="muted" style="margin: 0; font-size: var(--text-sm);">
+          Reviews the record. Reads the audit trail and reports — and nothing
+          else. Can't run work or change anything, so review stays independent.
+        </p>
+      </div>
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3);">
+        <p style="margin: 0 0 var(--space-1);"><span class="badge idle">viewer</span></p>
+        <p class="muted" style="margin: 0; font-size: var(--text-sm);">
+          Looks, doesn't touch. Sees dashboards and results, read-only.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><h2>Add a user</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      Type who they are and pick their role — saving again with a different
+      role changes it. {% if invites_on %}Prefer email? Send an invite link in
+      the section below and the role is granted when they accept.{% endif %}
+    </p>
+    <form method="post" action="/users/set" style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;">
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 18rem;">
+        <span>User principal</span>
+        <input class="ctl" type="text" name="principal" placeholder="user:&lt;subject&gt;"
+               aria-label="User principal" autocomplete="off" required />
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Role</span>
+        <select class="ctl" name="role" aria-label="Role">
+          {% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Save user</button>
+    </form>
+    <p class="muted" style="margin-bottom: 0; font-size: var(--text-sm);">A principal is the user's identity
+      from your company sign-in (SSO), written as <code>user:&lt;sub&gt;</code> — the same string shown on
+      their goals and in the audit log.</p>
+  </div>
+
+  {% if invites_on %}
+  <div class="section-head"><h2>Invite someone by email</h2></div>
+  <div class="panel">
+    {% if invite_link %}
+    <div class="panel" role="status"
+         style="border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-3);">
+      {% if invite_sent %}
+      <strong>Invitation emailed to <code>{{ invite_email }}</code>.</strong>
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">The same link is
+        below in case you also want to share it directly — it works once and expires in 7 days.</p>
+      {% else %}
+      <strong>Invitation for <code>{{ invite_email }}</code> created.</strong>
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">
+        {% if invite_send_note and 'disabled' not in invite_send_note and 'no sending account' not in invite_send_note %}
+        Emailing it failed ({{ invite_send_note }}) — copy the link and send it yourself.
+        {% else %}
+        Copy this link and send it to them — it is shown only once, works once, and expires in 7 days.
+        Anyone who opens it can accept, so send it directly to the invitee.
+        {% endif %}</p>
+      {% endif %}
+      <code style="display: block; margin-top: var(--space-2); word-break: break-all; user-select: all;">{{ invite_link }}</code>
+    </div>
+    {% endif %}
+    <form method="post" action="/users/invite" style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;">
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 18rem;">
+        <span>Email address</span>
+        <input class="ctl" type="email" name="email" placeholder="colleague@company.com"
+               aria-label="Invitee email address" autocomplete="off" required />
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Role</span>
+        <select class="ctl" name="role" aria-label="Invited role">
+          {% for r in roles %}<option value="{{ r }}"{% if r == 'viewer' %} selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Create invite link</button>
+    </form>
+    <p class="muted" style="margin-bottom: 0; font-size: var(--text-sm);">
+      With company sign-in (SSO) on, the link asks them to sign in and then grants the role.
+      Without SSO, opening the link signs them in directly as <code>user:&lt;email&gt;</code>.
+      When email sending is set up for this deployment, the link is emailed to
+      them automatically; either way you can copy it from here.</p>
+    {% if pending_invites %}
+    <div style="margin-top: var(--space-3);">
+      {% for inv in pending_invites %}
+      <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; border-top: 1px solid var(--hairline);">
+        <code style="flex: 1 1 14rem;">{{ inv.email }}</code>
+        <span class="badge">{{ inv.role }}</span>
+        <form method="post" action="/users/invite/revoke">
+          <input type="hidden" name="invite_id" value="{{ inv.id }}" />
+          <button type="submit" class="btn">Revoke</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if bootstrap_admins %}
+  <div class="section-head"><h2>Permanent administrators</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Pinned by your deployment owner — always admin and
+      not removable here, so you can never lock yourself out.</p>
+    {% for a in bootstrap_admins %}
+    <div style="padding: var(--space-2) 0; border-top: 1px solid var(--hairline);">
+      <code>{{ a }}</code> <span class="badge active">admin</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Assigned users</h2></div>
+  <div class="panel">
+    {% if users %}
+    {% for principal, role in users %}
+    <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-3) 0; border-top: 1px solid var(--hairline);">
+      <code style="flex: 1 1 14rem; min-width: 0; overflow: hidden; text-overflow: ellipsis;">{{ principal }}{% if principal == you %} <span class="muted">(you)</span>{% endif %}</code>
+      <form method="post" action="/users/set" style="display: flex; gap: var(--space-2); align-items: center;">
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        <select class="ctl" name="role" aria-label="Role for {{ principal }}">
+          {% for r in roles %}<option value="{{ r }}"{% if r == role %} selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn--primary">Save</button>
+      </form>
+      <form method="post" action="/users/remove">
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        <button type="submit" class="btn">Remove</button>
+      </form>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="muted" style="margin: 0;">No explicit assignments yet. Authenticated users default to
+      <code>{{ default_role }}</code>; add someone above to give them a different role.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Department access</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Scope a user to the departments their job needs — someone in
+      Finance sees and runs only the Finance specialists. Users without an entry may use
+      {% if default_suites is none %}<strong>every department</strong>{% else %}only:
+      <code>{{ default_suites|join(", ") or "none" }}</code>{% endif %}.
+      Permanent administrators are never scoped. This limits <em>which</em>
+      departments a user works with; their role above still decides <em>what</em>
+      they may do.</p>
+
+    {% for principal, suites in suite_grants %}
+    <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) 0; border-top: 1px solid var(--hairline);">
+      <code style="flex: 1 1 14rem; min-width: 0; overflow: hidden; text-overflow: ellipsis;">{{ principal }}{% if principal == you %} <span class="muted">(you)</span>{% endif %}</code>
+      <form method="post" action="/users/suites/set" style="display: flex; gap: var(--space-2); align-items: flex-start;">
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        <select class="ctl" name="suites" aria-label="Departments for {{ principal }}" multiple size="4">
+          {% for key, title in all_suites %}<option value="{{ key }}"{% if key in suites %} selected{% endif %}>{{ title }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn--primary">Save</button>
+      </form>
+      <form method="post" action="/users/suites/remove">
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        <button type="submit" class="btn">Remove</button>
+      </form>
+    </div>
+    {% endfor %}
+
+    <form method="post" action="/users/suites/set" style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin-top: var(--space-3);">
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 18rem;">
+        <span>User principal</span>
+        <input class="ctl" type="text" name="principal" placeholder="user:&lt;subject&gt;"
+               aria-label="User principal for department access" autocomplete="off" required />
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 18rem;">
+        <span>Departments (hold Ctrl/Cmd to pick several)</span>
+        <select class="ctl" name="suites" aria-label="Departments this user may use" multiple size="8">
+          {% for key, title in all_suites %}<option value="{{ key }}">{{ title }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Save access</button>
+    </form>
+  </div>
+{% endblock %}

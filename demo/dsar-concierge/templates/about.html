@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}About · DSAR Concierge{% endblock %}
+{% block content %}
+  <h1>The agent on its own — and what Lightwork adds</h1>
+  <p class="sub">{{ caps_summary.mode }}
+    {% set lic = caps_summary.license %}
+    {% if lic.mode == 'licensed' %} · licensed to <b>{{ lic.customer }}</b> ({{ lic.sku }})
+    {% elif lic.mode == 'evaluation' %} · <b>evaluation mode</b> — {{ lic.reason }};
+      open-request cap {{ lic.open_case_cap }}{% endif %}</p>
+
+  <div class="panel">
+    <h2>Always on (the agent you bought)</h2>
+    {% for label in caps_summary.active %}
+      <div class="evt">✓ {{ label }}</div>
+    {% endfor %}
+  </div>
+
+  {% if caps_summary.gated %}
+  <div class="panel">
+    <h2>Comes with the Lightwork platform</h2>
+    {% for label in caps_summary.gated %}
+      <div class="evt">◇ {{ label }}</div>
+    {% endfor %}
+    <p class="note">An upsell is a key swap, not a reinstall — the agent's
+      records stay exactly where they are.</p>
+  </div>
+  {% endif %}
+{% endblock %}

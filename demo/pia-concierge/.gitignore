@@ -1,0 +1,5 @@
+/.demo-home/
+/.standalone-data/
+/.pia-standalone/
+__pycache__/
+*.pyc

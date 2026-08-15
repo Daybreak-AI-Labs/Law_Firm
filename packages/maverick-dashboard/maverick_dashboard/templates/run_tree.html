@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Run tree · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Run tree — scoped. The nesting is a plain <ul>/<li> so the tree reads in
+     source order for a screen reader and prints straight into an audit pack. */
+  .rt-tree ul { list-style: none; margin: 0; padding-left: 1.25rem; border-left: 1px solid var(--border); }
+  .rt-tree > ul { padding-left: 0; border-left: 0; }
+  .rt-tree li { padding: 0.35rem 0; }
+  .rt-node { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; padding: 0.35rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); }
+  .rt-node .rt-id { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .rt-node .rt-meta { color: var(--muted); font-size: var(--text-sm); }
+  .rt-chosen { border-color: var(--accent, var(--border)); }
+</style>
+
+  <h1 class="page-title">Run tree</h1>
+  <p class="page-subtitle">What the agent chose, and what the alternative did. A fork branches a run at one decision point, replays its record up to that point, and keeps the counterfactual under the same root — so a reviewer reads both, not just the branch that shipped.</p>
+
+  <div class="panel">
+    <p style="margin: 0;">
+      {% if enabled %}<span class="badge active">forking on</span>
+      {% else %}<span class="badge">forking off — enable [session_tree] in Settings or the installer</span>{% endif %}
+      <span class="badge">{{ roots | length }} forked run{{ '' if roots | length == 1 else 's' }}</span>
+      <span class="badge">max depth {{ max_depth }}</span>
+    </p>
+  </div>
+
+  {% if roots %}
+  <div class="panel">
+    <h2 style="margin-top:0">Forked runs</h2>
+    <table>
+      <thead>
+        <tr><th>Run</th><th>Owner</th><th>Status</th><th>Branches</th><th>Last forked</th></tr>
+      </thead>
+      <tbody>
+        {% for r in roots %}
+        <tr>
+          <td><a href="/run-tree?goal={{ r.goal_id }}"><strong>#{{ r.goal_id }}</strong> {{ r.title or 'untitled run' }}</a></td>
+          <td>{{ r.owner or '—' }}</td>
+          <td><span class="badge">{{ r.status }}</span></td>
+          <td>{{ r.forks }}</td>
+          <td class="muted">{{ r.last_forked_at | datetime if r.last_forked_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel rt-tree">
+    <h2 style="margin-top:0">
+      {% if tree %}Branches under run #{{ tree.goal_id }}{% else %}Branches{% endif %}
+    </h2>
+    {% if tree %}
+    <ul>
+      {# `recursive` keeps the nesting in Jinja: each node re-enters the loop
+         with its own children, so depth is data rather than markup. #}
+      {% for node in [tree] recursive %}
+      <li>
+        <span class="rt-node{% if loop.depth0 == 0 %} rt-chosen{% endif %}">
+          <a href="/goals/{{ node.goal_id }}/trajectory" class="rt-id">#{{ node.goal_id }}</a>
+          <span>{{ node.title or 'untitled run' }}</span>
+          <span class="badge">{{ node.status }}</span>
+          {% if node.label %}<span class="badge">{{ node.label }}</span>{% endif %}
+          <span class="rt-meta">
+            {% if node.forked_at_event %}forked at event #{{ node.forked_at_event }}
+            {% elif loop.depth0 > 0 %}forked from the full trail
+            {% else %}the run as it happened{% endif %}
+            {% if node.forked_by %} · by {{ node.forked_by }}{% endif %}
+            {% if node.forked_at %} · {{ node.forked_at | datetime }}{% endif %}
+          </span>
+        </span>
+        {% if node.children %}<ul>{{ loop(node.children) }}</ul>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted" style="margin: var(--space-3) 0 0; font-size: var(--text-sm);">
+      A branch is a record, never a re-run: forking copies the parent's trail up
+      to the fork point so the alternative starts from the same visible state.
+      Nothing is re-executed and nothing is spent by forking.
+    </p>
+    {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">Pick a forked run</p>
+      <p class="mv-empty__body">Choose a run above to see its branches.</p>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="panel">
+    <div class="mv-empty">
+      <p class="mv-empty__title">No runs have been forked yet</p>
+      <p class="mv-empty__body">Fork a run at the decision point you want to question — the branch replays the record up to that step and runs on from there, and both outcomes stay side by side here for review.</p>
+    </div>
+  </div>
+  {% endif %}
+{% endblock %}

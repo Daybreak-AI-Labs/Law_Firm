@@ -1,0 +1,1402 @@
+{% extends "base.html" %}
+{% block title %}workflow builder · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .wf { max-width: 860px; margin-inline: auto; }
+  .wf :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .wf__field { margin-bottom: var(--space-4); }
+  .wf__field > label { display: block; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: var(--space-2); font-weight: var(--font-medium); }
+  .wf__brief { min-height: 120px; resize: vertical; line-height: 1.55; }
+  .wf__steps { min-height: 200px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size: var(--text-sm); line-height: 1.6; }
+  .wf__row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-top: var(--space-4); }
+  .wf__file-input { display: none; }
+  .wf__hint { color: var(--muted); font-size: var(--text-sm); }
+  .wf [hidden] { display: none !important; }
+
+  /* segmented control: pick what to build */
+  .seg { display: flex; gap: var(--space-1); padding: var(--space-1); background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: var(--space-5); }
+  .seg__opt { flex: 1 1 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: start; padding: var(--space-3) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-weight: var(--font-medium); transition: background .15s ease, color .15s ease, box-shadow .15s ease; }
+  .seg__opt:hover { color: var(--text); }
+  .seg__opt.is-active { background: var(--surface-1); color: var(--text); box-shadow: var(--shadow-sm); font-weight: var(--font-semibold); }
+  .seg__sub { font-size: var(--text-xs); font-weight: var(--font-normal); color: var(--muted); }
+
+  /* starter example chips */
+  .wf__chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+  .chip { padding: 0.32rem 0.72rem; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: var(--text-xs); cursor: pointer; line-height: 1.4; transition: color .12s ease, border-color .12s ease, background .12s ease; }
+  .chip:hover { color: var(--text); border-color: var(--brand-border); background: var(--brand-subtle); }
+  .chip__lead { color: var(--muted); margin-right: var(--space-1); }
+
+  /* button spinner (currentColor adapts to primary/ghost) */
+  .spinner { width: 0.95em; height: 0.95em; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: wf-spin .6s linear infinite; }
+  @keyframes wf-spin { to { transform: rotate(360deg); } }
+
+  /* editor cards rise in */
+  .wf-card, .wf-saved { animation: wf-rise .22s ease both; }
+  @keyframes wf-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .wf-card__head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .wf-card__head h2 { margin: 0; font-size: var(--text-lg); }
+  .wf-grid { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+  .wf-grid > .wf__field { flex: 1 1 220px; }
+  .wf-grid > .wf__field--sm { flex: 0 0 9rem; }
+
+  /* persona + refine */
+  .pb-persona { min-height: 100px; resize: vertical; line-height: 1.55; }
+  .wf__refine { display: flex; gap: var(--space-2); }
+  .wf__refine .input { flex: 1 1 auto; }
+
+  /* playbook step cards — the gate is the visible governance signal */
+  .pb-step { position: relative; border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--surface-2); transition: border-color .12s ease, box-shadow .12s ease; }
+  .pb-step:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+  .pb-step[data-gate="approval"] { border-left-color: var(--brand); }
+  .pb-step[data-gate="review"] { border-left-color: var(--info); }
+  .pb-gatebadge.gov { background: var(--brand-subtle); color: var(--brand); }
+  .pb-step__head { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+  .pb-step__num { flex: none; width: 1.6rem; height: 1.6rem; border-radius: var(--radius-pill); background: var(--brand-subtle); color: var(--brand); font-size: var(--text-xs); font-weight: var(--font-semibold); display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+  .pb-step__name { flex: 1 1 auto; }
+  .pb-step__gate { flex: 0 0 8rem; }
+  .pb-step__inst { resize: vertical; line-height: 1.5; margin-bottom: var(--space-2); min-height: 2.6rem; }
+  .pb-step__move { display: inline-flex; flex: none; }
+  .pb-step__btn { padding: 0.3rem 0.5rem; font-size: var(--text-sm); line-height: 1; }
+  .pb-gatebadge { margin-left: auto; }
+
+  /* flow canvas: steps connected into a governed top-to-bottom pipeline */
+  .pb-flow { display: flex; flex-direction: column; gap: 1.75rem; }
+  #pb-steps { display: flex; flex-direction: column; gap: 1.75rem; }
+  .pb-flow__node { position: relative; align-self: center; display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--muted); font-size: var(--text-sm); }
+  .pb-flow__node .dot { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%; }
+  .pb-flow__start .dot { background: var(--brand); }
+  .pb-flow__end .dot { background: var(--success); }
+  /* connector + chevron, drawn into the 1.75rem gap above each node */
+  .pb-step::before, .pb-flow__end::before { content: ""; position: absolute; left: 50%; top: -1.75rem; width: 2px; height: 1.75rem; background: var(--border-strong); transform: translateX(-50%); }
+  .pb-step::after, .pb-flow__end::after { content: ""; position: absolute; left: 50%; top: -0.42rem; width: 7px; height: 7px; border-right: 2px solid var(--border-strong); border-bottom: 2px solid var(--border-strong); transform: translateX(-50%) rotate(45deg); }
+  /* the gate is a checkpoint in the flow: color the connector arriving at a gated step */
+  .pb-step[data-gate="approval"]::before { background: var(--brand); }
+  .pb-step[data-gate="approval"]::after { border-color: var(--brand); }
+  .pb-step[data-gate="review"]::before { background: var(--info); }
+  .pb-step[data-gate="review"]::after { border-color: var(--info); }
+
+  /* live governance check */
+  .wf__govern { margin-top: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-sunken); padding: var(--space-3) var(--space-4); }
+  .wf__govern.is-ok { border-color: var(--brand-border); background: var(--brand-subtle); }
+  .wf__govern.is-err { border-color: var(--danger-subtle); }
+  .wf__govern h3 { margin: 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: var(--font-medium); }
+  .wf__lint { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+  .wf__lint li { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-1) 0; font-size: var(--text-sm); color: var(--text); }
+  .wf__lint li::before { flex: none; font-weight: var(--font-semibold); }
+  .wf__lint .err { color: var(--danger); }
+  .wf__lint .err::before { content: "⚠"; }
+  .wf__lint .warn::before { content: "•"; color: var(--warn); }
+  .wf__lint .ok { color: var(--brand); }
+  .wf__lint .ok::before { content: "✓"; }
+
+  /* tool field with a "Browse connectors" button */
+  .wf__toolfield { display: flex; gap: var(--space-2); align-items: center; }
+  .wf__toolfield .input { flex: 1 1 auto; }
+
+  /* connector picker dialog */
+  .picker-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-7) var(--space-4); background: var(--scrim); }
+  .picker { display: flex; flex-direction: column; width: min(640px, 100%); max-height: 80vh; overflow: hidden; background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+  .picker__head { padding: var(--space-4); border-bottom: 1px solid var(--hairline); }
+  .picker__head h3 { margin: 0 0 var(--space-3); font-size: var(--text-md); }
+  .picker__list { overflow-y: auto; padding: var(--space-2); }
+  .picker__item { display: flex; gap: var(--space-3); align-items: baseline; width: 100%; text-align: start; padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+  .picker__item:hover { background: var(--row-hover); border-color: var(--border); }
+  .picker__item:disabled { cursor: default; }
+  .picker__main { min-width: 0; }
+  .picker__name { font-weight: var(--font-medium); font-variant-numeric: tabular-nums; }
+  .picker__added { color: var(--brand); font-size: var(--text-xs); margin-left: var(--space-2); }
+  .picker__over { color: var(--danger); font-size: var(--text-xs); margin-left: var(--space-2); }
+  .picker__desc { color: var(--muted); font-size: var(--text-sm); line-height: 1.4; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .picker__meta { margin-left: auto; flex: none; }
+  .picker__foot { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--hairline); }
+  .badge.risk-low { background: var(--success-subtle); color: var(--success); }
+  .badge.risk-medium { background: var(--warn-subtle); color: var(--warn); }
+  .badge.risk-high { background: var(--danger-subtle); color: var(--danger); }
+
+  /* saved success */
+  .wf-saved { border-color: var(--brand-border); background: var(--brand-subtle); }
+  .wf-saved__head { display: flex; align-items: center; gap: var(--space-3); }
+  .wf-saved__check { flex: none; width: 2rem; height: 2rem; border-radius: var(--radius-pill); background: var(--brand); color: var(--brand-fg); display: inline-flex; align-items: center; justify-content: center; font-weight: var(--font-semibold); }
+  .wf-saved h2 { margin: 0; color: var(--brand); font-size: var(--text-lg); }
+
+  /* schedule panel (in the saved state, for templates) */
+  .wf__sched { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
+  .wf__sched-title { margin: 0 0 var(--space-1); font-size: var(--text-md); color: var(--text); }
+  summary.wf__sched-title { cursor: pointer; margin: 0; }
+  details.wf__sched[open] > summary.wf__sched-title { margin-bottom: var(--space-3); }
+  summary.wf__sched-title:hover { color: var(--brand); }
+  .wf__copyrow { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .wf__copyrow code { font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size: var(--text-xs); word-break: break-all; }
+  .wf__curl { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-xs); line-height: 1.5; overflow-x: auto; white-space: pre; margin: 0 0 var(--space-2); }
+  .wf__sched-list { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .wf__sched-list .mv-row { font-size: var(--text-sm); }
+  .wf__sched-when { color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+    .wf-card, .wf-saved { animation: none; }
+  }
+  @media (max-width: 560px) {
+    .seg { flex-direction: column; }
+  }
+</style>
+
+  <h1 class="page-title">Workflow builder</h1>
+  <p class="page-subtitle">Describe what you want — or drop in a document — and Lightwork drafts it for you to refine, save, and run. Prefer to build by hand? Use the <a href="/goal-builder">manual builder</a>.</p>
+
+  <div class="wf">
+    <div class="seg" role="group" aria-label="What to build">
+      <button type="button" id="wf-form-template" class="seg__opt is-active" aria-pressed="true">
+        Reusable template
+        <span class="seg__sub">a parameterized goal anyone can run</span>
+      </button>
+      <button type="button" id="wf-form-playbook" class="seg__opt" aria-pressed="false">
+        Agent playbook
+        <span class="seg__sub">an unsaved specialist first pass with persona &amp; tools</span>
+      </button>
+    </div>
+
+    <div class="panel">
+      <div class="wf__field" style="margin-bottom: var(--space-3);">
+        <label for="wf-brief">Describe the <span id="wf-noun">workflow</span></label>
+        <textarea id="wf-brief" class="input wf__brief"
+          placeholder="{% raw %}e.g. Weekly competitive-intel report — gather recent news on {{ competitor }}, summarize the notable moves, and draft an email to the team.{% endraw %}"></textarea>
+        <div class="wf__chips" id="wf-examples" aria-label="Starter examples"></div>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="wf-draft-btn" class="btn btn--primary">
+          <span class="spinner" hidden aria-hidden="true"></span><span>Draft with AI</span>
+        </button>
+        <button type="button" id="wf-file-btn" class="btn btn--ghost">Upload a document…</button>
+        <input type="file" id="wf-file" class="wf__file-input"
+               accept=".txt,.md,.markdown,.json,.csv,.yaml,.yml,text/*,application/json"
+               aria-label="Upload a document to draft from" />
+        <span class="wf__hint" id="wf-file-name"></span>
+      </div>
+    </div>
+
+    <p id="wf-status" role="status" aria-live="polite" class="muted" style="min-height: 1.2em; margin: 0 0 var(--space-4);"></p>
+
+    <!-- template editor -->
+    <div class="panel wf-card" id="wf-preview" hidden>
+      <div class="wf-card__head">
+        <span class="badge info">Template</span>
+        <h2>Review &amp; edit</h2>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field" style="flex: 1 1 16rem;">
+          <label for="wf-name">Name (id)</label>
+          <input type="text" id="wf-name" class="input" aria-label="Workflow id" />
+        </div>
+        <div class="wf__field" style="flex: 2 1 18rem;">
+          <label for="wf-title">Title</label>
+          <input type="text" id="wf-title" class="input" aria-label="Workflow title" />
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="wf-steps">Steps</label>
+        <textarea id="wf-steps" class="input wf__steps" aria-label="Workflow steps"></textarea>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field">
+          <label for="wf-params">Parameters (comma-separated)</label>
+          <input type="text" id="wf-params" class="input" placeholder="competitor, timeframe"
+                 aria-label="Workflow parameters" />
+        </div>
+        <div class="wf__field wf__field--sm">
+          <label for="wf-budget">Budget ($)</label>
+          <input type="number" id="wf-budget" class="input" min="0.5" max="100" step="0.5"
+                 aria-label="Per-run budget in dollars" />
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="wf-refine">Refine with a follow-up</label>
+        <div class="wf__refine">
+          <input type="text" id="wf-refine" class="input"
+                 placeholder="e.g. add a step to email the summary; make it weekly"
+                 aria-label="Refine the workflow with a follow-up instruction" />
+          <button type="button" id="wf-refine-btn" class="btn">
+            <span class="spinner" hidden aria-hidden="true"></span><span>Refine</span>
+          </button>
+        </div>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="wf-save-btn" class="btn btn--primary">Save workflow</button>
+        <span class="wf__hint">Saved workflows appear on <a href="/templates">Templates</a>, runnable from the goal box.</span>
+      </div>
+    </div>
+
+    <!-- playbook editor -->
+    <div class="panel wf-card" id="pb-preview" hidden>
+      <div class="wf-card__head">
+        <span class="badge info">Agent playbook</span>
+        <h2>Review &amp; edit the playbook</h2>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field" style="flex: 1 1 16rem;">
+          <label for="pb-name">Name (id)</label>
+          <input type="text" id="pb-name" class="input" aria-label="Agent id" />
+        </div>
+        <div class="wf__field wf__field--sm">
+          <label for="pb-risk">Max risk</label>
+          <select id="pb-risk" class="input" aria-label="Risk ceiling">
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="pb-desc">Description</label>
+        <input type="text" id="pb-desc" class="input" aria-label="Agent description" />
+      </div>
+      <div class="wf__field">
+        <label for="pb-persona">Persona</label>
+        <textarea id="pb-persona" class="input pb-persona" aria-label="Agent persona"></textarea>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field">
+          <label for="pb-allow">Allowed tools</label>
+          <div class="wf__toolfield">
+            <input type="text" id="pb-allow" class="input" placeholder="web_search, send_email"
+                   aria-label="Allowed tools" />
+            <button type="button" class="btn btn--ghost" data-browse="allow"
+                    aria-label="Browse connectors for allowed tools">Browse…</button>
+          </div>
+        </div>
+        <div class="wf__field">
+          <label for="pb-deny">Denied tools</label>
+          <div class="wf__toolfield">
+            <input type="text" id="pb-deny" class="input" placeholder="shell, delete_file"
+                   aria-label="Denied tools" />
+            <button type="button" class="btn btn--ghost" data-browse="deny"
+                    aria-label="Browse connectors for denied tools">Browse…</button>
+          </div>
+        </div>
+      </div>
+      <div class="wf__field">
+        <label>Steps <span class="wf__hint" style="text-transform: none; letter-spacing: 0;">— a top-to-bottom playbook; gates are review instructions</span></label>
+        <p class="wf__hint" id="pb-gate-boundary">Playbook gates guide the agent and reviewer but do not create a runtime pause. For a system-enforced checkpoint, use an <a href="/flows/designer">executable Flow approval node</a>.</p>
+        <div class="pb-flow">
+          <div class="pb-flow__node pb-flow__start"><span class="dot" aria-hidden="true"></span>Trigger — the agent starts here</div>
+          <div id="pb-steps"></div>
+          <div class="pb-flow__node pb-flow__end" id="pb-flow-end" hidden><span class="dot" aria-hidden="true"></span>Goal complete</div>
+        </div>
+        <button type="button" id="pb-add-step" class="btn btn--ghost" style="margin-top: var(--space-4);">+ Add step</button>
+      </div>
+      <div class="wf__field">
+        <label for="pb-refine">Refine with a follow-up</label>
+        <div class="wf__refine">
+          <input type="text" id="pb-refine" class="input"
+                 placeholder="e.g. require approval before any payment; add a reconciliation step"
+                 aria-label="Refine the playbook with a follow-up instruction" />
+          <button type="button" id="pb-refine-btn" class="btn">
+            <span class="spinner" hidden aria-hidden="true"></span><span>Refine</span>
+          </button>
+        </div>
+      </div>
+      <div class="wf__govern" id="pb-govern">
+        <h3>Governance check</h3>
+        <ul id="pb-lint" class="wf__lint"></ul>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="pb-save-btn" class="btn btn--primary"{% if not pack_editing_allowed %} disabled title="A dashboard admin must validate and save this draft"{% endif %}>Save playbook</button>
+        <span class="wf__hint">{% if pack_editing_allowed %}Saved playbooks become specialists on <a href="/agents">Agents</a>.{% else %}This first pass stays unsaved until a dashboard admin validates and saves it.{% endif %}</span>
+      </div>
+    </div>
+
+    <!-- saved -->
+    <div class="panel wf-card wf-saved" id="wf-saved" hidden>
+      <div class="wf-saved__head">
+        <span class="wf-saved__check" aria-hidden="true">✓</span>
+        <div>
+          <h2>Saved</h2>
+          <p id="wf-saved-msg" class="muted" style="margin: var(--space-1) 0 0;"></p>
+        </div>
+      </div>
+      <div class="wf__row">
+        <a class="btn btn--primary" id="wf-saved-link" href="/templates">Open Templates</a>
+        <a class="btn btn--ghost" href="/chat">Start a goal</a>
+      </div>
+      {% if scheduling_enabled %}
+      <details class="wf__sched" id="wf-sched" hidden>
+        <summary class="wf__sched-title"><span role="heading" aria-level="3">Run it on a schedule</span></summary>
+        <p class="wf__hint">Lightwork starts this workflow automatically. Schedules run while the Lightwork background worker is on.</p>
+        <div class="wf-grid">
+          <div class="wf__field">
+            <label for="sched-cadence">Cadence</label>
+            <select id="sched-cadence" class="input" aria-label="Schedule cadence">
+              <option value="">Off</option>
+              <option value="daily">Every day</option>
+              <option value="weekdays">Weekdays (Mon–Fri)</option>
+              <option value="weekly">Weekly (Monday)</option>
+              <option value="hourly">Every N hours</option>
+              <option value="custom">Advanced (cron)</option>
+            </select>
+          </div>
+          <div class="wf__field wf__field--sm" id="sched-time-wrap">
+            <label for="sched-time">Time (UTC)</label>
+            <input type="time" id="sched-time" class="input" value="09:00" aria-label="Schedule time (UTC)" />
+          </div>
+          <div class="wf__field wf__field--sm" id="sched-interval-wrap" hidden>
+            <label for="sched-interval">Every N hours</label>
+            <input type="number" id="sched-interval" class="input" min="1" max="23" value="6" />
+          </div>
+        </div>
+        <div class="wf__field" id="sched-cron-wrap" hidden>
+          <label for="sched-cron">Cron expression (UTC)</label>
+          <input type="text" id="sched-cron" class="input" placeholder="0 9 * * 1-5" autocomplete="off" spellcheck="false" aria-describedby="sched-cron-help" />
+          <p class="wf__hint" id="sched-cron-help">Five fields: minute hour day month weekday. Validated on save.</p>
+        </div>
+        <p class="wf__hint" id="sched-local-hint" hidden></p>
+        <div class="wf__field" id="sched-params-wrap" hidden>
+          <label>Parameter values for each run</label>
+          <div id="sched-params"></div>
+        </div>
+        <div class="wf__row">
+          <button type="button" id="sched-btn" class="btn btn--primary" disabled>Schedule it</button>
+          <span class="wf__hint" id="sched-cron-preview" aria-live="polite"></span>
+        </div>
+        <ul class="wf__sched-list" id="sched-list" aria-label="Active schedules"></ul>
+      </details>
+      {% endif %}
+      {% if triggers_enabled %}
+      <details class="wf__sched" id="wf-trig" hidden>
+        <summary class="wf__sched-title"><span role="heading" aria-level="3">Trigger from a webhook</span></summary>
+        <p class="wf__hint">Run this workflow on demand by POSTing to a URL — wire it to GitHub, Slack, Zapier, or anything that can send a signed webhook.</p>
+        <div class="wf-grid">
+          <div class="wf__field">
+            <label for="trig-name">Trigger name</label>
+            <input type="text" id="trig-name" class="input" placeholder="(defaults to the workflow name)" aria-label="Trigger name" />
+          </div>
+        </div>
+        <div class="wf__field" id="trig-params-wrap" hidden>
+          <label>Default parameter values</label>
+          <div id="trig-params"></div>
+        </div>
+        <div class="wf__row">
+          <button type="button" id="trig-btn" class="btn btn--primary" disabled>Create webhook trigger</button>
+          <span class="wf__hint" id="trig-msg" aria-live="polite"></span>
+        </div>
+        <div id="trig-howto" hidden>
+          <p class="wf__hint">Other systems can start this workflow by sending a signed request to this address (your administrator holds the signing secret).<span id="trig-secret-warn" hidden> ⚠ No signing secret is set yet — an administrator must configure one before this address will accept calls.</span></p>
+          <div class="wf__copyrow"><code id="trig-url"></code><button type="button" class="btn btn--ghost" id="trig-url-copy">Copy URL</button></div>
+          <p class="wf__hint" style="margin: var(--space-3) 0 var(--space-1);">Or copy a ready-to-run signed request:</p>
+          <pre class="wf__curl" id="trig-curl" aria-label="Signed curl example"></pre>
+          <div class="wf__row"><button type="button" class="btn btn--ghost" id="trig-curl-copy">Copy curl</button></div>
+        </div>
+        <ul class="wf__sched-list" id="trig-list" aria-label="Webhook triggers"></ul>
+      </details>
+      {% endif %}
+    </div>
+
+    <!-- connector picker (shared, for allow/deny/step tool fields) -->
+    <div class="picker-backdrop" id="tool-picker" hidden role="dialog" aria-modal="true" aria-label="Browse connectors">
+      <div class="picker">
+        <div class="picker__head">
+          <h3 id="tp-title">Browse connectors</h3>
+          <input type="search" id="tp-search" class="input" placeholder="Search tools by name or description…"
+                 aria-label="Search connectors" autocomplete="off" />
+          <p class="picker__count muted" id="tp-count" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);"></p>
+        </div>
+        <div class="picker__list" id="tp-list"></div>
+        <div class="picker__foot">
+          <span class="wf__hint" id="tp-hint"></span>
+          <button type="button" class="btn btn--primary" id="tp-done">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var mode = 'template';
+    var brief = document.getElementById('wf-brief');
+    var noun = document.getElementById('wf-noun');
+    var examples = document.getElementById('wf-examples');
+    var draftBtn = document.getElementById('wf-draft-btn');
+    var fileBtn = document.getElementById('wf-file-btn');
+    var fileInput = document.getElementById('wf-file');
+    var fileName = document.getElementById('wf-file-name');
+    var status = document.getElementById('wf-status');
+    var formTplBtn = document.getElementById('wf-form-template');
+    var formPbBtn = document.getElementById('wf-form-playbook');
+    // template editor
+    var preview = document.getElementById('wf-preview');
+    var elName = document.getElementById('wf-name');
+    var elTitle = document.getElementById('wf-title');
+    var elSteps = document.getElementById('wf-steps');
+    var elParams = document.getElementById('wf-params');
+    var elBudget = document.getElementById('wf-budget');
+    var saveBtn = document.getElementById('wf-save-btn');
+    var wfRefine = document.getElementById('wf-refine');
+    var wfRefineBtn = document.getElementById('wf-refine-btn');
+    // playbook editor
+    var pbPreview = document.getElementById('pb-preview');
+    var pbName = document.getElementById('pb-name');
+    var pbDesc = document.getElementById('pb-desc');
+    var pbPersona = document.getElementById('pb-persona');
+    var pbAllow = document.getElementById('pb-allow');
+    var pbDeny = document.getElementById('pb-deny');
+    var pbRisk = document.getElementById('pb-risk');
+    var pbSteps = document.getElementById('pb-steps');
+    var pbFlowEnd = document.getElementById('pb-flow-end');
+    var pbAddBtn = document.getElementById('pb-add-step');
+    var pbSaveBtn = document.getElementById('pb-save-btn');
+    var pbRefine = document.getElementById('pb-refine');
+    var pbRefineBtn = document.getElementById('pb-refine-btn');
+    var pbGovern = document.getElementById('pb-govern');
+    var pbLintEl = document.getElementById('pb-lint');
+    var existingNames = null;
+    var pbLintTimer = null;
+    // shared saved box
+    var savedBox = document.getElementById('wf-saved');
+    var savedMsg = document.getElementById('wf-saved-msg');
+    var savedLink = document.getElementById('wf-saved-link');
+    // schedule panel (null when [features] scheduling is off)
+    var schedWrap = document.getElementById('wf-sched');
+    var schedCadence = document.getElementById('sched-cadence');
+    var schedTime = document.getElementById('sched-time');
+    var schedInterval = document.getElementById('sched-interval');
+    var schedCronInput = document.getElementById('sched-cron');
+    var schedParamsWrap = document.getElementById('sched-params-wrap');
+    var schedParams = document.getElementById('sched-params');
+    var schedBtn = document.getElementById('sched-btn');
+    var schedCronPreview = document.getElementById('sched-cron-preview');
+    var schedList = document.getElementById('sched-list');
+    var lastSavedTemplate = null;
+    // webhook-trigger panel (null when [features] triggers is off)
+    var trigWrap = document.getElementById('wf-trig');
+    var trigName = document.getElementById('trig-name');
+    var trigParamsWrap = document.getElementById('trig-params-wrap');
+    var trigParams = document.getElementById('trig-params');
+    var trigBtn = document.getElementById('trig-btn');
+    var trigMsg = document.getElementById('trig-msg');
+    var trigHowto = document.getElementById('trig-howto');
+    var trigList = document.getElementById('trig-list');
+    // connector picker
+    var tpBackdrop = document.getElementById('tool-picker');
+    var tpTitle = document.getElementById('tp-title');
+    var tpSearch = document.getElementById('tp-search');
+    var tpList = document.getElementById('tp-list');
+    var tpCount = document.getElementById('tp-count');
+    var tpDone = document.getElementById('tp-done');
+    var toolCatalog = null;       // [{name, description, risk}], fetched once
+    var pickerTarget = null;      // the tool <input> to insert into
+    var pickerRestrict = null;    // Set of names to limit to, or null for all
+    var RISK_RANK = { low: 0, medium: 1, high: 2 };
+    // Draft/refine is an unsaved operator workspace. Reading an existing pack,
+    // live governance validation, and Save remain the admin control boundary.
+    var PACK_EDITING = {{ pack_editing_allowed | tojson }};
+
+    var EXAMPLES = {
+      template: [
+        {% raw %}'Weekly competitive-intel report on {{competitor}} — summarize moves and email the team',
+        'Onboard a new {{role}} hire: build the checklist and draft a welcome email',
+        'Summarize {{document}} into a one-page brief with key risks and next steps',{% endraw %}
+      ],
+      playbook: [
+        'An accounts-payable clerk that reads, three-way-matches, and pays invoices',
+        'A support-triage specialist that tags incoming tickets and routes them',
+        'A contract-review agent that flags risky clauses and drafts redlines',
+      ],
+    };
+
+    function setStatus(msg, isErr) {
+      status.textContent = msg || '';
+      status.style.color = isErr ? 'var(--danger)' : 'var(--muted)';
+    }
+    function playbookNoteSuffix(d) {
+      var notes = (d && Array.isArray(d.notes) ? d.notes : [])
+        .filter(function (n) { return typeof n === 'string' && n.trim(); })
+        .slice(0, 3);
+      return notes.length ? (' ' + notes.join(' ')) : '';
+    }
+    function setBusy(btn, on) {
+      btn.disabled = on;
+      var sp = btn.querySelector('.spinner');
+      if (sp) sp.hidden = !on;
+    }
+    function splitList(s) {
+      return (s || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    }
+    function hidePanels() { preview.hidden = true; pbPreview.hidden = true; savedBox.hidden = true; }
+
+    function renderExamples() {
+      examples.textContent = '';
+      EXAMPLES[mode].forEach(function (ex) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        var lead = document.createElement('span');
+        lead.className = 'chip__lead';
+        lead.textContent = 'Try:';
+        b.appendChild(lead);
+        b.appendChild(document.createTextNode(ex));
+        b.addEventListener('click', function () { brief.value = ex; brief.focus(); });
+        examples.appendChild(b);
+      });
+    }
+
+    function setForm(next) {
+      mode = next;
+      var isTpl = mode === 'template';
+      formTplBtn.classList.toggle('is-active', isTpl);
+      formTplBtn.setAttribute('aria-pressed', String(isTpl));
+      formPbBtn.classList.toggle('is-active', !isTpl);
+      formPbBtn.setAttribute('aria-pressed', String(!isTpl));
+      noun.textContent = isTpl ? 'workflow' : 'agent';
+      if (!isTpl) {
+        if (PACK_EDITING) loadRoster();
+        loadTools();
+      }
+      renderExamples();
+      hidePanels();
+      setStatus(!isTpl && !PACK_EDITING
+        ? 'Draft mode — you can create and refine a first pass; an admin must validate and save it.'
+        : '');
+    }
+    formTplBtn.addEventListener('click', function () { setForm('template'); });
+    formPbBtn.addEventListener('click', function () { setForm('playbook'); });
+    if (!PACK_EDITING) {
+      // Keep authoring available while making the mutation boundary explicit.
+      formPbBtn.title = 'Draft an unsaved first pass for admin review';
+      var pbSub = formPbBtn.querySelector('.seg__sub');
+      if (pbSub) pbSub.textContent = 'draft now; admin validates and saves';
+      pbSaveBtn.disabled = true;
+    }
+
+    fileBtn.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () {
+      fileName.textContent = fileInput.files.length ? ('Will draft from: ' + fileInput.files[0].name) : '';
+    });
+
+    function showSaved(href, label) {
+      savedLink.setAttribute('href', href);
+      savedLink.textContent = label;
+      preview.hidden = true; pbPreview.hidden = true;
+      if (schedWrap) schedWrap.hidden = true;   // template saves re-show it; playbooks don't
+      if (trigWrap) trigWrap.hidden = true;
+      savedBox.hidden = false;
+      savedBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ---- template form ----
+    var wfEditingName = null;   // set when rehydrated via ?edit= (Save overwrites)
+    var wfEditWall = null;      // preserved budget_wall_seconds for an edited template
+    var wfEditGeneration = null; // compare-and-swap generation for safe edits
+    // Render an API error detail readably. A 422's `detail` is a Pydantic error
+    // ARRAY, not a string — assigning it to textContent would print "[object
+    // Object]", so flatten it to "field: message" here.
+    function detailText(data, status) {
+      var d = data && data.detail;
+      if (typeof d === 'string') return d;
+      if (Array.isArray(d)) {
+        return d.map(function (e) {
+          var loc = (e && e.loc && e.loc.length) ? e.loc[e.loc.length - 1] : '';
+          return (loc ? loc + ': ' : '') + ((e && e.msg) || 'invalid');
+        }).join('; ') || ('Save failed: ' + status);
+      }
+      return 'Save failed: ' + status;
+    }
+    function renderDraft(d) {
+      elName.value = d.name || '';
+      elTitle.value = d.title || '';
+      elSteps.value = d.body || '';
+      elParams.value = (d.params || []).join(', ');
+      elBudget.value = (d.budget_dollars != null) ? d.budget_dollars : 5;
+      if (d.budget_wall_seconds != null) wfEditWall = d.budget_wall_seconds;
+      preview.hidden = false; pbPreview.hidden = true; savedBox.hidden = true;
+      preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function stepsFromBody(body) {
+      // Recover the ordered steps from the numbered "## Steps" markdown so a
+      // refine round-trip hands the model a real steps[] array (not just prose,
+      // which risks dropped/reordered steps).
+      var out = [];
+      (body || '').split('\n').forEach(function (line) {
+        var m = /^\s*\d+\.\s+(.*\S)\s*$/.exec(line);
+        if (m) out.push(m[1]);
+      });
+      return out;
+    }
+    function collectTemplate() {
+      var t = {
+        name: elName.value.trim(), title: elTitle.value.trim(), body: elSteps.value,
+        params: splitList(elParams.value), budget_dollars: parseFloat(elBudget.value) || 5.0,
+      };
+      // Preserve the wall-time cap of an edited template (the form has no field
+      // for it) so a save round-trip can't reset it to the server default.
+      if (wfEditWall != null) t.budget_wall_seconds = wfEditWall;
+      // Overwrite only when saving back to the template we opened for edit; a
+      // fresh name must not silently clobber an existing one.
+      t.overwrite = !!(wfEditingName && t.name === wfEditingName);
+      if (t.overwrite && wfEditGeneration != null) {
+        t.expected_generation = wfEditGeneration;
+      }
+      return t;
+    }
+    async function postTemplate(payload) {
+      var resp = await fetch('/api/v1/workflows', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return { resp: resp, data: await resp.json().catch(function () { return {}; }) };
+    }
+
+    saveBtn.addEventListener('click', async function () {
+      var payload = collectTemplate();
+      if (!payload.name) { setStatus('Give the workflow a name (id).', true); elName.focus(); return; }
+      saveBtn.disabled = true;
+      setStatus('Saving…');
+      try {
+        var r = await postTemplate(payload);
+        if (r.resp.status === 409) {
+          // Name collision on a fresh save: confirm an explicit overwrite rather
+          // than clobbering someone else's template silently.
+          if (await mvConfirm('A workflow named “' + payload.name + '” already exists. Overwrite it?')) {
+            payload.overwrite = true;
+            r = await postTemplate(payload);
+          } else {
+            setStatus('Not saved — pick a different name.', true); return;
+          }
+        }
+        if (!r.resp.ok) { setStatus(detailText(r.data, r.resp.status), true); return; }
+        var data = r.data;
+        setStatus('');
+        wfEditingName = data.name;   // subsequent saves overwrite this one
+        wfEditGeneration = data.generation;
+        savedMsg.textContent = 'Saved “' + (data.title || data.name) + '” as a reusable workflow'
+          + ((data.params && data.params.length) ? ' (parameters: ' + data.params.join(', ') + ').' : '.');
+        showSaved('/templates', 'Open Templates');
+        showScheduling({ name: data.name, params: data.params || [] });
+        showTriggers({ name: data.name, params: data.params || [] });
+      } catch (e) {
+        setStatus('Could not save the workflow.', true);
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    // ---- schedule a saved template to run on a cron (feature-gated) ----
+    function currentCron() {
+      var cad = schedCadence.value;
+      if (!cad) return null;
+      if (cad === 'custom') return (schedCronInput.value || '').trim() || null;
+      if (cad === 'hourly') {
+        var n = parseInt(schedInterval.value, 10);
+        if (isNaN(n) || n < 1) n = 1; if (n > 23) n = 23;
+        return '0 */' + n + ' * * *';
+      }
+      var parts = (schedTime.value || '09:00').split(':');
+      var h = parseInt(parts[0], 10); var m = parseInt(parts[1], 10);
+      if (isNaN(h)) h = 9;
+      if (isNaN(m)) m = 0;
+      if (cad === 'daily') return m + ' ' + h + ' * * *';
+      if (cad === 'weekdays') return m + ' ' + h + ' * * 1-5';
+      if (cad === 'weekly') return m + ' ' + h + ' * * 1';
+      return null;
+    }
+    function syncSchedInputs() {
+      // Show only the input(s) the chosen cadence needs.
+      var cad = schedCadence.value;
+      var timeWrap = document.getElementById('sched-time-wrap');
+      var intWrap = document.getElementById('sched-interval-wrap');
+      var cronWrap = document.getElementById('sched-cron-wrap');
+      if (timeWrap) timeWrap.hidden = !(cad === 'daily' || cad === 'weekdays' || cad === 'weekly');
+      if (intWrap) intWrap.hidden = cad !== 'hourly';
+      if (cronWrap) cronWrap.hidden = cad !== 'custom';
+    }
+    var fmtWhen = window.mvWhen;   // shared timestamp formatter (base.html)
+    function renderSchedParams(params) {
+      schedParams.textContent = '';
+      if (!params || !params.length) { schedParamsWrap.hidden = true; return; }
+      schedParamsWrap.hidden = false;
+      params.forEach(function (p, i) {
+        var id = 'sched-param-' + i;
+        var label = document.createElement('label');
+        label.htmlFor = id;   // associate the visible label with the field
+        label.style.cssText = 'display:block; font-size: var(--text-xs); color: var(--muted); margin: var(--space-2) 0 2px;';
+        label.textContent = p;
+        var inp = document.createElement('input');
+        inp.id = id;
+        inp.className = 'input sched-param';
+        inp.dataset.param = p;
+        inp.addEventListener('input', updateSchedBtn);
+        schedParams.appendChild(label);
+        schedParams.appendChild(inp);
+      });
+    }
+    function schedParamValues() {
+      var out = {}; var ok = true;
+      schedParams.querySelectorAll('.sched-param').forEach(function (i) {
+        var v = i.value.trim(); out[i.dataset.param] = v;
+        if (!v) ok = false;
+      });
+      return ok ? out : null;   // null => some required value is still blank
+    }
+    function updateSchedBtn() {
+      syncSchedInputs();
+      var cron = currentCron();
+      schedBtn.disabled = !cron || schedParamValues() === null;
+      schedCronPreview.textContent = cron ? ('cron: ' + cron + ' (UTC)') : '';
+      updateSchedLocalHint();
+    }
+    function updateSchedLocalHint() {
+      // Schedules fire in UTC; show what the chosen UTC time is locally so an
+      // operator isn't surprised when "09:00" runs at a different wall-clock hour.
+      // Only meaningful for the clock-time presets (not hourly / raw cron).
+      var hint = document.getElementById('sched-local-hint');
+      if (!hint) return;
+      var cad = schedCadence.value;
+      if (cad !== 'daily' && cad !== 'weekdays' && cad !== 'weekly') { hint.hidden = true; return; }
+      var p = (schedTime.value || '09:00').split(':');
+      var h = parseInt(p[0], 10), m = parseInt(p[1], 10);
+      if (isNaN(h) || isNaN(m)) { hint.hidden = true; return; }
+      var d = new Date(); d.setUTCHours(h, m, 0, 0);
+      var local = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      // Local day can differ from the UTC day (±1, month-wrap safe); and the
+      // mapping drifts across DST, so this is an approximation, not a promise.
+      var delta = d.getDate() - d.getUTCDate();
+      if (delta > 1) delta = -1; else if (delta < -1) delta = 1;
+      var dayLabel = delta === 0 ? '' : (delta > 0 ? ' (next day)' : ' (previous day)');
+      var jan = new Date(d.getFullYear(), 0, 1).getTimezoneOffset();
+      var jul = new Date(d.getFullYear(), 6, 1).getTimezoneOffset();
+      var dst = jan !== jul ? ', and shifts with daylight saving' : '';
+      hint.textContent = ('0' + h).slice(-2) + ':' + ('0' + m).slice(-2) + ' UTC ≈ '
+        + local + dayLabel + ' your time' + dst;
+      hint.hidden = false;
+    }
+    function showScheduling(tpl) {
+      if (!schedWrap) return;             // no-op when [features] scheduling is off
+      lastSavedTemplate = tpl;
+      schedCadence.value = '';
+      schedCronPreview.textContent = '';
+      renderSchedParams(tpl.params);
+      updateSchedBtn();
+      schedWrap.hidden = false;
+      loadSchedules();
+    }
+    async function scheduleIt() {
+      if (!lastSavedTemplate) return;
+      var cron = currentCron(); if (!cron) return;
+      var params = schedParamValues(); if (params === null) return;
+      schedBtn.disabled = true;
+      schedCronPreview.textContent = 'Scheduling…';
+      try {
+        var resp = await fetch('/api/v1/schedules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cron: cron, template: lastSavedTemplate.name, params: params }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { schedCronPreview.textContent = data.detail || ('Failed: ' + resp.status); mvToast(data.detail || 'Could not arm schedule', { error: true }); return; }
+        schedCadence.value = '';
+        schedCronPreview.textContent = 'Scheduled — next run ' + fmtWhen(data.next_run) + '.';
+        mvToast('Schedule armed — next run ' + fmtWhen(data.next_run));
+        loadSchedules();
+      } catch (e) {
+        schedCronPreview.textContent = 'Could not reach the scheduler.';
+      } finally {
+        updateSchedBtn();
+      }
+    }
+    async function loadSchedules() {
+      if (!schedList) return;
+      try {
+        var resp = await fetch('/api/v1/schedules');
+        var data = await resp.json().catch(function () { return {}; });
+        renderSchedList(data.schedules || []);
+      } catch (e) { /* the list is best-effort */ }
+    }
+    function renderSchedList(items) {
+      schedList.textContent = '';
+      items.forEach(function (s) {
+        var li = document.createElement('li');
+        li.className = 'mv-row';
+        var span = document.createElement('span');
+        span.className = 'mv-row__main';
+        var title = document.createElement('strong');
+        title.textContent = s.title || '(goal)';
+        var when = document.createElement('span');
+        when.className = 'wf__sched-when';
+        when.textContent = ' · ' + s.cron + ' · next ' + fmtWhen(s.next_run);
+        span.appendChild(title); span.appendChild(when);
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn btn--icon';
+        rm.setAttribute('aria-label', 'Cancel this schedule');
+        rm.title = 'Cancel';
+        rm.textContent = '✕';
+        rm.addEventListener('click', function () { cancelSchedule(s.id, li); });
+        li.appendChild(span); li.appendChild(rm);
+        schedList.appendChild(li);
+      });
+    }
+    async function cancelSchedule(id, li) {
+      if (!(await mvConfirm('Delete this schedule? It will stop running.'))) return;
+      try {
+        var resp = await fetch('/api/v1/schedules/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (resp.ok) { if (li) li.remove(); mvToast('Schedule deleted'); } else { mvToast('Could not delete schedule', { error: true }); }
+      } catch (e) { mvToast('Could not delete schedule', { error: true }); }
+    }
+    if (schedWrap) {
+      schedCadence.addEventListener('change', updateSchedBtn);
+      schedTime.addEventListener('input', updateSchedBtn);
+      if (schedInterval) schedInterval.addEventListener('input', updateSchedBtn);
+      if (schedCronInput) schedCronInput.addEventListener('input', updateSchedBtn);
+      schedBtn.addEventListener('click', scheduleIt);
+    }
+
+    // ---- create a webhook trigger for a saved template (feature-gated) ----
+    var trigTpl = null;
+    function renderTrigParams(params) {
+      trigParams.textContent = '';
+      if (!params || !params.length) { trigParamsWrap.hidden = true; return; }
+      trigParamsWrap.hidden = false;
+      params.forEach(function (p, i) {
+        var id = 'trig-param-' + i;
+        var label = document.createElement('label');
+        label.htmlFor = id;   // associate the visible label with the field
+        label.style.cssText = 'display:block; font-size: var(--text-xs); color: var(--muted); margin: var(--space-2) 0 2px;';
+        label.textContent = p;
+        var inp = document.createElement('input');
+        inp.id = id;
+        inp.className = 'input trig-param';
+        inp.dataset.param = p;
+        inp.addEventListener('input', updateTrigBtn);
+        trigParams.appendChild(label);
+        trigParams.appendChild(inp);
+      });
+    }
+    function trigParamValues() {
+      var out = {}; var ok = true;
+      trigParams.querySelectorAll('.trig-param').forEach(function (i) {
+        var v = i.value.trim(); out[i.dataset.param] = v;
+        if (!v) ok = false;
+      });
+      return ok ? out : null;   // null => some default is still blank
+    }
+    function updateTrigBtn() { trigBtn.disabled = trigParamValues() === null; }
+    function showTriggers(tpl) {
+      if (!trigWrap) return;            // no-op when [features] triggers is off
+      trigTpl = tpl;
+      trigName.value = '';
+      trigMsg.textContent = '';
+      trigHowto.hidden = true;
+      renderTrigParams(tpl.params);
+      updateTrigBtn();
+      trigWrap.hidden = false;
+      loadTriggers();
+    }
+    async function createTrigger() {
+      if (!trigTpl) return;
+      var params = trigParamValues(); if (params === null) return;
+      trigBtn.disabled = true;
+      trigMsg.textContent = 'Creating…';
+      try {
+        var resp = await fetch('/api/v1/triggers', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: trigTpl.name, params: params, name: trigName.value.trim() || null }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { trigMsg.textContent = data.detail || ('Failed: ' + resp.status); mvToast(data.detail || 'Could not create trigger', { error: true }); return; }
+        trigMsg.textContent = 'Created.';
+        mvToast('Trigger “' + data.name + '” created');
+        showHowto(data);
+        loadTriggers();
+      } catch (e) {
+        trigMsg.textContent = 'Could not reach the server.';
+      } finally {
+        updateTrigBtn();
+      }
+    }
+    function showHowto(data) {
+      var url = window.location.origin + (data.webhook_url || '/webhook/run');
+      var body = JSON.stringify({ trigger: data.name });
+      document.getElementById('trig-url').textContent = url;
+      // A ready-to-run signed request: signs "<timestamp>.<body>" with the
+      // secret exactly as the server verifies it (needs MAVERICK_WEBHOOK_SECRET).
+      document.getElementById('trig-curl').textContent = [
+        "BODY='" + body + "'",
+        "TS=$(date +%s)",
+        "SIG=$(printf '%s.%s' \"$TS\" \"$BODY\" | openssl dgst -sha256 -hmac \"$MAVERICK_WEBHOOK_SECRET\" | sed 's/^.* //')",
+        "curl -X POST '" + url + "' \\",
+        "  -H \"X-Maverick-Timestamp: $TS\" \\",
+        "  -H \"X-Maverick-Signature: sha256=$SIG\" \\",
+        "  -H 'Content-Type: application/json' \\",
+        "  -d \"$BODY\""
+      ].join('\n');
+      var warn = document.getElementById('trig-secret-warn');
+      if (warn) warn.hidden = !!data.secret_configured;
+      trigHowto.hidden = false;
+    }
+    async function loadTriggers() {
+      if (!trigList) return;
+      try {
+        var resp = await fetch('/api/v1/triggers');
+        var data = await resp.json().catch(function () { return {}; });
+        renderTrigList(data.triggers || []);
+      } catch (e) { /* the list is best-effort */ }
+    }
+    function renderTrigList(items) {
+      trigList.textContent = '';
+      items.forEach(function (t) {
+        var li = document.createElement('li');
+        li.className = 'mv-row';
+        var span = document.createElement('span');
+        span.className = 'mv-row__main';
+        var title = document.createElement('strong');
+        title.textContent = t.name;
+        var sub = document.createElement('span');
+        sub.className = 'wf__sched-when';
+        var pcount = t.params ? Object.keys(t.params).length : 0;
+        sub.textContent = ' · ' + (t.template || '') + (pcount ? (' · ' + pcount + ' param' + (pcount === 1 ? '' : 's')) : '');
+        span.appendChild(title); span.appendChild(sub);
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn btn--icon';
+        rm.setAttribute('aria-label', 'Delete this trigger');
+        rm.title = 'Delete';
+        rm.textContent = '✕';
+        rm.addEventListener('click', function () { deleteTrigger(t.name, li); });
+        li.appendChild(span); li.appendChild(rm);
+        trigList.appendChild(li);
+      });
+    }
+    async function deleteTrigger(name, li) {
+      if (!(await mvConfirm('Delete trigger “' + name + '”? Its webhook URL will stop working.'))) return;
+      try {
+        var resp = await fetch('/api/v1/triggers/' + encodeURIComponent(name), { method: 'DELETE' });
+        if (resp.ok) { if (li) li.remove(); mvToast('Trigger deleted'); } else { mvToast('Could not delete trigger', { error: true }); }
+      } catch (e) { mvToast('Could not delete trigger', { error: true }); }
+    }
+    if (trigWrap) {
+      trigName.addEventListener('input', updateTrigBtn);
+      trigBtn.addEventListener('click', createTrigger);
+      var urlCopy = document.getElementById('trig-url-copy');
+      if (urlCopy) urlCopy.addEventListener('click', function () { mvCopy(document.getElementById('trig-url').textContent); });
+      var curlCopy = document.getElementById('trig-curl-copy');
+      if (curlCopy) curlCopy.addEventListener('click', function () { mvCopy(document.getElementById('trig-curl').textContent); });
+    }
+
+    // ---- playbook form ----
+    var GATE_LABEL = { review: 'review', approval: 'needs approval' };
+    function paintGate(row) {
+      var gate = row.querySelector('.pb-step__gate').value;
+      row.dataset.gate = gate || '';
+      var badge = row.querySelector('.pb-gatebadge');
+      if (!gate) { badge.hidden = true; return; }
+      badge.hidden = false;
+      badge.textContent = GATE_LABEL[gate] || gate;
+      // Approval is the platform's signature governance control — paint it brand,
+      // not the amber/warn reserved for risk/degraded states.
+      badge.className = 'badge pb-gatebadge ' + (gate === 'approval' ? 'gov' : 'info');
+    }
+    function renumber() {
+      var steps = pbSteps.querySelectorAll('.pb-step');
+      steps.forEach(function (row, i) {
+        row.querySelector('.pb-step__num').textContent = (i + 1);
+      });
+      pbFlowEnd.hidden = !steps.length;   // the "Goal complete" node appears once there are steps
+    }
+    function moveStep(row, dir) {
+      if (dir < 0 && row.previousElementSibling) pbSteps.insertBefore(row, row.previousElementSibling);
+      else if (dir > 0 && row.nextElementSibling) pbSteps.insertBefore(row.nextElementSibling, row);
+      renumber(); schedulePbLint();
+    }
+    function addStep(step) {
+      step = step || {};
+      var row = document.createElement('div');
+      row.className = 'pb-step';
+      row.innerHTML =
+        '<div class="pb-step__head">'
+        + '<span class="pb-step__num"></span>'
+        + '<input class="input pb-step__name" placeholder="Step name" aria-label="Step name" />'
+        + '<select class="input pb-step__gate" aria-label="Human gate">'
+        + '<option value="">no gate</option>'
+        + '<option value="review">review</option>'
+        + '<option value="approval">approval</option>'
+        + '</select>'
+        + '<span class="pb-step__move">'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__up" aria-label="Move step up" title="Move up">↑</button>'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__down" aria-label="Move step down" title="Move down">↓</button>'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__rm" aria-label="Remove step" title="Remove">✕</button>'
+        + '</span>'
+        + '</div>'
+        + '<textarea class="input pb-step__inst" rows="2" placeholder="What the agent does at this step" aria-label="Step instruction"></textarea>'
+        + '<div class="pb-step__head" style="margin: 0;">'
+        + '<input class="input pb-step__tools" style="flex: 1 1 auto;" placeholder="tools used here (comma-separated)" aria-label="Step tools" />'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__browse" title="Browse connectors" aria-label="Browse connectors for this step">Browse…</button>'
+        + '<span class="badge pb-gatebadge" hidden></span>'
+        + '</div>';
+      // assign untrusted values via properties (never string-interpolated into HTML)
+      row.querySelector('.pb-step__name').value = step.name || '';
+      row.querySelector('.pb-step__inst').value = step.instruction || '';
+      row.querySelector('.pb-step__tools').value = (step.tools || []).join(', ');
+      row.querySelector('.pb-step__gate').value = step.gate || '';
+      row.querySelector('.pb-step__gate').addEventListener('change', function () { paintGate(row); });
+      row.querySelector('.pb-step__up').addEventListener('click', function () { moveStep(row, -1); });
+      row.querySelector('.pb-step__down').addEventListener('click', function () { moveStep(row, 1); });
+      row.querySelector('.pb-step__rm').addEventListener('click', function () {
+        // Re-home focus before removing the focused ✕ button, so keyboard users
+        // aren't dropped to <body>: prefer the previous step's ✕, else Add step.
+        var prev = row.previousElementSibling;
+        var landing = (prev && prev.querySelector('.pb-step__rm')) || document.getElementById('pb-add-step');
+        row.remove(); renumber(); schedulePbLint();
+        if (landing && typeof landing.focus === 'function') landing.focus();
+      });
+      row.querySelector('.pb-step__browse').addEventListener('click', function () {
+        openPicker(row.querySelector('.pb-step__tools'), allowSet(), 'Tools for this step');
+      });
+      pbSteps.appendChild(row);
+      paintGate(row);
+    }
+    pbAddBtn.addEventListener('click', function () { addStep(); renumber(); schedulePbLint(); });
+
+    function renderPlaybook(d) {
+      pbName.value = d.name || '';
+      pbDesc.value = d.description || '';
+      pbPersona.value = d.persona || '';
+      pbAllow.value = (d.allow_tools || []).join(', ');
+      pbDeny.value = (d.deny_tools || []).join(', ');
+      pbRisk.value = d.max_risk || 'medium';
+      pbSteps.innerHTML = '';
+      (d.workflow || []).forEach(function (s) { addStep(s); });
+      if (!pbSteps.children.length) addStep();
+      renumber();
+      pbPreview.hidden = false; preview.hidden = true; savedBox.hidden = true;
+      schedulePbLint();
+      pbPreview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function collectPlaybook() {
+      var steps = [];
+      pbSteps.querySelectorAll('.pb-step').forEach(function (row) {
+        var name = row.querySelector('.pb-step__name').value.trim();
+        if (!name) return;
+        steps.push({
+          name: name,
+          instruction: row.querySelector('.pb-step__inst').value.trim(),
+          tools: splitList(row.querySelector('.pb-step__tools').value),
+          gate: row.querySelector('.pb-step__gate').value || null,
+        });
+      });
+      return {
+        description: pbDesc.value.trim(), persona: pbPersona.value,
+        allow_tools: splitList(pbAllow.value), deny_tools: splitList(pbDeny.value),
+        max_risk: pbRisk.value, workflow: steps,
+      };
+    }
+    // When editing an existing agent, carry forward the override fields the
+    // builder can't show (set by ?edit_agent=) so saving doesn't drop them.
+    var pbEditPreserve = null;
+    function playbookPayload() {
+      return Object.assign(collectPlaybook(), pbEditPreserve || {});
+    }
+
+    // --- live governance feedback (reuses the agent-override lint endpoint) ---
+    async function loadRoster() {
+      if (existingNames) return;
+      existingNames = new Set();
+      try {
+        var resp = await fetch('/api/v1/agents');
+        var data = await resp.json().catch(function () { return {}; });
+        (data.agents || []).forEach(function (a) { if (a && a.name) existingNames.add(a.name); });
+      } catch (e) { /* the collision hint is best-effort */ }
+    }
+    function lintLine(cls, text) {
+      var li = document.createElement('li');
+      li.className = cls;
+      li.textContent = text;   // server/user text -> textContent, never innerHTML
+      return li;
+    }
+    function renderLint(data, name) {
+      pbLintEl.textContent = '';
+      pbGovern.classList.remove('is-ok', 'is-err');
+      if (!PACK_EDITING) {
+        pbLintEl.appendChild(lintLine(
+          'warn',
+          'Draft only — a dashboard admin must run governance validation and save this playbook.'
+        ));
+        pbSaveBtn.disabled = true;
+        return;
+      }
+      if (!data) { pbSaveBtn.disabled = false; return; }
+      var errs = data.errors || [], warns = data.warnings || [];
+      if (existingNames && existingNames.has(name)) {
+        pbLintEl.appendChild(lintLine('warn', '“' + name + '” already exists — saving customizes that agent.'));
+      }
+      errs.forEach(function (e) { pbLintEl.appendChild(lintLine('err', e)); });
+      warns.forEach(function (w) { pbLintEl.appendChild(lintLine('warn', w)); });
+      if (!errs.length && !warns.length) {
+        pbLintEl.appendChild(lintLine('ok', 'Looks sound — no governance issues.'));
+        pbGovern.classList.add('is-ok');
+      } else if (errs.length) {
+        pbGovern.classList.add('is-err');
+      }
+      pbSaveBtn.disabled = errs.length > 0;   // a pack that fails lint is refused on save
+    }
+    async function pbLint() {
+      if (!PACK_EDITING) { renderLint(null); return; }
+      var name = pbName.value.trim();
+      if (!name) { renderLint(null); return; }
+      await loadRoster();
+      try {
+        var resp = await fetch('/api/v1/agents/' + encodeURIComponent(name) + '/validate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(playbookPayload()),
+        });
+        var data = await resp.json().catch(function () { return null; });
+        renderLint(resp.ok ? data : null, name);
+      } catch (e) { renderLint(null); }
+    }
+    function schedulePbLint() { clearTimeout(pbLintTimer); pbLintTimer = setTimeout(pbLint, 500); }
+    pbPreview.addEventListener('input', schedulePbLint);
+    pbPreview.addEventListener('change', schedulePbLint);
+
+    pbSaveBtn.addEventListener('click', async function () {
+      if (!PACK_EDITING) {
+        setStatus('A dashboard admin must validate and save this draft.', true);
+        return;
+      }
+      var name = pbName.value.trim();
+      if (!name) { setStatus('Give the agent a name (id).', true); return; }
+      pbSaveBtn.disabled = true;
+      setStatus('Saving the playbook…');
+      try {
+        var resp = await fetch('/api/v1/agents/' + encodeURIComponent(name) + '/override', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(playbookPayload()),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { setStatus(data.detail || ('Save failed: ' + resp.status), true); return; }
+        setStatus('');
+        var warns = data.warnings || [];
+        savedMsg.textContent = 'Saved “' + (data.name || name) + '” as an agent playbook'
+          + ((data.workflow && data.workflow.length) ? ' (' + data.workflow.length + ' steps).' : '.')
+          + (warns.length ? ' Heads up: ' + warns[0] : '');
+        showSaved('/agents', 'Open Agents');
+      } catch (e) {
+        setStatus('Could not save the playbook.', true);
+      } finally {
+        pbSaveBtn.disabled = !PACK_EDITING;
+      }
+    });
+
+    // ---- connector picker: browse real tools (with risk) instead of typing ----
+    async function loadTools() {
+      if (toolCatalog) return;
+      try {
+        var resp = await fetch('/api/v1/tools');
+        var data = await resp.json().catch(function () { return {}; });
+        toolCatalog = (data.tools || []).filter(function (t) { return t && t.name; });
+      } catch (e) { toolCatalog = []; }
+    }
+    function allowSet() {
+      var a = splitList(pbAllow.value);
+      return a.length ? new Set(a) : null;   // restrict step picker to allowed tools
+    }
+    var pickerOpener = null;   // element to restore focus to when the picker closes
+    function openPicker(input, restrict, title) {
+      pickerTarget = input;
+      pickerRestrict = restrict || null;
+      pickerOpener = document.activeElement;
+      tpTitle.textContent = title || 'Browse connectors';
+      tpSearch.value = '';
+      tpBackdrop.hidden = false;
+      renderTools();
+      loadTools().then(renderTools);   // re-render once the catalog lands
+      tpSearch.focus();
+    }
+    function closePicker() {
+      tpBackdrop.hidden = true;
+      pickerTarget = null; pickerRestrict = null;
+      // Return focus to the "Browse…" button that opened the picker, so a
+      // keyboard user isn't dropped to <body>.
+      if (pickerOpener && pickerOpener.isConnected && typeof pickerOpener.focus === 'function') pickerOpener.focus();
+      pickerOpener = null;
+    }
+    function pill(cls, text) {
+      var s = document.createElement('span');
+      s.className = cls;
+      s.textContent = text;
+      return s;
+    }
+    function renderTools() {
+      tpList.textContent = '';
+      if (!toolCatalog) { tpCount.textContent = 'Loading connectors…'; return; }
+      var q = tpSearch.value.trim().toLowerCase();
+      var ceiling = RISK_RANK[pbRisk.value] != null ? RISK_RANK[pbRisk.value] : 2;
+      var already = pickerTarget ? new Set(splitList(pickerTarget.value)) : new Set();
+      var pool = pickerRestrict
+        ? toolCatalog.filter(function (t) { return pickerRestrict.has(t.name); })
+        : toolCatalog;
+      var matches = pool.filter(function (t) {
+        return !q || t.name.toLowerCase().indexOf(q) >= 0
+          || (t.description || '').toLowerCase().indexOf(q) >= 0;
+      });
+      tpCount.textContent = matches.length + (matches.length === 1 ? ' tool' : ' tools')
+        + (pickerRestrict ? ' allowed by this pack' : ' available')
+        + (matches.length > 80 ? ' — showing first 80' : '');
+      matches.slice(0, 80).forEach(function (t) {
+        var risk = t.risk || 'medium';
+        var over = (RISK_RANK[risk] != null ? RISK_RANK[risk] : 1) > ceiling;
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'picker__item';
+        var main = document.createElement('div');
+        main.className = 'picker__main';
+        var nameRow = document.createElement('div');
+        nameRow.appendChild(pill('picker__name', t.name));
+        if (already.has(t.name)) nameRow.appendChild(pill('picker__added', '✓ added'));
+        if (over) nameRow.appendChild(pill('picker__over', 'exceeds max risk'));
+        main.appendChild(nameRow);
+        if (t.description) main.appendChild(pill('picker__desc', t.description));
+        item.appendChild(main);
+        item.appendChild(pill('badge risk-' + risk + ' picker__meta', risk));
+        item.addEventListener('click', function () { insertTool(t.name); });
+        tpList.appendChild(item);
+      });
+    }
+    function insertTool(name) {
+      if (!pickerTarget) return;
+      var list = splitList(pickerTarget.value);
+      if (list.indexOf(name) < 0) list.push(name);
+      pickerTarget.value = list.join(', ');
+      pickerTarget.dispatchEvent(new Event('input', { bubbles: true }));   // -> live governance check
+      renderTools();                                                        // reflect the "added" state
+    }
+    tpSearch.addEventListener('input', renderTools);
+    tpDone.addEventListener('click', closePicker);
+    tpBackdrop.addEventListener('click', function (e) { if (e.target === tpBackdrop) closePicker(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !tpBackdrop.hidden) closePicker(); });
+    pbPreview.querySelectorAll('[data-browse]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.browse === 'deny') openPicker(pbDeny, null, 'Denied tools');
+        else openPicker(pbAllow, null, 'Allowed tools');
+      });
+    });
+
+    // ---- shared draft action ----
+    async function draft() {
+      setBusy(draftBtn, true);
+      // A fresh draft is a NEW template — clear any edit context so Save doesn't
+      // overwrite the previously-edited one or carry its wall-time cap forward.
+      if (mode === 'template') { wfEditingName = null; wfEditWall = null; }
+      setStatus(mode === 'playbook' ? 'Drafting the playbook…' : 'Drafting the workflow…');
+      try {
+        var resp;
+        if (fileInput.files.length) {
+          var fd = new FormData();
+          fd.append('file', fileInput.files[0]);
+          fd.append('form', mode);
+          resp = await fetch('/api/v1/workflows/draft-from-file', { method: 'POST', body: fd });
+        } else {
+          if (!brief.value.trim()) { setStatus('Describe it, or upload a document.', true); return; }
+          resp = await fetch('/api/v1/workflows/draft', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: brief.value.trim(), form: mode }),
+          });
+        }
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { setStatus(data.detail || ('Draft failed: ' + resp.status), true); return; }
+        if (mode === 'playbook') {
+          renderPlaybook(data);
+          setStatus('Draft ready — review the persona, tools, and gated steps, then save.'
+            + playbookNoteSuffix(data));
+        } else {
+          renderDraft(data);
+          setStatus('Draft ready — review and edit below, then save.');
+        }
+      } catch (e) {
+        setStatus('Could not reach the drafting service.', true);
+      } finally {
+        setBusy(draftBtn, false);
+      }
+    }
+    draftBtn.addEventListener('click', draft);
+
+    // ---- refine: revise the current draft with a follow-up instruction ----
+    async function refine(form) {
+      var isPb = form === 'playbook';
+      var instrEl = isPb ? pbRefine : wfRefine;
+      var btn = isPb ? pbRefineBtn : wfRefineBtn;
+      var instruction = instrEl.value.trim();
+      if (!instruction) { setStatus('Type the change you want, then Refine.', true); return; }
+      setBusy(btn, true);
+      setStatus('Refining…');
+      var current = isPb ? collectPlaybook() : collectTemplate();
+      // Hand the refiner a real steps[] array (the save path doesn't need it, so
+      // it's added here, not in the shared collector) so the model revises
+      // structured steps instead of re-deriving them from the markdown body.
+      if (isPb) current.name = pbName.value.trim();
+      else current.steps = stepsFromBody(elSteps.value);
+      try {
+        var resp = await fetch('/api/v1/workflows/refine', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ form: form, instruction: instruction, current: current }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { setStatus(data.detail || ('Refine failed: ' + resp.status), true); return; }
+        if (isPb) renderPlaybook(data); else renderDraft(data);
+        instrEl.value = '';
+        setStatus('Refined — review the update, refine again, or save.'
+          + (isPb ? playbookNoteSuffix(data) : ''));
+      } catch (e) {
+        setStatus('Could not reach the refining service.', true);
+      } finally {
+        setBusy(btn, false);
+      }
+    }
+    wfRefineBtn.addEventListener('click', function () { refine('template'); });
+    pbRefineBtn.addEventListener('click', function () { refine('playbook'); });
+    wfRefine.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); refine('template'); } });
+    pbRefine.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); refine('playbook'); } });
+
+    renderExamples();
+
+    // Deep-links from the Templates / Agents pages:
+    //   ?edit_agent=<name> -> rehydrate the PLAYBOOK editor; Save overwrites.
+    //   ?edit=<name>       -> rehydrate the TEMPLATE editor; Save overwrites.
+    //   ?template=<name>   -> jump to automating it (schedule / webhook trigger).
+    var PB_EDIT = {{ edit_agent_prefill | tojson }};
+    var PB_EDIT_DENIED = {{ edit_agent_denied | tojson }};
+    var WF_EDIT = {{ edit_prefill | tojson }};
+    var WF_PREFILL = {{ prefill | tojson }};
+    var AUTHOR_HANDOFF = null;
+    try {
+      AUTHOR_HANDOFF = JSON.parse(sessionStorage.getItem('lightwork.authoring-handoff') || 'null');
+      if (!AUTHOR_HANDOFF || AUTHOR_HANDOFF.kind !== 'agent' || !AUTHOR_HANDOFF.brief
+          || Date.now() - Number(AUTHOR_HANDOFF.created_at || 0) > 10 * 60 * 1000) {
+        AUTHOR_HANDOFF = null;
+      }
+    } catch (e) { AUTHOR_HANDOFF = null; }
+    if (PB_EDIT && PB_EDIT.name && PACK_EDITING) {
+      setForm('playbook');
+      pbEditPreserve = PB_EDIT.preserve || null;
+      renderPlaybook(PB_EDIT);
+      setStatus('Editing agent “' + PB_EDIT.name + '” — change the persona, tools, or steps, then Save to overwrite.');
+    } else if (PB_EDIT_DENIED) {
+      // The server deliberately withheld the existing pack from page data.
+      setStatus('Editing agent “' + PB_EDIT_DENIED + '” requires a dashboard admin. You can still draft a new unsaved first pass.', true);
+    } else if (WF_EDIT && WF_EDIT.name) {
+      setForm('template');
+      wfEditingName = WF_EDIT.name;   // Save overwrites this template
+      wfEditGeneration = WF_EDIT.generation;
+      renderDraft(WF_EDIT);
+      setStatus('Editing “' + (WF_EDIT.title || WF_EDIT.name) + '” — change it and Save to overwrite (or rename to save a copy).');
+    } else if (WF_PREFILL && WF_PREFILL.name) {
+      setForm('template');
+      savedMsg.textContent = 'Automate “' + (WF_PREFILL.title || WF_PREFILL.name) + '” — schedule it, or trigger it from a webhook.';
+      showSaved('/templates', 'Open Templates');
+      showScheduling({ name: WF_PREFILL.name, params: WF_PREFILL.params || [] });
+      showTriggers({ name: WF_PREFILL.name, params: WF_PREFILL.params || [] });
+    } else if (AUTHOR_HANDOFF) {
+      sessionStorage.removeItem('lightwork.authoring-handoff');
+      setForm('playbook');
+      brief.value = String(AUTHOR_HANDOFF.brief).slice(0, 8000);
+      draft();
+    }
+  })();
+  </script>
+{% endblock %}

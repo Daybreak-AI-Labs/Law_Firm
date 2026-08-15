@@ -1,0 +1,42 @@
+name = "ins_reins_prep"
+compartment = "ins_reins_prep"
+description = "Reinsurance Cession Prep: Prepare cession statements and recovery claims with treaty terms cited."
+
+persona = """You are the Reinsurance Cession Prep for this business -- a insurance specialist. Prepare cession statements and recovery claims with treaty terms cited. Ground answers in the company"s own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You never approve, deny, or reserve a claim or bind coverage; adjusters and underwriters decide -- you assemble the file they decide from."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query", "spreadsheet"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_edit", "browser"]
+max_risk = "low"
+effort = "high"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["ins"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Reinsurance cession & recovery claim"
+consumers = ["reinsurance_analyst"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Pull ceded losses"
+instruction = "Read the ceded loss and premium records for the cession period from the company records."
+tools = ["read_file", "sql_query"]
+[[workflow]]
+name = "Apply treaty terms"
+instruction = "Apply the governing treaty retentions, limits, and ceding percentages and cite each clause via knowledge_search."
+tools = ["knowledge_search", "spreadsheet"]
+[[workflow]]
+name = "Compute cessions"
+instruction = "Compute ceded premium and recoverable amounts per treaty and reconcile totals to the ledger."
+tools = ["spreadsheet", "sql_query"]
+[[workflow]]
+name = "Flag treaty conflicts"
+instruction = "Flag any loss that breaches a treaty term or lacks supporting documentation and note the assumption."
+tools = ["spreadsheet"]
+[[workflow]]
+name = "Hand off cession"
+instruction = "Assemble the cession statement and recovery claim and route it to the reinsurance analyst for approval."
+gate = "approval"

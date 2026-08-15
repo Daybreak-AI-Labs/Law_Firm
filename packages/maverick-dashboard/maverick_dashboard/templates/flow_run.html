@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Flow Run · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .fr { max-width: 900px; }
+  .fr__head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .fr__status { font-weight: var(--font-semibold); }
+  .fr__status.completed { color: var(--success, #16a34a); }
+  .fr__status.failed, .fr__status.rejected { color: var(--danger, #dc2626); }
+  .fr__status.paused_approval, .fr__status.paused_delay, .fr__status.queued, .fr__status.running { color: #d97706; }
+  .fr__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-3) 0; }
+  .fr__msg { font-size: var(--text-sm); color: var(--muted); }
+  .fr__error { color: var(--danger, #dc2626); font-size: var(--text-sm); margin: var(--space-2) 0;
+               white-space: pre-wrap; word-break: break-word; }
+  .fr__steps { list-style: none; padding: 0; margin: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .fr__step { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) var(--space-3);
+              border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+  .fr__step:last-child { border-bottom: none; }
+  .fr__step .badge { width: 20px; text-align: center; }
+  .fr__step .nid { font-family: var(--font-mono, monospace); color: var(--muted); min-width: 70px; }
+  .fr__step .kind { text-transform: uppercase; font-size: 10px; letter-spacing: .04em;
+                    font-weight: 700; min-width: 70px; }
+  .fr__step .lbl { flex: 1; }
+  .fr__step.cursor { background: var(--surface-sunken); }
+  .fr__data { margin-top: var(--space-4); }
+  .fr__data pre { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius);
+                  padding: var(--space-3); font-size: 12px; overflow-x: auto; max-height: 320px; }
+</style>
+
+<div class="fr">
+  <div class="fr__head">
+    <h1 style="margin:0;">Run <span style="font-family:var(--font-mono,monospace);font-size:.7em;" id="fr-runid"></span></h1>
+    <span class="fr__status" id="fr-status">loading…</span>
+    <a id="fr-designer-link" href="/flows/designer/{{ flow_id }}">open in designer →</a>
+    <a href="/automations">all automations</a>
+  </div>
+  <p class="fr__msg" id="fr-meta"></p>
+  <div class="fr__error" id="fr-error" hidden></div>
+  <div class="fr__actions" id="fr-actions"></div>
+  <span class="fr__msg" id="fr-msg" aria-live="polite"></span>
+
+  <h2 style="font-size:var(--text-base);">Steps</h2>
+  <ul class="fr__steps" id="fr-steps"></ul>
+
+  <div class="fr__data">
+    <h2 style="font-size:var(--text-base);">Run data (redacted)</h2>
+    <pre id="fr-data">…</pre>
+    <h2 style="font-size:var(--text-base);">Original trigger input</h2>
+    <pre id="fr-input">…</pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var flowId = {{ flow_id | tojson }};
+  var runId = {{ run_id | tojson }};
+  var KIND_ICON = { agent: '🧠', action: '⚙️', branch: '🔀', foreach: '🔁',
+                    parallel: '🔱', approval: '✅', delay: '⏱', subflow: '📎' };
+  var ACTIVE = ['queued', 'running', 'paused_delay'];
+  var msg = document.getElementById('fr-msg');
+  var flowNodes = null;   // ordered [{id, kind, label}] from the flow definition
+
+  function say(t) { msg.textContent = t || ''; }
+  {% include "_dash_helpers.js" %}
+
+  function orderNodes(flow) {
+    // BFS from start so the timeline reads in execution order; orphans go last.
+    var byId = {}, order = [], seen = {};
+    (flow.nodes || []).forEach(function (n) { byId[n.id] = n; });
+    var queue = flow.start ? [flow.start] : [];
+    while (queue.length) {
+      var id = queue.shift();
+      if (!id || seen[id] || !byId[id]) continue;
+      seen[id] = 1; order.push(byId[id]);
+      ['next', 'if_true', 'if_false', 'on_error'].forEach(function (k) {
+        if (byId[id][k]) queue.push(byId[id][k]);
+      });
+    }
+    (flow.nodes || []).forEach(function (n) { if (!seen[n.id]) order.push(n); });
+    return order.map(function (n) {
+      return { id: n.id, kind: n.kind, label: n.label || n.brief || n.tool || n.prompt || n.condition || '',
+               choices: n.choices || [], form: n.form || [], assignee: n.assignee || '' };
+    });
+  }
+
+  function badgeFor(run, id) {
+    if (run.cursor === id && ['paused_approval', 'paused_delay', 'paused_event'].indexOf(run.status) >= 0) return '⏳';
+    if (run.cursor === id && run.status === 'failed') return '🔴';
+    var rs = (run.nodes || {})[id];
+    if (!rs) return '·';
+    if (rs.outcome === 1) return '🟢';
+    if (rs.outcome === 0) return '🔴';
+    if (rs.status === 'true') return '✓';
+    if (rs.status === 'false') return '✗';
+    return '🟠';
+  }
+
+  function renderSteps(run) {
+    var ul = document.getElementById('fr-steps');
+    ul.textContent = '';
+    var list = flowNodes || Object.keys(run.nodes || {}).map(function (id) { return { id: id, kind: '', label: '' }; });
+    list.forEach(function (n) {
+      var li = document.createElement('li');
+      li.className = 'fr__step' + (run.cursor === n.id ? ' cursor' : '');
+      var rs = (run.nodes || {})[n.id] || {};
+      li.innerHTML = '';
+      function span(cls, text) { var s = document.createElement('span'); s.className = cls; s.textContent = text; return s; }
+      li.appendChild(span('badge', badgeFor(run, n.id)));
+      li.appendChild(span('nid', n.id));
+      li.appendChild(span('kind', (KIND_ICON[n.kind] || '') + ' ' + (n.kind || '')));
+      li.appendChild(span('lbl', n.label || ''));
+      var st = rs.status || (run.cursor === n.id ? (run.status === 'failed' ? 'failed here' : 'waiting here') : 'not reached');
+      li.appendChild(span('', st + (rs.outcome != null ? ' (' + (rs.outcome === 1 ? 'ok' : 'failed') + ')' : '')
+        + (rs.seconds != null ? ' · ' + rs.seconds + 's' : '')));
+      ul.appendChild(li);
+    });
+  }
+
+  function renderActions(run) {
+    var box = document.getElementById('fr-actions');
+    box.textContent = '';
+    function btn(label, primary, onClick) {
+      var b = document.createElement('button');
+      b.className = 'btn ' + (primary ? 'btn--primary' : 'btn--ghost'); b.type = 'button';
+      b.textContent = label; b.addEventListener('click', onClick); box.appendChild(b);
+    }
+    if (run.status === 'paused_approval') {
+      // Prefer the pause-time snapshot (run.human): it is what the node
+      // declared when it paused, immune to flow edits made while waiting.
+      var node = (run.human && Object.keys(run.human).length)
+        ? run.human
+        : ((flowNodes || []).filter(function (n) { return n.id === run.cursor; })[0] || {});
+      if (run.prompt) { var p = document.createElement('span'); p.className = 'fr__msg'; p.textContent = '“' + run.prompt + '” '; box.appendChild(p); }
+      if (node.assignee) { var as = document.createElement('span'); as.className = 'fr__msg'; as.textContent = '· for ' + node.assignee + ' '; box.appendChild(as); }
+      // optional form fields collected on sign-off (merged into flow data on resume)
+      var inputs = {};
+      (node.form || []).forEach(function (fld) {
+        if (!fld.name) return;
+        var wrap = document.createElement('div'); wrap.style.margin = '4px 0';
+        var lab = document.createElement('label'); lab.style.cssText = 'display:block;font-size:12px;color:var(--muted);';
+        lab.textContent = fld.label || fld.name;
+        var inp = document.createElement('input'); inp.className = 'input';
+        inp.addEventListener('input', function () { inputs[fld.name] = inp.value; });
+        wrap.appendChild(lab); wrap.appendChild(inp); box.appendChild(wrap);
+      });
+      btn('✅ Approve', true, function () { resume('approved', inputs); });
+      // any declared choice verdicts become their own buttons (routed by a switch)
+      (node.choices || []).forEach(function (ch) {
+        btn(ch, false, function () { resume(ch, inputs); });
+      });
+      btn('🚫 Reject', false, function () { resume('rejected', inputs); });
+    }
+    if (run.status === 'paused_event') {
+      if (run.prompt) { var pe = document.createElement('span'); pe.className = 'fr__msg'; pe.textContent = '📥 ' + run.prompt + ' '; box.appendChild(pe); }
+      btn('▶ Resume now (skip the wait)', false, function () { resume('approved'); });
+    }
+    if (run.status === 'failed' && run.cursor) {
+      btn('🔁 Retry from failed step (' + run.cursor + ')', true, function () { retry(true); });
+    }
+    if (['failed', 'completed', 'rejected'].indexOf(run.status) >= 0) {
+      btn('↻ Re-run from scratch', false, function () { retry(false); });
+    }
+  }
+
+  function resume(decision, inputs) {
+    api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/resume',
+        { method: 'POST', body: JSON.stringify({ decision: decision, inputs: inputs || {} }) })
+      .then(function (r) { say(r.ok ? (decision === 'rejected' ? 'Rejected.' : '‘' + decision + '’ — resuming…') : 'Could not resume.'); poll(8); })
+      .catch(function () { say('Could not resume.'); });
+  }
+  function retry(fromFailure) {
+    api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry' + (fromFailure ? '?from_failure=1' : ''),
+        { method: 'POST' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { say(res.j.detail || 'Could not retry.'); return; }
+        if (res.j.retried_from) { window.location = '/flows/' + encodeURIComponent(flowId) + '/runs/' + encodeURIComponent(res.j.run_id); return; }
+        say('Resuming from ' + (res.j.from_node || 'the failed step') + '…'); poll(8);
+      }).catch(function () { say('Could not retry.'); });
+  }
+
+  function renderRun(run) {
+    document.getElementById('fr-runid').textContent = run.run_id.slice(0, 12) + '…';
+    var st = document.getElementById('fr-status');
+    st.textContent = run.status; st.className = 'fr__status ' + run.status;
+    var meta = document.getElementById('fr-meta');
+    if (meta) {
+      var bits = [];
+      if (run.origin && run.origin !== 'manual') bits.push('fired by ' + run.origin);
+      else bits.push('run manually');
+      if (run.cost_dollars) bits.push('cost $' + Number(run.cost_dollars).toFixed(2));
+      meta.textContent = bits.join(' · ');
+    }
+    var err = document.getElementById('fr-error');
+    if (run.error) { err.hidden = false; err.textContent = run.error; } else { err.hidden = true; }
+    document.getElementById('fr-data').textContent = JSON.stringify(run.data || {}, null, 2);
+    document.getElementById('fr-input').textContent = JSON.stringify(run.input_data || {}, null, 2);
+    renderSteps(run); renderActions(run);
+  }
+
+  function poll(tries) {
+    api('/api/v1/flows/runs/' + encodeURIComponent(runId))
+      .then(function (r) {
+        if (!r.ok) { say(r.status === 404 ? 'No such run (or not yours).' : 'Could not load the run.'); return null; }
+        return r.json();
+      })
+      .then(function (run) {
+        if (!run) return;
+        renderRun(run);
+        if (ACTIVE.indexOf(run.status) >= 0 && tries > 0) setTimeout(function () { poll(tries - 1); }, 1200);
+      }).catch(function () { say('Could not load the run.'); });
+  }
+  function watch() {
+    // Live updates over SSE; polling is the fallback (no EventSource, stream
+    // slots exhausted, or the connection never opens).
+    if (typeof EventSource === 'undefined') { poll(60); return; }
+    var es;
+    try { es = new EventSource('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/events'); }
+    catch (e) { poll(60); return; }
+    var gotAny = false;
+    function onSnap(evt) {
+      gotAny = true;
+      try { renderRun(JSON.parse(evt.data)); } catch (e) { /* keep streaming */ }
+    }
+    es.addEventListener('snapshot', onSnap);
+    es.addEventListener('terminal', function (evt) { onSnap(evt); es.close(); });
+    es.addEventListener('timeout', function () { es.close(); poll(60); });
+    es.onerror = function () { if (!gotAny) { es.close(); poll(60); } };
+  }
+
+  api('/api/v1/flows/' + encodeURIComponent(flowId))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (f) { if (f) flowNodes = orderNodes(f); watch(); })
+    .catch(function () { watch(); });
+})();
+</script>
+{% endblock %}
