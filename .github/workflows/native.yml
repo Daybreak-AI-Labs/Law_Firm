@@ -139,28 +139,18 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "RUSTFLAGS=-C link-arg=/Brepro" >> "$GITHUB_ENV"
           fi
-      - name: Build the maverick_native wheel (first clean build)
+      # One clean build into dist/. Upstream built twice, into dist-first and
+      # dist-second, so a reproducibility step could hash both and promote one
+      # to dist/. That step proved a PUBLISHED wheel matches its source and is
+      # gone with the rest of the distribution machinery, so build once and
+      # build straight into the directory the install step reads.
+      - name: Build the maverick_native wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
         with:
           command: build
-          args: --release --locked -m rust/mvk-scan-py/Cargo.toml --out dist-first
-          maturin-version: v1.14.1
-      # Reuse one fixed path but remove every compiled artifact between builds:
-      # this remains a real clean-build check without adding path variance.
-      - name: Clean native target before the second build
-        shell: bash
-        env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
-        run: cargo clean --manifest-path rust/mvk-scan-py/Cargo.toml
-      - name: Build the maverick_native wheel (second clean build)
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
-        env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
-        with:
-          command: build
-          args: --release --locked -m rust/mvk-scan-py/Cargo.toml --out dist-second
+          args: --release --locked -m rust/mvk-scan-py/Cargo.toml --out dist
           maturin-version: v1.14.1
       - name: Install wheel + assert native engaged + run parity
         shell: bash
