@@ -2,7 +2,7 @@
 
 What Lightwork **does today**, grounded in the code on `main`. This is the
 catalogue of built features and tools; the forward backlog (what's *not* done
-yet) lives in [`ROADMAP.md`](./ROADMAP.md). When a roadmap item ships, it moves
+yet) lives in the roadmap in `README.md`. When a roadmap item ships, it moves
 here.
 
 > Conventions: capabilities are grouped by concern. Module paths are relative to
@@ -1615,8 +1615,7 @@ here.
   configurable benign false-positive ceiling (`--max-fp`, default 1%), and exports
   the `{bias, weights, threshold, ngram_buckets, ngram_sizes}` JSON the shield
   already loads. Still OFF by default and MAX-ensembled with the heuristic (can
-  only raise recall). Recommended datasets/model and the ship-gate are in
-  [`docs/research/shield-model-recommendation.md`](research/shield-model-recommendation.md).
+  only raise recall).
   **Annual safety report generator** (`safety_report.py`, `python -m
   maverick.safety_report --since --until`): aggregates what the deployment
   actually recorded — shield blocks, capability denials, killswitch
@@ -3369,11 +3368,6 @@ tested without spawning py-spy.
   mobile browser, and a Kivy shell + buildozer.spec for Android — store
   builds are maintainer acts; the hard limits (no sandbox/subprocess on
   mobile, relay for network) are documented, not papered over.
-- **RFCs** — [RFC 0001: Lightwork 2.0](./rfcs/0001-maverick-2.0.md) (config
-  schema v2 + async-only channel SDK + connector re-homing, migration story
-  riding `maverick migrate`) and [RFC 0002: Plugin API v2](./rfcs/0002-plugin-api-v2.md)
-  (static manifests discovered without importing plugin code, lifecycle hooks,
-  the wire shape for the gRPC plugin host) — both Draft, open for comment.
 - **Embeddable widgets** — two dependency-free `<script>`-tag surfaces,
   both self-hosted: the floating **chat widget**
   (`web/widget/maverick-widget.js`) posting to your own dashboard's
@@ -3390,9 +3384,7 @@ tested without spawning py-spy.
 - **Docs** — MkDocs site, [getting started](./getting-started.md), 30-recipe
   [cookbook](./cookbook/), [architecture](./architecture.md),
   [embedding guide](./embedding.md), [security hardening](./security-hardening.md),
-  [comparison page](./comparison.md) (Lightwork vs the field, claims grounded in
-  this catalogue), [press kit](./press-kit.md), [showcase wall](./showcase.md)
-  (built-with-Lightwork submissions by PR), and a self-serve
+  and a self-serve
   [observability integrations guide](./integrations/observability-partners.md)
   (OpenRouter provider, OTLP-generic tracing incl. LangSmith, Helicone via
   base_url override).
@@ -3400,45 +3392,6 @@ tested without spawning py-spy.
   door — mental model, guided tour, day-2 operations, safety posture,
   extension points, and a map of every other doc; every cited command and
   module verified against the tree.
-- **Localized docs** ([`docs/i18n/`](./i18n/)): real, native-quality human
-  translations of the getting-started guide into **9 languages** — Spanish,
-  Japanese, German, French, Brazilian Portuguese, Korean, Russian, Italian,
-  Hindi — each following its language's software-docs register, with code
-  blocks/commands/paths kept byte-identical and a source-commit header so
-  staleness is trackable. The **docs MT pipeline** (`docs_i18n.py`, `python
-  -m maverick.docs_i18n`) machine-translates the tail under hard quality
-  gates (fenced code preserved, glossary + structure verified before
-  anything is written, human translations never overwritten); `--check` is
-  offline, and the model resolves by the `translator` role.
-- **Distribution program kits** ([`docs/programs/`](./programs/)): 24
-  runnable playbooks — Summit v1 (virtual) + Summit v2 (hybrid delta) +
-  Conference v3 (flagship delta), university outreach, integration
-  partnerships (business half), GitHub Stars campaign, office hours,
-  sponsorship tiers (incl. the tier-2 gate + renewal terms), conference
-  booth, swag, ambassadors, Skill of the Year, community survey,
-  foundation exploration, badge program, curriculum kit, community grants,
-  regional meetups, hackathon series, localized communities, public
-  roadmap voting, skill + channel certification (mechanical bars over the
-  real gates), tutorial video seasons 2-4 (per-episode scripts, every
-  command verified), and press kit v2 + an evidence-gated case-study
-  template. Each kit reuses the shipped machinery (skill validator,
-  moderation gauntlet, ratings, plugin matrix CI, sigstore/CA signing,
-  retrospective generators) instead of inventing parallel process; founder
-  decisions (amounts, dates, license grants) are explicitly marked, never
-  invented; executing the programs is a maintainer act.
-- **2.0 release machinery** ([`docs/migration-2.0.md`](./migration-2.0.md)
-  + [`docs/release-checklist-2.0.md`](./release-checklist-2.0.md)): the
-  operator migration playbook (rehearsable today — snapshot, `maverick
-  migrate`/`schema-plan`/`config-lint` dry runs, apply, verify, rollback)
-  and the release gate the maintainer cut runs through (CI matrix,
-  contract checks, deprecation sunsets, migration rehearsal, LTS branch
-  cut, signing). **Governance**: the Safety Steering Group charter
-  ([`docs/governance/safety-steering-group.md`](./governance/safety-steering-group.md))
-  and the elected-TSC charter draft with explicit launch gates
-  ([`docs/governance/governance-v2-tsc.md`](./governance/governance-v2-tsc.md)).
-  **Strategy**: the five-year vision essay
-  ([`docs/strategy/vision-2031.md`](./strategy/vision-2031.md)), every
-  backward-looking claim grounded in this catalogue.
 - **AR plan tree (visionOS scaffold)** (`apps/visionos-plan-tree/`):
   SwiftUI + RealityKit volumetric window rendering the goal forest from
   `GET /api/v1/goal-tree` — status-colored spheres, parent link bars,

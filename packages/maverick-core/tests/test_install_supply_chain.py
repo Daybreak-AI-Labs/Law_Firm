@@ -186,13 +186,8 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
     for dependency_surface in (
         "requirements/ci.txt",
         "rust/Cargo.lock",
-        "examples/clients/rust/Cargo.lock",
         "apps/desktop/src-tauri/Cargo.lock",
-        "examples/clients/typescript/package-lock.json",
-        "examples/clients/csharp/packages.lock.json",
-        "examples/clients/go/go.mod",
         "go/model-proxy/go.mod",
-        "examples/clients/java/pom.xml",
     ):
         assert dependency_surface in step
 
@@ -214,14 +209,8 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
 
 
 def test_go_java_and_standalone_demo_security_floors_are_explicit():
-    go_client = _read("examples/clients/go/go.mod")
     model_proxy = _read("go/model-proxy/go.mod")
-    java_client = _read("examples/clients/java/pom.xml")
-    assert "\ngo 1.26.6\n" in go_client
-    assert "golang.org/x/sys v0.47.0" in go_client
     assert "\ngo 1.26.6\n" in model_proxy
-    assert "<jackson.version>3.1.5</jackson.version>" in java_client
-    assert "<artifactId>jackson-bom</artifactId>" in java_client
 
     demo_requirements = (
     )

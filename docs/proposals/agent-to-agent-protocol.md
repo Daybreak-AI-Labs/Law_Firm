@@ -2,8 +2,8 @@
 
 **Status:** design / roadmap — a load-bearing differentiator. Companion to the
 [self-extending agent factory](self-extending-agent-factory.md) and the eight agent
-suites ([`agent-suites-overview.md`](agent-suites-overview.md)). Builds on
-[`../enterprise/architecture.md`](../enterprise/architecture.md).
+suites (the agent-suites overview). Builds on
+`../enterprise/architecture.md` (`docs/architecture.md`).
 
 > **The thesis, from first principles.** A business *is* its handoffs — sales hands a
 > closed deal to finance, engineering hands a build to QA, a deal team hands terms to the

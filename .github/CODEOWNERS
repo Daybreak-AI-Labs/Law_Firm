@@ -1,9 +1,8 @@
-# Default reviewer for everything until the maintainer team grows.
-# See MAINTAINERS.md for the area-ownership story.
+# Default reviewer for everything. Two-person firm; the per-package rows exist
+# so an associate or paralegal can take an area without restructuring the file.
 *                                       @cdayAI
 
-# Per-package overrides (currently same person; structure ready for
-# future co-maintainers).
+# Per-package overrides (currently same person).
 /packages/maverick-core/                @cdayAI
 /packages/maverick-shield/              @cdayAI
 /packages/maverick-channels/            @cdayAI

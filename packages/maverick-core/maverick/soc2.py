@@ -5,10 +5,11 @@ to answer a simple question on demand: *which technical controls are actually
 ON in this deployment right now, and is the tamper-evident audit log intact?*
 This module answers it.
 
-:func:`collect_soc2_evidence` returns a structured dict an auditor or a
-``maverick soc2`` CLI command (a deliberate follow-on — see
-``docs/compliance/soc2-controls.md``) can serialize to JSON and attach to an
-evidence request. It probes the live configuration:
+:func:`collect_soc2_evidence` returns a structured dict a ``maverick soc2`` CLI
+command can serialize to JSON. The firm's own use for it is narrower than an
+audit: it answers "was encryption at rest on, and did the audit log verify, on
+the day this matter was worked" — which is a malpractice-defence question, not a
+certification one. It probes the live configuration:
 
   - capability enforcement (``maverick.capability.capability_enforced``)
   - per-user tenant isolation (``maverick.paths.tenant_by_user_enabled``)
@@ -33,8 +34,9 @@ Design contract — this module is **fail-soft and import-light**:
     ``cryptography`` are not installed.
 
 The snapshot is descriptive, not prescriptive: ``"absent"``/``"unknown"`` are
-honest states, not failures. The mapping of these controls to the SOC 2 Trust
-Services Criteria lives in ``docs/compliance/soc2-controls.md``.
+honest states, not failures. The name is inherited from upstream; the control
+mapping to the SOC 2 Trust Services Criteria was part of the product's
+certification programme and does not travel with this fork.
 """
 from __future__ import annotations
 

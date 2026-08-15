@@ -999,7 +999,7 @@ maverick erase --channel telegram --user <user_id> [--yes]
 
 **SOC 2 controls mapping.** The mapping of these technical controls to the SOC 2
 Trust Services Criteria lives in
-[`docs/compliance/soc2-controls.md`](compliance/soc2-controls.md). The
+`maverick soc2` (the live posture snapshot). The
 machine-readable evidence collector behind `maverick soc2` is
 `maverick.soc2.collect_soc2_evidence()`.
 
@@ -1100,7 +1100,7 @@ maverick soc2
 maverick audit verify
 ```
 
-**Further reading:** [`docs/compliance/soc2-controls.md`](compliance/soc2-controls.md)
+**Further reading:** `maverick soc2` (the live posture snapshot)
 (SOC 2 TSC → control mapping), the enterprise-mode docs under
 [`docs/security/`](security/), and [`docs/env-vars.md`](env-vars.md) for the
 full environment-variable reference.

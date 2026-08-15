@@ -52,8 +52,5 @@ command resolution, no LLM calls) is what's smoke-tested in
 
 ## See also
 
-- [`benchmarks/example-templates/`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/example-templates/) — the
-  ready-made goal templates the action can run.
-- [Drive Lightwork from another language](./clients/typescript-quickstart.md)
-  — the MCP client surface, for *calling* a local Lightwork from your app
-  (vs. *running* one in CI here).
+- [Starter goals](./starter-goals.md) — the ready-made goal templates the
+  action can run.

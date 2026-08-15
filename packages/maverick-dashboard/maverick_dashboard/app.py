@@ -3833,12 +3833,11 @@ def _fleet_recent_runs(
 
 @app.get("/fleets", response_class=HTMLResponse)
 async def fleets_page(request: Request) -> HTMLResponse:
-    """Operator console: the per-employee agent fleets + their oversight.
+    """Operator console: the per-person agent fleets + their oversight.
 
-    Layer C of the enterprise control plane (see
-    ``docs/enterprise/architecture.md``): lists each fleet (owner + role-scoped
-    roster) alongside the recent governance oversight trail and a link to the
-    pending human-approval queue -- the EU AI Act Art 14 human-oversight surface.
+    Lists each fleet (owner + role-scoped roster) alongside the recent
+    governance oversight trail and a link to the pending human-approval queue --
+    the surface where an attorney signs off before work product leaves.
     """
     try:
         from maverick.fleet import list_fleets

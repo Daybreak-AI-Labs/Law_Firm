@@ -22,15 +22,16 @@ def test_maverick_mcp_launches_stdio_server(monkeypatch):
     assert calls["run"] == 1, "`maverick mcp` did not start the stdio server"
 
 
-def test_maverick_mcp_help_still_advertises_cross_language():
-    # The council surface contract: --help must not regress when we add options.
+def test_maverick_mcp_help_still_advertises_the_editor_clients():
+    # --help must not regress when we add options. The five third-party language
+    # SDKs are gone; the editor-side MCP clients are the surface that remains,
+    # and `maverick mcp` is how you reach them.
     from maverick.cli import main
     result = CliRunner().invoke(main, ["mcp", "--help"])
     assert result.exit_code == 0
     low = result.output.lower()
-    assert "cross-language" in low
-    for lang in ("typescript", "go", "rust"):
-        assert lang in low
+    for client in ("claude code", "cursor", "zed"):
+        assert client in low
 
 
 def test_maverick_mcp_runs_enterprise_preflight_before_stdio(monkeypatch):

@@ -1,6 +1,6 @@
 # Design Spec: MCP Server Registry
 
-**Status:** Shipped (discovery + install + config write + CLI; OAuth deferred) · **Roadmap ref:** [`ROADMAP.md`](../ROADMAP.md) → "Current state & gap analysis" (B2) · **Related:** [`catalog.md`](./catalog.md), [`skill-index.md`](./skill-index.md) · **Date:** June 2026
+**Status:** Shipped (discovery + install + config write + CLI; OAuth deferred)· **Related:** [`catalog.md`](./catalog.md), [`skill-index.md`](./skill-index.md) · **Date:** June 2026
 
 ## 1. Problem
 

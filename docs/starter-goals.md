@@ -78,9 +78,8 @@ Don't apply labels -- output the list.
 
 ```
 Read the last 30 commits. Group them into themes (features / fixes /
-internal). Draft a release blog post (~400 words) suitable for the
-Lightwork newsletter. Include a "What's next" section based on
-docs/ROADMAP.md.
+internal). Draft a ~400-word change summary for the firm's own record.
+Include a "What's next" section based on the roadmap in README.md.
 ```
 
 ## 10. Investigate a failing test

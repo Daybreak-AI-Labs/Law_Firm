@@ -66,7 +66,7 @@ health-checks `/readyz`.
 ## Scaling to multi-tenant / multi-worker
 
 These blueprints use one dashboard/control-plane node. To add processing
-capacity, see the [enterprise architecture](enterprise/architecture.md): the Postgres
+capacity, see the enterprise architecture (`docs/architecture.md`): the Postgres
 world-model backend (tenant isolation + migrations), the `QueueDispatcher`
 (arq) worker pool, per-tenant KMS/egress, and the operator console. Once
 Postgres + queue are configured, keep one web/control-plane replica (`maverick

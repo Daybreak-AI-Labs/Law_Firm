@@ -1,6 +1,6 @@
 # Design Spec: MCP Tasks (async, pollable tool execution)
 
-**Status:** Shipped — stdio (full lifecycle + `notifications/tasks/status` push) **and** HTTP transport (opt-in via `MAVERICK_MCP_HTTP_TASKS`, poll-only); `input_required` deferred · **Roadmap ref:** [`ROADMAP.md`](../ROADMAP.md) → "Current state & gap analysis" (B1, async tasks) · **Spec:** [MCP Tasks 2025-11-25 (experimental)](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) · **Date:** June 2026
+**Status:** Shipped — stdio (full lifecycle + `notifications/tasks/status` push) **and** HTTP transport (opt-in via `MAVERICK_MCP_HTTP_TASKS`, poll-only); `input_required` deferred· **Spec:** [MCP Tasks 2025-11-25 (experimental)](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) · **Date:** June 2026
 
 ## 1. Problem
 

@@ -2,7 +2,7 @@
 
 **Status:** design / roadmap. Companion to the finance, IT-GRC, sales-GTM, HR,
 product-engineering, and strategy/exec suites; indexed in
-[`agent-suites-overview.md`](agent-suites-overview.md). Extends the shipped
+the agent-suites overview. Extends the shipped
 [`legal.toml`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/packages/maverick-core/maverick/domains/legal.toml) starter pack into
 a full suite. ~36 agents (31 base + 5 council-added) across eight towers.
 
@@ -480,7 +480,7 @@ The privilege/work-product tower — **sealed matter compartments**.
 
 ### Council-added agents (from the adversarial review)
 
-Five seats the council flagged. Full skills in [`agent-skills-catalog.md`](agent-skills-catalog.md).
+Five seats the council flagged. Full skills in the agent-skills catalogue.
 
 - **AI & Emerging-Tech Counsel Agent** *(Tower 6/7)* — EU AI Act, Colorado AI Act, the US state-privacy wave, AI/IP & training-data law, AI contracting. The legal owner of AI governance (complementing GRC). **Status: Gap.**
 - **Litigation Discovery-Response / Subpoena Agent** *(Tower 4 — sealed)* — responding to subpoenas/CIDs/government investigations, litigation-hold coordination (with 4.3), 30(b)(6) prep. Inbound-demand workflow, distinct from e-discovery review. **Status: Gap.**

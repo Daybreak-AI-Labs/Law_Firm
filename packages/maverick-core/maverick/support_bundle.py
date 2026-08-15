@@ -223,10 +223,10 @@ def export(path: str | None = None) -> tuple:
     """Assemble the redacted bundle and write it to ``path`` (default
     ``support-<correlation_id>.json`` in the cwd). Returns ``(Path, bundle)``.
 
-    The customer controls and can inspect the file before sending it — the
-    air-gap-safe, regulator-safe support channel (no silent telemetry). Wiring
-    an audit-trail record of the export belongs in the CLI wrapper so ``collect``
-    stays side-effect free (see docs/enterprise/product-operations.md)."""
+    You control and can inspect the file before it goes anywhere — no silent
+    telemetry, which matters when the host it describes holds matter files.
+    Wiring an audit-trail record of the export belongs in the CLI wrapper so
+    ``collect`` stays side-effect free."""
     import json
     from pathlib import Path
 

@@ -61,10 +61,10 @@ ROLE_MODELS: dict[str, str] = {
     "summarizer":      MODEL_HAIKU,
     "skill_distiller": MODEL_SONNET,
     "vision":          MODEL_SONNET,
-    # Roles resolved by name at their call sites (docs_i18n translator,
-    # self_modify_runner coding, review paths). Without an explicit default
-    # they silently fell back to DEFAULT_MODEL and were not overridable via
-    # [role_models]; pin sensible defaults so they are first-class (kernel rule 2).
+    # Roles resolved by name at their call sites (translation, self_modify_runner
+    # coding, review paths). Without an explicit default they silently fell back
+    # to DEFAULT_MODEL and were not overridable via [role_models]; pin sensible
+    # defaults so they are first-class (kernel rule 2).
     "translator":      MODEL_SONNET,
     "coding":          MODEL_SONNET,
     "reviewer":        MODEL_OPUS,

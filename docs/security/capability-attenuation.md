@@ -1,6 +1,6 @@
 # Verified: capability attenuation is least-privilege by construction
 
-The [capability layer](../enterprise/security-overview.md) is the
+The capability layer (`docs/security-hardening.md`) is the
 backbone of Lightwork's least-privilege model. A `Capability` is a scoped grant
 (tools, risk ceiling, filesystem paths, network hosts) bound to a principal, and
 it can only ever be **attenuated** (narrowed) as it propagates — to a subagent,

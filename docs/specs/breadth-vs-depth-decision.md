@@ -1,6 +1,6 @@
 # Decision: freeze breadth, invest in depth — re-home the connector tail
 
-**Status:** Decided — freeze breadth; re-home (don't delete) the 47-connector tail to the plugin/registry tier · **Roadmap ref:** [`ROADMAP.md`](../ROADMAP.md) → "Current state & gap analysis" (the breadth-vs-depth call) · **Grounds in:** [`tool-inventory.md`](./tool-inventory.md) · **Date:** June 2026
+**Status:** Decided — freeze breadth; re-home (don't delete) the 47-connector tail to the plugin/registry tier· **Grounds in:** [`tool-inventory.md`](./tool-inventory.md) · **Date:** June 2026
 
 ## The question
 

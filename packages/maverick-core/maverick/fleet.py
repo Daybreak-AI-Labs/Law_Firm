@@ -1,8 +1,8 @@
-"""Agent fleets -- Layer C of the enterprise control plane.
+"""Agent fleets -- the per-person layer of the control plane.
 
-(See ``docs/enterprise/architecture.md``.) A **Fleet** is the per-employee unit
-of the product: an *owner* (a human principal) plus a roster of named,
-role-scoped **agents** that do ongoing work. Each agent's role drives its
+A **Fleet** is the per-person unit: an *owner* (a human principal) plus a roster
+of named, role-scoped **agents** that do ongoing work. In a firm this size that
+means one fleet per attorney or paralegal, not a workforce. Each agent's role drives its
 capability (via ``[roles.<role>]`` RBAC) and the whole fleet runs under the
 oversight control plane (``maverick.governance``).
 

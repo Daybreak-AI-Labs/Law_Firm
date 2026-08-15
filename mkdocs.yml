@@ -1,10 +1,9 @@
-site_name: Lightwork
-site_description: Recursive multi-agent swarm. Drives Claude / GPT / Kimi / Grok / Gemini / Ollama from one kernel.
-site_url: https://daybreak-ai-labs.github.io/Lightwork/
+site_name: Bjerken and Day
+site_description: Internal engineering documentation for the firm's practice platform.
 repo_url: https://github.com/Daybreak-AI-Labs/Law_Firm
-repo_name: Daybreak-AI-Labs/Lightwork
+repo_name: Daybreak-AI-Labs/Law_Firm
 edit_uri: edit/main/docs/
-copyright: Proprietary, commercially licensed (see LICENSE). Built for everyone, not just the technical few.
+copyright: Proprietary and confidential. Internal documentation for Bjerken and Day.
 
 theme:
   name: material
@@ -27,15 +26,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: cyan
+      primary: blue grey
+      accent: teal
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: cyan
+      primary: blue grey
+      accent: teal
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -72,9 +71,8 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets:
-      # Resolve includes only inside the active docs_dir. The public overlay
-      # changes docs_dir to .public-docs, so an allowlisted page cannot inline
-      # internal repository documents with an --8<-- directive.
+      # Resolve --8<-- includes only inside docs_dir, so a page cannot inline
+      # an arbitrary repository file.
       base_path:
         - !relative $docs_dir
       restrict_base_path: true
@@ -115,7 +113,6 @@ nav:
       - Security & GRC suite: SECURITY_GRC.md
       - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
       - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
-      - Governance Frontier benchmark: https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md
       - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
       - Threat model: security/threat-model.md
       - DGM evaluator evidence: security/dgm-evaluator-evidence.md
@@ -124,27 +121,19 @@ nav:
       - Encryption at rest: encryption.md
       - Regulated deployment: regulated-deployment.md
       - Compliance assessments: compliance-assessments.md
+      - Hardened deployment checklist: compliance/deployment/hardening-checklist.md
       - Agent threat hunting: threat-hunting.md
-  - Enterprise:
-      - Security & compliance overview: enterprise/security-overview.md
-      - Architecture: enterprise/architecture.md
   - Design notes:
       - Oversight experience: ux/oversight-experience.md
-  - Roadmap:
-      - 36-month plan: ROADMAP.md
-      - "RFC 0001: Lightwork 2.0": rfcs/0001-maverick-2.0.md
-      - "RFC 0002: Plugin API v2": rfcs/0002-plugin-api-v2.md
-  - Community:
+  - Internal:
       - Observability integrations: integrations/observability-partners.md
-      - Contributing: CONTRIBUTING.md
+      - Working on this repo: CONTRIBUTING.md
       - Security policy: SECURITY.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/Daybreak-AI-Labs/Law_Firm
-    - icon: fontawesome/brands/python
-      link: https://pypi.org/project/maverick-agent/
   generator: false
 
 # How to preview locally:

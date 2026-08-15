@@ -90,12 +90,12 @@ platform remain proprietary.
 ## Where to go next
 
 - [Getting started](getting-started.md) — install + first goal
-- [Architecture](enterprise/architecture.md) — the governed agent runtime (OS-style primitives)
+- Architecture (`docs/architecture.md`) — the governed agent runtime (OS-style primitives)
 - [Configuration](configuration.md) — providers, channels, budgets
 - [Deployment](deployment.md) — desktop / docker / VPS / phone modes
 - [Safety](safety.md) — shield, audit log, kill switches, consent
 - [Threat model](security/threat-model.md) — trust boundaries, capabilities, tenancy, and security controls
-- [Security & compliance overview](enterprise/security-overview.md) — application egress controls, deployment boundaries, identity, audit/evidence
+- Security & compliance overview (`docs/security-hardening.md`) — application egress controls, deployment boundaries, identity, audit/evidence
 - [Plugins](plugins.md) — extending the tool / channel / skill surface
 - [Governed model improvement](MODEL_IMPROVEMENT_PLATFORM.md) — the learning lifecycle, regression detection, and promotion controls
 - [Starter goals](starter-goals.md) — ready-to-run examples for common workflows
