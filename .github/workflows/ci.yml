@@ -556,7 +556,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12.13"
+          # Minor version, not the exact patch the Linux jobs pin: setup-python
+          # does not publish every patch for every runner image, and 3.12.13
+          # does not exist for windows-2022. This job tests OS behaviour, so
+          # whichever 3.12 patch the image carries is the right one.
+          python-version: "3.12"
       - name: Install the focused test dependency
         run: python -m pip install "pytest==9.1.1"
       - name: Test Windows Job Object process-tree containment
