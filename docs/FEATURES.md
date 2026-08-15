@@ -1529,9 +1529,7 @@ here.
   final-release upper bounds unless explicitly named).
 - **Extensibility** — `@tool` decorator (`tools/decorator.py`): turn a typed
   function into a registered Tool with a signature-derived JSON Schema, no
-  boilerplate. **TypeScript plugin SDK** (`sdks/plugin-ts/`,
-  `@maverick/plugin-sdk`): author a tool in TypeScript with
-  `defineTool`/`servePlugin` over a versioned NDJSON stdio protocol
+  boilerplate. **Language-neutral subprocess plugins** use the versioned NDJSON stdio protocol
   (`maverick-plugin/1`: `--describe` manifest, `{id,tool,args}` →
   `{id,result|error}`); the host (`ts_plugin_host.py`, `[plugins] ts =
   [["node", "/path/plugin.js"]]`, wizard step included) loads the manifest
@@ -1912,11 +1910,6 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   index base URLs; catalogs merge across them (earlier indexes win on name
   collision, malformed entries skipped per-entry) — run your own index next
   to the community one (`catalog.py`, pinned by test).
-- **IDE protocol unification** — one MCP server (stdio + Streamable HTTP) is
-  the editor protocol: any MCP-speaking editor (VS Code, JetBrains, Zed,
-  Cursor) drives Lightwork through it; the editor-specific packages
-  (`apps/vscode-extension`, `apps/emacs`, `apps/nvim`) are thin CLI fronts,
-  not parallel protocols.
 - **A2A** (`a2a.py`, `a2a_tasks.py`) — Agent Card discovery + delegation, with
   the **interop consuming half** (`validate_agent_card` spec-shape lint,
   `parse_remote_card` normalization that refuses a non-conformant card before
@@ -2045,7 +2038,6 @@ pre-warming** (`max_tokens=0` prefill at orchestrator start) and a
   events) / `Cancel` / `GetStatus`. Behaviour lives in a transport-agnostic
   `GoalService`; the gRPC shim compiles stubs on demand from the bundled
   `maverick.proto`. Behind the `[grpc]` extra; run via `python -m maverick.grpc_api`.
-- **Cross-language quickstarts** — TypeScript, Go, Rust, C#, Java (`docs/clients/`).
 - **LangChain / LangGraph interop** (`langchain_adapter.py`, `[langchain]` extra)
   — expose the Lightwork swarm as a LangChain `StructuredTool`, and wrap any
   LangChain `BaseTool` as a Lightwork tool. **AutoGen + CrewAI adapters**
@@ -3143,24 +3135,8 @@ tested without spawning py-spy.
   = true` (default OFF, wizard-exposed). I2C is a pure protocol layer over
   an injected bus seam (`smbus2` via the `[i2c]` extra). Every op names its
   explicit target — no autodetect-and-flash; failures are `ERROR:` strings.
-- **WebGPU local vision + perceptual hashing** (`extensions/webgpu-vision/`
-  + `perceptual_hash.py`): a no-CDN WebGPU page running real hand-written
-  WGSL compute shaders (grayscale, Sobel) over a user-chosen local file
-  that never leaves the browser, plus an 8×8 average-hash specified in
-  integer-only arithmetic so the JS and the Python twin
-  (`average_hash_from_pixels`/`average_hash_file`, `[computer-use]` Pillow)
-  produce a **bit-identical** hash — a cross-language "are these two
-  screenshots the same screen?" primitive (Hamming distance). Honest scope:
-  GPU image primitives + perceptual hashing, not a trained vision model.
-- **Mobile companion v1 + offline cache** (`apps/mobile-companion/` +
-  `offline_bundle.py`, `GET /api/v1/offline/bundle`): a read-only Expo
-  scaffold (Runs list, Run detail, Glance, Settings) that consumes only
-  existing GET endpoints with a bearer token in `expo-secure-store`; zero
-  mutating calls. The **offline bundle** is a compact, bounded, versioned
-  snapshot (`maverick-offline/1`: glance + goals + recent events, every
-  list capped, no secrets — enforced by test) the app caches in
-  AsyncStorage and renders behind an "as of N min ago — offline" banner
-  when the dashboard is unreachable.
+- **Perceptual hashing** (`perceptual_hash.py`): an 8×8 average hash for
+  detecting whether two computer-use screenshots show the same screen.
 - **Marketplace federation** (`marketplace_federation.py` +
   `federation_envelope.py`): export/import signed listing bundles between
   instances (`maverick-marketplace-fed/1`) — import verifies the Ed25519
@@ -3278,22 +3254,6 @@ tested without spawning py-spy.
   Arabic community-seed catalog (genuinely translated starter keys, English
   fallback; he/fa/ur activate the moment a catalog lands — they're not
   offered in the picker until one does, to avoid implying support).
-- **Live-run IDE extensions** (`apps/vscode-extension/` +
-  `apps/jetbrains-plugin/`): the VS Code extension gains "Watch run live" /
-  "Stop live watch" — a dependency-free SSE tail of the dashboard's
-  per-goal event stream into an output channel (manual SSE parse,
-  exponential-backoff reconnect, terminal-control stripping, token header
-  honored, settings for URL/token; type-checks clean). The JetBrains
-  scaffold mirrors it as a Runs tool window (Kotlin, same SSE endpoint,
-  same backoff); building it requires the IntelliJ SDK, stated in its
-  README.
-- **Apple Watch glance** (`glance.py` + `apps/watch-glance/` SwiftUI
-  scaffold): a tiny fixed payload sized for a watch face — active count,
-  today's done/failed, today's spend (summed from the usage ledger), and the
-  last terminal result (60-char bound) — computed in one cheap pass; the
-  watchOS scaffold renders exactly that shape against the dashboard (token
-  header honored; building it requires Xcode, documented in its README — the
-  integrator wires `GET /api/v1/glance`).
 - **Mobile push v2** (`push_v2.py`): a device registry layered on the v1
   notify path — each device registers a backend, a minimum priority floor,
   and optional quiet hours; routing fans out only to eligible devices, with
@@ -3330,15 +3290,6 @@ tested without spawning py-spy.
 - **Scaffold generators** — `template_generator` tool: emit a validator-clean
   `SKILL.md` (op=skill) or a `Channel`-subclass adapter scaffold with the
   start/send/stop seams (op=channel); deterministic codegen.
-- **IDE / CI** — VS Code extension (`apps/vscode-extension/`), **Emacs
-  package** (`apps/emacs/maverick.el`: M-x maverick-start/status/monitor/
-  logs/halt/unhalt over the CLI, deps-free, Emacs 27.1+), **Neovim plugin**
-  (`apps/nvim/`: :MaverickStart/Status/Monitor/Logs/Halt/Unhalt, lazy.nvim-
-  ready, terminal-split UX), **Zed extension** (`apps/zed-extension/`:
-  registers `maverick mcp` as a context server — Zed extensions run in a
-  WASI sandbox and cannot exec, so CLI verbs ship as Zed tasks; compiling
-  needs the Zed SDK, stated in its README), GitHub Action wrapper
-  (`maverick-action`) — all contract-tested against the real CLI verb set.
 - **Native desktop engineering scaffold** (`apps/desktop/`): a Tauri v2 shell for the local
   dashboard — splash polls `127.0.0.1:8765/healthz` and redirects, spawning
   `maverick dashboard` as its own child when the port is closed (kills only
@@ -3363,26 +3314,11 @@ tested without spawning py-spy.
   bearer injected upstream; a seeder creates finished demo goals through
   the real world model; DNS/TLS/operating demo.maverick.dev is a
   maintainer act. Contract-tested like the other reference architectures.
-- **Mobile skill execution scaffolds** (`apps/mobile-skills/`): a Pyodide
-  runner page (vendored-only Pyodide, no CDN; pinned release + fill-on-
-  download checksum) executing a verified pure-stdlib repo module in a
-  mobile browser, and a Kivy shell + buildozer.spec for Android — store
-  builds are maintainer acts; the hard limits (no sandbox/subprocess on
-  mobile, relay for network) are documented, not papered over.
 - **RFCs** — [RFC 0001: Lightwork 2.0](./rfcs/0001-maverick-2.0.md) (config
   schema v2 + async-only channel SDK + connector re-homing, migration story
   riding `maverick migrate`) and [RFC 0002: Plugin API v2](./rfcs/0002-plugin-api-v2.md)
   (static manifests discovered without importing plugin code, lifecycle hooks,
   the wire shape for the gRPC plugin host) — both Draft, open for comment.
-- **Embeddable widgets** — two dependency-free `<script>`-tag surfaces,
-  both self-hosted: the floating **chat widget**
-  (`web/widget/maverick-widget.js`) posting to your own dashboard's
-  `/chat/send`, and the read-only **status widget**
-  (`extensions/widget/maverick-widget.js`): a Shadow-DOM pill → panel
-  polling the real goals API and bucketing counts client-side, with the
-  auth posture documented exactly (Bearer header only; same-origin or a
-  reverse proxy — the dashboard ships no CORS; the token is the full
-  control surface, so embed only where you'd paste the token).
 - **Self-hosted relay** — a stdlib edge service (`deploy/relay/relay.py`) that
   HMAC-signs an inbound POST and forwards it to a dashboard's `/webhook/start`
   exactly as `maverick.webhooks` verifies (replay-defended; signature
@@ -3439,9 +3375,3 @@ tested without spawning py-spy.
   **Strategy**: the five-year vision essay
   ([`docs/strategy/vision-2031.md`](./strategy/vision-2031.md)), every
   backward-looking claim grounded in this catalogue.
-- **AR plan tree (visionOS scaffold)** (`apps/visionos-plan-tree/`):
-  SwiftUI + RealityKit volumetric window rendering the goal forest from
-  `GET /api/v1/goal-tree` — status-colored spheres, parent link bars,
-  pinch-to-inspect card; read-only, bearer-token honored. Building/tuning
-  needs Xcode + the visionOS SDK (and honest on-device verification is
-  flagged in the source), per the watch-glance scaffold posture.

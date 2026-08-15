@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace monorepo. 8 pip packages
-(`packages/*`, `apps/installer-cli`) + a TypeScript SDK (`sdks/plugin-ts`).
+(`packages/*`, `apps/installer-cli`).
 
 ## Setup (verified)
 
@@ -17,7 +17,6 @@ Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace mon
 - Lint: `python -m ruff check .` and `python -m vulture`
 - Build: `python3 -m build --wheel` inside a package dir
 - Smoke: `maverick version`, `maverick doctor`
-- TS SDK: `cd sdks/plugin-ts && npm install && npm test`
 
 ## Hard rules (each backed by a real failure or CI gate)
 

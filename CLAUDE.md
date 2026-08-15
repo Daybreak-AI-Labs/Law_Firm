@@ -6,9 +6,8 @@
 ## Project
 
 - **Stack:** Python 3.10-3.12 uv-workspace monorepo (8 pip packages under
-  `packages/` + `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps,
-  one TypeScript SDK (`sdks/plugin-ts`, Node 22). pip editable installs; npm
-  only for the TS SDK.
+  `packages/` + `apps/installer-cli`), FastAPI dashboard, and a Tauri desktop
+  shell. Packages use pip editable installs.
 - **Entry points:** `maverick` CLI (`packages/maverick-core/maverick/cli.py`),
   dashboard app (`maverick_dashboard.app:app`), MCP server (`maverick mcp`).
 
@@ -32,7 +31,6 @@
 - **Lint:** `python -m ruff check .` and `python -m vulture` (no args).
 - **Build:** `python3 -m build --wheel` per package dir (setup installs build).
 - **CLI smoke:** `maverick version`, `maverick doctor`.
-- **TS SDK:** `cd sdks/plugin-ts && npm install && npm test` (tsc + node --test).
 
 ## Rules
 

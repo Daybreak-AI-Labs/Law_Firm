@@ -302,9 +302,8 @@ screened by the same shield/budget/sandbox machinery:
   permissions, a version lockfile (`maverick plugin lock / verify`),
   opt-in subprocess/subinterpreter isolation, and a CI compatibility gate
   (`python -m maverick.plugin_matrix --ci`). `maverick plugin new`
-  scaffolds one. Non-Python authors: the **TypeScript plugin SDK**
-  (`sdks/plugin-ts/`, `@maverick/plugin-sdk`) and a **gRPC plugin host**
-  for any language. Single Python tools need only the `@tool` decorator
+  scaffolds one. A **gRPC plugin host** supports language-neutral subprocesses.
+  Single Python tools need only the `@tool` decorator
   (`tools/decorator.py`).
 - **Channels** — 17 wired adapters (`packages/maverick-channels/`):
 - **Connectors & primary-source grounding** — 2,877 write-capable enterprise

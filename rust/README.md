@@ -74,8 +74,8 @@ Core unit tests: `cd rust && cargo test -p mvk-scan`.
 `maverick.perceptual_hash` runs on **every screenshot** in computer-use: an 8×8
 average-hash, pure integer arithmetic, with a per-pixel Python luma loop — the
 same shape that made the unicode scanner a win. It's a faithful port (the
-`GRADIENT_HASH` reference value is asserted identically in Rust, Python, and
-`extensions/webgpu-vision/ahash.js`), with the Python kept as a fallback shim.
+`GRADIENT_HASH` reference value is asserted identically in Rust and Python),
+with the Python kept as a fallback shim.
 
 The lesson here was about the **FFI boundary**, not the loop. Handing the native
 side a list of `width*height` Python tuples made it only ~1.4× (marshalling

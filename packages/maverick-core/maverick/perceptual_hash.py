@@ -6,9 +6,8 @@ means the screen changed. This is a classic *perceptual hash*, not a neural
 classifier — it has no notion of objects or text, only coarse luminance
 layout. That is exactly the honest scope: cheap, local, deterministic.
 
-The algorithm is specified in **integer arithmetic only** so the JavaScript
-twin (``extensions/webgpu-vision/ahash.js``) produces bit-identical hashes —
-no float rounding can diverge across languages:
+The algorithm is specified in **integer arithmetic only** so no floating-point
+rounding can diverge across platforms:
 
   1. gray(p)   = r*299 + g*587 + b*114                  (luma x1000, exact int)
   2. cells     = 8x8 grid; cell (cx, cy) covers x in [cx*w//8, (cx+1)*w//8)
@@ -17,8 +16,7 @@ no float rounding can diverge across languages:
                  (cross-multiplied average comparison; ties are 0)
   4. pack      = row-major (cy outer), MSB first; render as 16 hex chars
 
-Both sides assert ``GRADIENT_HASH`` over the same synthetic gradient, proving
-the implementations agree. Pillow is imported lazily and ONLY by
+Tests assert ``GRADIENT_HASH`` over a fixed synthetic gradient. Pillow is imported lazily and ONLY by
 ``average_hash_file`` (the ``computer-use`` extra); the pixel-level API and
 ``hamming`` are dependency-free.
 """
@@ -26,8 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-# Hash of synthetic_gradient(64, 64) — asserted by tests here AND by
-# extensions/webgpu-vision/ahash.js selfTest(). Change one, change both.
+# Hash of synthetic_gradient(64, 64), asserted by regression tests.
 GRADIENT_HASH = "000001071f7fffff"
 
 

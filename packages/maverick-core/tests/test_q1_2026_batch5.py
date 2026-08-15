@@ -1,8 +1,6 @@
-"""Q1 2026 batch 5: plugin hooks via entry points, VS Code extension scaffold."""
+"""Q1 2026 batch 5: plugin hooks via entry points."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import patch
 
 # ---------- hooks: load_from_entry_points ----------
@@ -150,38 +148,3 @@ def test_hooks_load_from_entry_points_ignores_invalid_items(monkeypatch):
     # Only the valid HookSpec entry registers.
     assert n == 1
     assert len(installed()) == 1
-
-
-# ---------- VS Code extension scaffold ----------
-
-def test_vscode_extension_package_json_valid():
-    repo_root = Path(__file__).resolve().parents[3]
-    p = repo_root / "apps" / "vscode-extension" / "package.json"
-    assert p.is_file()
-    data = json.loads(p.read_text())
-    # Required VS Code extension fields.
-    assert data["name"] == "maverick"
-    assert "engines" in data and "vscode" in data["engines"]
-    assert "main" in data
-    # Commands declared.
-    commands = {c["command"] for c in data["contributes"]["commands"]}
-    for required in (
-        "maverick.start",
-        "maverick.status",
-        "maverick.halt",
-        "maverick.unhalt",
-        "maverick.openExport",
-        "maverick.refreshRuns",
-    ):
-        assert required in commands, f"missing command: {required}"
-
-
-def test_vscode_extension_source_exists():
-    repo_root = Path(__file__).resolve().parents[3]
-    p = repo_root / "apps" / "vscode-extension" / "src" / "extension.ts"
-    assert p.is_file()
-    body = p.read_text()
-    # Sanity: source mentions the CLI it shells out to.
-    assert "maverick" in body
-    assert "activate" in body
-    assert "deactivate" in body
