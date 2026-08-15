@@ -127,15 +127,9 @@ nav:
       - Compliance assessments: compliance-assessments.md
       - Agent threat hunting: threat-hunting.md
   - Enterprise:
-      - Editions: enterprise/editions.md
       - Security & compliance overview: enterprise/security-overview.md
       - Architecture: enterprise/architecture.md
-      - Diligence data room: enterprise/diligence.md
-  - Strategy:
-      - Lightwork vs the field: comparison.md
-      - Competitive landscape: strategy/competitive-landscape.md
-      - Moat & acquisition: strategy/moat-and-acquisition.md
-      - Design-partner scorecard: strategy/design-partner-scorecard.md
+  - Design notes:
       - Oversight experience: ux/oversight-experience.md
   - Roadmap:
       - 36-month plan: ROADMAP.md

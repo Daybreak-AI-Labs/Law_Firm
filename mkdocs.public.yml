@@ -57,7 +57,6 @@ nav:
       - Compliance assessments: compliance-assessments.md
       - Agent threat hunting: threat-hunting.md
   - Enterprise:
-      - Editions: enterprise/editions.md
       - Security & compliance overview: enterprise/security-overview.md
       - Architecture: enterprise/architecture.md
   - Community:

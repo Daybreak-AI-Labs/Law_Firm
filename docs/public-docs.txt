@@ -36,7 +36,6 @@ encryption.md
 regulated-deployment.md
 compliance-assessments.md
 threat-hunting.md
-enterprise/editions.md
 enterprise/security-overview.md
 enterprise/architecture.md
 integrations/observability-partners.md
