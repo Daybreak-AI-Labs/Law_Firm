@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Overview · Lightwork{% endblock %}
+{% block title %}Overview · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% call hero('Your AI workforce', 'Overview',
@@ -21,12 +21,12 @@
     <div class="panel empty">
       <h2 class="empty__title">Start your first goal</h2>
       <p class="muted" style="max-width: 540px; margin: 0 auto 1.75rem;">
-        Describe the outcome you want. Lightwork plans the work across a team
+        Describe the outcome you want. Bjerken and Day plans the work across a team
         of AI agents, runs it within your budget, and streams results back here.
       </p>
       <form method="post" action="/chat/send" style="display: flex; gap: 0.5rem; max-width: 580px; margin: 0 auto; flex-wrap: wrap;">
         <input type="text" name="title" required autofocus
-               aria-label="Describe a goal for Lightwork to run"
+               aria-label="Describe a goal for Bjerken and Day to run"
                placeholder="Plan a 2-week trip to Japan"
                class="input" style="flex: 1 1 320px;" />
         <button type="submit" class="btn btn--primary">
@@ -87,7 +87,7 @@
           <p><strong>{{ k }}</strong> <span class="muted">— {{ v }}</span></p>
         {% endfor %}
       {% else %}
-        <p class="muted">Nothing recorded yet. Facts are details Lightwork remembers about your business — add them on the <a href="/facts">Facts</a> page.</p>
+        <p class="muted">Nothing recorded yet. Facts are details Bjerken and Day remembers about your business — add them on the <a href="/facts">Facts</a> page.</p>
       {% endif %}
     </div>
 
@@ -98,7 +98,7 @@
           <p><strong>{{ s.name }}</strong> <span class="muted">· {{ s.triggers|length }} trigger(s)</span></p>
         {% endfor %}
       {% else %}
-        <p class="muted">No skills yet. Lightwork turns finished work into reusable skills — they appear after the first multi-step goal completes.</p>
+        <p class="muted">No skills yet. Bjerken and Day turns finished work into reusable skills — they appear after the first multi-step goal completes.</p>
       {% endif %}
     </div>
 

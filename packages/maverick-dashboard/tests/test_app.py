@@ -110,7 +110,7 @@ def test_index_renders(tmp_path, monkeypatch):
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Lightwork" in resp.text
+    assert "Bjerken and Day" in resp.text
     assert "overview" in resp.text or "goals" in resp.text
 
 

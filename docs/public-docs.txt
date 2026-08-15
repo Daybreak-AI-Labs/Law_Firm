@@ -39,10 +39,6 @@ threat-hunting.md
 enterprise/editions.md
 enterprise/security-overview.md
 enterprise/architecture.md
-showcase.md
-press-kit.md
 integrations/observability-partners.md
 CONTRIBUTING.md
-CLA.md
-CODE_OF_CONDUCT.md
 SECURITY.md|security-policy.md

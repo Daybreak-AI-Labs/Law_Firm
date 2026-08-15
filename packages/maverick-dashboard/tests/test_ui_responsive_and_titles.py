@@ -58,14 +58,14 @@ def test_mobile_topbar_cannot_widen_the_document(monkeypatch, tmp_path):
 # ---------- page titles ----------
 
 @pytest.mark.parametrize("path,fragment", [
-    ("/goals", "Goals · Lightwork"),
-    ("/facts", "Facts · Lightwork"),
-    ("/tools", "Tools · Lightwork"),
-    ("/spend", "Spend · Lightwork"),
-    ("/plugins", "Plugins · Lightwork"),
-    ("/channels", "Channels · Lightwork"),
-    ("/audit", "Audit log · Lightwork"),
-    ("/mcp", "Tool servers · Lightwork"),
+    ("/goals", "Goals · Bjerken and Day"),
+    ("/facts", "Facts · Bjerken and Day"),
+    ("/tools", "Tools · Bjerken and Day"),
+    ("/spend", "Spend · Bjerken and Day"),
+    ("/plugins", "Plugins · Bjerken and Day"),
+    ("/channels", "Channels · Bjerken and Day"),
+    ("/audit", "Audit log · Bjerken and Day"),
+    ("/mcp", "Tool servers · Bjerken and Day"),
 ])
 def test_page_titles_carry_app_name(monkeypatch, tmp_path, path, fragment):
     from maverick import world_model

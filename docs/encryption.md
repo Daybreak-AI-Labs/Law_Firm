@@ -103,7 +103,7 @@ key in their secrets manager and need no on-disk backup.
 — selecting Postgres (`[world_model] backend = "postgres"` / `MAVERICK_WORLD_BACKEND`)
 while encryption-at-rest is enabled raises `PostgresAtRestUnsupported` rather than
 silently storing plaintext. Use the SQLite backend for encrypted / regulated
-deployments until Postgres sealing lands (tracked in `FIXES.md`).
+deployments until Postgres sealing lands.
 
 ## Search trade-off
 

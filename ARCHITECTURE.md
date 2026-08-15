@@ -1,6 +1,6 @@
 # Architecture
 
-Lightwork is a recursive multi-agent swarm with a safety layer at every chokepoint.
+The platform is a recursive multi-agent swarm with a safety layer at every chokepoint.
 
 ## Big picture
 
@@ -63,7 +63,7 @@ Thin Python wrapper over `agent-shield`. Provides three chokepoints:
 - `Shield.scan_tool_call(name, args)` — before any tool executes
 - `Shield.scan_output(text)` — before the final answer reaches the user
 
-If `agent-shield` is not installed, Lightwork falls back to ~20 high-impact built-in rules (`builtin_rules.py`): ignore-previous prompt injection, ChatML/DAN jailbreak, `rm -rf /`, curl-pipe-shell, sensitive file reads, etc. The shield never silently no-ops — `Shield.backend` reports which backend is active.
+If `agent-shield` is not installed, the shield falls back to ~20 high-impact built-in rules (`builtin_rules.py`): ignore-previous prompt injection, ChatML/DAN jailbreak, `rm -rf /`, curl-pipe-shell, sensitive file reads, etc. The shield never silently no-ops — `Shield.backend` reports which backend is active.
 
 ### `packages/maverick-dashboard/`
 
@@ -75,7 +75,7 @@ FastAPI local web UI + REST API.
 
 ### `packages/maverick-mcp/`
 
-Lightwork exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over both **stdio** and a **streamable HTTP** transport (`http_transport.py`), negotiating the current protocol version `2025-11-25` with a `2024-11-05` fallback. Core tools (`start_goal`, `goal_status`, `goal_events`, `list_goals`, `answer_question`, `set_fact`, `get_facts`, `list_skills`) plus spec features: async pollable **Tasks** and **elicitation**. The HTTP transport is bearer-gated with a DNS-rebinding (Host/Origin) defense for the loopback case; server-initiated `sampling` is the remaining unimplemented capability. Protocol errors return JSON-RPC `error` payloads (e.g. `-32602`). Run via `maverick mcp`.
+The platform exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over both **stdio** and a **streamable HTTP** transport (`http_transport.py`), negotiating the current protocol version `2025-11-25` with a `2024-11-05` fallback. Core tools (`start_goal`, `goal_status`, `goal_events`, `list_goals`, `answer_question`, `set_fact`, `get_facts`, `list_skills`) plus spec features: async pollable **Tasks** and **elicitation**. The HTTP transport is bearer-gated with a DNS-rebinding (Host/Origin) defense for the loopback case; server-initiated `sampling` is the remaining unimplemented capability. Protocol errors return JSON-RPC `error` payloads (e.g. `-32602`). Run via `maverick mcp`.
 
 ### `packages/maverick-channels/`
 
@@ -109,8 +109,8 @@ Tauri-based GUI installer for users who would never open a terminal. Cargo + tau
 
 ## Governance, learning & enterprise layers
 
-Beyond the swarm kernel, `maverick-core` carries the subsystems that make
-Lightwork a *governed, self-improving* platform rather than a bare runtime. All
+Beyond the swarm kernel, `maverick-core` carries the subsystems that make this
+a *governed, self-improving* platform rather than a bare runtime. All
 are opt-in and additive (kernel rule 1 — the kernel runs unchanged with them
 off). See `docs/FEATURES.md` for depth.
 
@@ -127,7 +127,7 @@ off). See `docs/FEATURES.md` for depth.
 
 ## Long-horizon properties
 
-What makes Lightwork different from OpenClaw / Hermes on the long-horizon axis:
+What lets the platform work a matter over hours or days rather than one prompt:
 
 1. **Persistent typed world model.** Goals, facts, episodes, and questions survive restarts. The agent can pause overnight and resume.
 2. **Recursive spawning with depth + budget caps.** Sub-agents can spawn sub-sub-agents until depth or budget runs out, never longer. Both `spawn_subagent` (blocking) and `spawn_swarm` (parallel) tools.
@@ -137,7 +137,7 @@ What makes Lightwork different from OpenClaw / Hermes on the long-horizon axis:
 
 ## Multi-agent properties
 
-What makes Lightwork a real multi-agent system, not just N parallel instances:
+What makes this a real multi-agent system, not just N parallel instances:
 
 1. **Shared blackboard.** Specialists never talk directly; they post observations and findings to a single board the orchestrator reads.
 2. **Shared world model.** Facts written by one agent are visible to siblings.

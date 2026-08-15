@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#32353a" />
-  <title>{% block title %}Lightwork{% endblock %}</title>
+  <title>{% block title %}Bjerken and Day{% endblock %}</title>
   <link rel="stylesheet" href="/static/lightwork.css" />
   {% if custom_theme_css %}
   <style>
@@ -69,12 +69,12 @@
         <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
       </svg>
     </button>
-    <a class="brand" href="/" aria-label="Lightwork by Daybreak Labs — home">
+    <a class="brand" href="/" aria-label="Bjerken and Day — home">
       <span class="brand__plate">
         <img class="brand__logo" src="/static/daybreak-logo.jpg" alt="Daybreak Labs"
              width="35" height="24" />
       </span>
-      <span class="brand__name">Lightwork</span>
+      <span class="brand__name">Bjerken and Day</span>
     </a>
     <span class="topbar__controls">
       <a href="#" id="halt-pill" class="halt-pill" role="button" aria-label="Emergency stop: stop or resume all work">
@@ -169,7 +169,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer>
-    <span class="muted">Lightwork by Daybreak Labs · {{ t('footer.local') }} · proprietary software</span>
+    <span class="muted">Bjerken and Day · {{ t('footer.local') }} · proprietary software</span>
   </footer>
 
   <!-- Reusable toast regions + confirm dialog (window.mvToast / window.mvConfirm).
@@ -203,7 +203,7 @@
           aria-expanded="false" aria-controls="mv-copilot"
           title="Copilot — need a hand?">💬</button>
   <div class="mv-copilot" id="mv-copilot" role="dialog"
-       aria-label="Lightwork copilot" hidden>
+       aria-label="Bjerken and Day copilot" hidden>
     <div class="mv-copilot__head">
       <strong>Copilot</strong>
       <button class="btn btn--ghost" id="mv-copilot-close" type="button"
@@ -242,7 +242,7 @@
                     "Performance reviews come from delivered work, not vibes."],
       "/goals":   ["A goal is one outcome; the timeline shows every step and cost.",
                    "Blocked goals name exactly what they are waiting on."],
-      "/agents":  ["Describe the specialist in plain English — Lightwork drafts the rest.",
+      "/agents":  ["Describe the specialist in plain English — Bjerken and Day drafts the rest.",
                    "Saves that would weaken the safety envelope are rejected, not merged."],
       "/spend":   ["Every dollar traces to a goal and a model call — click any bar.",
                    "Set cost tiers to steer routing economics without code."],

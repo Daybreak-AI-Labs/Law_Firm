@@ -1,7 +1,7 @@
 site_name: Lightwork
 site_description: Recursive multi-agent swarm. Drives Claude / GPT / Kimi / Grok / Gemini / Ollama from one kernel.
 site_url: https://daybreak-ai-labs.github.io/Lightwork/
-repo_url: https://github.com/Daybreak-AI-Labs/Lightwork
+repo_url: https://github.com/Daybreak-AI-Labs/Law_Firm
 repo_name: Daybreak-AI-Labs/Lightwork
 edit_uri: edit/main/docs/
 copyright: Proprietary, commercially licensed (see LICENSE). Built for everyone, not just the technical few.
@@ -116,7 +116,7 @@ nav:
       - Security & GRC suite: SECURITY_GRC.md
       - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
       - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
-      - Governance Frontier benchmark: https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md
+      - Governance Frontier benchmark: https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md
       - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
       - Threat model: security/threat-model.md
       - DGM evaluator evidence: security/dgm-evaluator-evidence.md
@@ -142,17 +142,14 @@ nav:
       - "RFC 0001: Lightwork 2.0": rfcs/0001-maverick-2.0.md
       - "RFC 0002: Plugin API v2": rfcs/0002-plugin-api-v2.md
   - Community:
-      - Showcase: showcase.md
-      - Press kit: press-kit.md
       - Observability integrations: integrations/observability-partners.md
       - Contributing: CONTRIBUTING.md
-      - Code of Conduct: CODE_OF_CONDUCT.md
       - Security policy: SECURITY.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/Daybreak-AI-Labs/Lightwork
+      link: https://github.com/Daybreak-AI-Labs/Law_Firm
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/maverick-agent/
   generator: false

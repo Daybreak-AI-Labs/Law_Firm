@@ -761,9 +761,6 @@ def test_native_source_bootstrap_is_not_advertised_as_a_product_installer():
     deployment = (
         REPO_ROOT / "docs" / "deployment.md"
     ).read_text(encoding="utf-8")
-    press = (
-        REPO_ROOT / "docs" / "press-kit.md"
-    ).read_text(encoding="utf-8")
     features = (
         REPO_ROOT / "docs" / "FEATURES.md"
     ).read_text(encoding="utf-8")
@@ -783,8 +780,6 @@ def test_native_source_bootstrap_is_not_advertised_as_a_product_installer():
     assert "native installers, GHCR" not in readme
     assert "Tauri-based GUI installer for users" not in deployment
     assert "not attached to product releases" in deployment
-    assert "native double-click installers for Windows" not in press
-    assert "self-contained, platform-signed native installer is not" in press
     assert "linux/amd64 and linux/arm64" in features
     assert "arm64 + riscv64" not in features
 
@@ -902,10 +897,8 @@ def test_customer_surfaces_do_not_reference_the_retired_repository_owner():
             "ARCHITECTURE.md",
             "CONTRIBUTING.md",
             "LICENSE",
-            "MAINTAINERS.md",
             "README.md",
             "SECURITY.md",
-            "TRADEMARK.md",
             "packages/maverick-core/maverick/a2a.py",
             "packages/maverick-core/maverick/issue_report.py",
             "packages/maverick-core/maverick/tools/geocode.py",

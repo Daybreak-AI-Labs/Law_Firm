@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}AI Evidence Gateway &amp; Model Risk - Lightwork{% endblock %}
+{% block title %}AI Evidence Gateway &amp; Model Risk - Bjerken and Day{% endblock %}
 {% block content %}
 <style>
   .assurance-stats {
@@ -261,8 +261,9 @@
     </button>
     {% endif %}
     <a class="btn" href="/benchmarks">Governance benchmark dashboard</a>
-    <a href="https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md"
-       target="_blank" rel="noopener noreferrer">Published benchmark report</a>
+    {# The published-benchmark link pointed at the upstream repo's
+       benchmarks/GOVERNANCE_FRONTIER_RESULTS.md, which this fork does not
+       carry. Dropped rather than left pointing at a 404. #}
     {% if gateway_admin and gateway_view.demo_seed_allowed %}
     <span class="assurance-demo">SYNTHETIC DEMO</span>
     <button class="btn" id="gateway-demo-seed" type="button">

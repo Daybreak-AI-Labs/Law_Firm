@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Lightwork: proprietary Python 3.10-3.12 uv-workspace monorepo. 8 pip packages
+Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace monorepo. 8 pip packages
 (`packages/*`, `apps/installer-cli`) + a TypeScript SDK (`sdks/plugin-ts`).
 
 ## Setup (verified)

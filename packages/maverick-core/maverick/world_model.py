@@ -3869,7 +3869,7 @@ class PostgresAtRestUnsupported(RuntimeError):
     The Postgres backend does not seal content at rest yet (the SQLite backend
     does, via ``crypto_at_rest``). Rather than silently storing regulated /
     encrypted-at-rest data as plaintext, :func:`open_world` fails closed. See
-    ``docs/encryption.md`` and ``FIXES.md`` (P1)."""
+    ``docs/encryption.md`` (P1)."""
 
 
 def reclaim_window_seconds(default: float = 60.0) -> float:

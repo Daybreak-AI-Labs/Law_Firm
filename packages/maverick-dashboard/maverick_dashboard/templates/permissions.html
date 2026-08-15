@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Permissions · Lightwork{% endblock %}
+{% block title %}Permissions · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% set enabled_tools = perm.tools | selectattr('enabled') | list %}
   {% call hero('Governance', 'Permissions',
-               subtitle='What Lightwork can do',
+               subtitle='What Bjerken and Day can do',
                lede='Everything the agent is currently allowed to do — tools,
                      capabilities, channels, and where your data goes.
                      Disabling a tool here takes effect on the next goal.') %}
@@ -89,10 +89,10 @@
       Nothing else.
     </p>
     <ul class="muted">
-      <li>No telemetry. Lightwork collects no usage analytics.</li>
+      <li>No telemetry. Bjerken and Day collects no usage analytics.</li>
       <li>All activity is logged on this server and retained locally,
         {{ perm.retention.audit_days if perm.retention.audit_days is defined else 'until you delete them' }} day(s).</li>
-      <li>Everything Lightwork remembers stays on this server. A person's
+      <li>Everything Bjerken and Day remembers stays on this server. A person's
         data can be erased on request from the <a href="/privacy">Privacy
         workspace</a>.</li>
     </ul>

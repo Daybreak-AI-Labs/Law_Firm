@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{{ "Policy unavailable" if policy_error else "500" }} · Lightwork{% endblock %}
+{% block title %}{{ "Policy unavailable" if policy_error else "500" }} · Bjerken and Day{% endblock %}
 {% block content %}
   <div class="panel" style="text-align: center; padding: 3rem 1.5rem;">
     {% if policy_error %}
       <h2 style="font-size: 1.4rem; color: var(--text); text-transform: none; letter-spacing: 0; font-weight: 600; margin-bottom: 0.75rem;">Operator policy unavailable</h2>
       <p class="muted" style="max-width: 520px; margin: 0 auto 1.5rem;">
-        Lightwork stopped safely because <code>runtime-overrides.toml</code>
+        Bjerken and Day stopped safely because <code>runtime-overrides.toml</code>
         could not be read or validated. An administrator must restore or repair
         that file before this operation can continue.
       </p>

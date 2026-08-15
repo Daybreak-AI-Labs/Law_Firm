@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Learned · Lightwork{% endblock %}
+{% block title %}Learned · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% call hero('Self-improving workforce', 'Learned',
                subtitle='Capabilities & guidance',
-               lede='What Lightwork taught itself — skills, tools, and
+               lede='What Bjerken and Day taught itself — skills, tools, and
                      integrations picked up mid-run, working guidance
                      distilled from its own mistakes, and the tools it built
                      for itself. Everything here comes from the tamper-evident
@@ -50,7 +50,7 @@
   <div class="section-head"><h2>Self-harness guidance</h2></div>
   <div class="panel" id="harness-guidance">
     <p class="muted">
-      Working guidance Lightwork learned from its own recurring mistakes —
+      Working guidance Bjerken and Day learned from its own recurring mistakes —
       reminders it now gives itself before doing similar work. Any line can
       be rolled back.
       {% if harness and not harness_enabled %}
@@ -109,7 +109,7 @@
   <div class="section-head"><h2>Generated tools</h2></div>
   <div class="panel" id="generated-tools">
     <p class="muted">
-      Tools Lightwork wrote for itself. Remove pulls a misbehaving tool —
+      Tools Bjerken and Day wrote for itself. Remove pulls a misbehaving tool —
       it's deleted and won't load on the next run.
     </p>
     {% if generated_tools %}

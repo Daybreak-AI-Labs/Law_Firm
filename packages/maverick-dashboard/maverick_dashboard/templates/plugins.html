@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Plugins · Lightwork{% endblock %}
+{% block title %}Plugins · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% set ns = namespace(total=0, on=0) %}
   {% for label, items in groups.items() %}{% for p in items %}{% set ns.total = ns.total + 1 %}{% if p.enabled %}{% set ns.on = ns.on + 1 %}{% endif %}{% endfor %}{% endfor %}
   {% call hero('Workforce capability', 'Plugins',
                subtitle='Extensions, managed in-app',
-               lede='Extend Lightwork with installed plugins — extra tools,
+               lede='Extend Bjerken and Day with installed plugins — extra tools,
                      channels, and integrations packaged for one-step install,
                      switched on and off right here.') %}
     {% if error %}

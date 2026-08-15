@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Automations · Lightwork{% endblock %}
+{% block title %}Automations · Bjerken and Day{% endblock %}
 {% block content %}
 <style>
   .auto { max-width: 880px; margin-inline: auto; }
@@ -43,7 +43,7 @@
       <h2 id="auto-sched-h" tabindex="-1">Schedules</h2>
       <span class="muted" id="auto-sched-count"></span>
     </div>
-    <p class="auto__hint">Recurring runs — daily reports, weekly digests. Schedules fire while the Lightwork background worker is on.</p>
+    <p class="auto__hint">Recurring runs — daily reports, weekly digests. Schedules fire while the Bjerken and Day background worker is on.</p>
     <ul class="auto__list" id="auto-sched-list" aria-label="Schedules"></ul>
     <div class="mv-empty" id="auto-sched-empty" hidden>
       <p class="mv-empty__title">No schedules yet</p>
@@ -76,7 +76,7 @@
       <h2 id="auto-event-h" tabindex="-1">Event triggers</h2>
       <span class="muted" id="auto-event-count"></span>
     </div>
-    <p class="auto__hint">Run a workflow when something new appears in a source that can’t push a webhook — Lightwork checks each source automatically in the background and starts a run per new item, with the item’s fields filling the workflow’s parameters. Use “Poll now” to check immediately.</p>
+    <p class="auto__hint">Run a workflow when something new appears in a source that can’t push a webhook — Bjerken and Day checks each source automatically in the background and starts a run per new item, with the item’s fields filling the workflow’s parameters. Use “Poll now” to check immediately.</p>
     <ul class="auto__list" id="auto-event-list" aria-label="Event triggers"></ul>
     <div class="mv-empty" id="auto-event-empty" hidden>
       <p class="mv-empty__title">No event triggers yet</p>
@@ -163,7 +163,7 @@
     <div class="section-head">
       <h2 id="auto-import-h" tabindex="-1">Import from another platform</h2>
     </div>
-    <p class="auto__hint">Pull a client’s existing automations (n8n, Make, Workato, Power Automate, UiPath) into Lightwork templates. For Zapier/Notion (no exportable definitions), describe the automation as JSON or have it call an inbound webhook.</p>
+    <p class="auto__hint">Pull a client’s existing automations (n8n, Make, Workato, Power Automate, UiPath) into Bjerken and Day templates. For Zapier/Notion (no exportable definitions), describe the automation as JSON or have it call an inbound webhook.</p>
     <form id="auto-import-form">
       <div class="field">
         <label for="auto-import-source">Platform</label>
@@ -399,7 +399,7 @@
         if (it.webhook_trigger) li.appendChild(document.createTextNode(' · webhook trigger wired'));
         if (it.schedule) li.appendChild(document.createTextNode(' · schedule ' + (out.dry_run ? 'recoverable' : 'armed')));
         // Surface the importer's own diagnostics (e.g. "schedule recovered — tick
-        // Activate to arm it", "event trigger has no Lightwork equivalent"): these
+        // Activate to arm it", "event trigger has no Bjerken and Day equivalent"): these
         // explain why an import that looks done won't actually run on its own.
         (it.notes || []).forEach(function (n) {
           var note = el('div', 'auto__runs'); note.textContent = '↳ ' + n; li.appendChild(note);

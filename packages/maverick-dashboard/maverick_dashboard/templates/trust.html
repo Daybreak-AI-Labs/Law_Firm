@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Agent Trust · Lightwork{% endblock %}
+{% block title %}Agent Trust · Bjerken and Day{% endblock %}
 {% block content %}
   <h1 class="page-title">Agent trust</h1>
   <p class="page-subtitle">Which outside agents may work with this deployment — and what each one is allowed to do, see, and spend. When enforcement is on, anyone not on this list is turned away.</p>
@@ -38,10 +38,10 @@
       <circle cx="{{ graph.cx }}" cy="{{ graph.cy }}" r="13" fill="#0f172a"
               stroke="#475569" stroke-width="1.5"></circle>
       <text x="{{ graph.cx }}" y="{{ graph.cy + 31 }}" text-anchor="middle"
-            font-size="12" fill="currentColor">Lightwork</text>
+            font-size="12" fill="currentColor">Bjerken and Day</text>
     </svg>
     <p class="muted" style="margin-top:.5rem">
-      Arrow into Lightwork = the agent may start conversations with us; arrow out = we may reach out to it.
+      Arrow into Bjerken and Day = the agent may start conversations with us; arrow out = we may reach out to it.
       <span style="color:#2563eb">&#9679;</span> bounded ·
       <span style="color:#d97706">&#9679;</span> high-risk ceiling ·
       <span style="color:#dc2626">&#9679;</span> revoked/expired

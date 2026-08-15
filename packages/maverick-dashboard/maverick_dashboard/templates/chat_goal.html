@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Goal #{{ goal.id }} · Lightwork{% endblock %}
+{% block title %}Goal #{{ goal.id }} · Bjerken and Day{% endblock %}
 {% block content %}
 <style>
   /* Goal as a conversation — same column + composer language as /chat, so
@@ -98,7 +98,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* The reply composer appears (sticky, at the bottom) only when the agent
-     needs an answer — Lightwork goals run autonomously between asks. */
+     needs an answer — Bjerken and Day goals run autonomously between asks. */
   .ask {
     position: sticky; bottom: var(--space-4); margin-top: var(--space-5);
     background: var(--surface-1); border: 1px solid var(--border);
@@ -210,7 +210,7 @@
         <rect x="1" y="1" width="20" height="20" rx="6.5" fill="var(--brand)"/>
         <circle cx="11" cy="11" r="3.2" fill="none" stroke="#fff" stroke-width="1.8"/>
       </svg>
-      Lightwork
+      Bjerken and Day
     </div>
     <p id="goal-action-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em; margin: 0 0 0.75rem;"></p>
     <details class="activity" id="work-activity" open>
@@ -372,7 +372,7 @@
     <p id="question-text" class="ask__text"></p>
     <form id="answer-form" class="ask__row">
       <input type="text" id="answer-input" required
-             placeholder="Reply to Lightwork…" aria-label="Your answer to the agent's question"
+             placeholder="Reply to Bjerken and Day…" aria-label="Your answer to the agent's question"
              aria-describedby="question-text" class="ask__field" />
       <button type="button" id="answer-mic" class="ask__send" aria-label="Dictate your answer by voice"
               aria-pressed="false" hidden>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Tenants · Lightwork{% endblock %}
+{% block title %}Tenants · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% set active_tenants = tenants | selectattr('status', 'equalto', 'active') | list | length %}

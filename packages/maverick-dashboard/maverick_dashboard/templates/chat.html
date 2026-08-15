@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Chat · Lightwork{% endblock %}
+{% block title %}Chat · Bjerken and Day{% endblock %}
 {% block content %}
 <style>
   /* Chat landing — page-scoped. Uses the design-system tokens from base. */
@@ -92,9 +92,9 @@
 
 {% from "_hero.html" import hero, state %}
 {% set chat_running = recent | selectattr('status', 'equalto', 'running') | list | length %}
-{% call hero('Your AI workforce', 'What should Lightwork take on?',
+{% call hero('Your AI workforce', 'What should Bjerken and Day take on?',
              subtitle='Start new work in plain English',
-             lede='Describe a goal below — Lightwork plans the work across a
+             lede='Describe a goal below — Bjerken and Day plans the work across a
                    team of agents and runs it within your budget, pausing for
                    your approval where it matters.') %}
   {{ state('Current state',
@@ -113,7 +113,7 @@
       value="{{ prefill_title or '' }}"
       class="composer__field"
       placeholder="Describe a goal — e.g. plan a 2-week trip to Japan under $4k"
-      aria-label="Describe a goal for Lightwork to run"
+      aria-label="Describe a goal for Bjerken and Day to run"
       required
       autofocus
     />
@@ -137,11 +137,11 @@
         <button type="button" id="mic-btn" class="composer__icon" aria-label="Dictate a goal by voice" aria-pressed="false" hidden>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
-        <span class="composer__hint" id="composer-hint" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Lightwork plans the work across a team of agents and runs it within your budget.</span>
+        <span class="composer__hint" id="composer-hint" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Bjerken and Day plans the work across a team of agents and runs it within your budget.</span>
       </div>
-      <label for="authoring-kind" class="sr-only">What should Lightwork create?</label>
+      <label for="authoring-kind" class="sr-only">What should Bjerken and Day create?</label>
       <select id="authoring-kind" name="authoring_kind" class="input"
-              aria-label="What should Lightwork create?" style="width:auto;min-width:10rem;">
+              aria-label="What should Bjerken and Day create?" style="width:auto;min-width:10rem;">
         <option value="goal">Run this goal</option>
         <option value="flow">Draft a workflow</option>
         <option value="agent">Draft an agent</option>

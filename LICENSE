@@ -1,10 +1,10 @@
-Lightwork Proprietary License
+Bjerken and Day Practice Platform — Proprietary License
 
 Copyright (c) 2026 Christopher Day. All rights reserved.
 
-Lightwork (the "Software") is proprietary and confidential. The Software is
-licensed, not sold, and only under a separate written agreement with
-Christopher Day (the "Licensor").
+The Bjerken and Day Practice Platform (the "Software") is proprietary and
+confidential. The Software is licensed, not sold, and only under a separate
+written agreement with Christopher Day (the "Licensor").
 
 No license or right is granted to any person or entity to use, run, install,
 copy, reproduce, modify, adapt, translate, merge, publish, distribute,
@@ -13,16 +13,14 @@ or in part, by any means, without the prior written permission of the
 Licensor. Making the source code visible in a repository does not grant any
 license to it. All rights not expressly granted are reserved.
 
-To request an evaluation, commercial, or enterprise license, contact the
-Licensor: https://github.com/Daybreak-AI-Labs/Lightwork
+To request access, contact the Licensor:
+https://github.com/Daybreak-AI-Labs/Law_Firm
 
-Prior releases: specific versions of the Software previously published under
-the MIT License remain available under the MIT License for those versions
-only. This Proprietary License governs the current version and all subsequent
-changes.
-
-"Lightwork", the Lightwork name, and the Lightwork logo are trademarks of the
-Licensor; see TRADEMARK.md. This license grants no right to use those marks.
+The Software is derived from the Licensor's Lightwork platform and remains
+subject to the same reservation of rights. Prior releases: specific versions
+of the upstream Software previously published under the MIT License remain
+available under the MIT License for those versions only. This Proprietary
+License governs the current version and all subsequent changes.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

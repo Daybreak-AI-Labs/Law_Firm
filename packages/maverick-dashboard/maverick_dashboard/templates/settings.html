@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settings · Lightwork{% endblock %}
+{% block title %}Settings · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
   {% set configured_providers = providers | selectattr('configured') | list %}
@@ -166,7 +166,7 @@
   <div class="section-head"><h2>Spend cap</h2></div>
   <div class="panel">
     <p class="muted" style="margin-top: 0;">
-      The most a single goal may spend before Lightwork stops it. Changes
+      The most a single goal may spend before Bjerken and Day stops it. Changes
       apply on the next run. Default is ${{ '%.2f'|format(default_budget) }}
       per goal.
     </p>
@@ -192,7 +192,7 @@
     <p class="muted" style="margin-top: 0;">
       Set an API key for at least one provider to run goals. Keys are sealed
       on this server and never shown again; a key saved here is the one
-      Lightwork uses. Leave a field blank to keep the current value.
+      Bjerken and Day uses. Leave a field blank to keep the current value.
     </p>
     {% for p in providers %}
     <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; padding: var(--space-3) 0; border-top: 1px solid var(--hairline);">

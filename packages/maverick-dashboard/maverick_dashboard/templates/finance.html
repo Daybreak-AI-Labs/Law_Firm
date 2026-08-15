@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Finance · Lightwork{% endblock %}
+{% block title %}Finance · Bjerken and Day{% endblock %}
 {% block content %}
   <style>
     .fin-links { display:flex; gap:var(--space-2); flex-wrap:wrap; margin:var(--space-3) 0 var(--space-5); }
@@ -204,7 +204,7 @@
       <h3 style="margin-top:0;">State licensing source packs</h3>
       <p class="fin-caveat">These v1 packs cover every state with cited source routing and
         renewal workflow metadata. Every row remains <code>source_check_required</code>;
-        Lightwork does not claim counsel-verified applicability, fees, exemptions, or deadlines.</p>
+        Bjerken and Day does not claim counsel-verified applicability, fees, exemptions, or deadlines.</p>
       <div class="fin-scroll"><table aria-label="State licensing packs">
         <thead><tr><th>vertical</th><th>version / as of</th><th>coverage</th><th>pack digest</th></tr></thead>
         <tbody>{% for pack in operations.licensing_packs %}
