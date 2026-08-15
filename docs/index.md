@@ -4,7 +4,7 @@
 
 A governed AI workforce of 125 specialist packs — 77 of them legal — that
 drafts, researches and keeps the file straight, running in the firm's own
-environment with a licensed attorney reviewing everything before it leaves the
+environment with an attorney reviewing everything before it leaves the
 office. It drives any LLM (Claude, GPT, Kimi, Grok, Gemini, DeepSeek, Ollama,
 OpenRouter) behind one governed, auditable safety surface.
 
