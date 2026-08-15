@@ -719,7 +719,11 @@ def test_assurance_cockpit_renders_gateway_evidence_without_raw_content(
     assert "Next best action" in response.text
     assert "unavailable after" in response.text
     assert "Load synthetic no-network demo" not in response.text
-    assert "Published benchmark report" in response.text
+    # The "Published benchmark report" link pointed at the upstream repository's
+    # benchmark results, which this fork does not carry. The in-app governance
+    # benchmark dashboard link below is what remains.
+    assert "Published benchmark report" not in response.text
+    assert "Governance benchmark dashboard" in response.text
     assert "AER-page-1" in response.text
     assert "2025-07-24 12:00:00 UTC" in response.text
     assert "Complete:" in response.text

@@ -130,6 +130,16 @@ apps/
 docs/                  Architecture, configuration, deployment, safety, API
 ```
 
+## Driving it from other languages
+
+The kernel is Python, but its wire surface is the Model Context Protocol, so anything
+that speaks MCP can drive it — spawn `maverick mcp`, list tools, call one:
+[TypeScript](docs/clients/typescript-quickstart.md) ·
+[Go](docs/clients/go-quickstart.md) ·
+[Rust](docs/clients/rust-quickstart.md) ·
+[C#](docs/clients/csharp-quickstart.md) ·
+[Java](docs/clients/java-quickstart.md).
+
 ## Confidentiality
 
 **Not yet fit for real client data.** The platform is provider-agnostic by design, but
