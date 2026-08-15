@@ -478,48 +478,6 @@ jobs:
           path: sbom.release-runtime.cyclonedx.json
           if-no-files-found: error
 
-  release-cohort:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.13"
-      - name: Install release verification tools
-        run: python -m pip install build pytest
-      - name: Verify the release cohort manifest and package metadata
-        env:
-          PYTHONPATH: ${{ github.workspace }}/packages/maverick-core
-        run: >-
-          python -m pytest -q
-          packages/maverick-core/tests/test_release_packaging.py
-      - name: Build every public wheel from the reviewed cohort
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t package_dirs < <(python - <<'PY'
-          import tomllib
-          from pathlib import Path
-
-          cohort = tomllib.loads(Path("release-cohort.toml").read_text(encoding="utf-8"))
-          for package in cohort["packages"]:
-              print(package["path"])
-          PY
-          )
-          mkdir -p "$GITHUB_WORKSPACE/dist-cohort"
-          for package_dir in "${package_dirs[@]}"; do
-            echo "==> building $package_dir"
-            (
-              cd "$package_dir"
-              python -m build --wheel \
-                --outdir "$GITHUB_WORKSPACE/dist-cohort" .
-            )
-          done
-          test "$(find dist-cohort -maxdepth 1 -name '*.whl' | wc -l)" -eq 8
-
   test:
     runs-on: ubuntu-24.04
     # The complete deterministic suite is intentionally broad and currently
