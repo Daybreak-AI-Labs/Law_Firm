@@ -153,12 +153,19 @@ All verified locally green; each is a build-failer:
 
 ## What this repo is
 
-A hard fork of the Lightwork platform, adapted into the operating system for a
-single Virginia law firm. Forked at Lightwork `f47c70c`; upstream history is
+A hard fork of the Lightwork platform, adapted into the operating system for the
+Bjerken and Day law firm. Forked at Lightwork `f47c70c`; upstream history is
 not shared, so fixes do not flow in automatically — port them deliberately.
 
-Practice: VA. Family law, complex litigation, privacy/cyber, estate planning &
+Practice areas: **VA = Veterans Affairs disability** (federal, not Virginia — this was
+misread once already), family law, complex litigation, privacy/cyber, estate planning &
 probate, business/transactional, real estate.
+
+Jurisdictions: Tennessee, Georgia, Florida. Practice area and jurisdiction are separate
+axes — VA disability is federal practice before the Department of Veterans Affairs and
+is not limited to the three states; everything else is. Anything that calculates a
+deadline, picks a trust-accounting rule, or routes an e-filing must read the matter's
+jurisdiction rather than assume one.
 
 What changed from upstream, and why:
 

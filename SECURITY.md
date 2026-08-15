@@ -46,8 +46,11 @@ matter note. The repository is scanned for committed secrets on every push.
 2. Preserve the audit log before anything else; it is the record of what happened.
 3. Rotate any credential the agent could have touched.
 4. Determine whether client confidential information was exposed. If it was, the
-   analysis is a legal one — Virginia Rule 1.6 and the applicable breach-notification
-   statutes — not merely a technical postmortem.
+   analysis is a legal one — the confidentiality rule of the state governing that
+   matter (Fla. Bar Rule 4-1.6, Ga. RPC 1.6, Tenn. RPC 1.6), plus the applicable
+   breach-notification statutes — not merely a technical postmortem. A veterans'
+   benefits matter adds the federal layer, since the file will contain service and
+   medical records.
 
 ## Hardening
 

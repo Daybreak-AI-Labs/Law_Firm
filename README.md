@@ -1,9 +1,9 @@
 # Bjerken and Day
 
 The firm's internal practice platform: a governed AI workforce that drafts, researches,
-and keeps the file straight — pleadings and motions, wills and trusts, corporate
-redlines, discovery, research memos — with a licensed attorney reviewing everything
-before it leaves the office.
+and keeps the file straight — VA disability claims and appeals, pleadings and motions,
+wills and trusts, corporate redlines, discovery, research memos — with a licensed
+attorney reviewing everything before it leaves the office.
 
 Private software for one firm. Not a product, not for distribution.
 
@@ -17,8 +17,19 @@ to the right specialist seat, and returns a draft with its sources. Every run is
 in dollars and wall-clock, every action is recorded, and nothing a seat produces is
 self-approving.
 
-**Practice areas:** family law, complex litigation, privacy and cyber, estate planning
-and probate, business and transactional, real estate. Virginia.
+**Practice areas:** VA (Veterans Affairs) disability, family law, complex litigation,
+privacy and cyber, estate planning and probate, business and transactional, real estate.
+
+**Jurisdictions:** Tennessee, Georgia, and Florida to start — with one important
+exception. VA disability is *federal* practice before the Department of Veterans
+Affairs, so an accredited attorney represents claimants nationwide; the three-state
+limit governs the state-law matters, not the veterans work. A matter therefore carries
+both a practice area and a jurisdiction, and the two are not the same axis.
+
+Multi-state is a design constraint, not a detail. A state matter's jurisdiction drives
+which rules of professional conduct apply, which trust-accounting regime governs its
+retainer, which court's deadlines calculate, and which e-filing system it lands in.
+Jurisdiction is a required field on a matter, not an optional tag.
 
 **What it keeps from upstream**
 
@@ -61,6 +72,10 @@ workflow playbook, and a declared deliverable that names a human consumer.
 Every legal pack must declare a deliverable, name a human consumer, and carry a
 review or approval gate. Two internal-workflow seats (`legal_intake`, `legal_km`) are
 the only exceptions, and a test guards that exception list so it cannot quietly grow.
+
+**Gap worth naming:** none of the 77 legal packs cover veterans' benefits. VA disability
+is the firm's practice area with the least support from the inherited roster and the
+most to gain from purpose-built seats — see the [roadmap](#roadmap).
 
 Prove the roster's safety properties:
 
@@ -158,15 +173,25 @@ Not built yet, in rough priority order:
 
 1. **Confidentiality gate** — matter-sensitivity flags and a hard block on privileged
    content reaching an unapproved provider.
-2. **Virginia practice packs** — family law (custody, support, equitable distribution,
-   PSAs), estate planning (wills, RLTs, POAs, advance directives), probate, and
-   residential real-estate closings. None of these exist upstream.
-3. **Matters and clients** — a real matter model with conflicts checking and deadline
-   docketing, built on the existing project model.
-4. **Time, billing, and IOLTA trust accounting** — genuinely new, and the trust ledger
-   carries bar-compliance requirements worth building slowly.
-5. **Court e-filing and rules-based calendaring** — Virginia-specific, and dependent on
-   vendor access.
+2. **VA disability packs** — the largest gap, and federal, so one build serves all three
+   states. Intake and accreditation (VA Form 21-22a), the AMA lanes (supplemental claim,
+   higher-level review, Board appeal), C-file review and evidence development, nexus
+   letters and DBQs, rating analysis under 38 C.F.R. Part 4, TDIU, and fee-agreement
+   compliance under 38 C.F.R. § 14.636 — where the fee rules are strict enough to be
+   worth encoding as a hard gate rather than a checklist. Verify current form numbers
+   and rule text when authoring; VA forms change.
+3. **State practice packs** — family law (custody, support, property division, marital
+   settlement agreements), estate planning (wills, RLTs, POAs, advance directives),
+   probate, and residential closings — each parameterized by jurisdiction rather than
+   written three times.
+4. **Matters and clients** — a matter model carrying practice area *and* jurisdiction,
+   with conflicts checking across all three states and deadline docketing.
+5. **Time, billing, and trust accounting** — three IOLTA regimes, not one. Florida's
+   trust-accounting rules are the strictest of the three and should set the floor the
+   ledger is built to; Georgia and Tennessee then fit inside it.
+6. **Court e-filing and rules-based calendaring** — three systems: Florida's statewide
+   portal is the most uniform, Georgia is Tyler-based, and Tennessee varies by county.
+   Sequence them in that order; the uniform one proves the design.
 6. **Retargeted self-improvement** — learning from the attorney's edits to drafts,
    building a clause bank out of executed documents, and grounding it all in outcomes.
 
