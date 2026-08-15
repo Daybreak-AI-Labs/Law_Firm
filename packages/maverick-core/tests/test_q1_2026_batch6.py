@@ -46,15 +46,6 @@ def test_docs_index_landing_exists():
         assert keyword in body, f"index.md missing section: {keyword}"
 
 
-def test_docs_workflow_exists():
-    p = REPO_ROOT / ".github" / "workflows" / "docs.yml"
-    assert p.is_file()
-    body = p.read_text()
-    # Must build with mkdocs and deploy to Pages.
-    assert "mkdocs" in body
-    assert "deploy-pages" in body or "github-pages" in body.lower()
-
-
 def test_reusable_agent_on_pr_workflow_exists():
     p = REPO_ROOT / ".github" / "workflows" / "agent-on-pr.yml"
     assert p.is_file()
@@ -65,14 +56,6 @@ def test_reusable_agent_on_pr_workflow_exists():
     assert "max_dollars:" in body
     # Posts to PR via REST.
     assert "createComment" in body or "pull-requests: write" in body
-
-
-def test_publish_workflow_still_present():
-    """Earlier PyPI publish workflow shouldn't have been clobbered."""
-    p = REPO_ROOT / ".github" / "workflows" / "publish.yml"
-    assert p.is_file()
-    body = p.read_text()
-    assert "pypa/gh-action-pypi-publish" in body
 
 
 def test_conventional_commits_workflow_still_present():

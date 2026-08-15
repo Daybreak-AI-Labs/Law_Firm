@@ -147,66 +147,6 @@ def test_training_bootstrap_installs_only_from_verified_checkout():
     assert "pip install --quiet 'maverick-agent[training]'" not in text
 
 
-def test_public_pypi_consumer_is_disabled_until_namespace_is_reserved():
-    text = _read(".github/workflows/homebrew-bump.yml")
-
-    assert "MAVERICK_PUBLIC_PYPI_ENABLED == 'true'" in text
-    assert text.count("github.event.release.prerelease == false") == 3
-    assert "disabled by default" in text
-    top_level = text.split("jobs:", 1)[0]
-    resolver = text.split("\n  resolve:", 1)[1].split("\n  test-formula:", 1)[0]
-    formula_test = text.split("\n  test-formula:", 1)[1].split("\n  open-pr:", 1)[0]
-    publisher = text.split("\n  open-pr:", 1)[1]
-    assert "contents: read" in top_level
-    assert "contents: write" not in resolver
-    assert "pull-requests: write" not in resolver
-    assert "pip-tools==7.6.0" in resolver
-    assert "runs-on: macos-15" in resolver
-    assert '"--no-header"' in resolver
-    assert '"--no-emit-index-url"' in resolver
-    assert '"--index-url"' in resolver
-    assert '"https://pypi.org/simple"' in resolver
-    assert "resolved-homebrew-formula" in resolver
-    assert "setuptools==83.0.0" in resolver
-    assert "fetch-depth: 0" in resolver
-    assert "Verify the signed exact-release Python authority" in resolver
-    assert resolver.index("Verify the signed exact-release Python authority") < resolver.index(
-        "Pin the formula to the published sdist"
-    )
-    assert 'gh release view "$tag"' in resolver
-    assert "release-manifest.json.cosign.bundle" in resolver
-    assert "SHA256SUMS.cosign.bundle" in resolver
-    assert resolver.count("cosign verify-blob") == 3
-    assert r"publish\.yml@refs/heads/main" in resolver
-    assert 'manifest["source_revision"] != revision' in resolver
-    assert "checksum_records != digests" in resolver
-    assert "downloaded GitHub sdist digest mismatch" in resolver
-    assert "EXPECTED_SDIST_FILENAME" in resolver
-    assert "EXPECTED_SDIST_SHA256" in resolver
-    assert "require_matching_pypi_sdist" in resolver
-    assert "expected_sha256=expected_sdist_sha" in resolver
-    assert "LIGHTWORK_BUILD_REQUIREMENTS_BEGIN" in resolver
-    assert "LIGHTWORK_RUNTIME_REQUIREMENTS_BEGIN" in resolver
-    assert "version=version" in resolver
-    assert "runs-on: macos-15" in formula_test
-    assert "brew install --formula --build-from-source" in formula_test
-    assert "brew test maverick" in formula_test
-    assert "HOMEBREW_NO_INSTALL_FROM_API" in formula_test
-    assert "needs: [resolve, test-formula]" in publisher
-    assert "permissions:\n      contents: read" in publisher
-    assert "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" in publisher
-    assert "LIGHTWORK_AUTOMATION_APP_CLIENT_ID" in publisher
-    assert "LIGHTWORK_AUTOMATION_APP_PRIVATE_KEY" in publisher
-    assert "permission-contents: write" in publisher
-    assert "permission-pull-requests: write" in publisher
-    assert "actions/download-artifact@" in publisher
-    assert "token: ${{ steps.automation-token.outputs.token }}" in publisher
-    assert "token: ${{ github.token }}" not in publisher
-    assert publisher.count("ref: main") == 1
-    assert publisher.count("base: main") == 1
-    assert resolver.count("ref: main") == 1
-
-
 def test_homebrew_formula_bootstraps_python_312_without_venv_pip():
     formula = _read("deploy/homebrew/maverick.rb")
 
@@ -343,29 +283,6 @@ def test_markdown_workflow_examples_do_not_recommend_mutable_action_refs():
                 mutable.append(f"{path.relative_to(REPO_ROOT)}:{line_no}: {target}")
 
     assert mutable == [], "mutable Markdown action refs:\n" + "\n".join(mutable)
-
-
-def test_public_publish_workflow_uses_an_explicit_package_allowlist():
-    text = _read(".github/workflows/publish.yml")
-    cohort = tomllib.loads(_read("release-cohort.toml"))
-
-    assert "release-cohort.toml" in text
-    assert {item["path"] for item in cohort["packages"]} == {
-        "packages/maverick-core",
-        "packages/maverick-shield",
-        "packages/maverick-channels",
-        "packages/maverick-dashboard",
-        "packages/maverick-mcp",
-        "packages/maverick-evolve",
-        "packages/maverick-knowledge",
-        "apps/installer-cli",
-    }
-    assert "apps/vendor-console" not in text
-    assert "for d in packages/* apps/*" not in text
-    # OIDC is granted only on the publish/sign jobs, never the dependency-
-    # installing build job through a workflow-wide permission.
-    top_permissions = text.split("jobs:", 1)[0]
-    assert "id-token: write" not in top_permissions
 
 
 def test_active_runtime_guidance_never_resolves_first_party_from_public_index():

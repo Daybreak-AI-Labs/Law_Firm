@@ -3285,62 +3285,22 @@ def pick_a2a() -> tuple[dict[str, Any], list[str]]:
 # maverick/domains/). The kernel's enabled_domains() honors the [suites] table
 # this writes; suites are ON by default (opt-out), so writing nothing keeps all.
 AGENT_SUITES: list[tuple[str, str]] = [
-    ("operations", "Operations / Supply Chain"),
-    ("legal", "Legal (General Counsel)"),
-    ("finance", "Finance"),
-    ("it_grc", "IT / GRC / Security / Privacy / AI-Governance"),
-    ("sales_gtm", "Sales / GTM"),
-    ("hr", "HR / People"),
-    ("product_engineering", "Product & Engineering"),
-    ("strategy", "Strategy / Corp Dev / Exec"),
-    ("customer_experience", "Customer Experience / Support"),
-    ("marketing", "Marketing / Communications"),
-    ("procurement", "Procurement / Sourcing"),
-    ("data_analytics", "Data & Analytics"),
-    ("security_ops", "Security Operations"),
-    ("executive_office", "Executive Office / Chief of Staff"),
-    ("facilities_ehs", "Facilities / EHS"),
-    ("healthcare", "Healthcare (RCM / Payer Ops)"),
-    ("insurance", "Insurance (Claims / Underwriting Support)"),
-    ("banking", "Banking / Credit Union Ops"),
-    ("retail", "Retail / E-commerce"),
-    ("manufacturing_vertical", "Manufacturing (Vertical)"),
-    ("construction", "Construction / AEC"),
-    ("logistics", "Logistics / Transportation"),
-    ("professional_services", "Professional Services"),
-    ("government_contracting", "Government Contracting"),
-    ("education_nonprofit", "Education / Nonprofit"),
-    ("tax", "Tax Preparation (CPA Firms)"),
-    # Council-expansion verticals (2026).
-    ("utilities", "Energy / Utilities"),
-    ("real_estate", "Real Estate / Property Management"),
-    ("pharma_lifesciences", "Pharma / Life Sciences"),
-    ("telecom_media", "Telecom / Media & Entertainment"),
-    ("hospitality", "Hospitality / Travel"),
-    ("capital_markets", "Capital Markets / Asset Management"),
-    # New industry suites (2026 build-out).
-    ("oil_gas", "Oil & Gas / Energy (Upstream-Downstream)"),
-    ("automotive", "Automotive (OEM / Dealership / Mobility)"),
-    ("public_sector", "Public Sector (State & Local Government Operations)"),
-    ("agriculture", "Agriculture / Agribusiness"),
-    ("aerospace_defense", "Aerospace & Defense"),
-    ("maritime", "Maritime / Shipping & Ports"),
-    ("travel_aviation", "Travel / Airlines & Aviation"),
-    ("mining_metals", "Mining & Metals"),
-    ("crypto_digital_assets", "Crypto & Digital Assets"),
-    ("chemicals", "Chemicals (Bulk / Specialty / Petrochemical)"),
-    ("food_beverage_cpg", "Food, Beverage & CPG"),
-    ("medical_devices", "Medical Devices & Diagnostics"),
-    ("private_equity_vc", "Private Equity & Venture Capital"),
-    ("water_utilities", "Water & Wastewater Utilities"),
-    ("renewables_cleantech", "Renewables & Clean Energy"),
-    ("semiconductors", "Semiconductors & Electronics"),
-    # Horizontal-function suites.
-    ("esg_sustainability", "ESG & Sustainability"),
-    ("enterprise_risk", "Enterprise Risk & Corporate Insurance"),
-    ("knowledge_management", "Knowledge Management"),
-    ("trust_safety", "Trust & Safety"),
-    ("process_automation", "Process Automation & Workflows"),
+    # Only suites with packs behind them in this fork. Verified against
+    # packages/maverick-core/maverick/domains/: upstream offered 53 industry
+    # suites, of which 42 (healthcare, banking, aerospace, mining, maritime,
+    # oil & gas, semiconductors, ...) toggle nothing here after the prune to
+    # 125 packs. A prompt that configures nothing is worse than no prompt.
+    ("legal", "Legal — the practice (77 packs)"),
+    ("tax", "Tax — advisory and controversy (12)"),
+    ("finance", "Finance — the firm's own books (8)"),
+    ("security_ops", "Security operations — breach response (5)"),
+    ("executive_office", "Corporate housekeeping — minutes, meetings (5)"),
+    ("knowledge_management", "Knowledge — clause bank, precedents, SOPs (4)"),
+    ("hr", "Employment — advising clients, hiring staff (4)"),
+    ("real_estate", "Real estate (3)"),
+    ("insurance", "Insurance — coverage, subrogation (3)"),
+    ("public_sector", "Public records requests (1)"),
+    ("government_contracting", "FOIA support (1)"),
 ]
 
 
@@ -3361,55 +3321,6 @@ def pick_suites() -> dict[str, bool]:
     out: dict[str, bool] = {}
     for key, label in AGENT_SUITES:
         out[key] = _q_confirm(f"    Enable the {label} suite?", default=True)
-    return out
-
-
-def pick_license() -> dict[str, Any]:
-    """The ``[license]`` section — paid-feature entitlement enforcement.
-
-    Default **OFF** (a community/dev box runs everything, matching the
-    fail-open kernel). A licensed production deployment turns enforcement on and
-    points at its signed license file; paid features then gate on the license.
-    Returns a config map for ``[license]`` (empty when the operator keeps the
-    fail-open default, so nothing is emitted and nothing gates)."""
-    console.print()
-    console.print("[bold]Licensing[/bold] — enforce paid-feature entitlements "
-                  "(Gold/Platinum features, add-on suites like fleet).")
-    console.print("[dim]Fail-open by default: the kernel runs with no license. "
-                  "Turn enforcement on only for a licensed production deployment. "
-                  "A missing/expired license never stops the core — only paid "
-                  "add-ons gate off. Editable later under [license] in "
-                  "~/.maverick/config.toml.[/dim]")
-    if not _q_confirm("  Enforce paid-feature entitlements on this deployment?",
-                      default=False):
-        return {}
-    out: dict[str, Any] = {"enforce": True}
-    path = _q_text("    Signed license file path (blank = ~/.maverick/license.json)",
-                   default="")
-    if path.strip():
-        out["license_file"] = path.strip()
-    pub = _q_text("    Trusted publisher pubkey(s), comma-separated hex "
-                  "(blank = keys embedded in the build)", default="")
-    keys = _csv_list(pub, lower=True)
-    if keys:
-        out["publisher_pubkeys"] = keys
-    api = _q_text("    Entitlement API URL for connected refresh "
-                  "(blank = offline license file only)", default="")
-    if api.strip():
-        out["api_url"] = api.strip()
-        # The API token is a secret: reference an env var, never inline it
-        # (config.toml interpolates ${VAR}; the value lives in ~/.maverick/.env).
-        out["api_token"] = "${MAVERICK_LICENSE_API_TOKEN}"
-        # Near-instant propagation: the dashboard polls the API on this
-        # interval so an upgrade issued in the vendor console lights up
-        # without a redeploy. 0 disables; the kernel floors it at 30s.
-        interval = _q_text("    Auto-refresh interval in seconds "
-                           "(blank = 60, 0 = manual refresh only)", default="")
-        if interval.strip():
-            try:
-                out["refresh_interval_seconds"] = int(interval.strip())
-            except ValueError:
-                pass  # keep the 60s default rather than fail the wizard
     return out
 
 
@@ -5950,11 +5861,10 @@ def run(fast: bool = False, resume: bool = False) -> int:
 
     suites = pick_suites()
 
-    license_cfg = state.get("license")
-    if license_cfg is None:
-        license_cfg = pick_license()
-        state["license"] = license_cfg
-        _save_partial(state)
+    # No licensing step: nothing in this fork is tier-gated (see
+    # maverick.entitlements.GATED_FEATURES), so there is no entitlement to
+    # enforce and no vendor console to point at.
+    license_cfg: dict[str, Any] = {}
 
     console.print()
     if not _q_confirm("Write config and finish?", default=True):
