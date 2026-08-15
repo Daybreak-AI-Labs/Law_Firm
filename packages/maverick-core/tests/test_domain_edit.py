@@ -164,10 +164,10 @@ class TestResolvedView:
 
     def test_view_exposes_output_contract(self, tenant_dir):
         # The merged view carries the deliverable so the editor/API can render it.
-        view = resolved_view("finance_cash13w")
+        view = resolved_view("finance_cashflow")
         assert view["output"]["shape"] == "forecast"
-        assert view["output"]["deliverable"] == "13-week cash forecast"
-        assert "fpa_analyst" in view["output"]["consumers"]
+        assert view["output"]["deliverable"] == "Cash-flow & liquidity runway"
+        assert "treasurer" in view["output"]["consumers"]
 
 
 class TestValidateAndList:

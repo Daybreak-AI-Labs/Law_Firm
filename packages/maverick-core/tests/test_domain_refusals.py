@@ -24,7 +24,7 @@ def test_universal_refusals_apply_to_every_pack():
 
 
 def test_hr_carries_eu_ai_act_art5_refusals():
-    items = refusals_for("hr_screening")
+    items = refusals_for("hr_employment_law")
     assert any("emotion" in r for r in items), "missing workplace emotion-inference refusal"
     assert any("biometric" in r for r in items)
     assert any("social score" in r for r in items)
@@ -39,7 +39,7 @@ def test_physical_suites_refuse_safety_critical_actuation():
 
 
 def test_pack_specific_refusals_append_and_dedupe():
-    items = refusals_for("hr_screening",
+    items = refusals_for("hr_employment_law",
                          ["never use a credit score in screening",
                           # a duplicate of a universal entry must not repeat
                           UNIVERSAL[0]])
@@ -48,9 +48,9 @@ def test_pack_specific_refusals_append_and_dedupe():
 
 
 def test_render_is_a_non_negotiable_block_or_empty():
-    block = render_refusals("hr_screening")
+    block = render_refusals("hr_employment_law")
     assert "Hard refusals" in block and "no approval path" in block
-    for r in refusals_for("hr_screening"):
+    for r in refusals_for("hr_employment_law"):
         assert r in block
     # render is never empty in practice (universal always applies), but a blank
     # name still yields the universal block, not a crash.

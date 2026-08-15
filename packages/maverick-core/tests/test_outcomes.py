@@ -9,15 +9,15 @@ from maverick.world_model import WorldModel
 @pytest.fixture()
 def world(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    # finance_sox: two goals, one done one blocked.
-    g1 = w.create_goal("Reconcile the ledger", domain="finance_sox")
+    # finance_gl_close: two goals, one done one blocked.
+    g1 = w.create_goal("Reconcile the ledger", domain="finance_gl_close")
     e1 = w.start_episode(g1)
     w.end_episode(e1, "done", "success")
     w.set_goal_status(g1, "done", result="tied out")
-    g2 = w.create_goal("Close Q3 books", domain="finance_sox")
+    g2 = w.create_goal("Close Q3 books", domain="finance_gl_close")
     w.set_goal_status(g2, "blocked", result="missing invoices")
-    # gtm_demand_gen: one goal done.
-    g3 = w.create_goal("Plan launch campaign", domain="gtm_demand_gen")
+    # legal_intake: one goal done.
+    g3 = w.create_goal("Plan launch campaign", domain="legal_intake")
     w.set_goal_status(g3, "done", result="shipped")
     # a human approval (no department).
     aid = w.create_approval("bank_transfer", risk="high", detail="Q3 batch")
@@ -27,8 +27,8 @@ def world(tmp_path):
 
 def test_by_worker_rolls_up_goals_per_specialist(world):
     cards = {c.worker: c for c in outcomes.worker_cards(world)}
-    assert set(cards) == {"finance_sox", "gtm_demand_gen"}
-    fin = cards["finance_sox"]
+    assert set(cards) == {"finance_gl_close", "legal_intake"}
+    fin = cards["finance_gl_close"]
     assert fin.goals_total == 2 and fin.goals_completed == 1
     assert fin.completion_rate == 0.5
     assert fin.suite == "finance" and fin.suite_title == "Finance"

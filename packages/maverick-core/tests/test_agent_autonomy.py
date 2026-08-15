@@ -168,9 +168,9 @@ def test_suite_default_tiers():
 
     assert default_profile_for("fin_ap_clerk").default is AutonomyLevel.SUGGEST  # finance
     assert default_profile_for("legal_contract").default is AutonomyLevel.SUGGEST  # legal
-    assert default_profile_for("clean_grid_ops").default is AutonomyLevel.SUGGEST
-    assert default_profile_for("semi_fab_ops").default is AutonomyLevel.SUGGEST
-    ops = default_profile_for("cx_ticket_triage")  # customer_experience -> STANDARD
+    assert default_profile_for("tax_research_tax").default is AutonomyLevel.SUGGEST
+    assert default_profile_for("ins_subro").default is AutonomyLevel.SUGGEST
+    ops = default_profile_for("hr_i9_compliance")  # hr -> STANDARD
     assert ops.default is AutonomyLevel.REQUEST
     assert ops.low is AutonomyLevel.AUTO
     assert ops.high is AutonomyLevel.SUGGEST

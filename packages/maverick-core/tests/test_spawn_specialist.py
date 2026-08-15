@@ -122,7 +122,7 @@ async def test_spawn_specialist_withholds_already_sealed_domain_without_running(
 
     # Containment is COMPARTMENT-scoped: a specialist registers under its pack's
     # compartment (profile.compartment), which may differ from the domain name
-    # (e.g. domain 'aero_airworthiness' -> compartment 'aero_mro'). Seal the
+    # (e.g. domain 'legal_ai_counsel' -> compartment 'legal_regulatory'). Seal the
     # sector the child actually lands in -- the same key the automatic escalation
     # path (maybe_seal_domain) uses -- not the bare domain name.
     compartment = load_domains(builtin_dir())[dom].compartment

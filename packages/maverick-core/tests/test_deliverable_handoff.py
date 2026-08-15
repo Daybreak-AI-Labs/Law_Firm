@@ -29,7 +29,7 @@ def test_configured_endpoint_fires_signed_event(monkeypatch):
         return len(urls or [])
 
     monkeypatch.setattr(webhooks, "fire", fake_fire)
-    n = webhooks.fire_deliverable_handoff({"goal_id": 7, "domain": "finance_cash13w"})
+    n = webhooks.fire_deliverable_handoff({"goal_id": 7, "domain": "finance_cashflow"})
     assert n == 1
     assert captured["event"] == "deliverable.approved"
     assert captured["urls"] == ["https://sor.example/ingest"]

@@ -14,6 +14,15 @@
 
 ## Commands (verified working)
 
+- **Setup (containers where the distro owns `cryptography`):** post-create.sh
+  installs into the system interpreter and dies on
+  `Cannot uninstall cryptography 41.0.7, RECORD file not found` (debian-owned,
+  no RECORD). Build a venv instead — `python3 -m venv .venv` then the same
+  install order — and run everything through `./.venv/bin/python -m pytest`.
+  `.venv/` is already gitignored.
+- **Test speed:** the full suite takes ~30min serially in a 4-core container
+  (not the 2m39s in the note below). `pip install pytest-xdist` and run
+  `-n 4`; that is the difference between iterating and waiting.
 - **Setup:** `bash .devcontainer/post-create.sh` — editable-installs all 8
   packages (core first WITH deps; the rest `--no-deps` so pip doesn't try to
   resolve `maverick>=0.1` from PyPI), then runtime deps + dev tools, including
@@ -142,18 +151,37 @@ All verified locally green; each is a build-failer:
   (plus `2024-11-05` fallback). Don't bump without the spec. (Also expect
   starlette's "install httpx2" TestClient deprecation warning — known noise.)
 
-## Kernel rules (pre-existing, still enforced)
+## What this repo is
 
-Lightwork = proprietary AGENTIC ENTERPRISE PLATFORM (kernel `maverick-core` +
-shield + channels + dashboard + mcp + evolve + knowledge): a governed,
-self-improving AI workforce — 2,020 lint-clean specialist packs across 53
-suites, a closed learning lifecycle (dreaming/hindsight/proof, snapshot +
-rollback, signed learning audit), fleet memory for external agents, and the
-Operating Record. Category note: free OS agent runtimes (OpenClaw etc.) are
-NOT the competitive category — they are a commodity layer / potential
-loss-leader funnel. Compete with enterprise platforms (Agentforce, Copilot,
-Gemini Enterprise, ServiceNow) on governance + provable learning, never on
-the runtime.
+A hard fork of the Lightwork platform, adapted into the operating system for a
+single Virginia law firm. Forked at Lightwork `f47c70c`; upstream history is
+not shared, so fixes do not flow in automatically — port them deliberately.
+
+Practice: VA. Family law, complex litigation, privacy/cyber, estate planning &
+probate, business/transactional, real estate.
+
+What changed from upstream, and why:
+
+- **Roster pruned 2,020 → 125 packs.** All 76 `legal_*` packs plus the tax,
+  finance, security, knowledge, employment, corporate, real-estate and
+  insurance seats that support legal work. The industry verticals (aero, ag,
+  mining, semiconductors, healthcare, banking, …) are gone. Pack names are
+  used as fixture data throughout the test suite — see the failure log.
+- **No fleet.** This is a solo practice with an invite path for a paralegal or
+  associate, not a 2,000-agent workforce. Agent-surveillance surfaces
+  (scorecards, trust scores, EDR, per-step telemetry) come out; the **audit
+  record stays** — conflicts checks, privilege logs and billing substantiation
+  are malpractice-defense artifacts, not enterprise ceremony.
+- **Theme default is `graphite`** (neutral grey), with `dove` as the light
+  grey. The upstream liquid-glass system renders against them unchanged.
+- **Deleted:** `benchmarks/`, `demo/`, and their CI jobs (eval-smoke,
+  governance-frontier-offline, harness-overhead) and docs-publishing steps.
+- **Retained deliberately:** `agent-shield`, all 14 client apps, and the
+  multi-tenant/`tenant` layer — the last is load-bearing (227 source
+  references, 163 test files) and single-tenant is already its default path,
+  so removing it would be a large refactor for no user-visible gain.
+
+## Kernel rules (pre-existing, still enforced)
 
 1. Kernel runs WITHOUT the shield — never require `agent-shield`; fail open
    with a warning.
@@ -199,3 +227,16 @@ and never mark the PR work done until the body has been verified clean.
 | Write a test | failed-then-fixed | Budget token caps trip at record time, not only `check()` |
 | Rename + imports | success | 16/16 green; stale `docs/FEATURES.md` ref; `git mv` revert leaves untracked file |
 | Fix lint issue | n/a | nothing to fix: gates clean; 127 bugbear findings intentionally out of scope |
+| Fork + prune to a law firm | success-with-tail | Deleting 1,895 packs broke 16 tests immediately and ~50 files in total: **pack names are fixture data all over the suite** (`finance_sox` alone in 27 files, `finance_cash13w` in 12). Roster-shape assertions (`>1000 non-builders`, `>=55 itgrc packs`) encode the enterprise product and must be retargeted, not deleted — the invariants inside them (read-only envelope, self-edit floor, effort tiers) are the safety contract. |
+| Bulk-rename pack references | caught in review | A blanket `\bfinance_anomaly\b` rewrite also hit `maverick/tools/finance_anomaly.py` — several pack names are ALSO tool/module names. Check for a `packages/**/<name>.py` collision before any roster-wide rename. |
+
+## Pack-reference gotchas
+
+- `available_domains()` globs `domains/*.toml`, so deleting a pack file is safe
+  at load time and explodes later — as a `KeyError` in a test fixture, or as a
+  **409 from the dashboard** when a goal names a domain that no longer exists.
+  That 409 is the signature of a pruned pack, not a CSRF problem.
+- The router benchmark (`test_domain_router.py`) is a labeled routing set, not
+  a smoke test. After a roster change, re-check the real numbers rather than
+  just green/red — currently hit@1 77%, recall@10 100%, suite@1 85% over 26
+  cases, against floors of 50/80/60%.

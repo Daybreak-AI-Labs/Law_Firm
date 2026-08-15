@@ -34,10 +34,10 @@ def _make_state(tmp_path, name, *, reflexions=(), insights=(), skills=()):
 class TestCoverage:
     def test_reflexion_provides_coverage(self, tmp_path):
         d = _make_state(tmp_path, "s", reflexions=[
-            ("reconcile the quarterly ledger totals", "finance_sox"),
+            ("reconcile the quarterly ledger totals", "finance_gl_close"),
         ])
         cov = hindsight.coverage_under(
-            "reconcile the quarterly ledger totals", d, domain="finance_sox",
+            "reconcile the quarterly ledger totals", d, domain="finance_gl_close",
         )
         assert cov.covered and cov.reflexion
 
@@ -71,7 +71,7 @@ class _World:
         return gs[:limit]
 
 
-def _goal(title, status="blocked", domain="finance_sox"):
+def _goal(title, status="blocked", domain="finance_gl_close"):
     return SimpleNamespace(title=title, description="", status=status,
                            domain=domain)
 
@@ -81,7 +81,7 @@ class TestReplay:
         # Older state: empty. Newer state: covers the goal.
         before = _make_state(tmp_path, "before")
         after = _make_state(tmp_path, "after", reflexions=[
-            ("reconcile the quarterly ledger totals", "finance_sox"),
+            ("reconcile the quarterly ledger totals", "finance_gl_close"),
         ])
         world = _World([_goal("reconcile the quarterly ledger totals")])
         report = hindsight.replay(world, before=before, after=after)
@@ -93,7 +93,7 @@ class TestReplay:
         # The newer state LOST the lesson (retired skill / pruned reflexion):
         # this is the signal the engine exists to surface.
         before = _make_state(tmp_path, "before", reflexions=[
-            ("reconcile the quarterly ledger totals", "finance_sox"),
+            ("reconcile the quarterly ledger totals", "finance_gl_close"),
         ])
         after = _make_state(tmp_path, "after")
         world = _World([_goal("reconcile the quarterly ledger totals")])
@@ -104,7 +104,7 @@ class TestReplay:
 
     def test_unchanged_is_neither(self, tmp_path):
         state = _make_state(tmp_path, "s", reflexions=[
-            ("reconcile the quarterly ledger totals", "finance_sox"),
+            ("reconcile the quarterly ledger totals", "finance_gl_close"),
         ])
         world = _World([_goal("reconcile the quarterly ledger totals")])
         report = hindsight.replay(world, before=state, after=state)
@@ -114,7 +114,7 @@ class TestReplay:
     def test_status_filter_replays_only_failures_by_default(self, tmp_path):
         before = _make_state(tmp_path, "before")
         after = _make_state(tmp_path, "after", reflexions=[
-            ("reconcile the ledger", "finance_sox"),
+            ("reconcile the ledger", "finance_gl_close"),
         ])
         world = _World([
             _goal("reconcile the ledger", status="blocked"),

@@ -592,7 +592,10 @@ class TestTaxSuitePacks:
     def test_roster_present_and_sealed(self):
         packs = {k: v for k, v in load_domains(builtin_dir()).items()
                  if k.startswith("tax_")}
-        assert len(packs) >= 19, f"expected >=19 tax packs, found {len(packs)}"
+        # The firm keeps the advisory/controversy tax seats that support estate,
+        # entity and client work; the tax-prep production seats (e-file status,
+        # workpaper assembly, season ops) are not part of this fork.
+        assert len(packs) >= 12, f"expected >=12 tax packs, found {len(packs)}"
         for name, p in packs.items():
             # Tax work is advisory: a pack may be low- or medium-risk (medium for
             # the higher-liability advisory areas -- audit defense, transfer
@@ -638,8 +641,8 @@ class TestTaxSuitePacks:
     def test_suite_registered_with_discipline(self):
         from maverick.domain import suite_for
         from maverick.domain_discipline import discipline_for
-        assert suite_for("tax_workpaper_assembler") == "tax"
-        block = discipline_for("tax_workpaper_assembler")
+        assert suite_for("tax_research_tax") == "tax"
+        block = discipline_for("tax_research_tax")
         assert "Tax preparation discipline" in block
         assert "never" in block.lower()
 
@@ -695,15 +698,10 @@ class TestTaxEngineConnectors:
         entry = next(e for e in connector_catalog() if e["name"] == "cch_axcess")
         assert ("CCH_AXCESS_SUBSCRIPTION_KEY", True) in entry["env"]
 
-    def test_status_packs_can_reach_the_read_seats(self):
-        packs = load_domains(builtin_dir())
-        for name in ("tax_efile_status", "tax_prior_year_compare",
-                     "tax_season_ops", "tax_intake_checklist"):
-            cap = packs[name].capability(f"agent:{name}")
-            assert cap.permits("cch_axcess_read") is True, name
-            assert cap.permits("gosystem_tax_read") is True, name
-            assert cap.permits("cch_axcess") is False, name   # write seat
-            assert cap.permits("gosystem_tax") is False, name
+    # The read-seat connector test (tax_efile_status et al. reach cch_axcess_read
+    # but never the write seat) is not carried over: those tax-prep production
+    # packs are not in the firm's roster. The connector catalog itself is still
+    # covered by the wizard test above.
 
 
 class TestJsonOutput:

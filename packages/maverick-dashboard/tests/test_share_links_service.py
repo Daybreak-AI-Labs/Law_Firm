@@ -15,7 +15,7 @@ def _world(tmp_path, monkeypatch):
 
 
 def _make_goal(w, *, approve=True):
-    gid = w.create_goal("Refresh forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result="| Week | Net |\n| --- | --- |\n| W1 | 300 |")
     if approve:
         w.record_signoff(gid, "approved", decided_by="reviewer")

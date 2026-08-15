@@ -12,7 +12,7 @@ from maverick.world_model import WorldModel
 @pytest.fixture()
 def world(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    gid = w.create_goal("Reconcile the quarterly ledger", domain="finance_sox")
+    gid = w.create_goal("Reconcile the quarterly ledger", domain="finance_gl_close")
     eid = w.start_episode(gid)
     w.end_episode(eid, "done", "success")
     w.set_goal_status(gid, "done", result="tied out")
@@ -27,12 +27,12 @@ def test_assemble_threads_goals_and_approvals(world):
     kinds = {r.kind for r in records}
     assert kinds == {"goal", "approval"}
     goal = next(r for r in records if r.kind == "goal")
-    assert goal.department == "finance_sox" and goal.outcome == "done"
+    assert goal.department == "finance_gl_close" and goal.outcome == "done"
     approval = next(r for r in records if r.kind == "approval")
     assert approval.decided_by == "user:cfo"
     s = orec.stats(records)
     assert s.n_goals == 1 and s.n_approvals == 1 and s.n_human_decisions == 1
-    assert s.departments == {"finance_sox": 1}
+    assert s.departments == {"finance_gl_close": 1}
 
 
 def test_query_finds_every_decision_that_touched_x(world):

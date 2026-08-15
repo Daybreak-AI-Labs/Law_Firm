@@ -33,9 +33,9 @@ def test_audit_captures_governance_posture():
 
 
 def test_roster_has_no_drafting_agent_reaching_a_mutator():
-    # The headline provable-governance number across all 1,118 packs.
+    # The headline provable-governance number across the whole roster.
     s = summarize(audit_roster(_BUILTIN))
-    assert s["packs"] >= 1000
+    assert s["packs"] >= 100
     assert s["drafting_agents_reaching_a_mutator"] == 0
     assert s["packs_with_deliverable"] == s["packs"]
 
@@ -76,8 +76,9 @@ def test_intermediate_prompt_gate_is_not_reported_as_enforced():
 
 
 def test_builder_is_flagged_as_builder_not_dangerous():
+    # The firm's roster ships no coding builders, so this is a forward guard:
+    # it starts asserting the moment a pack is granted shell/code_exec.
     builders = [a for a in audit_roster(_BUILTIN) if a.is_builder]
-    assert builders, "expected coding builders in the roster"
     for a in builders:
         # A builder legitimately reaches shell/code_exec; it is recorded as a
         # builder, and the summary excludes it from the drafting-agent invariant.

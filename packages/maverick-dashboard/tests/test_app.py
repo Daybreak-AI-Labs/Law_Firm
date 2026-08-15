@@ -138,7 +138,7 @@ def test_compartments_page_renders(tmp_path, monkeypatch):
     assert "finance" in resp.text
     # a pack that declares an output contract surfaces its deliverable
     assert "Delivers:" in resp.text
-    assert "13-week cash forecast" in resp.text
+    assert "Cash-flow &amp; liquidity runway" in resp.text
 
 
 def test_facts_page_renders(tmp_path, monkeypatch):

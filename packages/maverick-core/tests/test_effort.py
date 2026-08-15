@@ -187,24 +187,24 @@ _M = "claude-opus-4-8"  # an effort-supporting model
 def test_pack_effort_ignored_when_feature_off(monkeypatch):
     # A pack's tier never turns the feature on -- off stays off.
     monkeypatch.setattr(effort, "_config_effort", dict)
-    assert effort_for_role("finance_sox", _M, pack_default="high") is None
+    assert effort_for_role("finance_gl_close", _M, pack_default="high") is None
 
 
 def test_pack_effort_applies_when_enabled(monkeypatch):
     monkeypatch.setattr(effort, "_config_effort", lambda: {"enabled": True})
-    assert effort_for_role("finance_sox", _M, pack_default="high") == "high"
+    assert effort_for_role("finance_gl_close", _M, pack_default="high") == "high"
 
 
 def test_pack_effort_beats_global_default(monkeypatch):
     # A pack's tier is more specific than the deployment-wide default.
     monkeypatch.setattr(effort, "_config_effort",
                         lambda: {"enabled": True, "default": "low"})
-    assert effort_for_role("finance_sox", _M, pack_default="high") == "high"
+    assert effort_for_role("finance_gl_close", _M, pack_default="high") == "high"
     # ...but a pack with no tier still gets the global default.
-    assert effort_for_role("cx_status_page", _M) == "low"
+    assert effort_for_role("km_doc_quality", _M) == "low"
 
 
 def test_per_role_override_still_beats_pack_effort(monkeypatch):
-    monkeypatch.setenv("MAVERICK_EFFORT_FINANCE_SOX", "low")
+    monkeypatch.setenv("MAVERICK_EFFORT_FINANCE_GL_CLOSE", "low")
     monkeypatch.setattr(effort, "_config_effort", lambda: {"enabled": True})
-    assert effort_for_role("finance_sox", _M, pack_default="high") == "low"
+    assert effort_for_role("finance_gl_close", _M, pack_default="high") == "low"

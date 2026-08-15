@@ -13,7 +13,7 @@ class TestDiscipline:
         )
 
     def test_suite_pack_gets_universal_plus_suite(self):
-        block = domain_discipline.discipline_for("finance_sox")
+        block = domain_discipline.discipline_for("finance_gl_close")
         assert "Operating discipline:" in block
         assert "segregation of duties" in block.lower()
         # And a different suite gets ITS discipline, not finance's.
@@ -28,12 +28,12 @@ class TestDiscipline:
 
     def test_augment_appends_and_respects_opt_out(self, monkeypatch):
         monkeypatch.delenv("MAVERICK_DOMAIN_DISCIPLINE", raising=False)
-        out = domain_discipline.augment_persona("finance_sox", "You are X.")
+        out = domain_discipline.augment_persona("finance_gl_close", "You are X.")
         assert out.startswith("You are X.")
         assert "Finance discipline" in out
         monkeypatch.setenv("MAVERICK_DOMAIN_DISCIPLINE", "0")
         assert domain_discipline.augment_persona(
-            "finance_sox", "You are X.",
+            "finance_gl_close", "You are X.",
         ) == "You are X."
 
 
@@ -56,7 +56,7 @@ class TestSpawnIntegration:
         monkeypatch.delenv("MAVERICK_DOMAIN_DISCIPLINE", raising=False)
         from maverick.domain import agent_from_profile
         profile = DomainProfile(
-            name="finance_sox", persona="You are a SOX control tester.",
+            name="finance_gl_close", persona="You are a SOX control tester.",
             allow_tools=["read_file"], max_risk="low",
         )
         agent = agent_from_profile(profile, self._ctx(tmp_path), "test controls")
@@ -72,11 +72,11 @@ class TestSpawnIntegration:
             goal_text="reconcile the quarterly ledger totals",
             failure_class="budget", failure_msg="cap",
             reflection="raise the cap before starting",
-            domain="finance_sox",
+            domain="finance_gl_close",
         )
         from maverick.domain import agent_from_profile
         profile = DomainProfile(
-            name="finance_sox", persona="You are a SOX control tester.",
+            name="finance_gl_close", persona="You are a SOX control tester.",
             allow_tools=["read_file"], max_risk="low",
         )
         agent = agent_from_profile(
@@ -93,13 +93,13 @@ class TestSpawnIntegration:
             goal_text="reconcile leaked operator ledger",
             failure_class="scope", failure_msg="unscoped",
             reflection="LEAKME_OPERATOR_SECRET",
-            domain="finance_sox",
+            domain="finance_gl_close",
         )
         reflexion.record(
             goal_text="reconcile customer ledger",
             failure_class="scope", failure_msg="scoped",
             reflection="LEAKME_SCOPED_SECRET",
-            channel="api", user_id="victim-user", domain="finance_sox",
+            channel="api", user_id="victim-user", domain="finance_gl_close",
         )
 
         class Verdict:
@@ -119,7 +119,7 @@ class TestSpawnIntegration:
 
         from maverick.domain import agent_from_profile
         profile = DomainProfile(
-            name="finance_sox", persona="You are a SOX control tester.",
+            name="finance_gl_close", persona="You are a SOX control tester.",
             allow_tools=["read_file"], max_risk="low",
         )
 
@@ -142,19 +142,19 @@ class TestSpawnIntegration:
             lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("disabled Dreaming recall was invoked")),
         )
-        profile = DomainProfile(name="finance_sox")
+        profile = DomainProfile(name="finance_gl_close")
         assert _department_memory(profile, "anything") == ""
 
     def test_memory_includes_dream_insights(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAVERICK_DREAMING", "1")
         ipath = tmp_path / "insights.ndjson"
         dreaming.append_insights([dreaming.DreamInsight(
-            ts=1.0, kind="failure_pattern", domain="finance_sox",
+            ts=1.0, kind="failure_pattern", domain="finance_gl_close",
             text="Recurring failure (budget, seen 3x) on ledger goals.",
             evidence=3,
         )], path=ipath)
         monkeypatch.setattr(dreaming, "insights_path", lambda: ipath)
-        profile = DomainProfile(name="finance_sox")
+        profile = DomainProfile(name="finance_gl_close")
         memory = _department_memory(profile, "prepare the walkthrough memo")
         assert "Consolidated lessons" in memory
 
@@ -163,17 +163,17 @@ class TestSpawnIntegration:
         ipath = tmp_path / "insights.ndjson"
         dreaming.append_insights([
             dreaming.DreamInsight(
-                ts=1.0, kind="failure_pattern", domain="finance_sox",
+                ts=1.0, kind="failure_pattern", domain="finance_gl_close",
                 text="LOCAL_OPERATOR_LEDGER_LESSON", evidence=3,
             ),
             dreaming.DreamInsight(
-                ts=2.0, kind="failure_pattern", domain="finance_sox",
+                ts=2.0, kind="failure_pattern", domain="finance_gl_close",
                 text="ALICE_PRIVATE_LEDGER_LESSON", evidence=3,
                 channel="api", user_id="alice",
             ),
         ], path=ipath)
         monkeypatch.setattr(dreaming, "insights_path", lambda: ipath)
-        profile = DomainProfile(name="finance_sox")
+        profile = DomainProfile(name="finance_gl_close")
 
         alice = _department_memory(
             profile, "reconcile the customer ledger",
@@ -201,7 +201,7 @@ class TestSpawnIntegration:
         monkeypatch.setenv("MAVERICK_DREAMING", "1")
         ipath = tmp_path / "insights.ndjson"
         dreaming.append_insights([dreaming.DreamInsight(
-            ts=1.0, kind="failure_pattern", domain="finance_sox",
+            ts=1.0, kind="failure_pattern", domain="finance_gl_close",
             text="INJECT_IGNORE_PRIOR_INSTRUCTIONS on ledger goals.",
             evidence=3,
         )], path=ipath)
@@ -212,7 +212,7 @@ class TestSpawnIntegration:
                 blocked = "INJECT_IGNORE_PRIOR_INSTRUCTIONS" in text
                 return type("V", (), {"allowed": not blocked})()
 
-        profile = DomainProfile(name="finance_sox")
+        profile = DomainProfile(name="finance_gl_close")
         memory = _department_memory(
             profile, "prepare the walkthrough memo", shield=Shield())
         assert "INJECT_IGNORE_PRIOR_INSTRUCTIONS" not in memory
@@ -222,7 +222,7 @@ class TestSpawnIntegration:
 class TestLintProfile:
     def test_clean_pack_is_clean(self):
         errors, warnings = lint_profile(DomainProfile(
-            name="finance_sox", description="SOX control testing",
+            name="finance_gl_close", description="SOX control testing",
             persona="x" * 250, allow_tools=["read_file"],
             deny_tools=["shell", "write_file"], max_risk="low",
             knowledge_sources=["finance"],

@@ -184,15 +184,15 @@ def test_deployed_department_agent_runs_under_domain_capability(monkeypatch, tmp
     calls = _stub_runner(monkeypatch)
     c = _client()
 
-    # Self-host fail-open entitlement: deploy the Sales & GTM department.
-    r = c.post("/api/v1/departments/sales_gtm/deploy")
+    # Self-host fail-open entitlement: deploy the Legal department.
+    r = c.post("/api/v1/departments/legal/deploy")
     assert r.status_code == 201, r.text
     fleet = r.json()["fleet"]
-    agent = next(a for a in fleet["agents"] if a["name"] == "gtm_demand_gen")
-    assert agent["domain"] == "gtm_demand_gen"  # bound to its pack
+    agent = next(a for a in fleet["agents"] if a["name"] == "legal_intake")
+    assert agent["domain"] == "legal_intake"  # bound to its pack
 
-    rr = c.post("/api/v1/fleets/dept-sales_gtm/run",
-                json={"agent": "gtm_demand_gen", "prompt": "plan a campaign"})
+    rr = c.post("/api/v1/fleets/dept-legal/run",
+                json={"agent": "legal_intake", "prompt": "open a new matter"})
     assert rr.status_code == 201, rr.text
 
     # The dispatched capability enforces the pack's hard denials (shell/write).

@@ -1,4 +1,4 @@
-"""Specialist routing: lexical retrieval over the 1,118-pack roster.
+"""Specialist routing: lexical retrieval over the firm's pack roster.
 
 The router is a deterministic pre-filter that narrows the roster to a relevant
 shortlist for a task, so the orchestrator picks from ~10 candidates instead of
@@ -16,55 +16,60 @@ from maverick.domain_router import DomainRouter, rank_specialists
 _PACKS = load_domains(builtin_dir())
 _ROUTER = DomainRouter(_PACKS)
 
-# (task phrased as a user would, acceptable specialist set, expected suite).
-# Multiple packs are acceptable on purpose: with 1,118 specialists several are
-# legitimately right for one task, so exact top-1 would understate the router.
+# (task phrased as a lawyer would, acceptable specialist set, expected suite).
+# Multiple packs are acceptable on purpose: several seats are legitimately right
+# for one task, so exact top-1 would understate the router.
 _CASES: list[tuple[str, set[str], str]] = [
     ("review this NDA and flag the liability cap and indemnity clauses",
      {"legal_contract_review", "legal_nda_desk"}, "legal"),
-    ("do a three-way match on these invoices before we pay the vendor",
-     {"finance_ap"}, "finance"),
-    ("build a 13 week cash flow forecast",
-     {"finance_cash13w", "finance_cashflow"}, "finance"),
-    ("screen these resumes against the job rubric", {"hr_screening"}, "hr"),
-    ("an employee filed a harassment complaint, help me investigate",
-     {"hr_investigations", "hr_employee_relations", "hr_er_intake"}, "hr"),
-    ("triage this inbound support ticket and suggest a reply",
-     {"cx_triage", "cx_tech_support"}, "customer_experience"),
-    ("a customer wants a refund outside policy", {"cx_refunds"}, "customer_experience"),
-    ("write an outbound cold email sequence for these prospects",
-     {"gtm_outbound_sdr", "gtm_sequencing"}, "sales_gtm"),
-    ("our SOC 2 audit needs evidence collected",
-     {"itgrc_soc2_evidence", "itgrc_evidence"}, "it_grc"),
-    ("a vendor wants access to our data, assess the third party risk",
-     {"itgrc_vendor_risk", "itgrc_vendor_monitoring"}, "it_grc"),
-    ("investigate this security alert from the SIEM",
-     {"itgrc_siem_triage", "sec_soc_triage", "itgrc_threat_detection"}, "it_grc"),
-    ("plan the sprint and groom the backlog",
-     {"pe_backlog", "pe_roadmap"}, "product_engineering"),
-    ("review this pull request for bugs",
-     {"pe_code_review", "pe_bug_triage"}, "product_engineering"),
-    ("the production service is down, run the incident",
-     {"pe_sre_incident_commander", "pe_release_chaos"}, "product_engineering"),
-    ("prior authorization for an MRI from the payer", {"hc_prior_auth"}, "healthcare"),
-    ("file a claim for water damage on a property policy",
-     {"ins_fnol", "ins_claim_file"}, "insurance"),
-    ("a wire transfer looks suspicious, check for AML",
-     {"bank_aml_alerts", "bank_wire_review", "bank_sar_prep"}, "banking"),
-    ("reconcile the month end general ledger close",
-     {"finance_gl_close", "finance_close_driver"}, "finance"),
-    ("draft a press release for the product launch", {"mkt_pr_comms", "gtm_pr"}, "marketing"),
-    ("negotiate pricing on this supplier contract",
-     {"proc_sourcing", "proc_should_cost", "gtm_negotiation"}, "procurement"),
-    ("value this acquisition target",
-     {"strat_valuation", "strat_ma_modeling", "strat_due_diligence"}, "strategy"),
+    ("run a conflicts check before we take on this new client",
+     {"legal_conflicts"}, "legal"),
+    ("open a new matter and collect what we need from the client",
+     {"legal_matter_intake", "legal_intake", "legal_matter_mgmt"}, "legal"),
+    ("put a litigation hold in place and notify the custodians",
+     {"legal_hold", "legal_lit_hold"}, "legal"),
+    ("we were served with a subpoena, how do we respond",
+     {"legal_subpoena"}, "legal"),
+    ("collect and review the documents for discovery",
+     {"legal_ediscovery", "legal_ediscovery_modern_data"}, "legal"),
+    ("check the citations and quotations in this brief",
+     {"legal_citation"}, "legal"),
+    ("research the case law on this issue and write it up",
+     {"legal_research"}, "legal"),
+    ("draft the motion and supporting memorandum",
+     {"legal_briefs", "legal_litigation_mgmt"}, "legal"),
+    ("file a trademark application for the client's brand",
+     {"legal_trademark"}, "legal"),
+    ("docket the upcoming patent prosecution deadlines",
+     {"legal_ip_docket", "legal_patent"}, "legal"),
+    ("negotiate the data processing agreement with this vendor",
+     {"legal_dpa_negotiation", "legal_vendor_contract_review"}, "legal"),
+    ("the client had a data breach, what are the notification obligations",
+     {"legal_data_breach_legal", "legal_privacy"}, "legal"),
+    ("advise on GDPR obligations for the European rollout",
+     {"legal_gdpr_dpo", "legal_uk_gdpr", "legal_privacy"}, "legal"),
+    ("form a new LLC and draft the operating agreement",
+     {"legal_entity_mgmt", "legal_contract_drafting"}, "legal"),
+    ("draft the minutes for the annual board meeting",
+     {"legal_board", "exec_minutes"}, "legal"),
+    ("settle the case and paper the settlement agreement",
+     {"legal_settlement", "legal_negotiation"}, "legal"),
+    ("what open source licenses are in this codebase",
+     {"legal_open_source_license"}, "legal"),
     ("respond to an IRS notice for a client", {"tax_irs_notice"}, "tax"),
-    ("schedule preventive maintenance on the line equipment",
-     {"ops_maintenance_pm", "mfg_maintenance_pm"}, "operations"),
-    ("a shipment is delayed, chase the carrier for an ETA",
-     {"log_track_trace", "log_eta_comms"}, "logistics"),
-    ("check this construction change order and pay application",
-     {"con_pay_apps", "con_change_orders"}, "construction"),
+    ("abstract the key terms out of this commercial lease",
+     {"re_lease_abstraction"}, "real_estate"),
+    ("pursue subrogation against the at-fault party",
+     {"ins_subro"}, "insurance"),
+    ("reconcile the month end general ledger close",
+     {"finance_gl_close"}, "finance"),
+    ("chase the outstanding client invoices", {"finance_ar"}, "finance"),
+    ("is this worker properly classified as a contractor",
+     {"hr_contractor_class", "hr_employment_law"}, "hr"),
+    ("run the incident response tabletop exercise",
+     {"sec_ir_drill", "sec_tabletop_artifacts"}, "security_ops"),
+    ("submit a public records request to the agency",
+     {"pubsec_records_request", "gov_foia_support"}, "public_sector"),
 ]
 
 
@@ -141,8 +146,8 @@ def _fake_embed(texts):
 
 def _toy_domains():
     return {
-        "hr_offboarding": DomainProfile(
-            name="hr_offboarding", description="employee offboarding and exit",
+        "hr_employment_law": DomainProfile(
+            name="hr_employment_law", description="employee offboarding and exit",
             persona="You run offboarding and termination logistics for departing staff."),
         "legal_nda_desk": DomainProfile(
             name="legal_nda_desk", description="confidentiality agreements",
@@ -159,7 +164,7 @@ def test_embedding_router_ranks_paraphrase_without_shared_tokens():
     # "let someone go" shares no surface tokens with the offboarding pack, but
     # the synonym concept ("fire") makes it the top semantic match.
     scores = r.score_all("we need to fire a staff member")
-    assert max(scores, key=scores.get) == "hr_offboarding"
+    assert max(scores, key=scores.get) == "hr_employment_law"
 
 
 def test_embedding_router_unavailable_without_a_model():

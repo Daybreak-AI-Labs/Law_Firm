@@ -82,7 +82,7 @@ def test_agent_from_profile_no_autonomy_block_uses_own_suite_default(tmp_path):
         "parent task",
     )
     profile = DomainProfile(
-        name="bank_wire_review",
+        name="legal_investigations",
         allow_tools=["read_file"],
         autonomy=None,
     )
@@ -148,7 +148,7 @@ def test_every_suite_spawns_with_workflow_and_envelope(tmp_path):
     # envelope. Catches a pack whose appended [[workflow]] breaks the spawn path.
     ctx = _ctx(tmp_path)
     sample = _one_pack_per_suite()
-    assert len(sample) >= 25, f"only {len(sample)} suites sampled"
+    assert len(sample) >= 10, f"only {len(sample)} suites sampled"
     for name, profile in sample:
         agent = agent_from_profile(profile, ctx, "Do your job for the period.")
         assert agent.role == name
@@ -167,7 +167,7 @@ def test_pack_effort_tier_flows_to_agent(tmp_path, monkeypatch):
     from maverick import effort as effort_mod
     ctx = _ctx(tmp_path)
     profile = DomainProfile(
-        name="finance_sox", persona="You audit SOX controls. Cite evidence.",
+        name="finance_gl_close", persona="You audit SOX controls. Cite evidence.",
         allow_tools=["read_file"], deny_tools=["shell", "write_file"],
         max_risk="low", effort="high",
         models={"x": "claude-opus-4-8"},
@@ -187,7 +187,7 @@ def test_refusals_reach_the_agent_system_prompt(tmp_path):
     # independent of the model following persona prose.
     ctx = _ctx(tmp_path)
     profile = DomainProfile(
-        name="hr_screening", persona="You screen resumes against the rubric.",
+        name="hr_employment_law", persona="You screen resumes against the rubric.",
         allow_tools=["read_file"], deny_tools=["shell", "write_file"], max_risk="low",
         refuse=["never rank candidates by a credit score"],
     )

@@ -26,7 +26,7 @@ def _seed_world():
     w.end_episode(eid, "ok", "success", cost_dollars=1.25,
                   input_tokens=10_000, output_tokens=1_500, tool_calls=6)
     w.set_goal_status(done, "done")
-    blocked = w.create_goal("Access recert", domain="sec_access_review")
+    blocked = w.create_goal("Access recert", domain="sec_incident_scribe")
     w.set_goal_status(blocked, "blocked")
     return w
 

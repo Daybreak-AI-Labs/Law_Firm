@@ -20,7 +20,7 @@ def keys(tmp_path, monkeypatch):
 def _seed_insights(tmp_path) -> str:
     path = tmp_path / "insights.ndjson"
     dreaming.append_insights([dreaming.DreamInsight(
-        ts=1.0, kind="failure_pattern", domain="finance_sox",
+        ts=1.0, kind="failure_pattern", domain="finance_gl_close",
         text="Recurring failure (budget, seen 3x) on goals about ledger totals.",
         evidence=3,
     )], path=path)

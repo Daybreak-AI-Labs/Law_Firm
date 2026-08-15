@@ -20,7 +20,7 @@ class _Run:
     updated_at: float
 
 
-_FORECAST = {"domain": "finance_cash13w", "deliverable": "13-week cash forecast",
+_FORECAST = {"domain": "finance_cashflow", "deliverable": "13-week cash forecast",
              "shape": "forecast", "consumers": ["fpa_analyst", "treasurer"],
              "cadence": "weekly", "gate": "review", "suite": "finance"}
 _RISK = {"domain": "risk_x", "deliverable": "Risk assessment", "shape": "report",
@@ -38,7 +38,7 @@ class TestBuildInbox:
         assert m["role"] == "risk_officer"
 
     def test_finished_gated_run_is_awaiting_signoff(self):
-        runs = {"finance_cash13w": [_Run(7, "Refresh forecast", "done", 100.0)]}
+        runs = {"finance_cashflow": [_Run(7, "Refresh forecast", "done", 100.0)]}
         m = build_inbox([_FORECAST], runs)
         assert len(m["awaiting"]) == 1
         assert m["awaiting"][0]["id"] == 7
@@ -47,21 +47,21 @@ class TestBuildInbox:
 
     def test_running_or_ungated_run_is_not_awaiting(self):
         # in-flight run: not finished -> not awaiting
-        running = {"finance_cash13w": [_Run(8, "x", "running", 1.0)]}
+        running = {"finance_cashflow": [_Run(8, "x", "running", 1.0)]}
         assert build_inbox([_FORECAST], running)["awaiting"] == []
         # finished but the pack declares no gate -> nothing to sign off
         ungated = dict(_FORECAST, gate=None)
-        done = {"finance_cash13w": [_Run(9, "x", "done", 1.0)]}
+        done = {"finance_cashflow": [_Run(9, "x", "done", 1.0)]}
         assert build_inbox([ungated], done)["awaiting"] == []
 
     def test_items_with_signoffs_float_to_top(self):
-        runs = {"finance_cash13w": [_Run(1, "f", "done", 5.0)],  # awaiting
+        runs = {"finance_cashflow": [_Run(1, "f", "done", 5.0)],  # awaiting
                 "risk_x": [_Run(2, "r", "running", 6.0)]}        # not
         m = build_inbox([_RISK, _FORECAST], runs)  # risk first by input order
-        assert m["items"][0]["domain"] == "finance_cash13w"     # floated up
+        assert m["items"][0]["domain"] == "finance_cashflow"     # floated up
 
     def test_signed_off_run_drops_out_of_awaiting(self):
-        runs = {"finance_cash13w": [_Run(7, "Refresh forecast", "done", 100.0)]}
+        runs = {"finance_cashflow": [_Run(7, "Refresh forecast", "done", 100.0)]}
         # finished + gated, but reviewed -> no longer awaiting
         m = build_inbox([_FORECAST], runs, signoffs={7: "approved"})
         assert m["awaiting"] == []
@@ -77,7 +77,7 @@ class TestBuildInbox:
 
     def test_explicit_role_overrides_mine(self):
         m = build_inbox([_FORECAST, _RISK], {}, role="fpa_analyst", mine={"risk_officer"})
-        assert [it["domain"] for it in m["items"]] == ["finance_cash13w"]
+        assert [it["domain"] for it in m["items"]] == ["finance_cashflow"]
         assert m["showing_mine"] is False     # an explicit chip wins over the default
         assert m["roles"] == ["fpa_analyst", "risk_officer", "treasurer"]  # all roles, for the filter
 
@@ -116,13 +116,13 @@ class TestDeliverablesPage:
         r = client.get("/deliverables")
         assert r.status_code == 200
         assert "Deliverables" in r.text
-        # finance_cash13w ships a contract, so its consumers show as filter chips
+        # finance_cashflow ships a contract, so its consumers show as filter chips
         assert "fpa_analyst" in r.text
-        assert "13-week cash forecast" in r.text
+        assert "Cash-flow &amp; liquidity runway" in r.text
 
     def test_finished_forecast_shows_in_signoff_queue(self, tmp_path, monkeypatch):
         w = self._world(tmp_path, monkeypatch)
-        gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cash13w")
+        gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
         w.set_goal_status(gid, "done", result="| Week | Net |\n| --- | --- |\n| W1 | 10 |\n")
         t = client.get("/deliverables").text
         assert "Awaiting sign-off" in t
@@ -135,19 +135,19 @@ class TestDeliverablesPage:
         assert r.status_code == 200
         assert "No deliverables for nobody_consumes_this" in r.text
         # the real consumer keeps the forecast visible
-        assert "13-week cash forecast" in client.get("/deliverables?role=fpa_analyst").text
+        assert "Cash-flow &amp; liquidity runway" in client.get("/deliverables?role=fpa_analyst").text
 
     def test_persona_identity_defaults_inbox_to_my_roles(self, tmp_path, monkeypatch):
         self._world(tmp_path, monkeypatch)
         # No-auth single user bound to a persona role -> inbox defaults to "mine".
         monkeypatch.setattr("maverick.config.load_config",
-                            lambda *a, **k: {"personas": {"default": ["tax_analyst"]}})
+                            lambda *a, **k: {"personas": {"default": ["attorney"]}})
         t = client.get("/deliverables").text
         assert "Showing deliverables for your role" in t
-        assert "tax_analyst" in t
-        # a tax_analyst deliverable shows; a forecast (fpa/treasurer) is filtered out
-        assert "Tax provision" in t
-        assert "13-week cash forecast" not in t
+        assert "attorney" in t
+        # an attorney deliverable shows; a forecast (fpa/treasurer) is filtered out
+        assert "draft brief with table of authorities" in t
+        assert "Cash-flow &amp; liquidity runway" not in t
         # ?role=all widens back to everything
         t_all = client.get("/deliverables?role=all").text
-        assert "13-week cash forecast" in t_all
+        assert "Cash-flow &amp; liquidity runway" in t_all

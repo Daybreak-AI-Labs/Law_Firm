@@ -219,7 +219,7 @@
           <input id="agent-picker" list="agent-picker-list" type="text" autocomplete="off"
                  spellcheck="false" style="flex:1;"
                  aria-label="Choose a specialist to tailor"
-                 placeholder="e.g. finance_forecasting, hr_onboarding…"
+                 placeholder="e.g. legal_briefs, legal_contract_review…"
                  value="{{ selected.name if selected else '' }}"
                  onchange="if(this.value && document.querySelector('#agent-picker-list option[value=&quot;' + CSS.escape(this.value) + '&quot;]')) location.href='/agents?name=' + encodeURIComponent(this.value)">
           <datalist id="agent-picker-list">
@@ -501,9 +501,9 @@
         var ask = window.mvForm
           ? mvForm('Add ' + pack + ' to a team', [
               { key: 'team', label: 'Team (fleet) name', type: 'text', required: true,
-                placeholder: 'e.g. finance-team' },
+                placeholder: 'e.g. litigation-team' },
             ], { okText: 'Add' })
-          : Promise.resolve({ team: window.prompt('Team (fleet) name, e.g. finance-team') });
+          : Promise.resolve({ team: window.prompt('Team (fleet) name, e.g. litigation-team') });
         ask.then(function (vals) {
           var team = vals && (vals.team || '').trim();
           if (!team) return;
@@ -633,8 +633,8 @@
         });
       }
       function initials(s) { return (s || '?').trim().slice(0, 2).toUpperCase(); }
-      // A member pack name like "aero_supplier_quality_aero" reads as
-      // "supplier quality" on the card: strip the suite prefix + underscores.
+      // A member pack name like "legal_contract_review" reads as
+      // "contract review" on the card: strip the suite prefix + underscores.
       function memberLabel(name, key) {
         var s = String(name || '');
         var prefix = s.indexOf('_') > 0 ? s.slice(0, s.indexOf('_') + 1) : '';

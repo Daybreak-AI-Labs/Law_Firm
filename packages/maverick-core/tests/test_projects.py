@@ -8,12 +8,12 @@ from maverick.world_model import SCHEMA_VERSION, WorldModel
 
 def test_create_list_and_count(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    pid = w.create_project("Q3 Close", description="quarterly close", owner="user:a", domain="finance_sox")
+    pid = w.create_project("Q3 Close", description="quarterly close", owner="user:a", domain="finance_gl_close")
     p = w.get_project(pid)
     assert p["name"] == "Q3 Close" and p["description"] == "quarterly close"
-    assert p["domain"] == "finance_sox" and p["status"] == "active"
-    w.create_goal("Reconcile", domain="finance_sox", project_id=pid)
-    w.create_goal("Flux", domain="finance_sox", project_id=pid)
+    assert p["domain"] == "finance_gl_close" and p["status"] == "active"
+    w.create_goal("Reconcile", domain="finance_gl_close", project_id=pid)
+    w.create_goal("Flux", domain="finance_gl_close", project_id=pid)
     listed = w.list_projects()
     assert listed[0]["id"] == pid and listed[0]["goal_count"] == 2
 

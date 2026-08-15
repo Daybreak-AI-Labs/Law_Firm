@@ -55,7 +55,7 @@ jobs:
         # Column-0 match only: the legit pattern indents the import
         # inside a try-block, so anything at column 0 is the mistake.
         run: |
-          if grep -rn --include='*.py' -E '^import[[:space:]]+tomllib([[:space:]]|$)' apps packages benchmarks; then
+          if grep -rn --include='*.py' -E '^import[[:space:]]+tomllib([[:space:]]|$)' apps packages; then
             echo ""
             echo "ERROR: bare 'import tomllib' found above. tomllib is 3.11+ stdlib."
             echo "Use the try/except fallback documented in CLAUDE.md."
@@ -297,12 +297,6 @@ jobs:
             --lockfile examples/clients/go/go.mod \
             --lockfile go/model-proxy/go.mod \
             --lockfile examples/clients/java/pom.xml \
-            --lockfile demo/dsar-concierge/requirements-standalone.txt \
-            --lockfile demo/environment-threat-hunter/requirements.txt \
-            --lockfile demo/grc-concierge/requirements.txt \
-            --lockfile demo/model-risk-ai-assurance-officer/requirements.txt \
-            --lockfile demo/pia-concierge/requirements-standalone.txt \
-            --lockfile demo/platform-threat-hunter/requirements.txt \
             --format json \
             --output-file "$report"
       - name: Upload cross-ecosystem vulnerability report
@@ -721,117 +715,6 @@ jobs:
         run: python -m maverick_shield.redteam
       - name: Calibration report (informational)
         run: python -m maverick_shield.redteam --calibrate
-
-  eval-smoke:
-    # Eval-gated-release foundation (ROADMAP P3). Real evals drive `maverick
-    # start` against a live provider -- no models/network in CI -- so this gate
-    # runs the eval harness machinery (registry + scorers + tau2 verifier +
-    # pass@1 aggregation) against scripted solvers and asserts grading still
-    # works. A code change that breaks the harness wiring fails here, fast,
-    # without any API key. Deterministic and offline by construction.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.13"
-      - name: Install packages
-        run: |
-          set -x
-          # Mirror the test job's core install. The smoke imports nothing that
-          # needs the network-facing extras, so we skip them to stay fast.
-          pip install -e ./packages/maverick-core
-          pip install pytest pytest-asyncio
-      - name: Eval-harness smoke (offline regression gate)
-        run: python -m pytest -vvs --tb=long benchmarks/test_eval_smoke.py
-
-  governance-frontier-offline:
-    # Forty deterministic control-path definitions, each in governed and
-    # controls-disabled arms under three pinned order seeds. No provider key,
-    # model, or network. Semantics and signed evidence are hard gates; local
-    # latency observations are captured in the temporary report but are not an
-    # environment-sensitive pass/fail threshold.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.13"
-      - name: Install governance benchmark dependencies
-        run: |
-          python -m pip install -e './packages/maverick-core[audit-signing]'
-          python -m pip install -e ./packages/maverick-shield
-          python -m pip install pytest pytest-asyncio
-      - name: Governance-frontier focused tests
-        run: >-
-          python -m pytest -q
-          benchmarks/test_eval_governance_frontier.py
-          benchmarks/test_governance_metrics.py
-          benchmarks/test_eval_governance.py
-      - name: Verify checked-in governance-frontier artifacts
-        run: >-
-          python benchmarks/eval_governance_frontier.py
-          --verify-tracked-artifacts
-      - name: Measured offline governed-vs-baseline run
-        run: >-
-          python benchmarks/eval_governance_frontier.py
-          --output "$RUNNER_TEMP/governance-frontier-manifest.json"
-          --report "$RUNNER_TEMP/governance-frontier-report.md"
-          --publisher-key-out "$RUNNER_TEMP/governance-frontier.pub"
-      - name: Verify signed run manifest
-        run: >-
-          python benchmarks/eval_governance_frontier.py
-          --verify-manifest "$RUNNER_TEMP/governance-frontier-manifest.json"
-          --trusted-pubkey-file "$RUNNER_TEMP/governance-frontier.pub"
-
-  harness-overhead:
-    # What the governance record COSTS: identical deterministic tasks run in
-    # governed and ungoverned arms, stubbed at the model boundary so both call
-    # the same pure function. No provider key, model, or network. The
-    # deterministic invariants (equal model calls / tokens / steps, identical
-    # results, the expected evidence artifacts) are hard gates; measured wall
-    # time is recorded but never a pass/fail threshold — it is machine noise.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.13"
-      - name: Install overhead benchmark dependencies
-        run: |
-          python -m pip install -e './packages/maverick-core[audit-signing]'
-          python -m pip install -e ./packages/maverick-shield
-          python -m pip install pytest pytest-asyncio
-      - name: Harness-overhead focused tests
-        run: >-
-          python -m pytest -q
-          packages/maverick-core/tests/test_eval_harness_overhead.py
-      - name: Verify checked-in harness-overhead artifacts
-        run: >-
-          python benchmarks/eval_harness_overhead.py
-          --verify-tracked-artifacts
-      - name: Assert the deterministic overhead invariants
-        run: python benchmarks/eval_harness_overhead.py --ci
-      - name: Measured offline governed-vs-ungoverned run
-        run: >-
-          python benchmarks/eval_harness_overhead.py
-          --output "$RUNNER_TEMP/harness-overhead-manifest.json"
-          --report "$RUNNER_TEMP/harness-overhead-report.md"
-          --publisher-key-out "$RUNNER_TEMP/harness-overhead.pub"
-      - name: Verify signed run manifest
-        run: >-
-          python benchmarks/eval_harness_overhead.py
-          --verify-manifest "$RUNNER_TEMP/harness-overhead-manifest.json"
-          --trusted-pubkey-file "$RUNNER_TEMP/harness-overhead.pub"
 
   postgres:
     # DB-backed tests for the Postgres world-model backend. The default `test`

@@ -40,7 +40,7 @@ def test_sidebar_and_favicon_use_the_logo(tmp_path, monkeypatch):
 
 def test_share_page_shows_the_logo(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Forecast", "", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result="ok")
     w.record_signoff(gid, "approved", decided_by="reviewer")
     token = client.post(f"/api/v1/goals/{gid}/share").json()["url"].split("/share/")[1]

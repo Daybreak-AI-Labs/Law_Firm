@@ -68,10 +68,10 @@ class TestMaybeRecordCorrection:
         ])
         assert corrections.maybe_record_correction(
             world, 1, self._goal(), channel="slack", user_id="u1",
-            domain="finance_sox",
+            domain="finance_gl_close",
         ) is True
         assert captured[0]["failure_class"] == "user_correction"
-        assert captured[0]["domain"] == "finance_sox"
+        assert captured[0]["domain"] == "finance_gl_close"
         assert captured[0]["channel"] == "slack"
 
     def test_noop_without_conversation(self, monkeypatch):

@@ -20,7 +20,7 @@ def _world(tmp_path, monkeypatch):
 
 
 def _forecast_goal(w):
-    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result=_TABLE)
     return gid
 
@@ -64,7 +64,7 @@ class TestSignoffApi:
 
     def test_signoff_before_deliverable_is_finished_is_rejected(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("forecast", "", domain="finance_cash13w")
+        gid = w.create_goal("forecast", "", domain="finance_cashflow")
         r = client.post(
             f"/api/v1/goals/{gid}/signoff",
             json=_decision(w, gid, "approved"),
@@ -177,7 +177,7 @@ class TestSignoffApi:
         assert len(calls) == 1
         assert outcomes == [(gid, "approved")]
         assert calls[0]["goal_id"] == gid
-        assert calls[0]["domain"] == "finance_cash13w"
+        assert calls[0]["domain"] == "finance_cashflow"
         assert calls[0]["table"]["headers"] == ["Week", "Net"]  # parsed deliverable rides along
         assert calls[0]["result"] == ""  # no raw table text outside the reviewed artifact
 
@@ -197,7 +197,7 @@ class TestSignoffApi:
                             lambda payload: calls.append(payload) or 1)
 
         raw = "HIDDEN_PREFACE\n" + _TABLE + "\nHIDDEN_TRAILER"
-        gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cash13w")
+        gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
         w.set_goal_status(gid, "done", result=raw)
 
         r = client.post(
@@ -329,7 +329,7 @@ class TestDeliverableExport:
 
     def test_export_neutralizes_spreadsheet_formulas(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("Review AML alerts", "", domain="bank_aml_alerts")
+        gid = w.create_goal("Review AML alerts", "", domain="legal_investigations")
         w.set_goal_status(
             gid,
             "done",
@@ -340,7 +340,7 @@ class TestDeliverableExport:
                 "| @SUM(1,2) | -2+3 | unchanged |\n"
             ),
         )
-        # bank_aml_alerts is gated (review), so an approved sign-off is required
+        # legal_investigations is gated (review), so an approved sign-off is required
         # before the gated table can be exported.
         w.record_signoff(gid, "approved", decided_by="user:alice", note="ok")
 
@@ -358,7 +358,7 @@ class TestDeliverableExport:
 
     def test_no_table_is_404(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("Refresh forecast", "", domain="finance_cash13w")
+        gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
         w.set_goal_status(gid, "done", result="No grid here, just narrative.")
         assert client.get(f"/api/v1/goals/{gid}/deliverable.csv").status_code == 404
 

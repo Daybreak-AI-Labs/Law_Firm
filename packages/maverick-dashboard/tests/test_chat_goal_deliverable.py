@@ -26,7 +26,7 @@ def _world(tmp_path, monkeypatch):
 
 def test_forecast_goal_renders_as_a_deliverable_grid(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result=_FORECAST_RESULT)
 
     t = client.get(f"/chat/goal/{gid}").text

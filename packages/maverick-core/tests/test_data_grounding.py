@@ -52,14 +52,14 @@ def test_every_public_data_connector_is_used_by_some_suite():
 
 def test_representative_packs_get_their_suite_sources():
     cases = [
-        ("healthcare", "openfda"),
-        ("utilities", "eia"),
         ("legal", "courtlistener"),
+        ("tax", "ecfr"),
         ("government_contracting", "usaspending"),
         ("insurance", "nws_weather"),
-        ("esg_sustainability", "climatiq"),
         ("real_estate", "census"),
-        ("banking", "fdic"),
+        ("public_sector", "openstates"),
+        ("hr", "bls"),
+        ("security_ops", "federal_register"),
     ]
     for suite, probe in cases:
         name, p = _pick(suite)
@@ -80,19 +80,19 @@ def test_grant_is_suite_scoped_not_global():
 
 def test_kill_switch_withholds_the_grant(monkeypatch):
     monkeypatch.setenv("MAVERICK_WORKFORCE_DATA_GROUNDING", "off")
-    name, p = _pick("healthcare")
+    name, p = _pick("legal")
     cap = domain_capability(p, None, f"agent:{name}-1")
-    assert not cap.permits("openfda")
+    assert not cap.permits("courtlistener")
     # the pack's own declared tools are unaffected by the switch
     assert cap.permits("knowledge_search")
 
 
 def test_host_restricted_pack_keeps_its_egress_allowlist():
-    # finance_treasury restricts allow_hosts to its banks; granting data
+    # finance_cashflow restricts allow_hosts to its banks; granting data
     # connectors must NOT silently widen that egress boundary.
-    ft = _DOMAINS["finance_treasury"]
+    ft = _DOMAINS["finance_cashflow"]
     assert ft.allow_hosts, "fixture expects a host-restricted pack"
-    cap = domain_capability(ft, None, "agent:finance_treasury-1")
+    cap = domain_capability(ft, None, "agent:finance_cashflow-1")
     assert cap.permits("fred")  # tool is granted
     assert set(cap.allow_hosts) == set(ft.allow_hosts)  # but egress is unchanged
 
@@ -111,9 +111,9 @@ def test_config_file_kill_switch_withholds_the_grant(monkeypatch):
     monkeypatch.delenv("MAVERICK_WORKFORCE_DATA_GROUNDING", raising=False)
     monkeypatch.setattr("maverick.config.load_config",
                         lambda *a, **k: {"workforce": {"data_grounding": False}})
-    name, p = _pick("healthcare")
+    name, p = _pick("legal")
     cap = domain_capability(p, None, f"agent:{name}-1")
-    assert not cap.permits("openfda")
+    assert not cap.permits("courtlistener")
     assert cap.permits("knowledge_search")
 
 

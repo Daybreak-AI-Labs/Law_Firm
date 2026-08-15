@@ -13,7 +13,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 
-PACK = '''name = "finance_sox"
+PACK = '''name = "finance_gl_close"
 description = "SOX control testing"
 persona = "You are a meticulous control tester."
 allow_tools = ["knowledge_search", "sql_query"]
@@ -27,7 +27,7 @@ def _setup(tmp_path, config):
     archive.mark_confirmed(candidate.id)
     apath = tmp_path / "archive.json"
     archive.save(apath)
-    pack = tmp_path / "finance_sox.toml"
+    pack = tmp_path / "finance_gl_close.toml"
     pack.write_text(PACK, encoding="utf-8")
     return apath, pack
 
@@ -55,7 +55,7 @@ def test_adoption_refuses_development_only_archive(tmp_path):
     archive.add(Candidate(config={"persona": "unconfirmed"}, score=1.0))
     archive_path = tmp_path / "development.json"
     archive.save(archive_path)
-    pack = tmp_path / "finance_sox.toml"
+    pack = tmp_path / "finance_gl_close.toml"
     pack.write_text(PACK, encoding="utf-8")
 
     with pytest.raises(ValueError, match="no promotion-confirmed candidate"):
@@ -70,7 +70,7 @@ def test_adopt_writes_valid_toml_and_backs_up(tmp_path):
     with open(dest, "rb") as f:
         data = tomllib.load(f)
     assert data["persona"] == "New persona."
-    assert data["name"] == "finance_sox"
+    assert data["name"] == "finance_gl_close"
     # Second adoption with an unchanged best is a no-op...
     assert adopt_best(apath, pack, out_dir=out) is None
     # ...and re-adoption after a new best backs up the previous adopted pack.
@@ -154,7 +154,7 @@ def test_adopt_best_roundtrips_real_shipped_pack(tmp_path):
     # overlaying an adoptable key must not lose the workflow/output blocks.
     import maverick
 
-    src = Path(maverick.__file__).parent / "domains" / "itgrc_sod_it.toml"
+    src = Path(maverick.__file__).parent / "domains" / "legal_conflicts.toml"
     with open(src, "rb") as f:
         original = tomllib.load(f)
     assert original.get("workflow"), "fixture pack must carry [[workflow]]"
@@ -164,7 +164,7 @@ def test_adopt_best_roundtrips_real_shipped_pack(tmp_path):
 
     archive = Archive()
     candidate = archive.add(
-        Candidate(config={"persona": "Evolved SoD scanner."}, score=0.95))
+        Candidate(config={"persona": "Evolved conflicts scanner."}, score=0.95))
     archive.mark_confirmed(candidate.id)
     apath = tmp_path / "archive.json"
     archive.save(apath)
@@ -174,7 +174,7 @@ def test_adopt_best_roundtrips_real_shipped_pack(tmp_path):
     assert dest is not None
     with open(dest, "rb") as f:
         adopted = tomllib.load(f)
-    assert adopted["persona"] == "Evolved SoD scanner."
+    assert adopted["persona"] == "Evolved conflicts scanner."
     # Every untouched structural key survives the re-serialization intact.
     assert adopted["workflow"] == original["workflow"]
     assert adopted["output"] == original["output"]

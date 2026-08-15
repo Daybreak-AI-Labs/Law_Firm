@@ -46,8 +46,8 @@ log = logging.getLogger(__name__)
 # installed package. The agent kernel intentionally has no notion of the
 # repo layout, so we try a few candidate roots.
 _BUNDLED_CANDIDATES = [
-    Path(__file__).parent.parent.parent.parent / "benchmarks" / "example-templates",
-    Path.cwd() / "benchmarks" / "example-templates",
+    Path(__file__).parent / "starter_templates",
+    Path.cwd() / "packages" / "maverick-core" / "maverick" / "starter_templates",
 ]
 
 

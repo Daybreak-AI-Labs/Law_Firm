@@ -34,7 +34,7 @@ class TestEconomics:
                 _ep(2, cost=3.0, outcome="success"),
                 _ep(3, cost=1.0, outcome="failure"),  # cost counts, no deliverable
             ],
-            goal_domains={1: "finance_sox", 2: "finance_sox", 3: "legal_x"},
+            goal_domains={1: "finance_gl_close", 2: "finance_gl_close", 3: "legal_x"},
         )
         v = workforce_value.compute(world, window_days=365, human_cost=50.0,
                                     now=2000.0)
@@ -62,11 +62,11 @@ class TestEconomics:
                 _ep(2, cost=1.0, outcome="success"),
                 _ep(3, cost=1.0, outcome="success"),
             ],
-            goal_domains={1: "finance_sox", 2: "finance_sox", 3: "gtm_x"},
+            goal_domains={1: "finance_gl_close", 2: "finance_gl_close", 3: "gtm_x"},
         )
         v = workforce_value.compute(world, window_days=365, human_cost=50.0,
                                     now=2000.0)
-        assert v.by_department[0].department == "finance_sox"
+        assert v.by_department[0].department == "finance_gl_close"
         assert v.by_department[0].deliverables == 2
 
     def test_unattributed_when_no_domain(self):
@@ -101,13 +101,13 @@ class TestCompounding:
 class TestRender:
     def test_report_is_executive_readable(self):
         world = _World([_ep(1, cost=2.0, outcome="success")],
-                       {1: "finance_sox"})
+                       {1: "finance_gl_close"})
         v = workforce_value.compute(world, window_days=365, human_cost=50.0,
                                     now=2000.0)
         text = workforce_value.format_report(v)
         assert "AI Workforce" in text
         assert "Cost avoided" in text
-        assert "finance_sox" in text
+        assert "finance_gl_close" in text
 
     def test_to_dict_roundtrips_key_numbers(self):
         world = _World([_ep(1, cost=2.0, outcome="success")], {1: "x"})

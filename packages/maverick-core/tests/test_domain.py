@@ -125,40 +125,29 @@ class TestLoader:
 
 
 class TestBuiltinPacks:
-    def test_finance_reference_pack_ships(self):
+    def test_legal_reference_pack_ships(self):
         domains = available_domains()
-        assert "finance" in domains
-        fin = domains["finance"]
-        assert fin.compartment == "finance"
-        assert "Interactive_Brokers_IBKR" in fin.mcp_servers
-        # The derived capability denies order placement (deny wins).
-        assert fin.capability("agent:f1").permits("create_order_instruction") is False
+        assert "legal" in domains
+        legal = domains["legal"]
+        assert legal.compartment
+        # The derived capability denies mutation (deny wins) -- a drafting seat
+        # never writes to the matter file itself.
+        assert legal.capability("agent:l1").permits("write_file") is False
 
-    def test_all_four_reference_packs_ship(self):
+    def test_all_three_reference_packs_ship(self):
+        # The firm's fork drops the `finance` reference pack (it bound an
+        # Interactive Brokers trading connector); legal is the reference seat.
         domains = available_domains()
-        for name in ("finance", "legal", "privacy_compliance", "generic"):
+        for name in ("legal", "privacy_compliance", "generic"):
             assert name in domains, f"missing built-in pack: {name}"
             assert domains[name].persona  # each carries specialist instructions
 
     def test_builtin_knowledge_domains_permit_knowledge_search(self):
         domains = available_domains()
-        for name in ("finance", "legal", "privacy_compliance", "generic"):
+        for name in ("legal", "privacy_compliance", "generic"):
             prof = domains[name]
             assert prof.knowledge_sources, f"{name} should bind a knowledge collection"
             assert prof.capability(f"agent:{name}-0").permits("knowledge_search") is True
-
-    def test_healthcare_packs_deny_web_search(self):
-        domains = available_domains()
-        healthcare = {
-            name: prof for name, prof in domains.items()
-            if name.startswith("hc_")
-        }
-        assert healthcare
-        for name, prof in healthcare.items():
-            assert "web_search" not in prof.allow_tools, name
-            assert "web_search" in prof.deny_tools, name
-            for step in prof.workflow:
-                assert "web_search" not in step.tools, f"{name}: {step.name}"
 
 
 class TestDomainCapability:

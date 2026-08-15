@@ -16,10 +16,10 @@ def _world(tmp_path, monkeypatch):
 
 def test_projects_page_lists(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    pid = w.create_project("Q3 Close", domain="finance_sox")
+    pid = w.create_project("Q3 Close", domain="finance_gl_close")
     w.create_goal("Reconcile", "", project_id=pid)
     t = client.get("/projects").text
-    assert "Q3 Close" in t and "finance_sox" in t
+    assert "Q3 Close" in t and "finance_gl_close" in t
     assert "New project" in t  # create form present
 
 
@@ -39,7 +39,7 @@ def test_create_project_requires_name(tmp_path, monkeypatch):
 
 def test_project_detail_shows_member_goals(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    pid = w.create_project("Close", domain="finance_sox")
+    pid = w.create_project("Close", domain="finance_gl_close")
     w.create_goal("Reconcile AP", "", project_id=pid)
     w.create_goal("Unrelated", "")  # not in project
     t = client.get(f"/projects/{pid}").text

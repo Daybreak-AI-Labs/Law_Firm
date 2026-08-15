@@ -21,7 +21,7 @@ def test_forward_lists_overdue_first_with_blockers(tmp_path):
     db = tmp_path / "w.db"
     w = WorldModel(db)
     now = time.time()
-    g1 = w.create_goal("File the quarterly VAT return", domain="finance_vat_uk")
+    g1 = w.create_goal("File the quarterly VAT return", domain="finance_gl_close")
     w.set_goal_deadline(g1, now - 86400) if hasattr(w, "set_goal_deadline") else None
     # set deadlines directly (no setter API): update via SQL
     with w._writing() as conn:

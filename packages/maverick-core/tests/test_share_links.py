@@ -7,7 +7,7 @@ from maverick.world_model import WorldModel
 
 def test_mint_and_resolve(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    g = w.create_goal("forecast", domain="finance_cash13w")
+    g = w.create_goal("forecast", domain="finance_cashflow")
     lid, token = w.create_share_link(g, created_by="user:a", ttl_seconds=3600)
     assert isinstance(lid, int) and len(token) > 20
     assert w.resolve_share_link(token) == g

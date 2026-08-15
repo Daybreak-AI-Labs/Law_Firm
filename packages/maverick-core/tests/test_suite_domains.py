@@ -1,15 +1,17 @@
-"""Built-in business-suite domain packs: load + safety invariants.
+"""Built-in practice domain packs: load + safety invariants.
 
-These packs are the agents the factory spawns for the business suites (Operations,
-Legal, IT-GRC, Sales/GTM, HR, Strategy, and Product&Engineering). Almost every agent
-*analyzes and drafts* but never acts on the world, so it must load, carry a persona +
-a sealed compartment, and run under a read-only, low/medium-risk capability envelope
-(deny wins; the whitelist excludes shell/write). The exception is the
-Product&Engineering *builders* -- coding agents that need sandbox-mediated
-shell/code_exec -- which instead carry the one hard floor that can never relax: an
-agent may build, but never modify its own runtime/safety/controls (``self_edit``
-denied). This test is the contract that keeps a new or edited pack from quietly
+These packs are the agents the firm spawns for legal work (the Legal suite plus the
+tax, finance, security, knowledge, employment, corporate, real-estate and insurance
+seats that support it). Every agent *analyzes and drafts* but never acts on the
+world, so it must load, carry a persona + a sealed compartment, and run under a
+read-only, low/medium-risk capability envelope (deny wins; the whitelist excludes
+shell/write). This test is the contract that keeps a new or edited pack from quietly
 granting a dangerous tool.
+
+The roster carries no *builder* packs (coding agents with sandbox shell/code_exec) --
+the enterprise Product&Engineering suite is not part of the firm's fork. The builder
+invariant below is retained anyway so that adding one later is caught by the same
+floor: an agent may build, but never modify its own runtime/safety/controls.
 """
 from __future__ import annotations
 
@@ -27,38 +29,33 @@ def _by_prefix(pre: str) -> dict:
     return {k: v for k, v in _BUILTIN.items() if k.startswith(pre)}
 
 
-_OPS = _by_prefix("ops_")
 _LEGAL = _by_prefix("legal_")
-_ITGRC = _by_prefix("itgrc_")
-_GTM = _by_prefix("gtm_")
+_TAX = _by_prefix("tax_")
+_FINANCE = _by_prefix("finance_")
+_SEC = _by_prefix("sec_")
+_KM = _by_prefix("km_")
 _HR = _by_prefix("hr_")
-_STRAT = _by_prefix("strat_")
-_PE = _by_prefix("pe_")
-
-# P&E splits into coding *builders* (sandbox shell/code_exec) and read-only seats.
-_PE_BUILDERS = {k: v for k, v in _PE.items()
-                if "code_exec" in v.allow_tools or "shell" in v.allow_tools}
-_PE_READONLY = {k: v for k, v in _PE.items() if k not in _PE_BUILDERS}
+_EXEC = _by_prefix("exec_")
+_RE = _by_prefix("re_")
+_INS = _by_prefix("ins_")
 
 # Every read-only/sealed pack across all suites obeys the same envelope.
-_SUITE = {**_OPS, **_LEGAL, **_ITGRC, **_GTM, **_HR, **_STRAT, **_PE_READONLY}
+_SUITE = {**_LEGAL, **_TAX, **_FINANCE, **_SEC, **_KM, **_HR, **_EXEC, **_RE, **_INS}
 
 
 def test_suites_present():
-    # Each suite is fully built out as DomainProfile packs.
-    assert len(_OPS) >= 39, f"expected >=39 Operations packs, found {len(_OPS)}"
-    assert len(_LEGAL) >= 36, f"expected >=36 Legal packs, found {len(_LEGAL)}"
-    assert len(_ITGRC) >= 55, f"expected >=55 IT-GRC packs, found {len(_ITGRC)}"
-    assert len(_GTM) >= 50, f"expected >=50 Sales/GTM packs, found {len(_GTM)}"
-    assert len(_HR) >= 46, f"expected >=46 HR packs, found {len(_HR)}"
-    assert len(_STRAT) >= 31, f"expected >=31 Strategy packs, found {len(_STRAT)}"
-    assert len(_PE) >= 46, f"expected >=46 Product&Eng packs, found {len(_PE)}"
-    assert len(_PE_BUILDERS) >= 20, f"expected >=20 P&E builders, found {len(_PE_BUILDERS)}"
+    # Legal is the practice; the rest are the supporting seats a firm actually
+    # uses. Floors, not exact counts, so authoring a new pack never fails a test.
+    assert len(_LEGAL) >= 76, f"expected >=76 Legal packs, found {len(_LEGAL)}"
+    for label, packs in (("tax", _TAX), ("finance", _FINANCE), ("security", _SEC),
+                         ("knowledge", _KM), ("employment", _HR), ("corporate", _EXEC),
+                         ("real estate", _RE), ("insurance", _INS)):
+        assert packs, f"no {label} support packs discovered"
 
 
 def test_every_suite_pack_loads_with_persona_and_compartment():
     assert _SUITE, "no suite packs discovered"
-    for name, p in {**_SUITE, **_PE_BUILDERS}.items():
+    for name, p in _SUITE.items():
         assert p.name == name
         assert p.persona.strip(), f"{name}: empty persona"
         assert p.compartment, f"{name}: missing compartment"
@@ -66,9 +63,20 @@ def test_every_suite_pack_loads_with_persona_and_compartment():
 
 def test_suite_packs_are_read_only_and_safe():
     for name, p in _SUITE.items():
-        assert p.max_risk in ("low", "medium"), f"{name}: risk={p.max_risk!r}"
+        # A high ceiling is legitimate only for a spawn-router, which holds the
+        # privileged PARENT grant so its children can attenuate down from it.
+        if p.max_risk == "high":
+            assert {"spawn_subagent", "spawn_swarm"} & set(p.allow_tools), (
+                f"{name}: high risk but not a spawn-router")
+        else:
+            assert p.max_risk in ("low", "medium"), f"{name}: risk={p.max_risk!r}"
         cap = p.capability(f"agent:{name}")
-        assert cap.permits("read_file") is True, f"{name}: cannot read"
+        # Most seats read matter files; a few (e.g. tax_law_watch) are purely
+        # web/knowledge research and never touch the filesystem. Where read_file
+        # IS granted it must actually resolve -- a granted-but-blocked tool is a
+        # silently broken pack.
+        if "read_file" in p.allow_tools:
+            assert cap.permits("read_file") is True, f"{name}: read_file granted but blocked"
         # Mutating / host-control tools must be unreachable (deny + whitelist + ceiling).
         for dangerous in ("shell", "write_file", "code_exec", "computer", "home_assistant"):
             assert cap.permits(dangerous) is False, f"{name}: {dangerous} reachable!"
@@ -90,55 +98,27 @@ def test_legal_matter_packs_deny_external_web_search():
         assert cap.permits("web_search") is False, f"{name}: web_search reachable!"
 
 
-def test_strat_sealed_deal_execution_has_no_web_egress():
-    # Deal-execution handles MNPI inside the sealed corp-dev compartment. Unlike
-    # target sourcing, it only uses the deal compartment and legal/knowledge inputs,
-    # so model-controlled web_search queries must be explicitly unreachable.
-    p = _STRAT["strat_deal_execution"]
-    cap = p.capability("agent:strat_deal_execution")
-    assert "web_search" not in p.allow_tools
-    assert "web_search" in p.deny_tools
-    assert cap.permits("web_search") is False
-
-
-def test_pe_builders_can_build_but_never_self_edit():
-    # P&E coding agents legitimately need sandbox shell/code_exec; the floor that can
-    # never relax is self-modification -- an agent never edits its own runtime/safety.
-    assert _PE_BUILDERS, "no P&E builder packs discovered"
-    for name, p in _PE_BUILDERS.items():
-        cap = p.capability(f"agent:{name}")
-        assert cap.permits("read_file") is True, f"{name}: cannot read"
-        assert "self_edit" in p.deny_tools, f"{name}: builder must deny self_edit"
-        assert cap.permits("self_edit") is False, f"{name}: self_edit reachable!"
-
-
-def test_ops_compartments_are_sealed_by_tower():
-    # Every Operations pack sits in an ops_* compartment (the Rung-2 seal boundary).
-    for name, p in _OPS.items():
-        assert p.compartment.startswith("ops_"), f"{name}: compartment={p.compartment!r}"
-
-
 def test_suite_compartments_match_their_prefix():
     # A pack's compartment shares its suite prefix, so a Rung-2 seal quarantines the
-    # whole suite/tower at once (the factory<->safety hinge).
-    for pre, packs in (("itgrc_", _ITGRC), ("gtm_", _GTM), ("hr_", _HR),
-                       ("strat_", _STRAT), ("pe_", _PE)):
+    # whole suite at once (the factory<->safety hinge).
+    for pre, packs in (("legal_", _LEGAL), ("tax_", _TAX), ("finance_", _FINANCE),
+                       ("sec_", _SEC), ("km_", _KM), ("hr_", _HR), ("exec_", _EXEC),
+                       ("re_", _RE), ("ins_", _INS)):
         for name, p in packs.items():
             assert p.compartment.startswith(pre), f"{name}: compartment={p.compartment!r}"
 
 
 # Every built-in pack that is NOT a coding builder (no shell/code_exec in its
-# allowlist) is read-only by design. The per-suite tests above cover seven
-# suites by name; this covers the WHOLE roster -- finance and all the industry
-# verticals (banking, healthcare, retail, tax, ...) included -- so a future
-# edit anywhere that grants a drafting agent shell/write is caught.
+# allowlist) is read-only by design. The per-suite tests above cover the suites
+# by name; this covers the WHOLE roster so a future edit anywhere that grants a
+# drafting agent shell/write is caught.
 _BUILDERS = {n: p for n, p in _BUILTIN.items()
              if "code_exec" in p.allow_tools or "shell" in p.allow_tools}
 _NON_BUILDERS = {n: p for n, p in _BUILTIN.items() if n not in _BUILDERS}
 
 
 def test_every_non_builder_pack_is_read_only_and_safe():
-    assert len(_NON_BUILDERS) > 1000, f"only {len(_NON_BUILDERS)} non-builders?"
+    assert len(_NON_BUILDERS) > 100, f"only {len(_NON_BUILDERS)} non-builders?"
     for name, p in _NON_BUILDERS.items():
         # A high ceiling is legitimate only for a spawn-router (it holds the
         # privileged PARENT grant so children can attenuate down); everything
@@ -164,9 +144,9 @@ def test_every_non_builder_pack_denies_the_readonly_floor():
 
 
 def test_every_builder_denies_self_edit():
-    # The one floor a coding agent can never relax, asserted across ALL builders
-    # (not only the P&E suite): an agent may build, never edit its own runtime.
-    assert _BUILDERS, "no builder packs discovered"
+    # The one floor a coding agent can never relax: an agent may build, never edit
+    # its own runtime. The firm's roster ships no builders today, so this is a
+    # forward guard -- it starts asserting the moment someone authors one.
     for name, p in _BUILDERS.items():
         cap = p.capability(f"agent:{name}")
         assert "self_edit" in p.deny_tools, f"{name}: builder must deny self_edit"
@@ -181,8 +161,8 @@ _GATE_RANK = {None: 0, "review": 1, "approval": 2}
 
 
 def test_whole_roster_lints_error_free():
-    # The 1,118-pack roster carries zero lint ERRORs at all times (empty
-    # allowlist, bad max_risk, nameless/duplicate workflow steps would each fail).
+    # The roster carries zero lint ERRORs at all times (empty allowlist, bad
+    # max_risk, nameless/duplicate workflow steps would each fail).
     for name, p in _BUILTIN.items():
         errors, _ = lint_profile(p)
         assert errors == [], (name, errors)
@@ -241,16 +221,11 @@ def test_every_pack_effort_tier_is_valid():
 
 
 def test_high_stakes_packs_carry_high_effort():
-    # Right-sizing sentinels: severe-failure-cost judgment work runs deep.
-    for name in ("finance_sox", "finance_revrec", "bank_aml_alerts",
-                 "hc_prior_auth", "strat_valuation"):
+    # Right-sizing sentinels: severe-failure-cost judgment work runs deep. These
+    # are the seats whose output goes to a court, a counterparty, or a client.
+    for name in ("legal_briefs", "legal_contract_review", "legal_litigation_mgmt",
+                 "legal_investigations", "legal_contract_drafting"):
         assert _BUILTIN[name].effort == "high", name
-
-
-def test_high_volume_packs_carry_low_effort():
-    # ...and clerical, high-throughput work runs light.
-    for name in ("cx_status_page", "tax_efile_status", "proc_po_chaser"):
-        assert _BUILTIN[name].effort == "low", name
 
 
 # A pack that names a known SaaS-connector tool must scope the vendor's host in
@@ -286,11 +261,7 @@ def test_every_hr_pack_refuses_eu_ai_act_art5():
         assert any("biometric" in r for r in items), f"{name}: no biometric refusal"
 
 
-def test_physical_world_packs_refuse_safety_actuation():
-    from maverick.domain_refusals import refusals_for
-    for pre in ("ops_", "mfg_", "util_"):
-        packs = {n: p for n, p in _BUILTIN.items() if n.startswith(pre)}
-        assert packs, pre
-        for name in packs:
-            items = refusals_for(name)
-            assert any("interlock" in r or "safety-critical" in r for r in items), name
+# The physical-world refusal test (ops_/mfg_/util_ packs must refuse safety
+# actuation) is not carried over: the firm's roster ships no packs that touch
+# industrial equipment. maverick.domain_refusals still enforces the rule, so
+# re-adding such a pack re-arms it.

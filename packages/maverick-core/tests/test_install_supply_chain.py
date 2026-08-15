@@ -510,12 +510,6 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
         "examples/clients/go/go.mod",
         "go/model-proxy/go.mod",
         "examples/clients/java/pom.xml",
-        "demo/dsar-concierge/requirements-standalone.txt",
-        "demo/environment-threat-hunter/requirements.txt",
-        "demo/grc-concierge/requirements.txt",
-        "demo/model-risk-ai-assurance-officer/requirements.txt",
-        "demo/pia-concierge/requirements-standalone.txt",
-        "demo/platform-threat-hunter/requirements.txt",
     ):
         assert dependency_surface in step
 
@@ -547,20 +541,12 @@ def test_go_java_and_standalone_demo_security_floors_are_explicit():
     assert "<artifactId>jackson-bom</artifactId>" in java_client
 
     demo_requirements = (
-        "demo/dsar-concierge/requirements-standalone.txt",
-        "demo/environment-threat-hunter/requirements.txt",
-        "demo/grc-concierge/requirements.txt",
-        "demo/model-risk-ai-assurance-officer/requirements.txt",
-        "demo/pia-concierge/requirements-standalone.txt",
-        "demo/platform-threat-hunter/requirements.txt",
     )
     for path in demo_requirements:
         requirements = _read(path)
         assert "h11>=0.16.0" in requirements
         assert "idna>=3.18" in requirements
     for path in (
-        "demo/dsar-concierge/requirements-standalone.txt",
-        "demo/pia-concierge/requirements-standalone.txt",
     ):
         assert "python-multipart>=0.0.32" in _read(path)
 

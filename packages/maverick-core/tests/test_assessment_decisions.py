@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -226,22 +224,6 @@ def test_failed_decision_audit_retries_on_exact_read(monkeypatch):
     assert load_saved(s.id)["status"] == "approved"
     assert assessment._load_saved_raw(s.id)["_audit_pending"] == []
     assert attempts == 2
-
-
-def test_demo_seeder_rewrite_compatibility_keeps_revision(monkeypatch):
-    s = _saved()
-    before = load_saved(s.id)
-    script = (Path(__file__).parents[3] / "demo" / "pia-concierge"
-              / "seed_workspace.py")
-    spec = spec_from_file_location("pia_seed_workspace_test", script)
-    assert spec is not None and spec.loader is not None
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setattr(module, "NOW", time.time() - 10)
-    module._backdate_assessment(s.id, created_days_ago=30)
-    after = load_saved(s.id)
-    assert after["created_at"] < before["created_at"]
-    assert after["revision"] == before["revision"] + 1
 
 
 def test_full_assessment_audit_outbox_blocks_then_read_recovery(monkeypatch):

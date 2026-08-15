@@ -289,12 +289,6 @@ def _release_asset_fixture(tmp_path):
         "maverick-windows-x86_64.exe",
         f"maverick-container-{tag}.json",
         f"maverick-sbom-{tag}.cdx.json",
-        "lightwork-environment-threat-hunter-1.2.3.zip",
-        "lightwork-grc-concierge-1.2.3.zip",
-        "lightwork-model-risk-ai-assurance-officer-1.2.3.zip",
-        "lightwork-platform-threat-hunter-1.2.3.zip",
-        "lightwork-standalone-skus-1.2.3.cdx.json",
-        "lightwork-standalone-skus-1.2.3.sha256",
     )
     upstream = {}
     for name in upstream_names:
@@ -405,7 +399,7 @@ def test_release_asset_policy_rejects_a_signed_but_incomplete_upstream_cohort(
     _load_script("release_version")
     policy = _load_script("verify_github_release_assets")
     root, metadata, tag, revision, cohort = _release_asset_fixture(tmp_path)
-    omitted = "lightwork-grc-concierge-1.2.3.zip"
+    omitted = "maverick-macos-arm64"
     for suffix in ("", ".sig", ".pem"):
         (root / f"{omitted}{suffix}").unlink()
     release_sums = root / f"maverick-release-{tag}.sha256"

@@ -36,10 +36,10 @@ def test_groups_by_pack_and_computes_value_cost_roi(monkeypatch):
             _ep(1, 0.50, "done", now - 100),
             _ep(2, 0.30, "done", now - 200),
             _ep(3, 0.40, "failed", now - 300),   # finance_ap, not delivered
-            _ep(4, 0.20, "done", now - 400),      # hr_onboarding
+            _ep(4, 0.20, "done", now - 400),      # hr_i9_compliance
         ],
         goal_domains={1: "finance_ap", 2: "finance_ap",
-                      3: "finance_ap", 4: "hr_onboarding"})
+                      3: "finance_ap", 4: "hr_i9_compliance"})
     scores = {s.agent: s for s in sc.compute(world, human_cost=120.0, now=now)}
     ap = scores["finance_ap"]
     assert ap.runs == 3 and ap.delivered == 2
@@ -49,8 +49,8 @@ def test_groups_by_pack_and_computes_value_cost_roi(monkeypatch):
     assert ap.success_rate == round(100.0 * 2 / 3, 1)
     d = ap.to_dict()
     assert d["cost_avoided"] == round(240.0 - 1.20, 2)
-    # hr_onboarding delivered its one run.
-    assert scores["hr_onboarding"].success_rate == 100.0
+    # hr_i9_compliance delivered its one run.
+    assert scores["hr_i9_compliance"].success_rate == 100.0
 
 
 def test_window_excludes_old_episodes():

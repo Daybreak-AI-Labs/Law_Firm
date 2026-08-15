@@ -20,10 +20,10 @@ class _Profile:
 
 
 PROFILES = {
-    "finance_sox": _Profile(
+    "finance_gl_close": _Profile(
         description="SOX ICFR control testing, reconciliation and audit evidence",
     ),
-    "gtm_sales_eng": _Profile(
+    "legal_intake": _Profile(
         description="sales engineering demos, POC environments, technical evaluation",
     ),
 }
@@ -49,10 +49,10 @@ class TestDepartmentAttribution:
         sigs = dreaming.domain_signatures(PROFILES)
         assert dreaming.assign_domain(
             "Reconcile the SOX control testing evidence", sigs,
-        ) == "finance_sox"
+        ) == "finance_gl_close"
         assert dreaming.assign_domain(
             "Spin up a POC demo environment for the technical evaluation", sigs,
-        ) == "gtm_sales_eng"
+        ) == "legal_intake"
 
     def test_unrelated_text_is_generic(self):
         sigs = dreaming.domain_signatures(PROFILES)
@@ -100,9 +100,9 @@ class TestInsightSynthesis:
             {"goal_text": "reconcile the monthly ledger totals",
              "failure_class": "budget", "reflection": "older lesson", "ts": 1.0},
         ]
-        ins = dreaming.synthesize_insight(cluster, domain="finance_sox", now=10.0)
+        ins = dreaming.synthesize_insight(cluster, domain="finance_gl_close", now=10.0)
         assert ins.kind == "failure_pattern"
-        assert ins.domain == "finance_sox"
+        assert ins.domain == "finance_gl_close"
         assert ins.evidence == 2
         assert "budget" in ins.text
         assert "raise the cap first" in ins.text  # newest reflection wins
@@ -119,19 +119,19 @@ class TestInsightStore:
         path = tmp_path / "insights.ndjson"
         first = self._insight(
             "Recurring failure (budget, seen 2x) on goals about ledger totals.",
-            domain="finance_sox",
+            domain="finance_gl_close",
         )
         assert dreaming.append_insights([first], path=path) == 1
         # Near-identical same-department insight is a duplicate: not re-written.
         again = self._insight(
             "Recurring failure (budget, seen 2x) on goals about ledger totals.",
-            domain="finance_sox", ts=2.0,
+            domain="finance_gl_close", ts=2.0,
         )
         assert dreaming.append_insights([again], path=path) == 0
         # Same text under a different department is a distinct lesson.
         other_dept = self._insight(
             "Recurring failure (budget, seen 2x) on goals about ledger totals.",
-            domain="gtm_sales_eng", ts=3.0,
+            domain="legal_intake", ts=3.0,
         )
         assert dreaming.append_insights([other_dept], path=path) == 1
         assert len(dreaming.load_insights(path)) == 2
@@ -146,14 +146,14 @@ class TestInsightStore:
     def test_legacy_insights_without_scope_are_not_recalled(self, tmp_path):
         path = tmp_path / "insights.ndjson"
         path.write_text(
-            '{"ts":1.0,"kind":"failure_pattern","domain":"finance_sox",'
+            '{"ts":1.0,"kind":"failure_pattern","domain":"finance_gl_close",'
             '"text":"legacy scoped payload","evidence":2}\n',
             encoding="utf-8",
         )
         loaded = dreaming.load_insights(path)
         assert loaded[0].channel is not None
         assert dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox", path=path,
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close", path=path,
         ) == []
 
     def test_legacy_secret_is_sanitized_before_load_and_rewrite(self, tmp_path):
@@ -162,7 +162,7 @@ class TestInsightStore:
         path.write_text(json.dumps({
             "ts": 1.0,
             "kind": "failure_pattern",
-            "domain": "finance_sox",
+            "domain": "finance_gl_close",
             "text": f"retry with credential {secret}",
             "evidence": 2,
         }) + "\n", encoding="utf-8")
@@ -216,17 +216,17 @@ class TestInsightRecall:
     def test_same_department_recalled_without_lexical_match(self, tmp_path):
         path = tmp_path / "insights.ndjson"
         dreaming.append_insights([dreaming.DreamInsight(
-            ts=1.0, kind="failure_pattern", domain="finance_sox",
+            ts=1.0, kind="failure_pattern", domain="finance_gl_close",
             text="Recurring failure (budget, seen 3x) on goals about ledger totals.",
             evidence=3,
         )], path=path)
         # Goal wording shares no content tokens with the insight: only the
         # department link surfaces it.
         hits = dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox", path=path,
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close", path=path,
         )
         assert hits
-        assert hits[0][1].domain == "finance_sox"
+        assert hits[0][1].domain == "finance_gl_close"
         # Without the department link the same query recalls nothing.
         assert dreaming.recall_insights(
             "Prepare the ICFR walkthrough memo", path=path,
@@ -249,21 +249,21 @@ class TestInsightRecall:
     def test_scoped_insights_only_recall_for_same_scope(self, tmp_path):
         path = tmp_path / "insights.ndjson"
         dreaming.append_insights([dreaming.DreamInsight(
-            ts=1.0, kind="failure_pattern", domain="finance_sox",
+            ts=1.0, kind="failure_pattern", domain="finance_gl_close",
             text="Recurring failure (budget, seen 2x) on goals about ledger.",
             evidence=2, channel="api", user_id="attacker",
         )], path=path)
 
         assert dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox",
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close",
             channel="api", user_id="attacker", path=path,
         )
         assert dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox",
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close",
             channel="api", user_id="victim", path=path,
         ) == []
         assert dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox", path=path,
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close", path=path,
         ) == []
 
     def test_dream_cycle_preserves_reflexion_scope_on_insight(self, tmp_path, monkeypatch):
@@ -274,7 +274,7 @@ class TestInsightRecall:
             reflexion.record(
                 goal_text=goal, failure_class="budget", failure_msg="cap",
                 reflection="ATTACKER_PAYLOAD_DO_NOT_OBEY",
-                channel="api", user_id="attacker", domain="finance_sox",
+                channel="api", user_id="attacker", domain="finance_gl_close",
                 path=rpath,
             )
         ipath = tmp_path / "insights.ndjson"
@@ -288,7 +288,7 @@ class TestInsightRecall:
         assert insight.channel == "api"
         assert insight.user_id == "attacker"
         assert dreaming.recall_insights(
-            "Prepare the ICFR walkthrough memo", domain="finance_sox",
+            "Prepare the ICFR walkthrough memo", domain="finance_gl_close",
             channel="api", user_id="victim", path=ipath,
         ) == []
 
@@ -313,7 +313,7 @@ class TestSuccessToolAttribution:
                  "reconcile the monthly ledger accounts"]
         gids = []
         for text in goals:
-            gid = w.create_goal(text, "", domain="finance_sox")
+            gid = w.create_goal(text, "", domain="finance_gl_close")
             w.set_goal_status(gid, "done", result="tied out")
             gids.append(gid)
         return w, gids, trajectory_store
@@ -360,9 +360,9 @@ class TestSharedPromotion:
     def test_pattern_across_two_departments_is_not_promoted(self):
         promoted = dreaming.promote_shared_insights([
             self._failure("erp connector export timed out on large batches",
-                          "finance_sox"),
+                          "finance_gl_close"),
             self._failure("erp connector export timed out during demo prep",
-                          "gtm_sales_eng"),
+                          "legal_intake"),
         ], min_cluster=2)
         assert promoted == []
 
@@ -375,12 +375,12 @@ class TestSharedPromotion:
         ins = promoted[0]
         assert ins.kind == "shared_pattern"
         assert ins.domain is None
-        assert "finance_sox" not in ins.text and "gtm_sales_eng" not in ins.text
+        assert "finance_gl_close" not in ins.text and "legal_intake" not in ins.text
 
     def test_single_department_pattern_is_not_promoted(self):
         promoted = dreaming.promote_shared_insights([
-            self._failure("erp connector export timed out", "finance_sox"),
-            self._failure("erp connector export timed out again", "finance_sox"),
+            self._failure("erp connector export timed out", "finance_gl_close"),
+            self._failure("erp connector export timed out again", "finance_gl_close"),
         ], min_cluster=2)
         assert promoted == []
 
@@ -393,10 +393,10 @@ class TestSharedPromotion:
         rpath = tmp_path / "reflexions.ndjson"
         reflexion.record(goal_text="erp connector export timed out on batches",
                          failure_class="agent_error", failure_msg="timeout",
-                         reflection="r", domain="finance_sox", path=rpath)
+                         reflection="r", domain="finance_gl_close", path=rpath)
         reflexion.record(goal_text="erp connector export timed out in demo",
                          failure_class="agent_error", failure_msg="timeout",
-                         reflection="r", domain="gtm_sales_eng", path=rpath)
+                         reflection="r", domain="legal_intake", path=rpath)
         report = dreaming.dream_cycle(
             None, profiles=PROFILES, reflexion_path=rpath,
             insights_path=tmp_path / "insights.ndjson",
@@ -523,10 +523,10 @@ class TestRehearsal:
         return [
             {"goal_text": "reconcile the quarterly ledger totals",
              "failure_class": "budget", "reflection": "r",
-             "domain": "finance_sox", "ts": 2.0},
+             "domain": "finance_gl_close", "ts": 2.0},
             {"goal_text": "reconcile the monthly ledger totals",
              "failure_class": "budget", "reflection": "r",
-             "domain": "finance_sox", "ts": 1.0},
+             "domain": "finance_gl_close", "ts": 1.0},
         ]
 
     def test_cases_built_from_biggest_clusters(self):
@@ -535,7 +535,7 @@ class TestRehearsal:
         # The newest phrasing of the recurring problem is the practice prompt.
         assert cases[0]["prompt"] == "reconcile the quarterly ledger totals"
         assert cases[0]["scope"] == "local"
-        assert cases[0]["domain"] == "finance_sox"
+        assert cases[0]["domain"] == "finance_gl_close"
         assert cases[0]["evidence"] == 2
 
     def test_cases_skip_channel_scoped_failures(self):
@@ -554,7 +554,7 @@ class TestRehearsal:
             reflection="r",
             channel="api",
             user_id="attacker",
-            domain="finance_sox",
+            domain="finance_gl_close",
             path=rpath,
         )
         replayed = dreaming._replay_failures(rpath)
@@ -658,7 +658,7 @@ class TestRehearsal:
                      "reconcile the monthly ledger totals"):
             reflexion.record(goal_text=goal, failure_class="budget",
                              failure_msg="cap", reflection="r",
-                             domain="finance_sox", path=rpath)
+                             domain="finance_gl_close", path=rpath)
         report = dreaming.dream_cycle(
             None, profiles=PROFILES, reflexion_path=rpath,
             insights_path=tmp_path / "insights.ndjson",
@@ -972,7 +972,7 @@ class TestLearningGovernance:
                      "reconcile the monthly ledger totals"):
             reflexion.record(goal_text=goal, failure_class="budget",
                              failure_msg="cap", reflection="r",
-                             domain="finance_sox", path=rpath)
+                             domain="finance_gl_close", path=rpath)
         live = {
             "reflexions.ndjson": rpath,
             "insights.ndjson": tmp_path / "insights.ndjson",
@@ -1138,7 +1138,7 @@ class TestDreamCycle:
                      "reconcile the monthly ledger totals"):
             reflexion.record(goal_text=goal, failure_class="budget",
                              failure_msg="cap", reflection="raise the cap first",
-                             domain="finance_sox", path=rpath)
+                             domain="finance_gl_close", path=rpath)
         # Two similar finance successes -> a distilled department skill.
         world = _FakeWorld([
             _FakeGoal("Test the SOX ICFR control reconciliation evidence", 2.0),
@@ -1157,8 +1157,8 @@ class TestDreamCycle:
         assert list(store.glob("*.md"))  # the SKILL.md landed
         assert report.insights_written == 1
         insights = dreaming.load_insights(ipath)
-        assert insights[0].domain == "finance_sox"
-        assert "finance_sox" in report.departments
+        assert insights[0].domain == "finance_gl_close"
+        assert "finance_gl_close" in report.departments
 
     def test_cycle_is_idempotent_on_insights(self, tmp_path, monkeypatch):
         monkeypatch.setattr(dreaming, "settings", lambda: dict(_SETTINGS))
@@ -1168,7 +1168,7 @@ class TestDreamCycle:
                      "reconcile the monthly ledger totals"):
             reflexion.record(goal_text=goal, failure_class="budget",
                              failure_msg="cap", reflection="raise the cap",
-                             domain="finance_sox", path=rpath)
+                             domain="finance_gl_close", path=rpath)
         first = dreaming.dream_cycle(
             None, profiles=PROFILES, reflexion_path=rpath, insights_path=ipath,
             skill_store=tmp_path / "skills",
@@ -1187,7 +1187,7 @@ class TestDreamCycle:
         rpath = tmp_path / "reflexions.ndjson"
         reflexion.record(goal_text="reconcile the ledger",
                          failure_class="budget", failure_msg="cap",
-                         reflection="r", domain="finance_sox", path=rpath)
+                         reflection="r", domain="finance_gl_close", path=rpath)
         report = dreaming.dream_cycle(
             _FakeWorld([_FakeGoal("Test the SOX control reconciliation", 1.0)]),
             profiles=PROFILES, reflexion_path=rpath,

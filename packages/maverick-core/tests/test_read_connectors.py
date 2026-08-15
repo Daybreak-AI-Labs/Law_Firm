@@ -1,7 +1,7 @@
 """Read-only connector bridge: a GET-only, LOW-risk variant of a vendor connector
 that a read-only finance pack can actually reach -- closing the pack<->connector
 gap surfaced in test_fleet_spine, without handing a read-only seat a write-capable
-tool. Reference slice: modern_treasury_read -> finance_treasury / finance_cashflow."""
+tool. Reference slice: modern_treasury_read -> finance_cashflow / finance_cashflow."""
 from __future__ import annotations
 
 from maverick.capability import Capability
@@ -82,7 +82,7 @@ def test_read_connector_refuses_writes_while_the_write_seat_stays_high():
 
 def test_treasury_packs_can_now_reach_the_executable_read_seat():
     parent = Capability(principal="agent:finance_controller-0", max_risk="high")
-    for pack in ("finance_treasury", "finance_cashflow"):
+    for pack in ("finance_cashflow", "finance_cashflow"):
         prof = load_domains(builtin_dir())[pack]
         cap = domain_capability(prof, parent, f"agent:{pack}-1")
         # the read seat is reachable under the pack's read-only ceiling...

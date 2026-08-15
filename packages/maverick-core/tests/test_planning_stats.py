@@ -45,7 +45,7 @@ class TestBudgetTaskClass:
         class _G:
             title = "Reconcile the ledger"
         assert _budget_task_class(_G()) == "reconcile"
-        assert _budget_task_class(_G(), "finance_sox") == "finance_sox::reconcile"
+        assert _budget_task_class(_G(), "finance_gl_close") == "finance_gl_close::reconcile"
 
     def test_junk_title_falls_back(self):
         class _G:

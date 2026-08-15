@@ -29,10 +29,10 @@ def test_goal_domain_roundtrip(tmp_path):
     w = WorldModel(tmp_path / "w.db")
     gid = w.create_goal("t")
     assert w.get_goal(gid).domain == ""
-    gid2 = w.create_goal("t2", domain="finance_sox")
-    assert w.get_goal(gid2).domain == "finance_sox"
-    w.set_goal_domain(gid, "gtm_sales_eng")
-    assert w.get_goal(gid).domain == "gtm_sales_eng"
+    gid2 = w.create_goal("t2", domain="finance_gl_close")
+    assert w.get_goal(gid2).domain == "finance_gl_close"
+    w.set_goal_domain(gid, "legal_intake")
+    assert w.get_goal(gid).domain == "legal_intake"
 
 
 def test_default_owner_is_empty(tmp_path):
@@ -56,7 +56,7 @@ def test_list_goals_owner_filter(tmp_path):
 
 def test_signoff_record_and_read(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    gid = w.create_goal("forecast", domain="finance_cash13w")
+    gid = w.create_goal("forecast", domain="finance_cashflow")
     assert w.signoff_for(gid) is None                      # unreviewed
     w.set_goal_status(gid, "done", result="draft")
     w.record_signoff(gid, "approved", decided_by="user:alice", note="ties out")
@@ -68,7 +68,7 @@ def test_signoff_record_and_read(tmp_path):
 
 def test_signoff_latest_decision_wins(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    gid = w.create_goal("forecast", domain="finance_cash13w")
+    gid = w.create_goal("forecast", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result="draft")
     assert w.record_signoff(
         gid, "rejected", decided_by="user:bob", note="rework week 3",
@@ -86,7 +86,7 @@ def test_concurrent_identical_signoff_has_one_authoritative_transition(tmp_path)
     db = tmp_path / "w.db"
     first = WorldModel(db)
     second = WorldModel(db)
-    gid = first.create_goal("forecast", domain="finance_cash13w")
+    gid = first.create_goal("forecast", domain="finance_cashflow")
     first.set_goal_status(gid, "done", result="draft")
     version = first.get_goal(gid).updated_at
     barrier = threading.Barrier(2)
@@ -109,9 +109,9 @@ def test_concurrent_identical_signoff_has_one_authoritative_transition(tmp_path)
 
 def test_signoffs_for_goals_batch(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    a = w.create_goal("a", domain="finance_cash13w")
-    b = w.create_goal("b", domain="finance_cash13w")
-    c = w.create_goal("c", domain="finance_cash13w")  # unreviewed
+    a = w.create_goal("a", domain="finance_cashflow")
+    b = w.create_goal("b", domain="finance_cashflow")
+    c = w.create_goal("c", domain="finance_cashflow")  # unreviewed
     for gid in (a, b, c):
         w.set_goal_status(gid, "done", result=f"draft-{gid}")
     w.record_signoff(a, "approved")
@@ -122,7 +122,7 @@ def test_signoffs_for_goals_batch(tmp_path):
 
 def test_signoff_requires_finished_immutable_payload(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    gid = w.create_goal("forecast", domain="finance_cash13w")
+    gid = w.create_goal("forecast", domain="finance_cashflow")
     with pytest.raises(ValueError, match="not finished"):
         w.record_signoff(gid, "approved")
 
@@ -149,7 +149,7 @@ def test_signoff_requires_finished_immutable_payload(tmp_path):
 
 def test_new_artifact_version_invalidates_signoff(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    gid = w.create_goal("forecast", domain="finance_cash13w")
+    gid = w.create_goal("forecast", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result="draft")
     reviewed = w.get_goal(gid)
     w.record_signoff(gid, "approved")
@@ -167,7 +167,7 @@ def test_new_artifact_version_invalidates_signoff(tmp_path):
 
 def test_artifact_versioning_and_latest(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    g = w.create_goal("forecast", domain="finance_cash13w")
+    g = w.create_goal("forecast", domain="finance_cashflow")
     w.add_artifact(g, "table", "Cash forecast", "| W | Net |\n| - | - |\n| 1 | 300 |")
     w.add_artifact(g, "table", "Cash forecast", "| W | Net |\n| - | - |\n| 1 | 350 |")  # v2
     w.add_artifact(g, "markdown", "Memo", "# Memo\nUp 50.")
@@ -191,16 +191,16 @@ def test_artifacts_absent_is_empty(tmp_path):
 
 def test_list_goals_domain_filter(tmp_path):
     w = WorldModel(tmp_path / "w.db")
-    f1 = w.create_goal("forecast", domain="finance_cash13w")
-    f2 = w.create_goal("forecast 2", domain="finance_cash13w")
-    other = w.create_goal("other", domain="bank_cecl_allowance")
+    f1 = w.create_goal("forecast", domain="finance_cashflow")
+    f2 = w.create_goal("forecast 2", domain="finance_cashflow")
+    other = w.create_goal("other", domain="finance_gl_close")
     generic = w.create_goal("generic")  # no domain
-    assert {g.id for g in w.list_goals(domain="finance_cash13w")} == {f1, f2}
-    assert {g.id for g in w.list_goals(domain="bank_cecl_allowance")} == {other}
+    assert {g.id for g in w.list_goals(domain="finance_cashflow")} == {f1, f2}
+    assert {g.id for g in w.list_goals(domain="finance_gl_close")} == {other}
     assert {g.id for g in w.list_goals(domain="")} == {generic}  # unattributed only
     # domain + owner compose
-    w.set_goal_domain(f1, "finance_cash13w")  # idempotent; keep attribution
-    assert {g.id for g in w.list_goals(domain="finance_cash13w", limit=1, order="desc")} == {f2}
+    w.set_goal_domain(f1, "finance_cashflow")  # idempotent; keep attribution
+    assert {g.id for g in w.list_goals(domain="finance_cashflow", limit=1, order="desc")} == {f2}
 
 
 def test_migration_adds_owner_to_a_v10_db(tmp_path):

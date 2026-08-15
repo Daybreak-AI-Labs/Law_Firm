@@ -71,8 +71,8 @@ def test_fleet_from_department_maps_packs_to_agents():
 
 def test_fleet_agent_domain_survives_serialization():
     from maverick.fleet import FleetAgent
-    a = FleetAgent("finance_sox", "finance", "Reconcile", domain="finance_sox")
-    assert FleetAgent.from_dict(a.to_dict()).domain == "finance_sox"
+    a = FleetAgent("finance_gl_close", "finance", "Reconcile", domain="finance_gl_close")
+    assert FleetAgent.from_dict(a.to_dict()).domain == "finance_gl_close"
     # Backward compatible: a legacy agent dict with no domain reads as "".
     assert FleetAgent.from_dict({"name": "x", "role": "r"}).domain == ""
 

@@ -38,9 +38,9 @@ def _isolate_live_learned_store(tmp_path, monkeypatch):
 def world(tmp_path):
     w = WorldModel(tmp_path / "w.db")
     # Two finance goals; one done, one blocked.
-    g1 = w.create_goal("Reconcile the ledger", domain="finance_sox")
+    g1 = w.create_goal("Reconcile the ledger", domain="finance_gl_close")
     w.set_goal_status(g1, "done", result="tied out")
-    g2 = w.create_goal("Close Q3 books", domain="finance_sox")
+    g2 = w.create_goal("Close Q3 books", domain="finance_gl_close")
     w.set_goal_status(g2, "blocked", result="missing invoices")
     return w
 
@@ -60,7 +60,7 @@ def test_delivery_rolls_up_department_goals(world):
     assert d["goals_total"] == 2 and d["goals_completed"] == 1
     assert d["completion_rate"] == 0.5
     assert d["active_workers"] == 1
-    assert d["workers"][0]["worker"] == "finance_sox"
+    assert d["workers"][0]["worker"] == "finance_gl_close"
 
 
 def test_authority_reads_the_capability_envelope(world):

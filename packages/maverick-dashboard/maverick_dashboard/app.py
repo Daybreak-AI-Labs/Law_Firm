@@ -112,7 +112,7 @@ def _format_datetime(ts) -> str:
 templates.env.filters["datetime"] = _format_datetime
 # Make `theme` available unconditionally so templates rendered without
 # a Request object (rare; legacy paths) still resolve `theme or 'dark'`.
-templates.env.globals.setdefault("theme", "dark")
+templates.env.globals.setdefault("theme", "graphite")
 templates.env.globals.setdefault("font", "default")
 templates.env.globals.setdefault("lang", "en")
 templates.env.globals.setdefault("density", "comfortable")
@@ -124,7 +124,7 @@ from .themes import custom_themes, theme_css  # noqa: E402
 
 templates.env.globals.setdefault("t", lambda key: _i18n_t(key, "en"))
 
-_VALID_THEMES = {"dark", "light", "solarized", "hicontrast"}
+_VALID_THEMES = {"graphite", "dove", "dark", "light", "solarized", "hicontrast"}
 _VALID_FONTS = {"default", "dyslexic"}
 _VALID_DENSITIES = {"comfortable", "compact"}
 
@@ -163,7 +163,7 @@ def _resolve_theme(request: Request) -> str:
     """Pick the theme from ``?theme=`` query param, cookie, config, then dark."""
     return _resolve_pref(
         request, param="theme", cookie="mvk_theme", valid=_valid_theme_names(),
-        config_key="theme", default="dark",
+        config_key="theme", default="graphite",
     )
 
 

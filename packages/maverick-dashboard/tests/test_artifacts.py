@@ -16,7 +16,7 @@ def _world(tmp_path, monkeypatch):
 
 def test_goal_page_renders_artifacts(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Refresh forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
     w.add_artifact(gid, "table", "Cash forecast", "| Week | Net |\n| --- | --- |\n| W1 | 300 |")
     w.add_artifact(gid, "markdown", "Variance memo", "# Memo\n\nNet up 50.")
     t = client.get(f"/chat/goal/{gid}").text
@@ -29,7 +29,7 @@ def test_goal_page_renders_artifacts(tmp_path, monkeypatch):
 
 def test_artifact_versions_shown(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("g", "", domain="finance_cash13w")
+    gid = w.create_goal("g", "", domain="finance_cashflow")
     w.add_artifact(gid, "text", "Note", "ZZZ_BODY_ONE")
     w.add_artifact(gid, "text", "Note", "ZZZ_BODY_TWO")
     t = client.get(f"/chat/goal/{gid}").text
@@ -71,7 +71,7 @@ def test_artifact_history_endpoint_diffs(tmp_path, monkeypatch):
 
 def test_goal_page_shows_version_history_disclosure(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("g", "", domain="finance_cash13w")
+    gid = w.create_goal("g", "", domain="finance_cashflow")
     w.add_artifact(gid, "text", "Note", "v one")
     w.add_artifact(gid, "text", "Note", "v two")     # 2 versions -> disclosure shows
     t = client.get(f"/chat/goal/{gid}").text

@@ -26,10 +26,6 @@ SECURITY_GRC.md
 MODEL_RISK_ASSURANCE.md
 AI_EVIDENCE_GATEWAY.md
 audit-checkpoints.md
-@repo/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md|benchmarks/governance-frontier.md
-@repo/benchmarks/results/governance-frontier-v1/measured-manifest.json|benchmarks/results/governance-frontier-v1/measured-manifest.json
-@repo/benchmarks/results/governance-frontier-v1/trusted-publisher.pub|benchmarks/results/governance-frontier-v1/trusted-publisher.pub
-@repo/benchmarks/results/governance-frontier-v1/verify_manifest.py|benchmarks/results/governance-frontier-v1/verify_manifest.py
 MODEL_IMPROVEMENT_PLATFORM.md
 pricing-governance.md
 security/threat-model.md

@@ -167,13 +167,13 @@ class TestEffectiveReleaseGate:
 
 
 class TestBuiltinContract:
-    def test_finance_cash13w_declares_its_deliverable(self):
-        # The proof pack: the 13-week cash forecast declares its consumption side.
-        out = available_domains()["finance_cash13w"].output
-        assert out.shape == "forecast"
-        assert out.deliverable == "13-week cash forecast"
-        assert "fpa_analyst" in out.consumers
-        assert out.cadence == "weekly"
+    def test_legal_briefs_declares_its_deliverable(self):
+        # The proof pack: a drafted brief declares its consumption side.
+        out = available_domains()["legal_briefs"].output
+        assert out.shape == "prose"
+        assert out.deliverable == "draft brief with table of authorities"
+        assert "attorney" in out.consumers
+        assert out.cadence == "on-demand"
         assert out.gate == "review"
 
 
@@ -187,7 +187,7 @@ class TestFinanceSuiteContracts:
 
     def test_many_finance_packs_declare_deliverables(self):
         declared = self._finance_with_contract()
-        assert len(declared) >= 20, f"only {len(declared)} finance contracts"
+        assert len(declared) >= 8, f"only {len(declared)} finance contracts"
 
     def test_declared_finance_contracts_lint_clean(self):
         for name, p in self._finance_with_contract().items():
@@ -219,7 +219,7 @@ class TestInsuranceSuiteContracts:
                 if n.startswith("ins_") and (p.output.deliverable or p.output.consumers)}
 
     def test_many_insurance_packs_declare_deliverables(self):
-        assert len(self._with_contract()) >= 30
+        assert len(self._with_contract()) >= 3
 
     def test_declared_insurance_contracts_lint_clean(self):
         for name, p in self._with_contract().items():
@@ -232,54 +232,49 @@ class TestInsuranceSuiteContracts:
         assert roles and roles <= self._ALLOWED, f"unexpected roles: {roles - self._ALLOWED}"
 
 
-class TestBankingSuiteContracts:
-    """The banking suite declares contracts across BSA/AML, lending, treasury/
-    ALM, reg reporting, and operations -- so the inbox covers bank_ too."""
-
-    _ALLOWED = {"bsa_officer", "compliance_officer", "credit_officer", "loan_officer",
-                "treasurer", "controller", "risk_officer", "operations_manager",
-                "fraud_analyst", "internal_auditor", "trust_officer"}
+class TestLegalSuiteContracts:
+    """The legal suite is the practice: every seat declares who consumes its
+    work product, so a drafted brief, memo or redline lands in a real inbox
+    instead of nowhere."""
 
     def _with_contract(self):
         return {n: p for n, p in available_domains().items()
-                if n.startswith("bank_") and (p.output.deliverable or p.output.consumers)}
+                if n.startswith("legal_") and (p.output.deliverable or p.output.consumers)}
 
-    def test_many_banking_packs_declare_deliverables(self):
-        assert len(self._with_contract()) >= 30
+    def test_every_legal_pack_declares_a_deliverable(self):
+        packs = {n: p for n, p in available_domains().items() if n.startswith("legal_")}
+        missing = sorted(n for n, p in packs.items() if not p.output.deliverable)
+        assert not missing, f"legal packs with no declared deliverable: {missing}"
+        assert len(self._with_contract()) >= 76
 
-    def test_declared_banking_contracts_lint_clean(self):
+    def test_declared_legal_contracts_lint_clean(self):
         for name, p in self._with_contract().items():
             errors, warnings = lint_profile(p)
             assert not errors, (name, errors)
             assert not [w for w in warnings if "output" in w], (name, warnings)
 
-    def test_banking_roles_stay_a_consistent_vocabulary(self):
-        roles = {r for p in self._with_contract().values() for r in p.output.consumers}
-        assert roles and roles <= self._ALLOWED, f"unexpected roles: {roles - self._ALLOWED}"
+    # Internal-workflow seats: their output is firm-internal routing or
+    # knowledge upkeep, not a work product that leaves the office, so they
+    # carry no sign-off gate. Everything else does.
+    _UNGATED = {"legal_intake", "legal_km"}
 
-
-class TestItGrcSuiteContracts:
-    """The IT-GRC / risk suite declares contracts across the risk register,
-    privacy (DPIA/RoPA), control testing, incident/breach response, security
-    findings, and audit evidence -- the risk-officer / CISO / privacy home."""
-
-    _ALLOWED = {"risk_officer", "ciso", "compliance_officer", "internal_auditor",
-                "privacy_officer", "security_analyst", "vendor_risk_manager",
-                "control_owner", "it_manager", "iam_lead"}
-
-    def _with_contract(self):
-        return {n: p for n, p in available_domains().items()
-                if n.startswith("itgrc_") and (p.output.deliverable or p.output.consumers)}
-
-    def test_many_itgrc_packs_declare_deliverables(self):
-        assert len(self._with_contract()) >= 45
-
-    def test_declared_itgrc_contracts_lint_clean(self):
+    def test_every_legal_deliverable_routes_to_a_human_reviewer(self):
+        # Nothing a legal seat drafts is self-approving: the consumption side
+        # always names at least one human role, and every work product that
+        # reaches a client, a counterparty or a court carries a gate. This is
+        # the fork's central guarantee -- the attorney reviews the work.
         for name, p in self._with_contract().items():
-            errors, warnings = lint_profile(p)
-            assert not errors, (name, errors)
-            assert not [w for w in warnings if "output" in w], (name, warnings)
+            assert p.output.consumers, f"{name}: deliverable with no consumer"
+            if name in self._UNGATED:
+                continue
+            assert p.output.gate in ("review", "approval"), f"{name}: gate={p.output.gate!r}"
 
-    def test_itgrc_roles_stay_a_consistent_vocabulary(self):
-        roles = {r for p in self._with_contract().values() for r in p.output.consumers}
-        assert roles and roles <= self._ALLOWED, f"unexpected roles: {roles - self._ALLOWED}"
+    def test_the_ungated_allowlist_stays_honest(self):
+        # Guard the exception list itself: if one of these grows a gate, or a
+        # new pack is quietly added to the set, this fails rather than letting
+        # the allowlist rot into a hole in the rule above.
+        packs = available_domains()
+        for name in self._UNGATED:
+            assert name in packs, f"{name}: ungated allowlist names a missing pack"
+            assert packs[name].output.gate is None, (
+                f"{name}: now carries a gate -- drop it from _UNGATED")

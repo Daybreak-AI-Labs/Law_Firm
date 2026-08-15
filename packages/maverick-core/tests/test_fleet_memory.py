@@ -80,7 +80,7 @@ def test_lesson_lands_as_provenance_tagged_reflexion():
         "agent_id": "order-bot", "vendor": "agentforce", "kind": "lesson",
         "goal_text": "reconcile the partner ledger",
         "reflection": "partner feed lags a day; wait for the close",
-        "domain": "finance_sox",
+        "domain": "finance_gl_close",
     })
     assert (ok, reason) == (True, "ok")
     hits = reflexion.recall("reconcile the partner ledger")
@@ -90,7 +90,7 @@ def test_lesson_lands_as_provenance_tagged_reflexion():
     assert fleet_memory.register_agent("helper", "copilot")
     ctx, reason = fleet_memory.recall(
         "reconcile the partner ledger", agent_id="helper", vendor="copilot",
-        domain="finance_sox",
+        domain="finance_gl_close",
     )
     assert reason == "ok" and "partner feed lags" in ctx
 
@@ -103,21 +103,21 @@ def test_recall_uses_exact_user_scope_and_preserves_local_scope(monkeypatch):
         goal_text="reconcile the customer ledger",
         failure_class="scope", failure_msg="local",
         reflection="LOCAL_OPERATOR_REFLEXION",
-        domain="finance_sox",
+        domain="finance_gl_close",
     )
     reflexion.record(
         goal_text="reconcile the customer ledger",
         failure_class="scope", failure_msg="alice",
         reflection="ALICE_PRIVATE_REFLEXION",
-        channel="api", user_id="alice", domain="finance_sox",
+        channel="api", user_id="alice", domain="finance_gl_close",
     )
     dreaming.append_insights([
         dreaming.DreamInsight(
-            ts=1.0, kind="failure_pattern", domain="finance_sox",
+            ts=1.0, kind="failure_pattern", domain="finance_gl_close",
             text="LOCAL_OPERATOR_DREAM", evidence=3,
         ),
         dreaming.DreamInsight(
-            ts=2.0, kind="failure_pattern", domain="finance_sox",
+            ts=2.0, kind="failure_pattern", domain="finance_gl_close",
             text="ALICE_PRIVATE_DREAM", evidence=3,
             channel="api", user_id="alice",
         ),
@@ -125,17 +125,17 @@ def test_recall_uses_exact_user_scope_and_preserves_local_scope(monkeypatch):
 
     alice, reason = fleet_memory.recall(
         "reconcile the customer ledger",
-        agent_id="order-bot", vendor="agentforce", domain="finance_sox",
+        agent_id="order-bot", vendor="agentforce", domain="finance_gl_close",
         channel="api", user_id="alice",
     )
     bob, _ = fleet_memory.recall(
         "reconcile the customer ledger",
-        agent_id="order-bot", vendor="agentforce", domain="finance_sox",
+        agent_id="order-bot", vendor="agentforce", domain="finance_gl_close",
         channel="api", user_id="bob",
     )
     local, _ = fleet_memory.recall(
         "reconcile the customer ledger",
-        agent_id="order-bot", vendor="agentforce", domain="finance_sox",
+        agent_id="order-bot", vendor="agentforce", domain="finance_gl_close",
     )
 
     assert reason == "ok"

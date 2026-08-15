@@ -173,14 +173,14 @@ class TestLearnedSummarizer:
         # (scope|kind) rows; an unscoped summarizer keeps the legacy keys.
         fake_llm.scripted = [make_llm_response("scoped digest")]
         ledger = OutcomeLedger(path=tmp_path / "l.json")
-        ls = LearnedSummarizer(llm=fake_llm, ledger=ledger, scope="finance_sox")
+        ls = LearnedSummarizer(llm=fake_llm, ledger=ledger, scope="finance_gl_close")
         out = ls.compact(_traj(), keep_recent=2)
         assert ls.last_pick is not None
         kind, template = ls.last_pick
-        assert kind == "finance_sox|code"
-        assert 'kind="finance_sox|code"' in out[1]["content"]
+        assert kind == "finance_gl_close|code"
+        assert 'kind="finance_gl_close|code"' in out[1]["content"]
         ls.record_outcome(success=True, continuation_turns=1)
-        assert ledger.stats("finance_sox|code")[template]["trials"] == 1
+        assert ledger.stats("finance_gl_close|code")[template]["trials"] == 1
         assert ledger.stats("code") == {}
 
     def test_llm_error_falls_back(self, tmp_path):

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#0e1320" />
+  <meta name="theme-color" content="#32353a" />
   <title>{% block title %}Lightwork{% endblock %}</title>
   <link rel="stylesheet" href="/static/lightwork.css" />
   {% if custom_theme_css %}
@@ -19,7 +19,7 @@
   <link rel="icon" href="/static/daybreak-logo.jpg" />
   <link rel="apple-touch-icon" href="/static/daybreak-logo.jpg" />
 </head>
-<body class="theme-{{ theme or 'dark' }} font-{{ font or 'default' }} density-{{ density or 'comfortable' }}">
+<body class="theme-{{ theme or 'graphite' }} font-{{ font or 'default' }} density-{{ density or 'comfortable' }}">
   <a class="skip-link" href="#content">Skip to content</a>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
     <defs>
@@ -94,6 +94,8 @@
           <label class="prefs__row"><span>Theme</span>
       <select class="ctl" id="theme-select" onchange="if (this.value) { const u = new URL(window.location); u.searchParams.set('theme', this.value); window.location = u; }" aria-label="Theme">
         <option value="">Theme</option>
+        <option value="graphite" {% if theme == 'graphite' %}selected{% endif %}>Graphite</option>
+        <option value="dove" {% if theme == 'dove' %}selected{% endif %}>Dove</option>
         <option value="dark" {% if theme == 'dark' %}selected{% endif %}>Dark</option>
         <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
         <option value="solarized" {% if theme == 'solarized' %}selected{% endif %}>Solarized</option>

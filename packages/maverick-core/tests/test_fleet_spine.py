@@ -63,39 +63,20 @@ def test_no_finance_pack_can_move_money_without_a_human():
     # no attenuated grant in the suite permits moving money or posting.
     parent = _broad_parent()
     packs = _finance_packs()
-    assert len(packs) >= 20, f"expected the finance roster, got {len(packs)}"
+    assert len(packs) >= 8, f"expected the finance roster, got {len(packs)}"
     for name, prof in packs.items():
         cap = domain_capability(prof, parent, f"agent:{name}-1")
         for tool in _MONEY_TOOLS:
             assert not cap.permits(tool), f"{name} permits money tool {tool!r}"
 
 
-def test_treasury_specialist_runs_under_a_sealed_attenuated_capability():
-    prof = load_domains(builtin_dir())["finance_treasury"]
-    cap = domain_capability(prof, _broad_parent(), "agent:finance_treasury-1")
-    # least privilege: it runs at the pack's read/propose ceiling, not the parent's
-    assert cap.max_risk == "medium"
-    # permits its domain read/propose ops
-    for tool in ("read_file", "bank_read_balance", "bank_read_transactions", "propose_transfer"):
-        assert cap.permits(tool), tool
-    # the custody seal: money movement denied even in the treasury compartment
-    for money in ("wire_transfer", "ach_send", "release_payment"):
-        assert not cap.permits(money), money
-    # a high-risk vendor connector is dropped by the medium ceiling -- the read-
-    # only seal holds even where the vendor host is allowed
-    assert not cap.permits("modern_treasury")
-    # host scope comes from the pack
-    assert cap.permits_host("api.moderntreasury.com")
-    assert not cap.permits_host("paste.evil.example")
-
-
 def test_specialist_grant_never_exceeds_its_parent():
     # Confused-deputy safety: a constrained parent narrows the pack further --
     # never broadens it. The pack's own ceiling is medium, but a low parent
     # propagates down (min by rank), so the child can't use the pack's headroom.
-    prof = load_domains(builtin_dir())["finance_treasury"]
+    prof = load_domains(builtin_dir())["finance_cashflow"]
     low_parent = Capability(principal="agent:finance_controller-0", max_risk="low")
-    cap = domain_capability(prof, low_parent, "agent:finance_treasury-1")
+    cap = domain_capability(prof, low_parent, "agent:finance_cashflow-1")
     assert cap.max_risk == "low"             # min(parent low, pack medium)
     assert cap.permits("read_file")          # a low op still runs
     assert not cap.permits("wire_transfer")  # the money seal holds
@@ -108,12 +89,12 @@ def test_specialist_to_peer_handoff_is_verified():
     # attenuated grant to run under -- nothing more.
     auth = HandoffAuthority.for_run()
     grant = Capability(
-        principal="agent:finance_fpa-1",
+        principal="agent:finance_cashflow-1",
         allow_tools=frozenset({"bank_read_balance", "build_forecast_scenario"}),
         max_risk="low",
     )
     env = auth.mint(
-        sender="agent:finance_treasury-1", recipient="agent:finance_fpa-1",
+        sender="agent:finance_cashflow-1", recipient="agent:finance_cashflow-1",
         grant=grant, task="pull the cash position for the forecast",
         required_tools=("bank_read_balance",),
     )

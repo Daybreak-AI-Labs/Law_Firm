@@ -166,10 +166,10 @@ class TestReflexionDomainAttribution:
         reflexion.record(
             goal_text="Reconcile the quarterly ledger",
             failure_class="budget", failure_msg="cap", reflection="lesson",
-            domain="finance_sox", path=path,
+            domain="finance_gl_close", path=path,
         )
         hits = reflexion.recall("Reconcile the quarterly ledger", path=path)
-        assert hits and hits[0][1].domain == "finance_sox"
+        assert hits and hits[0][1].domain == "finance_gl_close"
 
     def test_same_domain_lesson_outranks_equal_generic(self, tmp_path):
         import json
@@ -186,12 +186,12 @@ class TestReflexionDomainAttribution:
             f.write(json.dumps({**base, "reflection": "generic lesson",
                                 "domain": None}) + "\n")
             f.write(json.dumps({**base, "reflection": "dept lesson",
-                                "domain": "finance_sox"}) + "\n")
+                                "domain": "finance_gl_close"}) + "\n")
         hits = reflexion.recall(
-            "Reconcile the quarterly ledger", domain="finance_sox", path=path,
+            "Reconcile the quarterly ledger", domain="finance_gl_close", path=path,
             k=2,
         )
-        assert hits[0][1].domain == "finance_sox"
+        assert hits[0][1].domain == "finance_gl_close"
 
     def test_legacy_lines_without_domain_still_load(self, tmp_path):
         path = tmp_path / "reflexions.ndjson"
@@ -236,13 +236,13 @@ class TestHumanOverrideIngestion:
         path = tmp_path / "reflexions.ndjson"
         assert reflexion.record_human_override(
             "Wire the Q3 vendor payment batch", "bank_transfer",
-            "amount above DoA tier", domain="finance_sox", path=path,
+            "amount above DoA tier", domain="finance_gl_close", path=path,
         ) is True
         hits = reflexion.recall("Wire the Q3 vendor payment batch", path=path)
         assert hits
         _, entry = hits[0]
         assert entry.failure_class == "human_override"
-        assert entry.domain == "finance_sox"
+        assert entry.domain == "finance_gl_close"
         assert "bank_transfer" in entry.tools_used
         assert "bank_transfer" in entry.reflection
 
@@ -273,7 +273,7 @@ class TestReflexionWiring:
         _maybe_record_reflexion(
             _Goal(), failure_class="agent_error",
             failure_msg="hit max_steps=25", blackboard=bb,
-            channel="slack", user_id="u1", domain="finance_sox",
+            channel="slack", user_id="u1", domain="finance_gl_close",
         )
         assert len(captured) == 1
         assert captured[0]["failure_class"] == "agent_error"
@@ -281,7 +281,7 @@ class TestReflexionWiring:
         assert captured[0]["tools_used"] == ["read_file"]
         assert captured[0]["channel"] == "slack"
         assert captured[0]["user_id"] == "u1"
-        assert captured[0]["domain"] == "finance_sox"
+        assert captured[0]["domain"] == "finance_gl_close"
 
     def test_record_redacts_shield_blocked_goal_text(self, monkeypatch):
         monkeypatch.setenv("MAVERICK_REFLEXION", "1")

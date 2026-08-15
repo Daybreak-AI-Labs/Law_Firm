@@ -94,11 +94,11 @@ def test_custom_theme_selectable_like_builtins(monkeypatch):
     assert "mvk_theme=midnight" in r.headers.get("set-cookie", "")
 
 
-def test_unknown_theme_still_falls_back_to_dark(monkeypatch):
+def test_unknown_theme_still_falls_back_to_the_default(monkeypatch):
     _with_themes(monkeypatch, {"midnight": _GOOD})
     fresh = TestClient(app)
     r = fresh.get("/", params={"theme": "nope"})
-    assert "theme-dark" in r.text
+    assert "theme-graphite" in r.text
     assert "mvk_theme" not in r.headers.get("set-cookie", "")
 
 

@@ -213,13 +213,15 @@ def dashboard_client(tmp_path, monkeypatch):
     w.close()
 
 
-def test_dashboard_default_theme_is_dark(dashboard_client):
+def test_dashboard_default_theme_is_graphite(dashboard_client):
     resp = dashboard_client.get("/")
     assert resp.status_code == 200
-    assert 'class="theme-dark' in resp.text
+    assert 'class="theme-graphite' in resp.text
 
 
-@pytest.mark.parametrize("theme", ["dark", "light", "solarized", "hicontrast"])
+@pytest.mark.parametrize(
+    "theme", ["graphite", "dove", "dark", "light", "solarized", "hicontrast"]
+)
 def test_dashboard_theme_query_param(dashboard_client, theme):
     resp = dashboard_client.get(f"/?theme={theme}")
     assert resp.status_code == 200
@@ -229,8 +231,8 @@ def test_dashboard_theme_query_param(dashboard_client, theme):
 def test_dashboard_invalid_theme_falls_back(dashboard_client):
     resp = dashboard_client.get("/?theme=garbage-not-a-theme")
     assert resp.status_code == 200
-    # Falls back to dark (the default).
-    assert 'class="theme-dark' in resp.text
+    # Falls back to graphite (the default).
+    assert 'class="theme-graphite' in resp.text
 
 
 def test_dashboard_theme_cookie_persists(dashboard_client):

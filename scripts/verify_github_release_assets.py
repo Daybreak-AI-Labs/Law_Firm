@@ -294,12 +294,6 @@ def verify_release_assets(
         "maverick-windows-x86_64.exe",
         f"maverick-container-{tag}.json",
         f"maverick-sbom-{tag}.cdx.json",
-        f"lightwork-environment-threat-hunter-{release.version}.zip",
-        f"lightwork-grc-concierge-{release.version}.zip",
-        f"lightwork-model-risk-ai-assurance-officer-{release.version}.zip",
-        f"lightwork-platform-threat-hunter-{release.version}.zip",
-        f"lightwork-standalone-skus-{release.version}.cdx.json",
-        f"lightwork-standalone-skus-{release.version}.sha256",
     }
     if set(upstream_records) != expected_upstream:
         raise ValueError(

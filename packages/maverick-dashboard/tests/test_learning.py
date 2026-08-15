@@ -69,7 +69,7 @@ def test_signoff_shows_up_as_a_grounded_outcome(tmp_path, monkeypatch):
     # Learning view counts -- the loop from human judgement to accumulated asset.
     monkeypatch.setenv("MAVERICK_CONSEQUENCE", "1")
     w = _isolate(tmp_path, monkeypatch)
-    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cash13w")
+    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
     w.set_goal_status(gid, "done", result=_TABLE)
     w.start_episode(gid)
     assert client.get("/api/v1/learning").json()["accumulated"]["grounded_outcomes"] == 0

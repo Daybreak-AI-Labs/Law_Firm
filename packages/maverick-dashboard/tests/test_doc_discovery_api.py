@@ -37,7 +37,7 @@ def _goal() -> int:
     from maverick import world_model
     w = world_model.WorldModel(world_model.DEFAULT_DB)
     return w.create_goal("Privacy assessment: Acme CRM", "seeded",
-                         domain="itgrc_dpia")
+                         domain="legal_privacy")
 
 
 # ---- POST /api/v1/docs/discover ----------------------------------------------

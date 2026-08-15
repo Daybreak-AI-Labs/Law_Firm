@@ -77,6 +77,34 @@
       --warn: #ffff00; --danger: #ff5050;
       --brand: #00ffff; --brand-hi: #aaffff; --brand-fg: #000000; --info: #66ccff;
     }
+    /* The firm's two greys — neither the navy-black of `dark` nor the near-white
+       of `light`. Both are true neutrals (equal-ish R/G/B) so the frosted panes
+       below read as glass over stone rather than as a tinted colour cast, and
+       both are tuned so every text/surface pair clears WCAG AA (4.5:1) except
+       where noted. `graphite` is the default; `dove` is the long-reading light
+       grey for document work.
+
+       Note the brand is LIGHT here with DARK text on it (--brand-fg). On a dark
+       grey panel a brand dark enough to carry white text would drop below 4.5:1
+       as a link colour; inverting the pair keeps both the button and the link
+       legible from one variable. */
+    body.theme-graphite {
+      color-scheme: dark;
+      --bg: #32353a; --panel: #3d4147; --border: #545a63;
+      --text: #edeff2; --muted: #aab1bb; --accent: #5fd39a;
+      --warn: #e9b968; --danger: #f59a89;
+      --brand: #93b3e2; --brand-hi: #aac6ee; --brand-fg: #11141a; --info: #6fc6d6;
+    }
+    body.theme-dove {
+      color-scheme: light;
+      --bg: #d9dce1; --panel: #eaecf0; --border: #c2c7ce;
+      --text: #1c2028; --muted: #565e6b; --accent: #17864a;
+      --warn: #8a5d0f; --danger: #b0392c;
+      --brand: #2f5488; --brand-hi: #3f6aa8; --brand-fg: #ffffff; --info: #1f6f92;
+      --shadow-sm: 0 1px 2px rgba(24,30,42,0.10);
+      --shadow-md: 0 4px 16px rgba(24,30,42,0.12);
+      --shadow-lg: 0 12px 40px rgba(24,30,42,0.16);
+    }
     /* Derived tokens — declared on <body>, where the theme class lives, so the
        var() references resolve against the *active* theme's core vars. On :root
        they would bake in the dark fallback and leak it into the other themes
@@ -593,11 +621,13 @@
           var(--bg);
         background-attachment: fixed;
       }
-      /* Light theme: the same washes that read as ambient glow over a dark bg
+      /* Light themes: the same washes that read as ambient glow over a dark bg
          mix a DARK brand navy into white, rendering as grey stains (visually a
          dirty screen, caught by the screenshot audit). Keep the effect but at
-         whisper strength, and drop the bottom wash entirely. */
-      body.theme-light:not(.theme-hicontrast) {
+         whisper strength, and drop the bottom wash entirely. `dove` is a light
+         theme too, so it takes the same treatment. */
+      body.theme-light:not(.theme-hicontrast),
+      body.theme-dove:not(.theme-hicontrast) {
         background:
           radial-gradient(1100px 720px at 88% -12%, color-mix(in srgb, var(--brand) 5%, transparent), transparent 62%),
           radial-gradient(920px 640px at -12% 28%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 58%),

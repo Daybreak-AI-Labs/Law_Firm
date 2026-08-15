@@ -60,7 +60,7 @@ class _BlockOutputShield:
 
 def _insight():
     return dreaming.DreamInsight(
-        ts=1.0, kind="failure_pattern", domain="finance_sox",
+        ts=1.0, kind="failure_pattern", domain="finance_gl_close",
         text="Recurring failure (agent_error, seen 2x) on goals about ledger.",
         evidence=2,
     )
@@ -83,7 +83,7 @@ def test_enrich_replaces_text_with_llm_output():
     assert llm.calls == 1
     assert out.text == "ROOT CAUSE: partner feed lags. FIX: wait for close."
     # scope/evidence/domain are preserved -- only the text changes.
-    assert out.domain == "finance_sox"
+    assert out.domain == "finance_gl_close"
     assert out.evidence == 2
     assert out.kind == "failure_pattern"
 
@@ -168,7 +168,7 @@ def _seed_failures(path):
                  "reconcile the quarterly partner ledger"):
         reflexion.record(goal_text=goal, failure_class="agent_error",
                          failure_msg="feed lagged", reflection="wait for close",
-                         domain="finance_sox", path=path)
+                         domain="finance_gl_close", path=path)
 
 
 def _run(tmp_path, **kw):

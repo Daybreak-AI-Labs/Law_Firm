@@ -11,7 +11,7 @@ from maverick.domain import available_domains, enabled_domains, suite_for
 
 
 def test_suite_for_prefix_mapping():
-    assert suite_for("ops_purchasing") == "operations"
+    assert suite_for("re_lease_abstraction") == "real_estate"
     assert suite_for("legal_research") == "legal"
     assert suite_for("finance_gl_close") == "finance"
     # Legacy/generic packs have no suite prefix and are never toggled off.

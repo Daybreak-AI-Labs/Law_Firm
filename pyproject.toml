@@ -93,15 +93,15 @@ max-complexity = 20
 # and module-level symbols those miss. Tests are excluded -- fixtures and
 # parametrize helpers read as "unused" to static analysis.
 min_confidence = 80
-paths = ["packages", "apps", "benchmarks"]
+paths = ["packages", "apps"]
 exclude = ["*/tests/*", "*/test_*.py"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages", "apps", "benchmarks"]
+testpaths = ["packages", "apps"]
 python_files = "test_*.py"
 addopts = "--import-mode=importlib"
-# Put the repo root (rootdir) on sys.path so cross-package test imports like
-# `from benchmarks.swe_bench import ...` resolve regardless of the invocation
-# cwd. Without this the maverick-core suite only collected from the repo root
-# and ModuleNotFound'd when run from inside packages/maverick-core (#599).
+# Put the repo root (rootdir) on sys.path so cross-package test imports
+# resolve regardless of the invocation cwd. Without this the maverick-core
+# suite only collected from the repo root and ModuleNotFound'd when run from
+# inside packages/maverick-core (#599).
 pythonpath = ["."]

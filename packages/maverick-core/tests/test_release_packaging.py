@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import gzip
-import hashlib
 import importlib.util
 import io
 import json
@@ -99,21 +98,12 @@ def _release_input_assembler() -> str:
 
 
 def _release_input_fixture(root: Path, *, tag: str = "v1.2.3") -> tuple[Path, Path]:
-    version = tag.removeprefix("v")
     input_root = root / "release-inputs"
     output_root = root / "dist"
     expected = {
         "binary-linux": {"maverick-linux-x86_64"},
         "binary-macos": {"maverick-macos-arm64"},
         "binary-windows": {"maverick-windows-x86_64.exe"},
-        "standalone": {
-            f"lightwork-environment-threat-hunter-{version}.zip",
-            f"lightwork-grc-concierge-{version}.zip",
-            f"lightwork-model-risk-ai-assurance-officer-{version}.zip",
-            f"lightwork-platform-threat-hunter-{version}.zip",
-            f"lightwork-standalone-skus-{version}.cdx.json",
-            f"lightwork-standalone-skus-{version}.sha256",
-        },
         "sbom": {f"maverick-sbom-{tag}.cdx.json"},
     }
     for producer, names in expected.items():
@@ -146,16 +136,6 @@ def _run_release_input_assembler(
         capture_output=True,
         text=True,
     )
-
-
-def _load_sku_builder():
-    path = REPO_ROOT / "scripts" / "build_standalone_skus.py"
-    spec = importlib.util.spec_from_file_location("build_standalone_skus", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def _load_artifact_normalizer():
@@ -244,45 +224,6 @@ def test_release_cohort_helper_validates_without_site_packages():
     )
     assert result.returncode == 0, result.stderr
     assert "validated 8 Lightwork cohort source projects" in result.stdout
-
-
-def test_standalone_sku_archives_are_deterministic_and_self_describing(tmp_path):
-    builder = _load_sku_builder()
-    first_dir = tmp_path / "first"
-    second_dir = tmp_path / "second"
-    first = builder.build("0.1.7", "0123456789abcdef", first_dir)
-    second = builder.build("v0.1.7", "0123456789abcdef", second_dir)
-
-    assert [path.name for path in first] == [path.name for path in second]
-    assert len(first) == 6
-    for left, right in zip(first, second, strict=True):
-        assert left.read_bytes() == right.read_bytes()
-
-    archives = sorted(first_dir.glob("*.zip"))
-    assert len(archives) == 4
-    for archive_path in archives:
-        with zipfile.ZipFile(archive_path) as archive:
-            names = archive.namelist()
-            assert len({name.split("/", 1)[0] for name in names}) == 1
-            assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
-            metadata_name = next(name for name in names if name.endswith("/RELEASE-METADATA.json"))
-            metadata = json.loads(archive.read(metadata_name))
-            assert metadata["artifact_type"] == "standalone-source-archive"
-            assert metadata["pypi_distribution"] is False
-            assert metadata["source_revision"] == "0123456789abcdef"
-            assert metadata["version"] == "0.1.7"
-            assert next(name for name in names if name.endswith("/LICENSE"))
-
-    bom = json.loads((first_dir / "lightwork-standalone-skus-0.1.7.cdx.json").read_text())
-    assert bom["bomFormat"] == "CycloneDX"
-    assert bom["specVersion"] == "1.6"
-    assert len([item for item in bom["components"] if item["type"] == "application"]) == 4
-
-    checksum_lines = (first_dir / "lightwork-standalone-skus-0.1.7.sha256").read_text().splitlines()
-    assert len(checksum_lines) == 5
-    for line in checksum_lines:
-        digest, name = line.split("  ", 1)
-        assert hashlib.sha256((first_dir / name).read_bytes()).hexdigest() == digest
 
 
 def test_python_release_archive_normalizer_removes_wall_clock_metadata(tmp_path):
@@ -608,33 +549,6 @@ def test_product_release_manifests_share_the_python_cohort_version():
     assert "<string>$VERSION</string>" in macos_build
 
 
-def test_standalone_skus_are_github_source_assets_not_pypi_packages():
-    release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
-        encoding="utf-8"
-    )
-    publish_workflow = (REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "python scripts/build_standalone_skus.py" in release_workflow
-    assert "dist/lightwork-*" in release_workflow
-    assert "git checkout --detach" in release_workflow
-    assert "cyclonedx-bom==7.3.1" in release_workflow
-    assert "SBOM generation failed (non-fatal)" not in release_workflow
-    assert 'target_tags=("$CONTAINER_IMAGE:$version")' in release_workflow
-    assert "$CONTAINER_IMAGE:latest" not in release_workflow
-    assert 'workflows: ["Release"]' in publish_workflow
-    assert "types: [completed]" in publish_workflow
-    assert "github.event.workflow_run.conclusion == 'success'" in publish_workflow
-    assert "attempt $i/8" in publish_workflow
-    for sku in (
-        "grc-concierge",
-        "platform-threat-hunter",
-        "environment-threat-hunter",
-        "model-risk-ai-assurance-officer",
-    ):
-        assert f"demo/{sku}" not in publish_workflow
-
-
 def test_release_cohort_dependency_environments_are_complete():
     cohort = tomllib.loads(
         (REPO_ROOT / "release-cohort.toml").read_text(encoding="utf-8")
@@ -904,73 +818,6 @@ def test_tauri_binary_apps_use_tracked_locks_and_a_pinned_toolchain():
         assert required_argument in build_step
 
 
-def test_public_site_contains_the_commit_bound_governance_benchmark():
-    manifest = (REPO_ROOT / "docs" / "public-docs.txt").read_text(
-        encoding="utf-8"
-    )
-    public_config = (REPO_ROOT / "mkdocs.public.yml").read_text(
-        encoding="utf-8"
-    )
-    base_config = (REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
-    docs_workflow = (
-        REPO_ROOT / ".github" / "workflows" / "docs.yml"
-    ).read_text(encoding="utf-8")
-    gateway = (
-        REPO_ROOT / "docs" / "AI_EVIDENCE_GATEWAY.md"
-    ).read_text(encoding="utf-8")
-    report = (
-        REPO_ROOT / "benchmarks" / "GOVERNANCE_FRONTIER_RESULTS.md"
-    ).read_text(encoding="utf-8")
-
-    mapping = (
-        "@repo/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md"
-        "|benchmarks/governance-frontier.md"
-    )
-    assert mapping in manifest
-    evidence_root = "benchmarks/results/governance-frontier-v1"
-    for filename in (
-        "measured-manifest.json",
-        "trusted-publisher.pub",
-        "verify_manifest.py",
-    ):
-        exact_mapping = (
-            f"@repo/{evidence_root}/{filename}|"
-            f"{evidence_root}/{filename}"
-        )
-        assert exact_mapping in manifest
-        assert filename in docs_workflow
-    assert "Governance Frontier benchmark: benchmarks/governance-frontier.md" in (
-        public_config
-    )
-    assert "- pymdownx.snippets:" in base_config
-    assert "!relative $docs_dir" in base_config
-    assert "restrict_base_path: true" in base_config
-    assert "check_paths: true" in base_config
-    assert "not_found: warn" in public_config
-    assert "./benchmarks/governance-frontier.md" in gateway
-    assert "source_name.startswith(\"@repo/\")" in docs_workflow
-    assert "benchmarks/GOVERNANCE_FRONTIER_RESULTS.md" in docs_workflow
-    assert re.search(r"Git commit: `[0-9a-f]{40}`", report)
-    assert re.search(r"Input digest: `[0-9a-f]{64}`", report)
-    manifest_bytes = (
-        REPO_ROOT / evidence_root / "measured-manifest.json"
-    ).read_bytes().replace(b"\r\n", b"\n")
-    key_bytes = (
-        REPO_ROOT / evidence_root / "trusted-publisher.pub"
-    ).read_bytes().replace(b"\r\n", b"\n")
-    raw_key = bytes.fromhex(key_bytes.decode("ascii").strip())
-    for digest in (
-        hashlib.sha256(manifest_bytes).hexdigest(),
-        hashlib.sha256(key_bytes).hexdigest(),
-        hashlib.sha256(raw_key).hexdigest(),
-    ):
-        assert f"`{digest}`" in report
-    assert "Source-binding verification requires a licensed Lightwork source" in (
-        report
-    )
-    assert "reviewed_non_markdown" in docs_workflow
-
-
 def test_cloud_quickstarts_and_reference_probes_match_the_runtime_contract():
     distribution = (REPO_ROOT / "docs" / "DISTRIBUTION.md").read_text(
         encoding="utf-8"
@@ -1065,8 +912,7 @@ def test_customer_surfaces_do_not_reference_the_retired_repository_owner():
             "packages/maverick-core/maverick/tools/reddit_tool.py",
             "packages/maverick-core/maverick/tools/wikipedia.py",
             "packages/maverick-mcp/maverick_mcp/publish.py",
-            "scripts/build_standalone_skus.py",
-            "scripts/train_runpod.sh",
+                "scripts/train_runpod.sh",
             "web/README.md",
             "web/index.html",
         )
@@ -1196,7 +1042,7 @@ def test_release_tags_require_main_ancestry_and_isolated_concurrency():
     assert 'echo "ref=refs/tags/$tag"' not in release
     assert release.count(
         "ref: ${{ needs.validate-release-tag.outputs.sha }}"
-    ) == 6
+    ) == 5
     assert (
         "group: lightwork-release-${{ inputs.tag || github.ref_name }}"
         in release
@@ -1259,26 +1105,6 @@ def test_release_version_policy_has_one_canonical_cross_channel_spelling():
             pass
         else:  # pragma: no cover - assertion branch
             raise AssertionError(f"accepted noncanonical release tag: {invalid}")
-
-
-def test_standalone_builder_accepts_every_canonical_release_version(tmp_path):
-    builder = _load_sku_builder()
-    versions = tuple(
-        f"1.2.3{prerelease}{postrelease}{developmental}"
-        for prerelease in ("", "a1", "b2", "rc3")
-        for postrelease in ("", ".post4")
-        for developmental in ("", ".dev5")
-    )
-    assert len(versions) == 16
-
-    for version in versions:
-        output = builder.build(
-            version,
-            "a" * 40,
-            tmp_path / version,
-        )
-        assert len(output) == 6
-        assert all(version in path.name for path in output)
 
 
 def test_reusable_agent_separates_untrusted_execution_from_pr_write():
@@ -1590,7 +1416,7 @@ def test_privileged_release_job_downloads_only_named_producer_artifacts():
     final_release_job = release.split("\n  release:", 1)[1]
 
     assert "merge-multiple:" not in final_release_job
-    assert final_release_job.count("uses: actions/download-artifact@") == 5
+    assert final_release_job.count("uses: actions/download-artifact@") == 4
     expected_downloads = {
         "Download the Linux binary producer": (
             "maverick-linux-x86_64",
@@ -1603,10 +1429,6 @@ def test_privileged_release_job_downloads_only_named_producer_artifacts():
         "Download the Windows binary producer": (
             "maverick-windows-x86_64.exe",
             "binary-windows",
-        ),
-        "Download the standalone source producer": (
-            "standalone-sku-source",
-            "standalone",
         ),
         "Download the release-runtime SBOM producer": (
             "release-runtime-sbom",
@@ -1636,17 +1458,11 @@ def test_release_input_assembler_accepts_only_the_exact_producer_cohort(tmp_path
     result = _run_release_input_assembler(tmp_path, input_root)
 
     assert result.returncode == 0, result.stderr
-    assert "assembled 10 allowlisted release inputs" in result.stdout
+    assert "assembled 4 allowlisted release inputs" in result.stdout
     assert {path.name for path in output_root.iterdir()} == {
         "maverick-linux-x86_64",
         "maverick-macos-arm64",
         "maverick-windows-x86_64.exe",
-        "lightwork-environment-threat-hunter-1.2.3.zip",
-        "lightwork-grc-concierge-1.2.3.zip",
-        "lightwork-model-risk-ai-assurance-officer-1.2.3.zip",
-        "lightwork-platform-threat-hunter-1.2.3.zip",
-        "lightwork-standalone-skus-1.2.3.cdx.json",
-        "lightwork-standalone-skus-1.2.3.sha256",
         "maverick-sbom-v1.2.3.cdx.json",
     }
 
@@ -1839,7 +1655,6 @@ def test_release_delivery_toolchains_and_artifacts_are_deterministic():
         "validate-release-tag",
         "docker-image",
         "binaries",
-        "standalone-sku-artifacts",
         "release-runtime-sbom",
     ):
         assert f"        {required_need}," in final_release_job

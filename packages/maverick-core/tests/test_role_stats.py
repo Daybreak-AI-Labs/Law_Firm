@@ -58,18 +58,18 @@ class TestDepartmentScopedCredit:
 
     def test_domain_record_lands_in_both_scopes(self, tmp_path):
         p = tmp_path / "role_stats.json"
-        role_stats.record("researcher", 0.8, path=p, domain="finance_sox")
+        role_stats.record("researcher", 0.8, path=p, domain="finance_gl_close")
         # Global view still sees the role (department signal also feeds it).
         assert dict(role_stats.top_roles(min_runs=1, path=p)) == {"researcher": 0.8}
         # Department view sees it scoped, with the scope stripped.
-        assert dict(role_stats.top_roles(min_runs=1, path=p, domain="finance_sox")) \
+        assert dict(role_stats.top_roles(min_runs=1, path=p, domain="finance_gl_close")) \
             == {"researcher": 0.8}
         # A different department sees nothing.
-        assert role_stats.top_roles(min_runs=1, path=p, domain="gtm_sales_eng") == []
+        assert role_stats.top_roles(min_runs=1, path=p, domain="legal_intake") == []
 
     def test_global_view_excludes_scoped_keys(self, tmp_path):
         p = tmp_path / "role_stats.json"
-        role_stats.record("coder", 0.5, path=p, domain="pe_bi")
+        role_stats.record("coder", 0.5, path=p, domain="km_doc_quality")
         top = role_stats.top_roles(min_runs=1, path=p)
         assert all("::" not in role for role, _ in top)
 
@@ -79,10 +79,10 @@ class TestDepartmentScopedCredit:
         # Globally the writer wins; within finance the auditor does.
         role_stats.record("writer", 0.9, path=p)
         role_stats.record("writer", 0.9, path=p)
-        role_stats.record("auditor", 0.7, path=p, domain="finance_sox")
-        role_stats.record("auditor", 0.7, path=p, domain="finance_sox")
-        g = role_stats.guidance(path=p, domain="finance_sox")
-        assert g and "finance_sox" in g and "auditor" in g
+        role_stats.record("auditor", 0.7, path=p, domain="finance_gl_close")
+        role_stats.record("auditor", 0.7, path=p, domain="finance_gl_close")
+        g = role_stats.guidance(path=p, domain="finance_gl_close")
+        assert g and "finance_gl_close" in g and "auditor" in g
 
     def test_guidance_falls_back_to_global_when_department_is_thin(
         self, tmp_path, monkeypatch,

@@ -1249,7 +1249,10 @@ class WorldModel:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        # The context-manager protocol passes these positionally and we ignore
+        # all three (close() is unconditional); underscore-prefixed so vulture
+        # reads them as deliberately unused rather than dead code.
         self.close()
 
     def reclaim_orphan_goals(self, *, max_age_seconds: float = 60.0) -> int:
