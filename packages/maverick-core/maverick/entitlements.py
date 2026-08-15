@@ -49,21 +49,24 @@ BASE_TIER = "basic"
 DEFAULT_GRACE_DAYS = 14
 
 #: Feature name → minimum tier that unlocks it. Anything **not** listed here is
-#: a *core* feature and is always allowed (fail-open). Add gated capabilities
-#: here so there is exactly one enforcement registry.
-GATED_FEATURES: dict[str, str] = {
-    "external_agents": "gold",
-    "fleet_governance": "gold",
-    "fleet_memory": "gold",
-    "siem_export": "gold",
-    "advanced_evolve": "platinum",
-    "custom_pack_factory": "platinum",
-    "multi_tenant": "platinum",
-}
+#: a *core* feature and is always allowed (fail-open).
+#:
+#: EMPTY ON PURPOSE. Upstream this gated paid add-ons behind an Ed25519 license
+#: issued by the vendor: external_agents, fleet_governance, fleet_memory and
+#: siem_export at "gold"; advanced_evolve, custom_pack_factory and multi_tenant
+#: at "platinum". The firm owns this software outright, there is no vendor to
+#: buy a tier from, and the console that minted those licenses is deleted -- so
+#: every capability is a core capability here. Leaving the registry populated
+#: would have let the firm's own platform refuse to run its own features.
+#:
+#: The machinery is retained rather than ripped out: it is load-bearing for the
+#: expiry/grace/trust-anchor paths that other modules import, and an empty
+#: registry expresses "nothing is gated" in the module's own terms.
+GATED_FEATURES: dict[str, str] = {}
 
-#: Add-on suites that require an explicit entitlement (not shipped in the base
-#: platform). Core suites are always on.
-GATED_SUITES: frozenset[str] = frozenset({"fleet"})
+#: Add-on suites that require an explicit entitlement. Empty for the same
+#: reason: there are no add-on suites to sell to ourselves.
+GATED_SUITES: frozenset[str] = frozenset()
 
 # Status values for a loaded license.
 LICENSED = "licensed"   # valid + in date

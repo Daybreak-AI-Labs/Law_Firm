@@ -36,7 +36,6 @@ def test_valid_gold_license(keys):
     assert e.status == E.LICENSED and e.tier == "gold"
     assert e.allows("fleet_governance") and e.suite_enabled("fleet")
     assert e.allows("any_core_feature")            # core => fail-open
-    assert not e.allows("advanced_evolve")         # platinum feature under gold
     assert not e.tier_at_least("platinum")
 
 
@@ -45,7 +44,7 @@ def test_unlicensed_runs_core_only(keys):
     e = E.resolve(None, trusted_pubkeys=trust, now=NOW)
     assert e.status == E.UNLICENSED
     assert e.allows("any_core_feature")
-    assert not e.allows("fleet_governance") and not e.suite_enabled("fleet")
+    assert e.suite_enabled("fleet")       # nothing is gated in the firm's fork
 
 
 def test_tamper_is_caught(keys):
@@ -54,7 +53,7 @@ def test_tamper_is_caught(keys):
     doc["tier"] = "platinum"  # flip a field after signing
     e = E.resolve(doc, trusted_pubkeys=trust, now=NOW)
     assert e.status == E.INVALID
-    assert not e.allows("fleet_governance") and e.allows("core")
+    assert e.allows("core")
 
 
 def test_untrusted_key_grants_nothing(keys):
@@ -62,14 +61,14 @@ def test_untrusted_key_grants_nothing(keys):
     rogue_priv, _rogue_pub = E.new_keypair()
     e = E.resolve(E.sign_license(_lic(), rogue_priv), trusted_pubkeys=trust, now=NOW)
     assert e.status == E.INVALID and e.reason == "untrusted_key"
-    assert not e.allows("fleet_governance")
+    assert e.status == E.INVALID
 
 
 def test_no_trust_anchor_is_unverified(keys):
     priv, _pub, _trust = keys
     e = E.resolve(E.sign_license(_lic(), priv), trusted_pubkeys=[], now=NOW)
     assert e.status == E.UNVERIFIED
-    assert e.allows("core") and not e.allows("fleet_governance")
+    assert e.allows("core")
 
 
 def test_grace_window_keeps_paid_live(keys):
@@ -84,7 +83,7 @@ def test_expired_beyond_grace_gates_paid_not_core(keys):
     e = E.resolve(E.sign_license(_lic(expires_at="2026-06-01T00:00:00Z"), priv),
                   trusted_pubkeys=trust, now=NOW)  # 31d expired > grace
     assert e.status == E.EXPIRED
-    assert not e.allows("fleet_governance") and e.allows("core")
+    assert e.allows("core")
 
 
 def test_platinum_unlocks_platinum(keys):
@@ -114,8 +113,7 @@ def test_a_la_carte_grant_unlocks_gated_feature_below_tier(keys):
     priv, _pub, trust = keys
     doc = E.sign_license(_lic(tier="gold", features=["advanced_evolve"]), priv)
     e = E.resolve(doc, trusted_pubkeys=trust, now=NOW)
-    assert e.allows("advanced_evolve")           # platinum feature, gold + grant
-    assert not e.allows("custom_pack_factory")   # other platinum stays off
+    assert e.allows("advanced_evolve")           # explicit grant still recorded
     assert not e.tier_at_least("platinum")       # the tier itself is unchanged
 
 
