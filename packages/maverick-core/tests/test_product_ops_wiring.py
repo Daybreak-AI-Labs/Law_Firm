@@ -44,9 +44,13 @@ def test_require_gates_only_paid_under_enforcement(monkeypatch):
     monkeypatch.setenv("MAVERICK_LICENSE_ENFORCE", "1")
     assert E.enforcing() is True
     monkeypatch.setattr(E, "current", lambda refresh=False: E.Entitlements(status=E.UNLICENSED))
-    assert E.require("fleet_memory") is False      # paid gated off
-    assert E.require("some_core_feature") is True  # core still runs
-    assert E.require_suite("fleet") is False
+    # Nothing is gated in the firm's fork (GATED_FEATURES/GATED_SUITES are empty
+    # on purpose), so even with enforcement switched ON and no licence at all,
+    # every capability is a core capability and runs. This is the assertion that
+    # stops a future edit from quietly reintroducing a paid tier.
+    assert E.require("fleet_memory") is True
+    assert E.require("some_core_feature") is True
+    assert E.require_suite("fleet") is True
 
 
 def test_enforcement_honours_a_valid_license(monkeypatch):
@@ -56,7 +60,7 @@ def test_enforcement_honours_a_valid_license(monkeypatch):
     monkeypatch.setattr(E, "current", lambda refresh=False: ent)
     assert E.require("fleet_memory") is True
     assert E.require_suite("fleet") is True
-    assert E.require("advanced_evolve") is False   # platinum feature, gold license
+    assert E.require("advanced_evolve") is True    # ungated: no tier withholds it
 
 
 def test_config_knob_supplies_trust_and_enforce(monkeypatch):
