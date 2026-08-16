@@ -37,7 +37,7 @@ def test_generic_empties_use_mv_empty():
     # inline to mask that (the old page-text assertion matched the CSS rule).
     import pathlib
     base = pathlib.Path(__file__).resolve().parents[1] / "maverick_dashboard" / "templates"
-    for f in ["benchmarks.html", "compartments.html", "store.html"]:
+    for f in ["compartments.html", "store.html"]:
         assert "mv-empty" in (base / f).read_text(), f
 
 

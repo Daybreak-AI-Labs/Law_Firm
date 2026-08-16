@@ -417,7 +417,6 @@ class TestBypassRegression:
         "packages/maverick-core/maverick/quotas.py",
         "packages/maverick-core/maverick/plugin_ca.py",
         "packages/maverick-core/maverick/workspace_snapshot.py",
-        "packages/maverick-core/maverick/adapter_rung.py",
         "packages/maverick-core/maverick/automation_import/to_flow.py",
         "apps/installer-cli/maverick_installer/wizard.py",
         "deploy/docker-compose.yml",

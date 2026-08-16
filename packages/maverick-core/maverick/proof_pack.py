@@ -14,12 +14,8 @@ Sections (status is honest — a section that can't run here says so):
   (:mod:`maverick.reliability_cert`). *Runs for real, offline.* (hard)
 * **perf_sla**      — the published hot-path SLA measured live
   (:mod:`maverick.perf_sla`). *Runs for real, offline.* (hard)
-* **shield_asr**    — attack-success-rate reduction through the real shield
-  chokepoints (``benchmarks/security``). *Offline, built-in shield; repo-only.*
 * **learning_curve** — the compounding metric + workforce-value report read
   from the world model. *Real when run history exists; honest when it doesn't.*
-* **benchmarks**    — competitive pass@1. *Needs a provider key; reported
-  ``NOT_RUN`` with the exact reproduce command until then — never fabricated.*
 
     python -m maverick.proof_pack [-o OUTDIR] [--ci] [--human-cost N]
 
@@ -40,9 +36,6 @@ FAIL = "FAIL"
 SKIPPED = "SKIPPED"
 NOT_RUN = "NOT_RUN"
 INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
-
-_REPRODUCE_BENCHMARK = "python benchmarks/run_eval.py gaia --dataset <path> --limit 25"
-
 
 @dataclass
 class Evidence:
@@ -113,32 +106,6 @@ def collect_perf_sla() -> Evidence:
                         for r in results]})
 
 
-def collect_shield_asr() -> Evidence:
-    # The offline ASR harness lives under benchmarks/ (repo-only, not in the
-    # installed wheel); degrade honestly when it isn't importable.
-    try:
-        from benchmarks.security import end_to_end_asr
-    except Exception:
-        return Evidence("shield_asr", SKIPPED,
-                        "offline shield-ASR harness is repo-only — run from a source checkout",
-                        hard=False)
-    try:
-        r = end_to_end_asr.measure()
-    except Exception as e:  # noqa: BLE001 -- a harness error must not break the pack
-        return Evidence("shield_asr", SKIPPED, f"harness error: {type(e).__name__}: {e}",
-                        hard=False)
-    db_k, db_n, (lo, hi) = r["did_block"]
-    fp_k, fp_n, _fp_ci = r["fp"]
-    block = (db_k / db_n) if db_n else 0.0
-    fp_pct = f"{100 * fp_k / fp_n:.0f}%" if fp_n else "n/a"
-    summary = (
-        f"backend={r['backend']} · ASR 1.000 -> {1 - block:.3f} "
-        f"(defense-in-depth block {100 * block:.0f}% "
-        f"[{lo * 100:.0f}-{hi * 100:.0f}], benign FP {fp_pct}); "
-        "detection only — primary defense is containment (see governance)")
-    return Evidence("shield_asr", PASS, summary, hard=False, data=r)
-
-
 def collect_learning(world, *, human_cost: float | None = None) -> Evidence:
     from . import compounding_metric, workforce_value
     reports = compounding_metric.report_from_world(world)
@@ -160,21 +127,6 @@ def collect_learning(world, *, human_cost: float | None = None) -> Evidence:
         + (f", ROI={wv.roi_multiple:.1f}x" if wv.agent_cost else ""))
     return Evidence("learning_curve", PASS if improving else INSUFFICIENT_DATA,
                     summary, hard=False, data=data)
-
-
-def collect_benchmarks() -> Evidence:
-    from .config import any_provider_configured
-    has_key = any_provider_configured()
-    if has_key:
-        summary = ("provider key detected — competitive benchmarks are runnable but "
-                   "intentionally NOT auto-run here (cost/time). "
-                   f"Reproduce: {_REPRODUCE_BENCHMARK}")
-    else:
-        summary = ("no provider key configured — competitive scores NOT_RUN "
-                   f"(never fabricated). Set a key and run: {_REPRODUCE_BENCHMARK}")
-    return Evidence("benchmarks", NOT_RUN, summary, hard=False,
-                    data={"provider_configured": has_key,
-                          "reproduce": _REPRODUCE_BENCHMARK})
 
 
 # --- assembly -------------------------------------------------------------
@@ -202,9 +154,7 @@ def build(world=None, *, human_cost: float | None = None,
             collect_governance(),
             collect_reliability(),
             collect_perf_sla(),
-            collect_shield_asr(),
             collect_learning(w, human_cost=human_cost),
-            collect_benchmarks(),
         ]
     finally:
         if own_world:
@@ -273,7 +223,7 @@ _BADGE = {
     PASS: "PASS",
     FAIL: "FAIL",
     SKIPPED: "SKIPPED",
-    NOT_RUN: "NOT RUN (needs provider key)",
+    NOT_RUN: "NOT RUN",
     INSUFFICIENT_DATA: "INSUFFICIENT DATA",
 }
 
@@ -308,13 +258,8 @@ def render_markdown(manifest: dict) -> str:
         "## Read this honestly",
         "- `governance`, `reliability`, `perf_sla` run against the **real** code on "
         "this machine — no mocks. They gate the verdict above.",
-        "- `shield_asr` is the **built-in** fallback shield (no SDK / LLM cascade — "
-        "those score higher) and measures *detection*; the load-bearing defense is "
-        "**containment** (least-privilege capabilities), proven under `governance`.",
         "- `learning_curve` reads this deployment's own run history — it says "
         "`INSUFFICIENT DATA` until real goals have run; it never invents a curve.",
-        "- `benchmarks` competitive scores require a provider key and are reported "
-        "`NOT RUN` with the exact reproduce command — **no number is fabricated**.",
         "",
         "Verify the bundle: `maverick audit verify` (the audit chain) and "
         "`python -m maverick.proof_pack --verify proof_manifest.json "

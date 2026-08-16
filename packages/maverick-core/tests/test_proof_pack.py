@@ -37,7 +37,6 @@ class _FakeWorld:
 
 
 def test_build_runs_hard_sections_and_is_honest(monkeypatch, tmp_path):
-    # Deterministic: no provider key -> benchmarks NOT_RUN.
     monkeypatch.setattr("maverick.config.any_provider_configured", lambda: False)
 
     from maverick.world_model import WorldModel
@@ -47,8 +46,7 @@ def test_build_runs_hard_sections_and_is_honest(monkeypatch, tmp_path):
 
     assert manifest["kind"] == "maverick-proof-pack"
     secs = manifest["sections"]
-    assert set(secs) == {"governance", "reliability", "perf_sla", "shield_asr",
-                         "learning_curve", "benchmarks"}
+    assert set(secs) == {"governance", "reliability", "perf_sla", "learning_curve"}
 
     # Hard, real, offline sections must pass on the same runner CI uses.
     assert secs["governance"]["status"] == "PASS", secs["governance"]
@@ -58,14 +56,12 @@ def test_build_runs_hard_sections_and_is_honest(monkeypatch, tmp_path):
 
     # Honest reporting of what can't run here.
     assert secs["learning_curve"]["status"] == "INSUFFICIENT_DATA"
-    assert secs["benchmarks"]["status"] == "NOT_RUN"
-    assert "run_eval" in secs["benchmarks"]["data"]["reproduce"]
-    # The ASR harness is repo-only; either it ran or it degraded cleanly.
-    assert secs["shield_asr"]["status"] in {"PASS", "SKIPPED"}
 
-    # The governance section carries all seven guarantees, none failed.
+    # The governance section carries every guarantee, none failed. The
+    # segregation-of-duties claim went with the finance subsystem; the count is
+    # asserted so a guarantee cannot go missing unnoticed.
     guarantees = secs["governance"]["data"]["guarantees"]
-    assert len(guarantees) == 7
+    assert len(guarantees) == 6
     assert not [g for g in guarantees if not g["passed"]]
 
 
@@ -83,8 +79,6 @@ def test_build_releases_only_owned_world_handles(monkeypatch):
         "collect_governance",
         "collect_reliability",
         "collect_perf_sla",
-        "collect_shield_asr",
-        "collect_benchmarks",
     ):
         monkeypatch.setattr(proof_pack, name, lambda: evidence)
     monkeypatch.setattr(
@@ -163,7 +157,8 @@ def test_render_markdown_is_executive_readable():
         "environment": {"python": "3.12.0", "platform": "linux", "provider_configured": False},
         "sections": {
             "governance": {"status": "PASS", "summary": "5 proven", "hard": True, "data": {}},
-            "benchmarks": {"status": "NOT_RUN", "summary": "no key", "hard": False, "data": {}},
+            "learning_curve": {"status": "NOT_RUN", "summary": "no history",
+                               "hard": False, "data": {}},
         },
     }
     md = proof_pack.render_markdown(manifest)

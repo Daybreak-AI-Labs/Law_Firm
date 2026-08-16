@@ -86,10 +86,6 @@ KNOWN_SECTIONS = frozenset({
     # allowlist for the DGM-style code rung. Read by config.get_self_modify,
     # written by the wizard's advanced opt-in step.
     "self_modify",
-    # Governed in-tenant weights adaptation (maverick.adapter_rung): LoRA
-    # adapters promoted through the weights rung. Read by
-    # config.get_adapter_rung, written by the wizard's advanced opt-in step.
-    "adapter_rung",
     # Data-residency region pinning (maverick.residency): read by real
     # load_config() call sites and written by the wizard's regulated-posture
     # step, yet was missing here -- a false "unknown section" for [residency].

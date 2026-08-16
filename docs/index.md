@@ -97,7 +97,5 @@ platform remain proprietary.
 - [Threat model](security/threat-model.md) — trust boundaries, capabilities, tenancy, and security controls
 - Security & compliance overview (`docs/security-hardening.md`) — application egress controls, deployment boundaries, identity, audit/evidence
 - [Plugins](plugins.md) — extending the tool / channel / skill surface
-- [Governed model improvement](MODEL_IMPROVEMENT_PLATFORM.md) — the learning lifecycle, regression detection, and promotion controls
 - [Starter goals](starter-goals.md) — ready-to-run examples for common workflows
-- Roadmap details are available during enterprise evaluation.
-- [Contributing](CONTRIBUTING.md) — how to send PRs
+- [Working on this repo](CONTRIBUTING.md)

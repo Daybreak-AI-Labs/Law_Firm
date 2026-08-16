@@ -218,7 +218,6 @@ def _require_halt_permission(request: Request) -> None:
 _PERF_SLA_CACHE_TTL_SECONDS = 60.0
 _PERF_SLA_LOCK = asyncio.Lock()
 _PERF_SLA_CACHE: tuple[float, list[dict], str | None] | None = None
-_PERF_HISTORY_MAX_FILES = 128
 _COMPLIANCE_PACKET_CACHE_TTL_SECONDS = 60.0
 _COMPLIANCE_PACKET_LOCK = asyncio.Lock()
 _COMPLIANCE_PACKET_CACHE: tuple[float, str] | None = None
@@ -2656,14 +2655,6 @@ async def partner_fleet(request: Request, check: int = 0) -> dict:
 
 # ---- audit binder (the regulator-grade evidence pack) ----------------------
 
-def _binder_finance_section() -> dict:
-    """Finance evidence for the binder: posture (with its disclaimer), the
-    structural SoD lint, and the license renewal runway."""
-    from maverick.license_registry import runway
-    return {"posture": _finance_posture(), "sod": _finance_sod(),
-            "licenses": runway()}
-
-
 def _binder_payload(days: int = 90) -> dict:
     """Everything an auditor asks for, assembled from the records themselves:
     per-day chain verification over the signed audit log, the event summary,
@@ -2764,7 +2755,6 @@ def _binder_payload(days: int = 90) -> dict:
         # Finance evidence: control coverage, not an audit opinion — the
         # disclaimer travels with the numbers. Plus the SoD lint and the
         # regulatory-license renewal runway.
-        "finance": _binder_finance_section(),
     }
 
 
@@ -9125,16 +9115,13 @@ async def offline_bundle(request: Request) -> dict:
 
 @router.get("/perf")
 async def perf_dashboard() -> dict:
-    """Public perf dashboard data: SLA measurements + benchmark history.
+    """Public perf dashboard data: the live perf-SLA measurements.
 
-    One JSON face for the perf story (roadmap 2027-H1 "public perf
-    dashboard"): the live perf-SLA measurements against their published
-    thresholds (docs/perf-sla.md), the recorded benchmark score history with
-    short-window regression verdicts, and the longitudinal era retrospective.
-    Everything is measured/read locally -- nothing fabricated; sections with
-    no recorded data say so.
+    One JSON face for the perf story: each hot-path measurement against its
+    published threshold (docs/perf-sla.md), probed on this machine. Nothing
+    fabricated; a failed probe reports its error rather than a number.
     """
-    out: dict = {"sla": [], "benchmarks": {}, "retrospective": None}
+    out: dict = {"sla": []}
     try:
         sla, error = await _cached_perf_sla()
         out["sla"] = sla
@@ -9142,52 +9129,6 @@ async def perf_dashboard() -> dict:
             out["sla_error"] = error
     except Exception as e:  # measurement/cache must never 500 the dashboard
         out["sla_error"] = f"{type(e).__name__}: {e}"
-    try:
-        import json as _json
-
-        from maverick.benchmark_retrospective import analyze, coverage
-        from maverick.continuous_benchmark import _store_path, detect_regression, load_history
-        store = _store_path()
-        history: list[dict] = []
-        if store.is_dir():
-            # Legacy layout: a directory of per-suite *.json files.
-            files = sorted(
-                store.glob("*.json"),
-                key=lambda p: p.stat().st_mtime if p.exists() else 0.0,
-                reverse=True,
-            )[:_PERF_HISTORY_MAX_FILES]
-            for f in sorted(files):
-                try:
-                    rows = _json.loads(f.read_text(encoding="utf-8"))
-                    if isinstance(rows, list):
-                        history.extend(r for r in rows if isinstance(r, dict))
-                except (OSError, ValueError):
-                    continue
-        else:
-            # Production layout: the single history.json FILE the bench_track
-            # tool writes via save_history -- the same store /benchmarks reads.
-            history.extend(r for r in load_history(store) if isinstance(r, dict))
-        names = sorted({r.get("name") for r in history if r.get("name")})
-        for name in names:
-            scores = [r["score"] for r in history if r.get("name") == name]
-            verdict = detect_regression(history, name)
-            out["benchmarks"][name] = {
-                "runs": len(scores),
-                "latest": scores[-1] if scores else None,
-                "best": max(scores) if scores else None,
-                "regression": verdict,
-            }
-        span = coverage(history)
-        if span:
-            retros = analyze(history)
-            out["retrospective"] = {
-                "coverage": list(span),
-                "trends": {n: {"trend": r.trend,
-                               "net_change": round(r.net_change, 4)}
-                           for n, r in retros.items()},
-            }
-    except Exception as e:
-        out["benchmarks_error"] = f"{type(e).__name__}: {e}"
     return out
 
 
@@ -9701,62 +9642,6 @@ async def save_workflow(request: Request, payload: WorkflowSaveIn) -> dict:
         "generation": tpl.generation,
         "saved": True,
     }
-
-
-# ---------- continuous-benchmark history ----------
-
-
-def _benchmark_snapshot() -> dict:
-    """Recorded benchmark runs, grouped per suite, with regression verdicts.
-
-    Reads the same store ``maverick.continuous_benchmark`` (the bench_track
-    tool) persists to — this deployment's own recorded runs, nothing else.
-    Malformed rows (hand-edited file) are skipped, not invented around.
-    """
-    from maverick import continuous_benchmark as cb
-    path = cb._store_path()
-    history: list[dict] = []
-    for h in cb.load_history(path):
-        if not isinstance(h, dict) or not h.get("name"):
-            continue
-        try:
-            score = float(h.get("score"))
-        except (TypeError, ValueError):
-            continue
-        history.append({"name": str(h["name"]), "score": score,
-                        "commit": str(h.get("commit") or ""), "t": h.get("t")})
-    names: list[str] = []
-    for h in history:
-        if h["name"] not in names:
-            names.append(h["name"])
-    suites = []
-    for name in names:
-        entries = [h for h in history if h["name"] == name]
-        r = cb.detect_regression(history, name)
-        suites.append({
-            "name": name,
-            "runs": len(entries),
-            "entries": entries[-50:],
-            "latest": r["latest"],
-            "baseline_mean": r["baseline_mean"],
-            "delta": r["delta"],
-            "drop_pct": r["drop_pct"],
-            "regressed": r["regressed"],
-        })
-    return {"suites": suites, "history_path": str(path)}
-
-
-@router.get("/benchmarks")
-async def benchmarks_api() -> dict:
-    """Benchmark history for this deployment (see ``_benchmark_snapshot``)."""
-    snap = _benchmark_snapshot()
-    if not snap["suites"]:
-        snap["note"] = (
-            "no benchmark runs recorded — record one with the bench_track "
-            "tool (op=record, name, score) or "
-            "maverick.continuous_benchmark.record_result"
-        )
-    return snap
 
 
 # ---------- walkthrough export (replay video into the walkthroughs dir) ----------
@@ -10354,8 +10239,6 @@ async def marketplace_connectors_api(request: Request, q: str = "") -> dict:
 # Department router: security/GRC records and both defensive hunters. Imported
 # at the end so its lazy actor resolver can call this module's strict
 # ``_request_actor`` without a circular import during module initialization.
-from .finance_api import router as finance_operations_router  # noqa: E402
 from .security_api import router as security_router  # noqa: E402
 
 router.include_router(security_router)
-router.include_router(finance_operations_router)

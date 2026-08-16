@@ -74,7 +74,6 @@ from .auth import (
     non_static_auth_configured,
     require_permission,
     require_principal_in_request_context,
-    require_suite,
     require_websocket_principal_in_context,
     stored_automation_identity,
     websocket_caller_principal,
@@ -400,18 +399,6 @@ async def _lifespan(app: FastAPI):
     await _reclaim_orphans()
     await _install_queue_dispatcher()
     await _install_automation_scheduler()
-    try:
-        from maverick_dashboard.security_api import start_hunter_scheduler
-
-        await run_in_threadpool(start_hunter_scheduler)
-    except Exception:  # pragma: no cover - never block startup
-        log.exception("security hunter scheduler not started")
-    try:
-        from maverick_dashboard.finance_scheduler import start_finance_scheduler
-
-        await run_in_threadpool(start_finance_scheduler)
-    except Exception:  # pragma: no cover - never block startup
-        log.exception("finance operations scheduler not started")
     # The connected-entitlement auto-refresh loop is not started. Upstream it
     # polled the vendor console for tier upgrades; that console is deleted and
     # nothing is gated here (see maverick.entitlements.GATED_FEATURES), so the
@@ -435,18 +422,6 @@ async def _lifespan(app: FastAPI):
     try:
         from maverick.entitlements import stop_refresher
         await run_in_threadpool(stop_refresher)
-    except Exception:  # pragma: no cover - shutdown must never raise
-        pass
-    try:
-        from maverick_dashboard.security_api import stop_hunter_scheduler
-
-        await run_in_threadpool(stop_hunter_scheduler)
-    except Exception:  # pragma: no cover - shutdown must never raise
-        pass
-    try:
-        from maverick_dashboard.finance_scheduler import stop_finance_scheduler
-
-        await run_in_threadpool(stop_finance_scheduler)
     except Exception:  # pragma: no cover - shutdown must never raise
         pass
     await _stop_automation_scheduler()
@@ -706,17 +681,6 @@ _MAX_FINANCE_ANOMALY_BODY_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_GATEWAY_BODY_BYTES = 3 * 1024 * 1024
 _MAX_EVIDENCE_GATEWAY_DELIVERY_BODY_BYTES = 34 * 1024 * 1024
 _EVIDENCE_GATEWAY_PREFIX = "/api/v1/security/assurance/gateway/"
-_SECURITY_HUNTER_BODY_PATHS = {
-    "/api/v1/security/threats/scan",
-    "/api/v1/security/soc/ingest",
-}
-_FINANCE_LARGE_BODY_LIMITS = {
-    "/api/v1/finance-operations/regulatory/feeds/ingest": (
-        _MAX_FINANCE_REGULATORY_BODY_BYTES
-    ),
-    "/api/v1/finance-operations/aml/lists/ingest": _MAX_FINANCE_AML_LIST_BODY_BYTES,
-    "/api/v1/finance-operations/anomalies/scan": _MAX_FINANCE_ANOMALY_BODY_BYTES,
-}
 
 
 async def _read_limited_request_body(
@@ -747,71 +711,6 @@ async def _read_limited_request_body(
         if len(body) > max_bytes:
             raise HTTPException(status_code=413, detail=too_large_detail)
     return bytes(body)
-
-
-@app.middleware("http")
-async def bound_security_hunter_body(request: Request, call_next):
-    """Cap hunter JSON before FastAPI/Pydantic parses nested telemetry."""
-    if request.method != "POST" or request.url.path not in _SECURITY_HUNTER_BODY_PATHS:
-        return await call_next(request)
-    try:
-        body = await _read_limited_request_body(
-            request,
-            max_bytes=_MAX_SECURITY_HUNTER_HTTP_BODY_BYTES,
-            too_large_detail="security hunter request body too large",
-        )
-    except HTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-    delivered = False
-
-    async def replay_receive():
-        nonlocal delivered
-        if not delivered:
-            delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
-
-    # BaseHTTPMiddleware wraps this Request and consults its cached-body marker;
-    # setting only ``_receive`` after consuming the stream makes that wrapper
-    # emit an empty body. Populate both seams so downstream validation receives
-    # the exact bounded bytes once.
-    request._body = body  # noqa: SLF001 - bounded ASGI body replay
-    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def bound_finance_operations_body(request: Request, call_next):
-    """Cap finance JSON before Starlette/Pydantic buffers nested records."""
-    path = request.url.path
-    if (
-        request.method != "POST"
-        or not path.startswith("/api/v1/finance-operations/")
-    ):
-        return await call_next(request)
-    maximum = _FINANCE_LARGE_BODY_LIMITS.get(path, _MAX_FINANCE_DEFAULT_BODY_BYTES)
-    try:
-        body = await _read_limited_request_body(
-            request,
-            max_bytes=maximum,
-            too_large_detail="finance operations request body too large",
-        )
-    except HTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-    delivered = False
-
-    async def replay_receive():
-        nonlocal delivered
-        if not delivered:
-            delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
-
-    request._body = body  # noqa: SLF001 - bounded ASGI body replay
-    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
-    return await call_next(request)
 
 
 @app.middleware("http")
@@ -2523,140 +2422,6 @@ async def model_risk_assurance_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/security/threats", response_class=HTMLResponse)
-async def platform_threats_page(request: Request) -> HTMLResponse:
-    """Internal Maverick platform threat-hunter console."""
-    require_permission(request, "operate")
-    from maverick import platform_hunt
-
-    return templates.TemplateResponse(
-        request, "security_threats.html", {"enabled": platform_hunt.enabled()}
-    )
-
-
-@app.get("/security/soc", response_class=HTMLResponse)
-async def environment_threats_page(request: Request) -> HTMLResponse:
-    """Customer-environment defensive SOC hunter console."""
-    require_permission(request, "operate")
-    from maverick import env_hunt
-
-    return templates.TemplateResponse(
-        request,
-        "security_soc.html",
-        {
-            "enabled": env_hunt.enabled(),
-            "response_execution": env_hunt.response_execution_enabled(),
-        },
-    )
-
-
-@app.get("/finance/board", response_class=HTMLResponse)
-async def finance_board_page(request: Request) -> HTMLResponse:
-    """The finance command center: the board chassis parameterized to the
-    finance department — control tests, close readiness, SoD lint, the
-    coverage posture (never an audit opinion), the license renewal runway,
-    and the learning loop over finance decisions. Data from
-    GET /api/v1/finance/board."""
-    require_permission(request, "operate")
-    return templates.TemplateResponse(request, "finance_board.html", {})
-
-
-@app.get("/finance", response_class=HTMLResponse)
-async def finance_page(request: Request) -> HTMLResponse:
-    """The Finance workspace: the same chassis over the finance team's
-    assessment types — SOX controls, fraud risk, ITGC, credit risk, and
-    close readiness — with the shared review pop-out."""
-    require_permission(request, "operate")
-    require_suite(request, "finance")
-    operations = {
-        "enabled": False,
-        "degraded": False,
-        "error_type": "",
-        "regulatory_alerts": [],
-        "licensing_packs": [],
-        "anomaly_cases": [],
-        "aml_cases": [],
-        "aml_list_versions": 0,
-        "control_cycles": [],
-    }
-    try:
-        from dataclasses import asdict
-
-        from maverick.finance import aml_screening, control_testing
-        from maverick.finance.anomaly_engine import FinanceAnomalyCaseQueue
-        from maverick.finance.licensing import load_licensing_pack
-        from maverick.finance.regulatory_change import RegulatoryChangeEngine
-        from maverick.paths import data_dir
-
-        operations["enabled"] = aml_screening.enabled()
-        if operations["enabled"]:
-            engine = RegulatoryChangeEngine(
-                data_dir("finance_operations", "regulatory_change.sqlite3")
-            )
-            operations["regulatory_alerts"] = [
-                asdict(row) for row in engine.list_alerts(limit=20)
-            ]
-            operations["licensing_packs"] = [
-                {
-                    "vertical": pack.vertical,
-                    "title": pack.title,
-                    "version": pack.version,
-                    "as_of": pack.as_of,
-                    "jurisdictions": len(pack.requirements),
-                    "source_check_required": sum(
-                        row.determination == "source_check_required"
-                        for row in pack.requirements
-                    ),
-                    "content_sha256": pack.content_sha256,
-                }
-                for pack in (
-                    load_licensing_pack("money_transmitter"),
-                    load_licensing_pack("insurance_producer"),
-                )
-            ]
-            operations["anomaly_cases"] = [
-                {
-                    "id": row.get("id"),
-                    "finding_id": row.get("finding_id"),
-                    "rule_id": (row.get("finding") or {}).get("rule_id"),
-                    "severity": row.get("severity"),
-                    "status": row.get("status"),
-                    "revision": row.get("revision"),
-                }
-                for row in FinanceAnomalyCaseQueue().list_cases(limit=20)
-            ]
-            aml_cases = aml_screening.list_cases(limit=20)
-            operations["aml_cases"] = [
-                {
-                    "id": row.get("id"),
-                    "status": row.get("status"),
-                    "hit_count": len(row.get("hits") or []),
-                    "revision": row.get("revision"),
-                }
-                for row in aml_cases
-            ]
-            operations["aml_list_versions"] = len(
-                aml_screening.list_versions(limit=10_001)
-            )
-            operations["control_cycles"] = [
-                {
-                    "id": row.get("id"),
-                    "status": row.get("status"),
-                    "engagement_id": row.get("engagement_id"),
-                    "observed_at": row.get("observed_at"),
-                }
-                for row in control_testing.list_cycles(limit=20)
-            ]
-    except Exception as exc:  # failure-policy: visible_degradation
-        operations["degraded"] = True
-        operations["error_type"] = type(exc).__name__
-        log.warning("finance workspace operations summary degraded: %s", type(exc).__name__)
-    context = _workspace_ctx("finance", viewer=caller_principal(request) or "")
-    context["operations"] = operations
-    return templates.TemplateResponse(
-        request, "finance.html", context)
-
-
 @app.get("/savings", response_class=HTMLResponse)
 async def savings_page(request: Request, days: int = 90) -> HTMLResponse:
     """The value dashboard: money saved vs the typical human cost, computed
@@ -2799,16 +2564,6 @@ async def audit_page(request: Request) -> HTMLResponse:
         request, "audit.html",
         {"events": events, "n": n, "day": day, "kind": kind, "kinds": kinds},
     )
-
-
-@app.get("/partner", response_class=HTMLResponse)
-async def partner_page(request: Request) -> HTMLResponse:
-    """The partner fleet console: every client deployment this partner
-    operates -- health, latency, agent version, white-label theme, and the
-    summed value ledgers. Reading is operate-tier; adding/removing tenants
-    (which carry probe URLs + optional tokens) is admin via the API."""
-    require_permission(request, "operate")
-    return templates.TemplateResponse(request, "partner.html", {})
 
 
 @app.get("/audit/binder", response_class=HTMLResponse)
@@ -6379,37 +6134,6 @@ async def automations_page(request: Request) -> HTMLResponse:
 async def embed_demo_page(request: Request) -> HTMLResponse:
     """Demo + honest usage notes for the <maverick-analytics> web component."""
     return templates.TemplateResponse(request, "embed_demo.html", {})
-
-
-def _sparkline_points(values: list[float], width: int = 160, height: int = 36,
-                      pad: int = 3) -> str:
-    """SVG polyline ``points`` for a score series (server-side sparkline)."""
-    if not values:
-        return ""
-    lo, hi = min(values), max(values)
-    span = (hi - lo) or 1.0
-    n = len(values)
-    pts = []
-    for i, v in enumerate(values):
-        x = pad + (width - 2 * pad) * (i / (n - 1) if n > 1 else 0.5)
-        y = pad + (height - 2 * pad) * (1 - (v - lo) / span)
-        pts.append(f"{x:.1f},{y:.1f}")
-    return " ".join(pts)
-
-
-@app.get("/benchmarks", response_class=HTMLResponse)
-async def benchmarks_page(request: Request) -> HTMLResponse:
-    """Continuous-benchmark history: this deployment's recorded runs only.
-
-    Per-suite trend sparklines + a comparison table over the real
-    ``~/.maverick/benchmarks/history.json`` store. No competitor numbers are
-    shown or invented here — see docs/comparison.md for the qualitative
-    comparison."""
-    from .api import _benchmark_snapshot
-    snap = _benchmark_snapshot()
-    for s in snap["suites"]:
-        s["spark"] = _sparkline_points([e["score"] for e in s["entries"]])
-    return templates.TemplateResponse(request, "benchmarks.html", snap)
 
 
 @app.get("/walkthroughs", response_class=HTMLResponse)

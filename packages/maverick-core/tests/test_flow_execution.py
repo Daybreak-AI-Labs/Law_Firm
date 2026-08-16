@@ -1,60 +1,13 @@
-"""Flow lowering (import -> Flow), the live execution driver + resumable state,
-per-node outcomes, and the self-rewrite proposal pass."""
+"""The live flow execution driver + resumable state, per-node outcomes,
+and the self-rewrite proposal pass."""
 from __future__ import annotations
 
-from maverick.automation_import import ir as iir
-from maverick.automation_import.to_flow import to_flow
 from maverick.flow import evolve, execution, node_outcomes
 from maverick.flow.ir import NODE_ACTION, NODE_AGENT, NODE_APPROVAL, Flow, FlowNode
 
 
 def _patch_home(tmp_path, monkeypatch):
     monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
-
-
-# ---- lowering ---------------------------------------------------------------
-
-class TestLowering:
-    def test_single_step_lowers_to_single_agent(self):
-        a = iir.ImportedAutomation(
-            "n8n", "1", "One thing", iir.ImportedTrigger(kind=iir.TRIGGER_WEBHOOK),
-            steps=[iir.ImportedStep(name="do it", description="carry out the thing")])
-        f = to_flow(a)
-        assert len(f.nodes) == 1
-        assert f.nodes["n0"].kind == NODE_AGENT
-        assert f.validate() == []
-
-    def test_clean_tool_step_becomes_action(self):
-        a = iir.ImportedAutomation(
-            "n8n", "2", "notify", iir.ImportedTrigger(kind=iir.TRIGGER_WEBHOOK),
-            steps=[iir.ImportedStep(name="Post", app="slack", operation="post",
-                                    params={"text": "hi"}, tools_hint=["slack"])])
-        f = to_flow(a)
-        assert f.nodes["n0"].kind == NODE_ACTION
-        assert f.nodes["n0"].tool == "slack_bot"
-        assert f.nodes["n0"].params["op"] == "post"
-
-    def test_ambiguous_step_becomes_agent(self):
-        a = iir.ImportedAutomation(
-            "n8n", "3", "x", iir.ImportedTrigger(kind=iir.TRIGGER_WEBHOOK),
-            steps=[iir.ImportedStep(name="Decide", tools_hint=["a", "b"])])  # >1 hint
-        f = to_flow(a)
-        assert f.nodes["n0"].kind == NODE_AGENT
-
-    def test_empty_import_still_yields_runnable_flow(self):
-        a = iir.ImportedAutomation("n8n", "4", "Empty", iir.ImportedTrigger(), steps=[])
-        f = to_flow(a)
-        assert f.validate() == [] and f.nodes["n0"].kind == NODE_AGENT
-
-    def test_multi_step_chains_in_order(self):
-        a = iir.ImportedAutomation(
-            "n8n", "5", "chain", iir.ImportedTrigger(kind=iir.TRIGGER_WEBHOOK),
-            steps=[iir.ImportedStep(name="s1"), iir.ImportedStep(name="s2"),
-                   iir.ImportedStep(name="s3")])
-        f = to_flow(a)
-        assert f.start == "n0"
-        assert f.nodes["n0"].next == "n1" and f.nodes["n1"].next == "n2"
-        assert f.nodes["n2"].next is None
 
 
 # ---- live execution driver + resumable state --------------------------------

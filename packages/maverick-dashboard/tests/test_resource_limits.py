@@ -128,47 +128,6 @@ def test_rate_limit_global_ceiling(monkeypatch, tmp_path):
     assert exc.value.status_code == 429
 
 
-def test_finance_body_cap_rejects_declared_length_before_parsing(monkeypatch):
-    from maverick_dashboard import app as dash_app
-
-    path = "/api/v1/finance-operations/anomalies/scan"
-    monkeypatch.setitem(dash_app._FINANCE_LARGE_BODY_LIMITS, path, 64)
-    response = _client().post(
-        path,
-        content=b"{}",
-        headers={
-            "Content-Type": "application/json",
-            "Content-Length": "65",
-            "Origin": "http://testserver",
-        },
-    )
-    assert response.status_code == 413
-    assert response.json() == {"detail": "finance operations request body too large"}
-
-
-def test_finance_body_cap_streams_chunked_body_without_content_length(monkeypatch):
-    from maverick_dashboard import app as dash_app
-
-    path = "/api/v1/finance-operations/anomalies/scan"
-    monkeypatch.setitem(dash_app._FINANCE_LARGE_BODY_LIMITS, path, 64)
-
-    def chunks():
-        yield b"{" + (b"x" * 39)
-        yield b"x" * 40 + b"}"
-
-    response = _client().post(
-        path,
-        content=chunks(),
-        headers={
-            "Content-Type": "application/json",
-            "Transfer-Encoding": "chunked",
-            "Origin": "http://testserver",
-        },
-    )
-    assert response.status_code == 413
-    assert response.json() == {"detail": "finance operations request body too large"}
-
-
 # ---------- task 4: /healthz minimal payload under a token ----------
 
 def test_healthz_minimal_payload_when_token_set(monkeypatch, tmp_path):

@@ -2137,16 +2137,6 @@ def pick_advanced() -> dict[str, Any]:
             "until editable_paths plus at least two discriminating eval_tests are set.",
             default=False,
         ),
-        "adapter_rung": _q_confirm(
-            "Enable GOVERNED in-tenant weights adaptation? Train LoRA adapters for a "
-            "LOCAL open-weights base model on your own corrections and traces -- frontier-"
-            "model output is refused by default (distillation guard) -- and promote them "
-            "through the weights rung: held-out evidence, no new authority, Ed25519 human "
-            "signature, one-step rollback (maverick.adapter_rung). Nothing leaves the "
-            "tenant. Off by default AND inert until you set base_model; needs Ollama (or "
-            "compatible) serving and the [training] extra for real tuning.",
-            default=False,
-        ),
         "skill_synthesis": _q_confirm(
             "Test-time skill synthesis? Write a short task-specific cheat-sheet for "
             "each goal before working on it.",
@@ -3903,21 +3893,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append('# eval_tests = ["path/test_feature.py::case_a",')
         lines.append('#               "path/test_feature.py::case_b"]')
         lines.append('# eval_command = "python3 -m pytest -q"')
-    if advanced.get("adapter_rung"):
-        lines.append("")
-        lines.append("[adapter_rung]")
-        lines.append("# Governed in-tenant weights adaptation (maverick.adapter_rung):")
-        lines.append("# LoRA adapters trained on YOUR corrections/traces, promoted through")
-        lines.append("# the weights rung (held-out evidence + non-escalation + Ed25519")
-        lines.append("# approval + one-step rollback). Frontier-model output is refused as")
-        lines.append("# training data unless allow_model_output = true (distillation guard).")
-        lines.append("# Inert until base_model is set to YOUR local serving spec; prefer an")
-        lines.append("# Apache-2.0/MIT base so no vendor can restrict the tenant's model.")
-        lines.append("enable = true")
-        lines.append('# base_model = "ollama:<model-id>"   # e.g. an Apache-2.0 Qwen3 size')
-        lines.append('# trainer = "dpo-lora"               # needs the [training] extra')
-        lines.append("# allow_synthetic = false")
-        lines.append("# allow_model_output = false")
     if advanced.get("rehearsal"):
         lines.append("")
         lines.append("[rehearsal]")

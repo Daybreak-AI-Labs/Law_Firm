@@ -6,9 +6,9 @@ means the screen changed. This is a classic *perceptual hash*, not a neural
 classifier — it has no notion of objects or text, only coarse luminance
 layout. That is exactly the honest scope: cheap, local, deterministic.
 
-The algorithm is specified in **integer arithmetic only** so the JavaScript
-twin (``extensions/webgpu-vision/ahash.js``) produces bit-identical hashes —
-no float rounding can diverge across languages:
+The algorithm is specified in **integer arithmetic only** so the Rust twin
+(``rust/mvk-scan/src/phash.rs``) produces bit-identical hashes — no float
+rounding can diverge across languages:
 
   1. gray(p)   = r*299 + g*587 + b*114                  (luma x1000, exact int)
   2. cells     = 8x8 grid; cell (cx, cy) covers x in [cx*w//8, (cx+1)*w//8)
@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 # Hash of synthetic_gradient(64, 64) — asserted by tests here AND by
-# extensions/webgpu-vision/ahash.js selfTest(). Change one, change both.
+# rust/mvk-scan/src/phash.rs. Change one, change both.
 GRADIENT_HASH = "000001071f7fffff"
 
 

@@ -1,16 +1,13 @@
 """Tests for maverick.perceptual_hash (8x8 average-hash + hamming).
 
-The load-bearing assertion: Python and the JS twin
-(extensions/webgpu-vision/ahash.js) hash the shared synthetic gradient to the
-SAME constant. Both sides assert GRADIENT_HASH; when node is available we run
-the JS self-test for a direct cross-language comparison.
+The load-bearing assertion: Python and the Rust twin
+(rust/mvk-scan/src/phash.rs) hash the shared synthetic gradient to the SAME
+constant. Both sides assert GRADIENT_HASH; the Rust side does it in its own
+`cargo test`, so this file pins the Python half of that contract.
 """
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from maverick.perceptual_hash import (
@@ -19,10 +16,6 @@ from maverick.perceptual_hash import (
     average_hash_from_pixels,
     hamming,
     synthetic_gradient,
-)
-
-AHASH_JS = (
-    Path(__file__).resolve().parents[3] / "extensions" / "webgpu-vision" / "ahash.js"
 )
 
 
@@ -87,20 +80,3 @@ def test_file_hash_matches_pixels_when_pillow_present(tmp_path):
     p = tmp_path / "gradient.png"
     im.save(p)
     assert average_hash_file(str(p)) == GRADIENT_HASH
-
-
-def test_js_constant_stays_in_sync():
-    """ahash.js must embed the exact same constant (cheap drift tripwire)."""
-    assert AHASH_JS.is_file(), AHASH_JS
-    assert f'"{GRADIENT_HASH}"' in AHASH_JS.read_text()
-
-
-@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
-def test_js_and_python_agree_via_node():
-    r = subprocess.run(
-        ["node", str(AHASH_JS), "--selftest"],
-        capture_output=True, text=True, timeout=30,
-    )
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == GRADIENT_HASH
-    assert average_hash_from_pixels(synthetic_gradient(), 64, 64) == r.stdout.strip()

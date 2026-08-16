@@ -2,15 +2,14 @@
 {% block title %}Performance · Bjerken and Day{% endblock %}
 {% block content %}
   <h1 class="page-title">Performance</h1>
-  <p class="page-subtitle">Service-level checks measured live on this host, plus recorded benchmark history.</p>
+  <p class="page-subtitle">Service-level checks measured live on this host.</p>
 
   <div class="panel">
     <details style="margin-bottom: var(--space-3);">
       <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For developers: where these numbers come from</summary>
       <p class="muted" style="margin-top: var(--space-2);">
         The published perf SLA (<code>docs/perf-sla.md</code>) measured live on
-        this host, plus recorded benchmark history. Loaded from
-        <code>/api/v1/perf</code>.
+        this host. Loaded from <code>/api/v1/perf</code>.
       </p>
     </details>
     <div class="section-head"><h2>SLA</h2></div>
@@ -18,17 +17,12 @@
       <thead><tr><th scope="col">check</th><th scope="col">measured</th><th scope="col">threshold</th><th scope="col">verdict</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="section-head"><h2>Benchmarks</h2></div>
-    <table id="bench-table">
-      <thead><tr><th scope="col">benchmark</th><th scope="col">runs</th><th scope="col">latest</th><th scope="col">best</th><th scope="col">trend</th><th scope="col">regression</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p id="perf-empty" class="muted" hidden>No benchmark history recorded yet.</p>
+    <p id="perf-empty" class="muted" hidden></p>
   </div>
 
   <script>
     // Build cells with textContent (mvEl) rather than innerHTML string
-    // concatenation: benchmark/SLA names come from local tool output and must
+    // concatenation: SLA check names come from local probe output and must
     // never be interpreted as markup.
     function row(cells) {
       var tr = document.createElement("tr");
@@ -48,16 +42,11 @@
           r.passed ? "PASS" : "BREACH",
         ]));
       });
-      var names = Object.keys(d.benchmarks || {});
-      if (!names.length) { document.getElementById("perf-empty").hidden = false; }
-      var bBody = document.querySelector("#bench-table tbody");
-      var trends = (d.retrospective && d.retrospective.trends) || {};
-      names.forEach(function (n) {
-        var b = d.benchmarks[n] || {};
-        var trend = trends[n] ? trends[n].trend : "—";
-        var reg = b.regression && b.regression.regressed ? "REGRESSED" : "ok";
-        bBody.appendChild(row([n, b.runs, b.latest, b.best, trend, reg]));
-      });
+      if (d.sla_error) {
+        document.getElementById("perf-empty").textContent =
+          "Could not measure the SLA (" + d.sla_error + ").";
+        document.getElementById("perf-empty").hidden = false;
+      }
     }).catch(function (e) {
       document.getElementById("perf-empty").textContent =
         "Could not load performance data (" + e.message + ").";

@@ -68,8 +68,6 @@ out/
 # Rust
 target/
 Cargo.lock
-!apps/desktop/src-tauri/Cargo.lock
-!apps/installer-desktop/src-tauri/Cargo.lock
 !rust/Cargo.lock
 **/*.rs.bk
 

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .finance.regimes import union_policies  # generic strictest-wins policy union
 from .governance import Policy
+from .policy_union import union_policies
 
 # Protection floors a profile can require. Active compliance profiles make
 # these floors mandatory: runtime readers treat a required floor as enabled so

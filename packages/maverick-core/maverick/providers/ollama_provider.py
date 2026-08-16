@@ -25,16 +25,5 @@ class OllamaClient(OpenAIClient):
 
     def _build_kwargs(self, system, messages, tools, max_tokens, model,
                       thinking_budget=None):
-        # A PROMOTED tenant adapter ([adapter_rung]) is a serving detail of THIS
-        # provider: resolve base -> tuned model here, at request-build time, so
-        # spec parsing, admin allow-lists, pricing, and telemetry upstream all
-        # keep the stable base model id (the adapter carries its own
-        # Ed25519-signed weights-rung approval). Fail-open: any error serves
-        # the base model unchanged.
-        try:
-            from ..adapter_rung import effective_wire_model
-            model = effective_wire_model("ollama", model or self.DEFAULT_MODEL)
-        except Exception:  # pragma: no cover -- the rung must never break serving
-            pass
         return super()._build_kwargs(system, messages, tools, max_tokens, model,
                                      thinking_budget=thinking_budget)

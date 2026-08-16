@@ -1011,23 +1011,3 @@ def test_write_config_omits_self_modify_when_off(
     assert "self_modify" not in parsed
 
 
-def test_pick_advanced_includes_adapter_rung(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_advanced
-    assert "adapter_rung" in pick_advanced()
-
-
-def test_write_config_emits_adapter_rung(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced={"adapter_rung": True})
-    assert parsed["adapter_rung"]["enable"] is True
-    from maverick import config
-    monkeypatch.setattr(config, "load_config", lambda *a, **k: parsed)
-    resolved = config.get_adapter_rung()
-    assert resolved["enable"] is True
-    assert resolved["base_model"] is None  # base stays commented -> rung is inert
-    assert resolved["allow_model_output"] is False  # distillation guard stays closed
-
-
-def test_write_config_omits_adapter_rung_when_off(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
-    assert "adapter_rung" not in parsed

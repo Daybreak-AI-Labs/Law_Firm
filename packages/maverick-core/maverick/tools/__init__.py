@@ -1022,10 +1022,6 @@ def base_registry(
     reg.register(translate())
     reg.register(slack_bot())
     reg.register(stripe_tool())
-    from .sanctions_screen import sanctions_screen
-    reg.register(sanctions_screen())  # finance: OFAC/SDN screening (finance-agent-suite)
-    from .finance_anomaly import finance_anomaly
-    reg.register(finance_anomaly())
     reg.register(currency())
     reg.register(a11y(sandbox))
     reg.register(discord_bot())

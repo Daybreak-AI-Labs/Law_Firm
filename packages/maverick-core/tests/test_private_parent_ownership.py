@@ -14,7 +14,6 @@ from maverick import (
     tiered_storage,
     voice_macros,
 )
-from maverick import benchmark_reproducibility as benchmark
 from maverick.encryption_migrate import backup_world_db
 from maverick.file_lock import private_path_is_restricted
 from maverick.world_model import WorldModel
@@ -200,28 +199,3 @@ def test_cold_archive_refuses_shared_custom_directory_without_mutation(
 
     _assert_shared_unchanged(shared, unrelated, before)
     assert {path.name for path in shared.iterdir()} == {unrelated.name}
-
-
-def test_manifest_refuses_preexisting_shared_manifest_directory(
-    tmp_path, monkeypatch,
-):
-    root = tmp_path / "benchmark-root"
-    root.mkdir()
-    manifests = root / "manifests"
-    _make_shared_directory(manifests)
-    unrelated = manifests / "team-file.txt"
-    unrelated.write_text("keep-access", encoding="utf-8")
-    before = _security_snapshot(manifests)
-    monkeypatch.setattr(benchmark, "host_info", lambda: {"os": "test"})
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        benchmark.record_with_manifest(
-            "suite",
-            0.9,
-            history_path=root / "history.json",
-            write_manifest=True,
-            now=1000.0,
-        )
-
-    _assert_shared_unchanged(manifests, unrelated, before)
-    assert not list(manifests.glob("suite-*.json"))

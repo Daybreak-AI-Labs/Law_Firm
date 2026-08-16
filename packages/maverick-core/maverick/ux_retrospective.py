@@ -1,13 +1,13 @@
 """UX retrospective generator (roadmap: 2028 H2 UX — "36-month UX
 retrospective + reset").
 
-The period generator for the UX half of the retrospective trio (safety:
-``safety_report``; perf: ``benchmark_retrospective``). Aggregates what the
-deployment recorded about how it was *used* over a window — goal volume and
-outcomes, channel mix, approval friction, template adoption — into an honest
-markdown retrospective plus a **reset worksheet**: the questions the
-36-month reset answers from the data (what to cut, what to double down on),
-with the data row each question reads from.
+The period generator for the UX half of the retrospective pair (safety:
+``safety_report``). Aggregates what the deployment recorded about how it was
+*used* over a window — goal volume and outcomes, channel mix, approval
+friction, template adoption — into an honest markdown retrospective plus a
+**reset worksheet**: the questions the 36-month reset answers from the data
+(what to cut, what to double down on), with the data row each question reads
+from.
 
 Pure over an injected world (and optional ledgers); sections without data say
 so. ``python -m maverick.ux_retrospective --since --until`` runs it; the
