@@ -58,7 +58,7 @@ def test_self_learning_lifecycle_sections_lint_clean():
     # a *different* feature, which would silently disable self-harness.
     cfg = {s: {"enable": True} for s in (
         "self_harness", "self_improvement", "dreaming",
-        "fleet_memory", "rehearsal", "memory_guard")}
+        "rehearsal", "memory_guard")}
     unknown = [f for f in lint_config(cfg) if "unknown" in f.message.lower()]
     assert not unknown, [f.message for f in unknown]
 

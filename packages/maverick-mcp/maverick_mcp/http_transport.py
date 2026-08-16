@@ -66,13 +66,9 @@ _SESSION_BINDING_KEY = secrets.token_bytes(32)
 class _MCPAuthorization:
     """Authenticated HTTP caller plus its non-bypassable tool ceiling.
 
-    ``caller_identity`` is empty for the legacy shared bearer because that
-    credential cannot distinguish individual callers.  When Agent Trust is
-    enforced, the shared bearer is nevertheless admitted as the explicit
-    surface principal ``mcp`` and carries that entry's capability.  A
-    per-agent bearer always carries its own registry capability, even when the
-    trust plane's default-deny admission switch is disengaged: authenticating
-    *as* a scoped agent must never discard the scope attached to that token.
+    ``caller_identity`` is empty for the shared bearer because that
+    credential cannot distinguish individual callers; it is admitted as the
+    surface principal ``mcp``.
     """
 
     caller_identity: str
@@ -327,13 +323,7 @@ def _authorization_for_bearer(
     string is the authorization bypass this boundary is designed to prevent.
 
     Unlike stdio, HTTP requests are network-reachable; token auth is
-    therefore mandatory. Two accepted credentials: the shared
-    ``MAVERICK_MCP_TOKEN`` and a per-caller ``[agent_trust] mcp_token`` (real
-    per-caller identity). On top of authentication, when the Agent Trust Plane
-    is engaged the caller must be a permitted inbound agent — a per-caller token
-    gates on its own entry, a shared-token caller on the surface-wide ``"mcp"``
-    entry — so engaging the plane default-denies MCP instead of leaving it open
-    on the shared bearer. No-op (auth only) when disengaged.
+    therefore mandatory: the shared ``MAVERICK_MCP_TOKEN`` bearer.
     """
     expected = os.environ.get("MAVERICK_MCP_TOKEN")
     given = ""
@@ -341,32 +331,11 @@ def _authorization_for_bearer(
         given = authorization[len("Bearer "):].strip()
     if not given:
         return None
-    try:
-        from maverick import agent_trust
-
-        # One snapshot for token resolution, admission, and capability.  A
-        # second config read here would create a TOCTOU window where identity
-        # came from one registry revision and authority from another.
-        enforced, registry = agent_trust.load_trust_state()
-        agent = agent_trust.agent_for_token(given, "mcp", registry=registry)
-    except Exception as e:  # fail closed at a network tool-execution boundary
-        log.error("MCP trust plane unavailable; refusing inbound caller: %s", e)
-        return None
 
     shared = bool(
         expected and hmac.compare_digest(expected.encode(), given.encode())
     )
-    if agent is None and not shared:
-        return None
-
-    principal = agent.id if agent is not None else "mcp"
-    decision = agent_trust.decide_inbound(
-        principal,
-        registry=registry,
-        enforced=enforced,
-    )
-    if decision.denied:
-        agent_trust.record_denied(principal, decision, direction="inbound")
+    if not shared:
         return None
 
     # A keyed, process-local digest can be retained for session ownership and
@@ -374,26 +343,10 @@ def _authorization_for_bearer(
     from .server import _credential_fingerprint
     fingerprint = _credential_fingerprint(given)
 
-    if agent is not None:
-        # Per-agent authentication is itself an explicit scoped credential.
-        # Keep that scope even when default-deny admission is disengaged (in
-        # which case decide_inbound deliberately returns capability=None).
-        capability = decision.capability or agent.capability()
-        return _MCPAuthorization(
-            caller_identity=agent.id,
-            trust_principal=agent.id,
-            capability=capability,
-            credential_kind="agent",
-            credential_fingerprint=fingerprint,
-        )
-
-    # Shared bearer compatibility is explicit: unrestricted only while the
-    # trust plane is disengaged; when enforced, the required ``mcp`` registry
-    # entry supplies the capability that tools/list and tools/call must honor.
     return _MCPAuthorization(
         caller_identity="",
         trust_principal="mcp",
-        capability=decision.capability,
+        capability=None,
         credential_kind="shared",
         credential_fingerprint=fingerprint,
     )
@@ -984,78 +937,76 @@ def _dispatch(
         from .server import _ProtocolError
         raise _ProtocolError(-32601, f"method not found: {method}")
     handler = getattr(server, handler_name)
-    from maverick.fleet_memory import bind_caller
-    with bind_caller(caller_identity):
-        if method == "tools/call":
-            if caller_capability is None and caller_trust_principal is None:
-                return handler(params, task_owner=task_owner)
-            return handler(
-                params,
-                task_owner=task_owner,
-                task_quota_owner=task_quota_owner,
-                caller_identity=caller_identity,
-                caller_trust_principal=caller_trust_principal,
-                caller_credential_kind=caller_credential_kind,
-                caller_credential_fingerprint=caller_credential_fingerprint,
-                capability=caller_capability,
-            )
-        if method == "tools/list":
-            if caller_capability is None and caller_trust_principal is None:
+    if method == "tools/call":
+        if caller_capability is None and caller_trust_principal is None:
+            return handler(params, task_owner=task_owner)
+        return handler(
+            params,
+            task_owner=task_owner,
+            task_quota_owner=task_quota_owner,
+            caller_identity=caller_identity,
+            caller_trust_principal=caller_trust_principal,
+            caller_credential_kind=caller_credential_kind,
+            caller_credential_fingerprint=caller_credential_fingerprint,
+            capability=caller_capability,
+        )
+    if method == "tools/list":
+        if caller_capability is None and caller_trust_principal is None:
+            return handler(params)
+        return handler(
+            params,
+            caller_trust_principal=caller_trust_principal,
+            capability=caller_capability,
+        )
+    if method in {
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+    }:
+        if caller_capability is None:
+            if caller_trust_principal is None:
                 return handler(params)
-            return handler(
-                params,
-                caller_trust_principal=caller_trust_principal,
-                capability=caller_capability,
-            )
-        if method in {
-            "resources/list",
-            "resources/read",
-            "resources/subscribe",
-        }:
-            if caller_capability is None:
-                if caller_trust_principal is None:
-                    return handler(params)
-                if method == "resources/list":
-                    return handler(
-                        params,
-                        caller_trust_principal=caller_trust_principal,
-                    )
-                return handler(
-                    params,
-                    caller_identity=caller_identity,
-                    caller_trust_principal=caller_trust_principal,
-                )
             if method == "resources/list":
                 return handler(
                     params,
                     caller_trust_principal=caller_trust_principal,
-                    capability=caller_capability,
                 )
             return handler(
                 params,
                 caller_identity=caller_identity,
                 caller_trust_principal=caller_trust_principal,
-                capability=caller_capability,
             )
-        if method.startswith("tasks/"):
-            if caller_capability is None and caller_trust_principal is None:
-                return handler(params, task_owner=task_owner)
-            kwargs = {
-                "task_owner": task_owner,
-                "caller_identity": caller_identity,
-                "caller_trust_principal": caller_trust_principal,
-                "capability": caller_capability,
-            }
-            if method == "tasks/result":
-                kwargs.update({
-                    "caller_credential_kind": caller_credential_kind,
-                    "caller_credential_fingerprint": caller_credential_fingerprint,
-                })
+        if method == "resources/list":
             return handler(
                 params,
-                **kwargs,
+                caller_trust_principal=caller_trust_principal,
+                capability=caller_capability,
             )
-        return handler(params)
+        return handler(
+            params,
+            caller_identity=caller_identity,
+            caller_trust_principal=caller_trust_principal,
+            capability=caller_capability,
+        )
+    if method.startswith("tasks/"):
+        if caller_capability is None and caller_trust_principal is None:
+            return handler(params, task_owner=task_owner)
+        kwargs = {
+            "task_owner": task_owner,
+            "caller_identity": caller_identity,
+            "caller_trust_principal": caller_trust_principal,
+            "capability": caller_capability,
+        }
+        if method == "tasks/result":
+            kwargs.update({
+                "caller_credential_kind": caller_credential_kind,
+                "caller_credential_fingerprint": caller_credential_fingerprint,
+            })
+        return handler(
+            params,
+            **kwargs,
+        )
+    return handler(params)
 
 
 def serve(host: str = "127.0.0.1", port: int = 8771) -> None:

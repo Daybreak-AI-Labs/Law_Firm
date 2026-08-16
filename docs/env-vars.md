@@ -88,7 +88,6 @@ for false unless noted otherwise.
 | `MAVERICK_EMERGENT_PROTOCOL` | config `[emergent_protocol] enable` (off) | Enable the auditable coordination codec (sentinel form; `maverick codebook`). |
 | `MAVERICK_EMERGENT_CODEC` | config `[emergent_codec] enable` (off) | Measure the token-aware codec on the live coordination stream (telemetry only; `maverick codec-learn`). |
 | `MAVERICK_DOMAIN_DISCIPLINE` | config `[domains] discipline` (on) | Append suite operating discipline to specialist personas at spawn. |
-| `MAVERICK_FLEET_MEMORY` | config `[fleet_memory] enable` (off) | Allow registered external agents to use the governed memory plane. |
 | `MAVERICK_PRM` | `null` | Process reward model: `null`, `heuristic`, `remote`, `learned`, or `linear`. A linear backend reconciles durable verifier-promotion authority before serving and falls back to the heuristic for an in-doubt, unrecognized, or out-of-band artifact. |
 | `MAVERICK_PRM_PATH` | unset | Learned-model directory (`learned`) or stable serving artifact (`linear`). Relative linear paths are pinned to an absolute startup path before recovery and serving. |
 | `MAVERICK_PRM_BOOTSTRAP_SHA256` | unset | Explicit SHA-256 trust root for an initially provisioned `linear` artifact. Required when `MAVERICK_PRM_PATH` already exists but has no committed promotion chain; later hot reloads must match the durable ledger exactly. |

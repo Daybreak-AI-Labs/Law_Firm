@@ -1441,49 +1441,6 @@ def get_skill_synthesis() -> dict:
         cfg, "enable", governed_learning_default())}
 
 
-def get_fleet_memory() -> dict:
-    """Return the ``[fleet_memory]`` section (agent-agnostic learning plane).
-    OFF by default: exposing governed memory to third-party agents is an
-    explicit trust decision."""
-    cfg = load_config().get("fleet_memory", {})
-    return {"enable": bool(cfg.get("enable", False))}
-
-
-def get_external_agents() -> dict:
-    """Return the ``[external_agents]`` section (bring-your-own-agent gateway:
-    enrollment, run ingest onto the Operating Record, pre-action screening).
-    OFF by default: admitting foreign runtimes is an explicit trust decision,
-    made per-agent in the trust registry once the plane is on. Also honored
-    via ``MAVERICK_EXTERNAL_AGENTS=1``."""
-    cfg = load_config().get("external_agents", {})
-    raw = cfg.get("connectors", [])
-    if isinstance(raw, str):
-        raw = raw.split(",")
-    return {
-        "enable": bool(cfg.get("enable", False)),
-        # Signed-identity enforcement on the gateway: when on, an agent
-        # enrolled with a strong credential (pinned Ed25519 pubkey or JWT
-        # issuer) may no longer authenticate with its minted bearer alone —
-        # it must present that credential. Agents holding only bearers are
-        # unaffected. Strict bool; a malformed value engages the refusal
-        # (fail closed — this is a tightening switch).
-        "require_signed": _strict_config_bool(
-            cfg, "require_signed", False, invalid=True),
-        # Governed-REST connectors external agents may EXECUTE through (the
-        # enforcement tier above screening). Empty = screen-only; naming one
-        # here is the operator's explicit decision to let foreign agents act
-        # through Maverick's egress-guarded, receipted connector path.
-        "connectors": [str(p).strip().lower() for p in raw if str(p).strip()],
-        # Step-up re-auth on credential minting: when on, ``mint_token`` parks
-        # a world approval (dual-control quorum at "high" risk) and refuses to
-        # mint until a decision-maker approves; each approval mints exactly
-        # one credential. Strict bool; a malformed value engages the gate
-        # (fail closed — this is a tightening switch).
-        "mint_approval": _strict_config_bool(
-            cfg, "mint_approval", False, invalid=True),
-    }
-
-
 def get_repl() -> dict:
     """Return the ``[repl]`` section (governed code execution).
 

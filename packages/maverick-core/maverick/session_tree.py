@@ -21,9 +21,8 @@ empty run pre-loaded with context, driven from there like any other goal.
 Lineage lives in a tenant-scoped JSON sidecar rather than a ``goals`` column.
 Released world-model migrations are immutable (see
 :mod:`maverick.migration_governance`), and fork provenance is metadata *about*
-runs rather than part of one — so it sits beside the world exactly the way
-:mod:`maverick.external_agents` keeps its enrollment metadata. A missing or
-corrupt sidecar degrades to "no known forks": the runs themselves are still
+runs rather than part of one — so it sits beside the world as a sidecar.
+A missing or corrupt sidecar degrades to "no known forks": the runs themselves are still
 whole, and a lineage read must never take a review page down.
 """
 from __future__ import annotations

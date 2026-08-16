@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 # [security] "silently do nothing" -- advice that would delete live config).
 # When adding a new config section, add it here or migrate will lint it.
 KNOWN_SECTIONS = frozenset({
-    "a2a", "adaptive_compute", "agent", "agent_factory", "agent_trust",
+    "a2a", "adaptive_compute", "agent", "agent_factory",
     "analytics", "approval", "assessments", "automation_import",
     "approval_delegation", "attachments", "audit", "auth", "autonomy",
     "deployment",
@@ -72,11 +72,11 @@ KNOWN_SECTIONS = frozenset({
     # config section" warning from config-lint (which sources this set), some
     # with actively-wrong suggestions ("self_harness -> did you mean
     # self_learning?", which is a *different* feature). The self-learning
-    # lifecycle (self_harness/self_improvement/dreaming/fleet_memory/rehearsal/
+    # lifecycle (self_harness/self_improvement/dreaming/rehearsal/
     # memory_guard) plus actions/domains/fairness_monitor/speculative/tax.
     # Guarded against future drift by test_wizard_parity's wizard-section check.
     "actions", "domains", "dreaming", "earned_autonomy", "fairness_monitor",
-    "external_agents", "fleet_memory", "memory_guard", "rehearsal",
+    "memory_guard", "rehearsal",
     "self_harness", "self_improvement", "speculative", "tax",
     # Structured rubric verifier + JitRL test-time adaptation: read by
     # load_config (config.get_reasoning_reward / get_jit_rl) and written by the

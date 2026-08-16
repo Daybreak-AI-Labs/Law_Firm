@@ -1,6 +1,6 @@
 """Enforcement wiring for the product-operations layer: the opt-in gate
-(default off), the require() chokepoint, the fleet_memory integration, and the
-support-bundle export. See maverick/entitlements.py + fleet_memory.py."""
+(default off), the require() chokepoint, and the support-bundle export.
+See maverick/entitlements.py."""
 from __future__ import annotations
 
 import json
@@ -72,15 +72,6 @@ def test_config_knob_supplies_trust_and_enforce(monkeypatch):
     assert E.enforcing() is True
     ent = E.resolve(_gold(priv), now=NOW)   # trust comes from config, not explicit
     assert ent.status == E.LICENSED and ent.allows("fleet_governance")
-
-
-def test_fleet_memory_respects_entitlement(monkeypatch):
-    from maverick import fleet_memory as FM
-    monkeypatch.setenv("MAVERICK_FLEET_MEMORY", "1")   # base-enabled
-    monkeypatch.setattr("maverick.entitlements.require", lambda f: False)
-    assert FM.enabled() is False                        # gated off
-    monkeypatch.setattr("maverick.entitlements.require", lambda f: True)
-    assert FM.enabled() is True                         # granted
 
 
 def test_support_export_writes_redacted_bundle(tmp_path):

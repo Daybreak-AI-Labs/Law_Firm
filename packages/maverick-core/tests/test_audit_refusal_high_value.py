@@ -63,8 +63,7 @@ def test_agent_bus_incidental_audit_outage_remains_fail_soft(monkeypatch):
     assert delivered is not None and delivered.payload == "continue"
 
 
-def test_trust_and_egress_denials_propagate_refusal(monkeypatch):
-    from maverick.agent_trust import record_denied
+def test_egress_denials_propagate_refusal(monkeypatch):
     from maverick.enterprise import (
         assert_provider_allowed,
         enterprise_egress_denial,
@@ -73,8 +72,6 @@ def test_trust_and_egress_denials_propagate_refusal(monkeypatch):
     monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
     _audit_refuses(monkeypatch)
 
-    with pytest.raises(AuditRefused):
-        record_denied("untrusted-peer", direction="inbound", reason="bad signature")
     with pytest.raises(AuditRefused):
         assert_provider_allowed("anthropic")
     with pytest.raises(AuditRefused):
@@ -118,24 +115,6 @@ def test_attestation_export_is_not_published_after_refusal(tmp_path, monkeypatch
 
     with pytest.raises(AuditRefused):
         attestation.export(out)
-
-    assert not out.exists()
-
-
-def test_memory_plane_export_is_not_published_after_refusal(tmp_path, monkeypatch):
-    from maverick import memory_plane
-
-    bundle = {
-        "claims": {"cross_vendor": {"vendors": ["one"]}},
-        "signature": {"key_id": "test-key"},
-    }
-    monkeypatch.setattr(memory_plane, "build", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(memory_plane, "sign", lambda _bundle: bundle)
-    _audit_refuses(monkeypatch)
-    out = tmp_path / "memory-plane.json"
-
-    with pytest.raises(AuditRefused):
-        memory_plane.export(out)
 
     assert not out.exists()
 

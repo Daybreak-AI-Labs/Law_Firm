@@ -48,11 +48,6 @@
       <p class="viz-sub">Best delivery on record.</p>
       <div id="bd-leaders"></div>
     </div>
-    <div class="panel viz-card viz-card--wide" id="bd-platforms-card" hidden>
-      <h2>External agents</h2>
-      <p class="viz-sub">Bring-your-own agents delivering under governance, by home platform.</p>
-      <div id="bd-platforms"></div>
-    </div>
   </div>
 
   <div class="panel">
@@ -175,21 +170,6 @@
         centerSub: 'completed',
         aria: 'Completion: ' + D.kpis.goals_completed + ' of ' +
               D.kpis.goals_total + ' goals delivered.' });
-
-      if ((D.platforms || []).length) {
-        document.getElementById('bd-platforms-card').hidden = false;
-        var pmax = 1;
-        D.platforms.forEach(function (r) { pmax = Math.max(pmax, r.total); });
-        B.hbars(document.getElementById('bd-platforms'),
-          D.platforms.map(function (r) {
-            return { label: r.label,
-                     value_text: r.completed + ' of ' + r.total +
-                                 ' · ' + B.money(r.spend),
-                     pct: r.completed / pmax * 100, pct_bg: r.total / pmax * 100,
-                     title: r.label + ' — ' + r.completed + ' delivered of ' +
-                            r.total + ', ' + B.money(r.spend) + ' reported' };
-          }), 'Delivery and reported spend by external-agent platform.');
-      }
 
       var lbox = document.getElementById('bd-leaders');
       if ((D.leaders || []).length) {

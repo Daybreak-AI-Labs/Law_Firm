@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 #: it demonstrably had enforcement running.
 _DENIAL_KINDS = (
     "governance_denied", "capability_denied", "shield_block", "egress_blocked",
-    "autonomy_gated", "agent_trust_denied",
+    "autonomy_gated",
 )
 
 

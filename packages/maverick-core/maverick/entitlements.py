@@ -323,9 +323,9 @@ def enforcing() -> bool:
     ``MAVERICK_LICENSE_ENFORCE=1``). This is what keeps the fail-open promise:
     the gate never activates unless an operator turns it on."""
     from .config import env_flag
-    v = env_flag("MAVERICK_LICENSE_ENFORCE")   # shared truthy parser (sibling of
-    if v is not None:                          # fleet_memory's gate); None on an
-        return v                               # unrecognized value → fall to config
+    v = env_flag("MAVERICK_LICENSE_ENFORCE")   # shared truthy parser; None on an
+    if v is not None:                          # unrecognized value → fall to config
+        return v
     return bool(_license_cfg().get("enforce", False))
 
 

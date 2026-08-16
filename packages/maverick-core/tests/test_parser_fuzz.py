@@ -9,9 +9,7 @@ hang. An unhandled exception on this surface is at least a DoS.
 
 This is a seed-based fuzzer (stdlib ``random``, fixed seeds) rather than
 Hypothesis so it needs no new dependency and is byte-for-byte reproducible in CI.
-The corpus deliberately includes recursion bombs and oversized values — the
-class that found the ``verify_envelope`` ``RecursionError`` this harness now
-guards against.
+The corpus deliberately includes recursion bombs and oversized values.
 """
 from __future__ import annotations
 
@@ -118,27 +116,6 @@ def _run(name, fn, *, allowed: tuple = (), seed: int = 1):
 
 
 # ---- federation signed envelopes (the recursion-bomb regression) -------------
-
-def test_fuzz_verify_envelope():
-    from maverick import federation_envelope as fe
-    peers = {"o": {"origin": "o", "pubkey": "ab" * 32}}
-    _run("verify_envelope",
-         lambda v: fe.verify_envelope(v, expected_schema="x", peers=peers))
-
-
-def test_fuzz_verify_envelope_pubkey_matches():
-    """With the pinned pubkey matching, fuzzing reaches the digest path — this is
-    exactly where the RecursionError lived. A bomb must reject, never raise."""
-    from maverick import federation_envelope as fe
-    peers = {"o": {"origin": "o", "pubkey": "ab" * 32}}
-
-    def call(v):
-        if isinstance(v, dict):
-            v = {**v, "schema": "x", "origin": "o", "sig": "ab", "pubkey": "ab" * 32}
-        return fe.verify_envelope(v, expected_schema="x", peers=peers)
-
-    _run("verify_envelope_match", call, seed=2)
-
 
 def test_fuzz_web_session():
     from maverick.web_session import verify_session

@@ -46,12 +46,9 @@ fronted by its own authenticated, fail-closed surface:
    dashboard users  ---> | dashboard (FastAPI)        |  OIDC / proxy / session
    (browsers, OIDC)      |  - per-user owner scoping   |  cookie; RBAC; CSRF
                          +----------------------------+
-   API / SDK / MCP   ---> | gRPC goal API + MCP server |  bearer / per-caller
-   clients               |  - capability-attenuated    |  trust token; TLS
+   API / SDK / MCP   ---> | gRPC goal API + MCP server |  shared bearer
+   clients               |  - capability-attenuated    |  token; TLS
                          +----------------------------+
-   external agents   ---> | external-agent gateway      |  Ed25519 signed
-   (bring-your-own)      |  - Agent Trust Plane gate    |  envelopes; pinned
-                         +----------------------------+  keys; per-agent token
                                       |
                                       v
                          +----------------------------+
@@ -81,8 +78,7 @@ or unknown caller is refused before any work is done.
   the wrapped DEK is never written unwrapped).
 - Per-deployment / per-tenant client data — must never mingle across
   matters or users (dashboard owner scoping).
-- External-agent credentials: pinned Ed25519 public keys, per-surface
-  bearer tokens, dashboard `session_secret`.
+- The dashboard `session_secret` and API bearer tokens.
 
 ## Out-of-scope (won't defend against)
 
@@ -175,7 +171,7 @@ or unknown caller is refused before any work is done.
 ## Networked / multi-principal threats (enterprise + federated)
 
 These cover the inbound boundaries in the second diagram: the dashboard,
-the gRPC/MCP APIs, the external-agent gateway, and the cross-host queue.
+the gRPC/MCP APIs, and the cross-host queue.
 Every mitigation below is
 implemented today (not roadmap); the named mechanism is the enforcement
 point.
@@ -184,15 +180,13 @@ point.
 
 | Threat | Mitigation |
 |--------|------------|
-| A peer presents a copyable shared token to impersonate another swarm | Per-peer token, constant-time compared; when the Agent Trust Plane is engaged a pinned-key peer must additionally **sign** the canonical envelope with its Ed25519 key (`federation_envelope.verify_envelope` against the pinned pubkey — a self-carried pubkey is never the trust anchor). |
 | Dashboard caller forges another user's identity | OIDC ID-token verification is asymmetric-only (defeats HS256/`none` alg-confusion), all of `exp/iat/aud/iss/sub` required; the browser-login session cookie is HMAC-signed (constant-time verify, expiry-enforced). |
-| API/MCP caller spoofs the bearer | Constant-time bearer compare; per-caller `[agent_trust]` tokens give real per-caller identity; fail-closed when nothing matches. |
+| API/MCP caller spoofs the bearer | Constant-time bearer compare; fail-closed when nothing matches. |
 
 ### Tampering
 
 | Threat | Mitigation |
 |--------|------------|
-| A captured federation message is **replayed** at the same peer | Every delegation, including token-only peers, is bound to a bounded per-peer `correlation_id` ledger: identical concurrent/retry requests coalesce, while the same id with changed content is refused. Signed peers additionally carry a `created_at` freshness window and signature replay protection. |
 | An **older** signed marketplace bundle is replayed to resurrect a withdrawn (e.g. malicious) listing | Per-origin monotonic `created_at` watermark — an import must be strictly newer than the last applied from that origin (also blocks exact-replay). |
 | A delegated capability grant is tampered with in transit / on the queue | gRPC and the queue worker **re-intersect** any wire-supplied capability with the receiver's own local policy (`_rpc_capability` / `_worker_capability`); a grant can only narrow, never broaden. |
 | Audit chain edited after the fact | Ed25519 hash-chain with cross-file anchoring; `maverick audit verify --pubkey <externally-held hex>` is required for third-party tamper-evidence (a co-located key only catches non-privileged edits). |
@@ -201,27 +195,23 @@ point.
 
 | Threat | Mitigation |
 |--------|------------|
-| A node drops its half of a cross-swarm delegation | Both halves are audit-logged with a shared `correlation_id`; `audit.federation` reciprocity (`cross_verify`) detects a missing half. |
-| A trust-plane denial isn't recorded | Every inbound/outbound denial lands in the audit chain (`agent_trust.record_denied`). |
+| A governance denial isn't recorded | Every capability/consent denial lands in the signed audit chain. |
 
 ### Information disclosure
 
 | Threat | Mitigation |
 |--------|------------|
-| One federation peer reads another peer's (or a local) goal status/result | `GoalStatus` is owner-scoped — a goal is stamped `federation:<peer>` and only its delegating peer can poll it; anything else is reported as "unknown" (indistinguishable from non-existent). |
 | One dashboard user reads another user's goals (IDOR) | Object-level `assert_goal_access` on every goal-by-id endpoint; exact owner match; denials return **404** (not 403) so existence isn't disclosed. Legacy `owner==""` rows are unreachable by authenticated non-admins. |
 | A peer reads webhook/push secrets back from config | `get_push_config` masks the token; support bundles redact secret-named keys. |
 | Provider session cookies readable by another local user mid-write | Written **mode-at-creation** (`os.open(..., 0600)`), closing the world-readable window the old write-then-chmod left. |
 | Cross-tenant data decryption | Per-tenant DEK + AEAD context binding (`tenant/kms.py`); a tenant's key/ciphertext can't open another's (GCM auth fails). |
-| Forwarded channel user-ids leak across peers | Pseudonymized per-peer (HMAC under a per-pair secret) before they leave the host; no secret = no forwarding. |
 | A remote gRPC client sends bearer credentials or goal data over plaintext | Both listener binds and client dials reject non-loopback plaintext by default. TLS/mTLS is the production path; `MAVERICK_ALLOW_INSECURE_GRPC=1` is the explicit trusted-network escape hatch. |
 
 ### Denial of service
 
 | Threat | Mitigation |
 |--------|------------|
-| A deeply-nested signed envelope crashes verification (`RecursionError` in the canonical-JSON digest) before the signature is even checked | Recursion-safe depth guard rejects over-nested envelopes first (`federation_envelope._within_depth`). |
-| An outward surface is flooded | Bounded thread pools + `maximum_concurrent_rpcs` (gRPC/webhooks); SSE/WS offload + a WS concurrency cap (dashboard); per-request byte ceilings on the external-agent gateway. |
+| An outward surface is flooded | Bounded thread pools + `maximum_concurrent_rpcs` (gRPC/webhooks); SSE/WS offload + a WS concurrency cap (dashboard); per-request byte ceilings on the webhook surfaces. |
 | A client-supplied budget/deadline bypasses caps | Clamped down to operator ceilings; budget caps are enforced at record time, never bypassed. |
 | ReDoS via adversarial text on the scanning surfaces | Secret-detector / shield regexes are anchored (verified <0.15s on 100 KB adversarial inputs). |
 

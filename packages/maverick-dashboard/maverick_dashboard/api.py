@@ -70,8 +70,6 @@ from .api_schemas import (
     DsarIn,
     EventTriggerIn,
     EventTriggerOut,
-    ExternalAgentIn,
-    ExternalCredentialIn,
     FactIn,
     FeatureSwitchIn,
     FeedbackIn,
@@ -134,8 +132,6 @@ from .api_schemas import (
     TenantRoleIn,
     TriggerIn,
     TriggerOut,
-    TrustAgentIn,
-    TrustRevokeIn,
     UserSuitesIn,
     ValueAssumptionsIn,
     WorkflowDraftIn,
@@ -452,39 +448,7 @@ def _board_spend(w, owner, days: int) -> dict:
         top_goals.append({"goal_id": gid, "title": g.title if g else f"#{gid}",
                           "cost": float(cost or 0), "runs": int(runs)})
     return {"totals": totals, "prev": prev, "daily": list(daily.values()),
-            "outcomes": outcomes, "per_run": per_run, "top_goals": top_goals,
-            "by_platform": _external_platform_spend(w, owner, since)}
-
-
-def _external_platform_spend(w, owner, since: float) -> list[dict]:
-    """Spend by external-agent platform (bring-your-own-agent runs).
-
-    Forces the episodes⋈goals join unconditionally — the admin/auth-off view
-    passes ``owner is None``, and that is precisely the view where
-    ``agent:*`` rows exist. Individual humans keep owner scoping and simply
-    see an empty segment."""
-    if owner is not None:
-        return []
-    from maverick.external_agents import PLATFORMS, roster
-    platform_of = {f"agent:{r['id']}": r["platform"] for r in roster()}
-    if not platform_of:
-        return []
-    agg: dict[str, dict] = {}
-    for own_id, cost, runs in w.conn.execute(
-            "SELECT g.owner, SUM(COALESCE(e.cost_dollars, 0)), COUNT(*) "
-            "FROM episodes e JOIN goals g ON e.goal_id = g.id "
-            "WHERE e.ended_at IS NOT NULL AND e.started_at >= ? "
-            "AND g.owner LIKE 'agent:%' GROUP BY g.owner",
-            (since,)).fetchall():
-        platform = platform_of.get(str(own_id))
-        if platform is None:
-            continue
-        row = agg.setdefault(platform, {
-            "label": PLATFORMS.get(platform, platform),
-            "cost": 0.0, "runs": 0})
-        row["cost"] += float(cost or 0)
-        row["runs"] += int(runs)
-    return sorted(agg.values(), key=lambda r: r["cost"], reverse=True)[:8]
+            "outcomes": outcomes, "per_run": per_run, "top_goals": top_goals}
 
 
 def _board_workforce(w, owner, days: int) -> dict:
@@ -526,39 +490,7 @@ def _board_workforce(w, owner, days: int) -> dict:
                         key=lambda r: (r["completed"], r["total"]),
                         reverse=True)[:8],
         "leaders": [c.to_dict() for c in cards[:6]],
-        "platforms": _external_platform_workforce(w, owner),
     }
-
-
-def _external_platform_workforce(w, owner) -> list[dict]:
-    """Goals by external-agent platform for the workforce board. Same
-    admin-view-only rule as the spend segment: individual humans keep owner
-    scoping and see an empty segment."""
-    if owner is not None:
-        return []
-    from maverick.external_agents import PLATFORMS, roster
-    platform_of = {f"agent:{r['id']}": r["platform"] for r in roster()}
-    if not platform_of:
-        return []
-    agg: dict[str, dict] = {}
-    for own_id, completed, total, spend in w.conn.execute(
-            "SELECT g.owner, "
-            "SUM(CASE WHEN g.status = 'done' THEN 1 ELSE 0 END), COUNT(*), "
-            "(SELECT COALESCE(SUM(e.cost_dollars), 0) FROM episodes e "
-            " JOIN goals g2 ON e.goal_id = g2.id WHERE g2.owner = g.owner) "
-            "FROM goals g WHERE g.owner LIKE 'agent:%' GROUP BY g.owner"
-            ).fetchall():
-        platform = platform_of.get(str(own_id))
-        if platform is None:
-            continue
-        row = agg.setdefault(platform, {
-            "label": PLATFORMS.get(platform, platform),
-            "completed": 0, "total": 0, "spend": 0.0})
-        row["completed"] += int(completed or 0)
-        row["total"] += int(total or 0)
-        row["spend"] += float(spend or 0)
-    return sorted(agg.values(), key=lambda r: (r["completed"], r["total"]),
-                  reverse=True)[:8]
 
 
 def _board_workspace(department: str) -> dict:
@@ -2555,19 +2487,6 @@ def _probe_tenant(t: dict) -> dict:
                             "dollars": round(float(d.get("dollars") or 0), 2)}
     except Exception:  # value ledger is optional on older agents
         pass
-    try:
-        x = httpx.get(f"{base}/api/v1/external-agents", headers=headers,
-                      timeout=4)
-        if x.status_code == 200:
-            st = (x.json() or {}).get("status") or {}
-            out["external"] = {
-                "enrolled": int(st.get("enrolled") or 0),
-                "active": int(st.get("active") or 0),
-                "over_budget": int(st.get("over_budget") or 0),
-                "contained": int(st.get("contained") or 0),
-            }
-    except Exception:  # BYOA console is optional on older tenants
-        pass
     return out
 
 
@@ -2636,7 +2555,6 @@ async def partner_fleet(request: Request, check: int = 0) -> dict:
     tenants = [partner_store.public_row(r) for r in rows]
     checks = [t.get("last_check") or {} for t in tenants]
     values = [c.get("value") for c in checks if c.get("value")]
-    externals = [c.get("external") for c in checks if c.get("external")]
     return {"tenants": tenants,
             "fleet": {
                 "total": len(tenants),
@@ -2644,9 +2562,6 @@ async def partner_fleet(request: Request, check: int = 0) -> dict:
                 "cases": sum(v["cases"] for v in values),
                 "hours": round(sum(v["hours"] for v in values), 1),
                 "dollars": round(sum(v["dollars"] for v in values), 2),
-                "external_agents": sum(x["enrolled"] for x in externals),
-                "external_attention": sum(
-                    x["over_budget"] + x["contained"] for x in externals),
             }}
 
 
@@ -7562,8 +7477,6 @@ _FEATURE_SWITCHES: dict = {
                          "and reversible."),
     "self_harness": ("Self-harness", "Re-runs learned skills against known "
                      "outcomes before they are trusted."),
-    "fleet_memory": ("Fleet memory", "Shares vetted lessons between agents "
-                     "so one agent's fix helps the whole workforce."),
     "rehearsal": ("Rehearsal", "Practices risky operations in a sandbox "
                   "before doing them for real."),
     "flows": ("Flow engine", "Runs the visual flow designer's automations "
@@ -7985,179 +7898,10 @@ async def replay_evidence(request: Request, goal_id: int) -> Response:
     )
 
 
-@router.get("/trust/agents")
-async def trust_agents(request: Request) -> dict:
-    """The Agent Trust Plane registry: external agents + their tool/risk/budget
-    ceilings and lifecycle status (the cross-agent permission graph as JSON)."""
-    from .control_plane import trust_overview
-    return trust_overview()
-
-
-@router.post("/trust/agents", status_code=201)
-async def trust_agent_register(request: Request, payload: TrustAgentIn) -> dict:
-    """Register or replace an external agent from the app (admin).
-
-    Writes the dashboard/CLI-managed overlay (``agent_trust.json``), never the
-    operator's config file; a managed entry with the same id overrides the
-    config-file one, so admins can also amend hand-edited entries here."""
-    require_permission(request, "admin")
-    from maverick.agent_trust import AgentTrustError, put_agent
-    try:
-        agent = put_agent(payload.model_dump())
-    except AgentTrustError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, "id": agent.id}
-
-
-@router.post("/trust/agents/{agent_id}/revoke")
-async def trust_agent_revoke(request: Request, agent_id: str,
-                             payload: TrustRevokeIn) -> dict:
-    """Revoke (or restore) a managed external agent (admin). Entries defined in
-    the operator's config file can't be flipped here -- register the same id
-    from the app first to take it under management."""
-    require_permission(request, "admin")
-    from maverick.agent_trust import set_revoked
-    if not set_revoked(agent_id, payload.revoked):
-        raise HTTPException(
-            status_code=404,
-            detail="this agent is defined in the server's config file, not in "
-                   "the app-managed registry. Register the same id here to "
-                   "override it, or ask your administrator to edit the config.",
-        )
-    return {"ok": True, "id": agent_id, "revoked": payload.revoked}
-
-
-@router.delete("/trust/agents/{agent_id}", status_code=204)
-async def trust_agent_remove(request: Request, agent_id: str) -> None:
-    """Remove a managed external agent (admin). Config-file entries reappear
-    after their managed override is deleted; the same 404 rule applies."""
-    require_permission(request, "admin")
-    from maverick.agent_trust import remove_agent
-    if not remove_agent(agent_id):
-        raise HTTPException(
-            status_code=404,
-            detail="this agent is not in the app-managed registry (it may be "
-                   "defined in the server's config file).",
-        )
-
-
-@router.get("/external-agents")
-async def external_agents_list(request: Request) -> dict:
-    """The bring-your-own-agent roster: platform provenance, ownership,
-    ceilings, lifecycle, reported spend, and which credential surfaces each
-    agent holds (never token values)."""
-    from maverick import external_agents as xa
-    return {"enabled": xa.enabled(), "status": xa.status(),
-            "agents": xa.roster()}
-
-
-@router.post("/external-agents", status_code=201)
-async def external_agent_enroll(request: Request,
-                                payload: ExternalAgentIn) -> dict:
-    """Enroll an agent built on another platform (admin): trust entry +
-    fleet-memory roster + platform metadata in one call."""
-    require_permission(request, "admin")
-    from maverick import external_agents as xa
-    if not xa.entitled():
-        raise HTTPException(
-            status_code=403,
-            detail="external-agent governance is a paid (Gold) add-on not "
-                   "included in this license")
-    try:
-        out = xa.enroll(
-            payload.id, payload.platform, description=payload.description,
-            owner=payload.owner, department=payload.department,
-            allow_tools=payload.allow_tools, deny_tools=payload.deny_tools,
-            max_risk=payload.max_risk, max_dollars=payload.max_dollars,
-            max_wall_seconds=payload.max_wall_seconds,
-            data_scopes=payload.data_scopes,
-            expires_days=payload.expires_days,
-            budget_period=payload.budget_period,
-            enrolled_by=caller_principal(request) or "admin")
-    except xa.ExternalAgentsError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return out
-
-
-@router.post("/external-agents/{agent_id}/release")
-async def external_agent_release(request: Request, agent_id: str) -> dict:
-    """Lift an auto-containment and clear the denial window (admin)."""
-    require_permission(request, "admin")
-    from maverick import external_agents as xa
-    if not xa.release(agent_id,
-                      released_by=caller_principal(request) or "admin"):
-        raise HTTPException(status_code=404,
-                            detail=f"agent {agent_id!r} is not enrolled")
-    return {"ok": True, "id": agent_id}
-
-
-@router.post("/external-agents/{agent_id}/reset-budget")
-async def external_agent_reset_budget(request: Request,
-                                      agent_id: str) -> dict:
-    """Zero the active budget meter and clear the over-budget flag (admin).
-    Lifetime totals are preserved — this changes what counts against the
-    cap, never what was historically reported."""
-    require_permission(request, "admin")
-    from maverick import external_agents as xa
-    if not xa.reset_budget(agent_id,
-                           reset_by=caller_principal(request) or "admin"):
-        raise HTTPException(status_code=404,
-                            detail=f"agent {agent_id!r} is not enrolled")
-    return {"ok": True, "id": agent_id}
-
-
-@router.get("/external-agents/{agent_id}")
-async def external_agent_detail(request: Request, agent_id: str) -> dict:
-    """One enrolled agent: roster row + its Operating Record footprint
-    (spend, recent episodes)."""
-    from maverick import external_agents as xa
-    try:
-        return xa.agent_detail(agent_id)
-    except xa.ExternalAgentsError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-
-
-@router.post("/external-agents/{agent_id}/credentials")
-async def external_agent_mint(request: Request, agent_id: str,
-                              payload: ExternalCredentialIn) -> dict:
-    """Mint or rotate one per-surface bearer (admin). The token appears in
-    THIS response only — it is stored for verification, never for reading.
-    With ``[external_agents] mint_approval`` on, the first call parks a
-    step-up approval and answers 409 with its id; re-post with
-    ``approval_id`` once a decision-maker approves."""
-    require_permission(request, "admin")
-    from maverick import external_agents as xa
-    try:
-        token = xa.mint_token(
-            agent_id, payload.surface,
-            minted_by=caller_principal(request) or "admin",
-            mint_approval_id=payload.approval_id)
-    except xa.MintApprovalPending as e:
-        return JSONResponse(status_code=409, content={
-            "detail": str(e), "status": "approval_required",
-            "approval_id": e.approval_id})
-    except xa.ExternalAgentsError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, "id": agent_id, "surface": payload.surface,
-            "token": token}
-
-
-@router.delete("/external-agents/{agent_id}", status_code=204)
-async def external_agent_unenroll(request: Request, agent_id: str) -> None:
-    """Unenroll (admin): removes the managed trust entry + metadata. The
-    fleet-memory roster keeps its history — provenance is never rewritten.
-    Prefer revoking (POST /trust/agents/{id}/revoke) to keep the entry."""
-    require_permission(request, "admin")
-    from maverick import external_agents as xa
-    if not xa.unenroll(agent_id):
-        raise HTTPException(status_code=404,
-                            detail=f"agent {agent_id!r} is not enrolled")
-
-
 @router.get("/discovery")
 async def discovery(request: Request) -> dict:
     """Inventory of governable surfaces: tools (by risk), MCP servers (with
-    supply-chain pins), configured providers, channels, and external agents."""
+    supply-chain pins), configured providers, and channels."""
     from .control_plane import discovery_overview
     return discovery_overview()
 

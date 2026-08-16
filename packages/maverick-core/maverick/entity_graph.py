@@ -1,7 +1,7 @@
 """The entity graph -- one resolved identity per real-world thing, and typed,
 time-bounded edges derived from the records the platform already governs.
 
-The memory layers exist (episodic ``world_model``, semantic ``fleet_memory`` /
+The memory layers exist (episodic ``world_model``, semantic
 ``assessment_memory``, procedural ``procedural_memory``, consolidation in
 ``dreaming``), but they are silos: "Acme Corp" in a DPA review, in a paper
 redline, in a security vendor assessment, and in an assessment subject are four

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from maverick_dashboard.app import app
-from maverick_dashboard.control_plane import build_replay, trust_overview
+from maverick_dashboard.control_plane import build_replay
 
 client = TestClient(app, headers={"Origin": "http://testserver"})
 
@@ -142,92 +142,13 @@ def test_replay_page_renders():
 
 # ---- agent trust / permission graph ----------------------------------------
 
-def _fake_trust(monkeypatch, *, enforced=True):
-    import maverick.agent_trust as at
-    from maverick.agent_trust import TrustedAgent
-    agent = TrustedAgent(
-        id="vega", pubkey="ab" * 32, direction="inbound",
-        allow_tools=frozenset({"read_file", "web_search"}),
-        deny_tools=frozenset({"shell"}), max_risk="medium",
-        max_dollars=5.0, data_scopes=frozenset({"crm"}),
-    )
-    monkeypatch.setattr(at, "load_trust_state", lambda: (enforced, {"vega": agent}))
-
-
-def test_trust_overview_shapes_registry(monkeypatch):
-    _fake_trust(monkeypatch)
-    ov = trust_overview()
-    assert ov["enforced"] is True
-    a = ov["agents"][0]
-    assert a["id"] == "vega"
-    assert a["direction"] == "inbound"
-    assert a["max_risk"] == "medium"
-    assert "shell" in a["deny_tools"]
-    assert a["active"] is True
-
-
-def test_trust_overview_lifecycle_failure_is_not_rendered_active(monkeypatch):
-    import maverick.agent_trust as at
-
-    class BrokenLifecycleAgent:
-        id = "broken"
-        allow_tools = frozenset()
-
-        def is_active(self):
-            raise RuntimeError("registry unavailable")
-
-    agent = BrokenLifecycleAgent()
-    monkeypatch.setattr(at, "load_trust_state", lambda: (True, {"broken": agent}))
-
-    ov = trust_overview()
-    row = ov["agents"][0]
-    assert row["active"] is False
-    assert row["status"] == "unknown (lifecycle check failed)"
-    assert ov["graph"]["nodes"][0]["color"] == "#dc2626"
-
-
-def test_trust_api_and_page(monkeypatch):
-    _fake_trust(monkeypatch)
-    r = client.get("/api/v1/trust/agents")
-    assert r.status_code == 200
-    assert r.json()["agents"][0]["id"] == "vega"
-    p = client.get("/trust")
-    assert p.status_code == 200
-    assert "vega" in p.text
-
-
-def test_trust_empty_state_does_not_error(monkeypatch):
-    import maverick.agent_trust as at
-    monkeypatch.setattr(at, "load_trust_state", lambda: (False, {}))
-    ov = trust_overview()
-    assert ov["agents"] == []
-    assert ov["enforced"] is False
-    assert ov["graph"]["nodes"] == []  # empty graph, no render, no error
-    assert client.get("/trust").status_code == 200
-
-
-def test_trust_graph_layout(monkeypatch):
-    _fake_trust(monkeypatch)
-    g = trust_overview()["graph"]
-    assert g["width"] > 0 and g["height"] > 0
-    node = g["nodes"][0]
-    assert node["id"] == "vega"
-    assert {"x", "y", "color", "inbound", "outbound"} <= node.keys()
-    # vega is inbound-only + medium-risk in the fixture
-    assert node["inbound"] is True and node["outbound"] is False
-    assert node["color"] == "#2563eb"
-
-
-# ---- discovery -------------------------------------------------------------
-
 def test_discovery_overview_shape():
     from maverick_dashboard.control_plane import discovery_overview
     ov = discovery_overview()
-    assert {"tools", "mcp_servers", "providers", "channels", "agents"} <= ov.keys()
+    assert {"tools", "mcp_servers", "providers", "channels"} <= ov.keys()
     assert {"entries", "by_tier", "count"} <= ov["tools"].keys()
     assert isinstance(ov["mcp_servers"], list)
     assert isinstance(ov["providers"], list)
-    assert "count" in ov["agents"]
 
 
 def test_discovery_page_and_api():

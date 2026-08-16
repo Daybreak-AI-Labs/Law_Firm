@@ -26,10 +26,6 @@ class _Ctx:
         return self._peer
 
 
-class _Agent:
-    id = "vega"
-
-
 def test_disabled_when_zero(monkeypatch):
     monkeypatch.setenv("MAVERICK_GRPC_RATE_LIMIT", "0")
     for _ in range(1000):
@@ -50,20 +46,19 @@ def test_buckets_independent(monkeypatch):
     assert gs._grpc_rate_ok("agent:b") is True
 
 
-def test_key_prefers_agent_then_peer_address():
-    assert gs._grpc_rate_key(_Ctx(), _Agent()) == "agent:vega"
-    key = gs._grpc_rate_key(_Ctx("ipv4:10.0.0.7:5"), None)
+def test_key_buckets_by_peer_address():
+    key = gs._grpc_rate_key(_Ctx("ipv4:10.0.0.7:5"))
     assert key.startswith("peer:")
     # Distinct peer addresses get distinct buckets.
-    assert key != gs._grpc_rate_key(_Ctx("ipv4:10.0.0.8:5"), None)
+    assert key != gs._grpc_rate_key(_Ctx("ipv4:10.0.0.8:5"))
 
 
 def test_peer_key_ignores_tcp_source_port():
-    assert gs._grpc_rate_key(_Ctx("ipv4:10.0.0.7:50001"), None) == gs._grpc_rate_key(
-        _Ctx("ipv4:10.0.0.7:50002"), None
+    assert gs._grpc_rate_key(_Ctx("ipv4:10.0.0.7:50001")) == gs._grpc_rate_key(
+        _Ctx("ipv4:10.0.0.7:50002")
     )
-    assert gs._grpc_rate_key(_Ctx("ipv6:[2001:db8::1]:50001"), None) == gs._grpc_rate_key(
-        _Ctx("ipv6:[2001:db8::1]:50002"), None
+    assert gs._grpc_rate_key(_Ctx("ipv6:[2001:db8::1]:50001")) == gs._grpc_rate_key(
+        _Ctx("ipv6:[2001:db8::1]:50002")
     )
 
 

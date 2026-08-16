@@ -148,69 +148,6 @@ def test_authorized_calls_reach_all_rpc_methods(monkeypatch):
         assert call[2]["expected_owner"] is None
 
 
-def test_per_agent_token_binds_owner_and_execution_identity(monkeypatch):
-    from maverick import agent_trust
-    from maverick.agent_trust import TrustedAgent
-
-    monkeypatch.setattr(grpc_server, "_grpc_code", lambda: _Codes)
-    registry = {
-        "alice": TrustedAgent(
-            id="alice", grpc_token="alice-secret", direction="inbound",
-            max_dollars=2.0, max_wall_seconds=120.0,
-        ),
-    }
-    monkeypatch.setattr(agent_trust, "load_registry", lambda cfg=None: registry)
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (False, registry))
-
-    svc = _Service()
-    servicer = grpc_server._servicer(svc, _Pb2, _Pb2Grpc, bearer_token="operator-secret")
-    context = _Context((("authorization", "Bearer alice-secret"),))
-
-    start_request = SimpleNamespace(
-        title="run", description="", max_dollars=99.0,
-        max_wall_seconds=999.0, channel="private", user_id="victim",
-    )
-    goal_request = SimpleNamespace(goal_id=2, since_id=0, max_seconds=1.0)
-    run_request = SimpleNamespace(
-        goal_id=2, max_dollars=1.5, max_wall_seconds=30.0,
-        channel="private", user_id="victim", max_depth=0,
-        capability_json="",
-    )
-
-    assert servicer.StartGoal(start_request, context).goal_id == 7
-    assert list(servicer.StreamEpisode(goal_request, context))
-    assert servicer.Cancel(goal_request, context).cancelled is True
-    assert servicer.GetStatus(goal_request, context).found is True
-    assert servicer.RunGoal(run_request, context).found is True
-
-    calls = {name: kwargs for name, _args, kwargs in svc.calls}
-    assert calls["start_goal"]["owner"] == "agent:alice"
-    assert calls["start_goal"]["channel"] == "grpc"
-    assert calls["start_goal"]["user_id"] == "alice"
-    assert calls["start_goal"]["max_dollars"] == 2.0
-    assert calls["start_goal"]["max_wall_seconds"] == 120.0
-    assert calls["stream_episode"]["expected_owner"] == "agent:alice"
-    assert calls["cancel"]["expected_owner"] == "agent:alice"
-    assert calls["status"]["expected_owner"] == "agent:alice"
-    assert calls["run_goal"]["expected_owner"] == "agent:alice"
-    assert calls["run_goal"]["channel"] == "grpc"
-    assert calls["run_goal"]["user_id"] == "alice"
-    # A caller may voluntarily request a stricter budget than the registry cap.
-    assert calls["run_goal"]["max_dollars"] == 1.5
-    assert calls["run_goal"]["max_wall_seconds"] == 30.0
-
-
-def test_per_agent_nonfinite_budget_falls_back_to_registry_ceiling():
-    from maverick.agent_trust import TrustedAgent
-
-    agent = TrustedAgent(
-        id="alice", max_dollars=2.0, max_wall_seconds=120.0,
-    )
-    assert grpc_server._execution_budget(
-        agent, max_dollars=float("nan"), max_wall_seconds=float("inf"),
-    ) == (2.0, 120.0)
-
-
 def test_remote_depth_and_stream_duration_are_worker_bounded(monkeypatch):
     monkeypatch.setenv("MAVERICK_GRPC_MAX_DEPTH", "4")
     monkeypatch.setenv("MAVERICK_GRPC_STREAM_MAX_SECONDS", "30")
@@ -221,40 +158,6 @@ def test_remote_depth_and_stream_duration_are_worker_bounded(monkeypatch):
     assert grpc_server._stream_deadline(5.0) == 5.0
 
 
-
-@pytest.mark.parametrize("method_name", ["StreamEpisode", "Cancel", "GetStatus"])
-def test_read_and_control_rpcs_enforce_trust_plane(monkeypatch, method_name):
-    from maverick import agent_trust
-    from maverick.agent_trust import TrustedAgent
-
-    monkeypatch.setattr(grpc_server, "_grpc_code", lambda: _Codes)
-    registry = {
-        "outbound": TrustedAgent(
-            id="outbound", grpc_token="agent-secret", direction="outbound"
-        )
-    }
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, registry))
-    monkeypatch.setattr(agent_trust, "load_registry", lambda cfg=None: registry)
-
-    svc = _Service()
-    servicer = grpc_server._servicer(svc, _Pb2, _Pb2Grpc, bearer_token="secret")
-    request = SimpleNamespace(goal_id=2, since_id=0, max_seconds=1.0)
-    # A shared-operator-bearer caller passes authentication; with the trust plane
-    # engaged the read/control RPC must still go through the gate, which
-    # default-denies the "grpc" surface when it isn't registered (an outbound
-    # per-caller token would instead fail authentication outright -- see
-    # agent_for_token -- so the shared bearer is what actually reaches the gate).
-    context = _Context((("authorization", "Bearer secret"),))
-    call = getattr(servicer, method_name)
-
-    with pytest.raises(PermissionError, match="not in the trust registry"):
-        result = call(request, context)
-        if method_name == "StreamEpisode":
-            list(result)
-
-    assert context.aborted[0] == _Codes.PERMISSION_DENIED
-    assert "not in the trust registry" in context.aborted[1]
-    assert svc.calls == []
 
 def test_run_goal_intersects_rpc_capability_with_local_policy(monkeypatch):
     monkeypatch.setattr(grpc_server, "_grpc_code", lambda: _Codes)
@@ -320,42 +223,6 @@ def test_run_goal_omitted_capability_still_installs_local_policy(monkeypatch):
     assert servicer.RunGoal(request, context).status == "done"
     cap = svc.calls[-1][2]["capability"]
     assert cap is local
-    assert cap.permits("read_file")
-    assert not cap.permits("shell")
-
-
-def test_start_goal_intersects_trust_ceiling_with_local_policy(monkeypatch):
-    monkeypatch.setattr(grpc_server, "_grpc_code", lambda: _Codes)
-    import maverick.capability as capability_mod
-
-    local = Capability(
-        principal="user:victim",
-        allow_tools=frozenset({"read_file", "shell"}),
-        deny_tools=frozenset({"shell"}),
-        max_risk="medium",
-    )
-    trust = Capability(
-        principal="agent:remote",
-        allow_tools=frozenset({"read_file"}),
-        max_risk="high",
-    )
-    monkeypatch.setattr(capability_mod, "capability_enforced", lambda: True)
-    monkeypatch.setattr(capability_mod, "capability_from_config", lambda **kw: local)
-    monkeypatch.setattr(grpc_server, "_trust_capability", lambda context, agent: trust)
-
-    svc = _Service()
-    servicer = grpc_server._servicer(svc, _Pb2, _Pb2Grpc, bearer_token="secret")
-    context = _Context((("authorization", "Bearer secret"),))
-    request = SimpleNamespace(
-        title="run", description="", max_dollars=0,
-        max_wall_seconds=0, channel="prod", user_id="victim",
-    )
-
-    assert servicer.StartGoal(request, context).goal_id == 7
-    cap = svc.calls[-1][2]["capability"]
-    assert cap.principal == "user:victim"
-    assert cap.allow_tools == frozenset({"read_file"})
-    assert cap.max_risk == "medium"
     assert cap.permits("read_file")
     assert not cap.permits("shell")
 

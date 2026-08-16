@@ -1351,52 +1351,6 @@ def pick_oidc() -> dict[str, Any]:
     return result
 
 
-def _ask_external_agent_followups(advanced: dict[str, Any]) -> None:
-    """The external-agent gateway's follow-up questions (gateway already on).
-
-    Governed execution rides on the gateway: naming a connector is the
-    operator's explicit decision to let foreign agents ACT through
-    Maverick's egress-guarded, receipted connector path. Blank keeps the
-    gateway screen-only; the kernel intersects with its reference factories
-    anyway, so the filter here just surfaces a typo at answer time instead
-    of silently at runtime.
-    """
-    raw = _q_text(
-        "  Governed connectors external agents may EXECUTE through "
-        "(comma-separated: salesforce, servicenow; blank = screen-only)",
-        default="",
-    )
-    connectors = []
-    for name in dict.fromkeys(_csv_list(raw, lower=True)):
-        if name in ("salesforce", "servicenow"):
-            connectors.append(name)
-        else:
-            console.print(
-                f"  [yellow]unknown connector '{name}' — skipped "
-                "(valid: salesforce, servicenow)[/yellow]"
-            )
-    if connectors:
-        advanced["external_connectors"] = connectors
-    # Both hardening switches below are strict, tightening booleans in the
-    # kernel (a malformed config value engages them, never disables).
-    if _q_confirm(
-        "  Require the strong credential? An agent whose trust entry pins "
-        "an Ed25519 key or names a JWT issuer must present it -- its "
-        "minted bearer alone stops authenticating (token-only agents are "
-        "unaffected). Off by default.",
-        default=False,
-    ):
-        advanced["external_require_signed"] = True
-    if _q_confirm(
-        "  Step-up approval on credential minting? Each mint/rotation "
-        "parks a dashboard approval a decision-maker must approve before "
-        "the token is issued (one approval mints exactly one credential). "
-        "Off by default.",
-        default=False,
-    ):
-        advanced["external_mint_approval"] = True
-
-
 def _ask_governed_execution_followups(advanced: dict[str, Any]) -> None:
     """Follow-ups for the two default-off governed-execution planes.
 
@@ -1509,21 +1463,6 @@ def pick_advanced() -> dict[str, Any]:
             "then recalled into that model's system prompt. Inspect or roll it "
             "back any time with `maverick self-harness`. ON by default.",
             default=True,
-        ),
-        "fleet_memory": _q_confirm(
-            "Fleet memory? Let EXTERNAL agents (Agentforce, Copilot, custom) "
-            "deposit experience into and recall from Maverick's governed "
-            "memory -- Shield-scanned, provenance-tagged, audited reads. "
-            "An explicit trust decision; OFF by default.",
-            default=False,
-        ),
-        "external_agents": _q_confirm(
-            "External-agent gateway? Govern agents built on OTHER platforms "
-            "(Salesforce Agentforce, AWS Bedrock, custom runtimes): enroll "
-            "them, credential them, screen their actions, and account their "
-            "runs on the Operating Record. An explicit trust decision; OFF "
-            "by default.",
-            default=False,
         ),
         "repl": _q_confirm(
             "Governed session kernel? Let an agent write PYTHON against a live "
@@ -1873,14 +1812,6 @@ def pick_advanced() -> dict[str, Any]:
             "when the agent handles PHI/PII/financial data.",
             default=False,
         ),
-        "agent_trust": _q_confirm(
-            "Govern which OUTSIDE agents your agents may talk to? Engages the Agent "
-            "Trust Plane: external agents (bring-your-own-agent callers, fleet "
-            "agents) are default-DENIED unless listed in [agent_trust] agents with a "
-            "pinned key, direction, and tool/budget/data ceiling. Auto-on under "
-            "enterprise mode; recommended at the company boundary.",
-            default=False,
-        ),
         "anonymous_logs": _q_confirm(
             "Anonymous mode? Scrub user-identifying content (goal text, user/channel "
             "ids, home paths, emails/phones) from logs and audit events — hashes or "
@@ -2051,8 +1982,6 @@ def pick_advanced() -> dict[str, Any]:
             "blank = approve from the dashboard)", default="").strip()
         if flows_url:
             advanced["flows_public_url"] = flows_url
-    if advanced.get("external_agents"):
-        _ask_external_agent_followups(advanced)
     # Both governed-execution planes are off by default, so the helper guards
     # each of its own questions rather than gating the call.
     _ask_governed_execution_followups(advanced)
@@ -3487,25 +3416,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("# AI-disclosure line surfaced to users (maverick.compliance).")
         lines.append("[compliance]")
         _emit_kv(lines, "disclosure_text", advanced["compliance_disclosure_text"])
-    if advanced.get("agent_trust"):
-        lines.append("")
-        lines.append("[agent_trust]")
-        lines.append("enforce = true")
-        # require_signed: refuse a federation peer that authenticates with only a
-        # shared token (no pinned-key signature). Peers WITH a pinned key are
-        # always signature-verified regardless of this flag.
-        lines.append("require_signed = false")
-        # Default-deny: external agents must be listed here, by pinned Ed25519
-        # public key (lowercase id, e.g. "vega"), with the direction and ceiling
-        # they're trusted within. Swap pubkeys out of band
-        # (data_dir('audit','keys')/<key_id>.pub). expires_at/not_before (epoch
-        # seconds) and revoked support key rotation/revocation.
-        lines.append("# agents = [")
-        lines.append('#   { id = "vega", pubkey = "<64-hex Ed25519>", '
-                     'direction = "both", allow_tools = ["read_file", '
-                     '"http_fetch"], max_risk = "medium", max_dollars = 2.0, '
-                     'max_wall_seconds = 600, data_scopes = ["support"] },')
-        lines.append("# ]")
     if advanced.get("anonymous_logs"):
         lines.append("")
         lines.append("[privacy]")
@@ -3652,20 +3562,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         retire_days = advanced.get("self_harness_retire_days")
         if retire_days and retire_days > 0:
             lines.append(f"retire_after_days = {int(retire_days)}")
-    if advanced.get("fleet_memory"):
-        lines.append("")
-        lines.append("[fleet_memory]")
-        lines.append("enable = true")
-    if advanced.get("external_agents"):
-        lines.append("")
-        lines.append("[external_agents]")
-        lines.append("enable = true")
-        if advanced.get("external_require_signed"):
-            lines.append("require_signed = true")
-        if advanced.get("external_connectors"):
-            _emit_kv(lines, "connectors", advanced["external_connectors"])
-        if advanced.get("external_mint_approval"):
-            lines.append("mint_approval = true")
     if advanced.get("repl"):
         lines.append("")
         lines.append("[repl]")

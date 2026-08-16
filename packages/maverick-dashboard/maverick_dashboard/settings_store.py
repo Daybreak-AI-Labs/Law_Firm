@@ -443,8 +443,8 @@ def set_toggle(section: str, name: str, enabled: bool) -> None:
 # Platform systems whose [section] enable flag an admin may switch from
 # inside the app -- the single authority the /features/switches API trusts.
 SWITCHABLE_SECTIONS: tuple[str, ...] = (
-    "dreaming", "self_improvement", "self_harness", "fleet_memory",
-    "rehearsal", "flows", "threat_hunt", "env_hunt", "entity_graph",
+    "dreaming", "self_improvement", "self_harness",
+    "rehearsal", "flows", "threat_hunt", "entity_graph",
 )
 
 

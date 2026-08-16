@@ -65,19 +65,6 @@ def readiness_deep_checks() -> tuple[bool, dict[str, str]]:
         checks["shield"] = f"unknown: {type(exc).__name__}"
         ok = False
 
-    try:
-        from maverick.agent_trust import load_trust_state
-
-        enforced, registry = load_trust_state()
-        if enforced and not registry:
-            checks["agent_trust"] = "fail: engaged but registry empty (denies all)"
-            ok = False
-        else:
-            checks["agent_trust"] = "ok"
-    except Exception as exc:  # pragma: no cover - probe must return, not raise
-        checks["agent_trust"] = f"unknown: {type(exc).__name__}"
-        ok = False
-
     # Replica posture is evidence for operators, not a traffic gate.  A process
     # that does not own the lease may be intentionally configured as a reader.
     try:

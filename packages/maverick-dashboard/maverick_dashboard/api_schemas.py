@@ -377,59 +377,6 @@ class OAuthExchangeIn(BaseModel):
     client_id: str | None = Field(default=None, max_length=512)
 
 
-class TrustAgentIn(BaseModel):
-    """Register (or replace) an external agent in the Agent Trust Plane's
-    dashboard-managed registry overlay (agent_trust.json) -- so an admin can
-    govern federation / A2A / MCP peers from the app without editing the
-    operator's config file. A managed entry with the same id overrides the
-    config-file one."""
-    id: str = Field(..., min_length=1, max_length=64)
-    pubkey: str = Field(default="", max_length=64)
-    direction: str = Field(default="both", pattern="^(inbound|outbound|both)$")
-    allow_tools: list[str] = Field(default_factory=list)
-    deny_tools: list[str] = Field(default_factory=list)
-    max_risk: str | None = Field(default=None, pattern="^(low|medium|high)$")
-    max_dollars: float | None = Field(default=None, ge=0)
-    max_wall_seconds: float | None = Field(default=None, ge=0)
-    data_scopes: list[str] = Field(default_factory=list)
-
-
-class TrustRevokeIn(BaseModel):
-    """Revoke (or restore) a managed external agent without deleting it."""
-    revoked: bool = True
-
-
-class ExternalAgentIn(BaseModel):
-    """Enroll (or re-enroll) a bring-your-own agent: one call writes the trust
-    entry (inbound, with ceilings + expiry), the fleet-memory roster, and the
-    platform/ownership metadata the /external-agents console shows."""
-    id: str = Field(..., min_length=1, max_length=64)
-    platform: str = Field(..., min_length=1, max_length=32)
-    description: str = Field(default="", max_length=500)
-    owner: str = Field(default="", max_length=200)
-    department: str = Field(default="", max_length=100)
-    allow_tools: list[str] = Field(default_factory=list, max_length=128)
-    deny_tools: list[str] = Field(default_factory=list, max_length=128)
-    max_risk: str | None = Field(default=None, pattern="^(low|medium|high)$")
-    max_dollars: float | None = Field(default=None, ge=0)
-    max_wall_seconds: float | None = Field(default=None, ge=0)
-    data_scopes: list[str] = Field(default_factory=list, max_length=64)
-    expires_days: float | None = Field(default=None, gt=0, le=3650)
-    # "monthly" resets the spend meter each calendar month (UTC); "total"
-    # is a lifetime cap. allow_tools entries may carry the operator's risk
-    # rating as "name:risk", which floors whatever the agent declares.
-    budget_period: str = Field(default="monthly", pattern="^(monthly|total)$")
-
-
-class ExternalCredentialIn(BaseModel):
-    """Mint (or rotate) one per-surface bearer for an enrolled external agent.
-    The response carries the token exactly once; it is never readable again.
-    ``approval_id`` replays a step-up mint approval when ``[external_agents]
-    mint_approval`` gates the mint (one approval mints exactly one token)."""
-    surface: str = Field(default="rest", pattern="^(rest|grpc|mcp)$")
-    approval_id: int | None = None
-
-
 class ConnectionIn(BaseModel):
     """Create/replace a named SaaS connection: the connector it credentials, its
     base URL, and an API token (sealed at rest, never returned). ``name`` lets

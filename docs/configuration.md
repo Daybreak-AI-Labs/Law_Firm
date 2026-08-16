@@ -8,7 +8,7 @@ Maverick reads `~/.maverick/config.toml`. The installer wizard writes it; you ca
 [deployment]
 type = "desktop"       # desktop | docker | vps | phone
 # Break-glass only. Exactly one control plane may write a data root: flows and
-# the audit, budget-receipt, fleet-memory and learning ledgers are hash-chained
+# the audit, budget-receipt and learning ledgers are hash-chained
 # and assume a single author. Two writers do not tear a
 # record -- they interleave valid ones, so the result verifies clean and is
 # unreconstructable. Startup takes an exclusive lock on the data root and a
@@ -431,9 +431,6 @@ data_grounding = true      # auto-grant each analyst pack its suite's primary-
                            #   deferred (no context cost), inert without each
                            #   source's API key. Set false to withhold them.
                            #   Env: MAVERICK_WORKFORCE_DATA_GROUNDING.
-
-[fleet_memory]             # external agents read/write governed memory
-enable = false             # explicit trust decision; roster-gated
 
 [suites]                   # disable whole suites (all on by default)
 # healthcare = false

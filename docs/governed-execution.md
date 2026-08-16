@@ -438,5 +438,3 @@ Every refusal below is deliberate and leaves the system in a defined state.
 - [Configuration](configuration.md) — every section and knob in one place.
 - [Safety](safety.md) — the sandbox backends, approval floors, and Shield.
 - [Operations](operations.md) — running the dashboard and the audit surfaces.
-- [External agents](external-agents.md) — the same governance seam applied to
-  agents built on other platforms.

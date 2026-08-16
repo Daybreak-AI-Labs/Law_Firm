@@ -209,14 +209,19 @@ What changed from upstream, and why:
   steps; the enterprise sales + SOC2/ISO certification docs; the five
   third-party language SDKs (TypeScript, Go, Rust, C#, Java) and their five CI
   jobs; `a2a`/`federation`/`channel_federation` (cross-organization agent
-  interop) and the marketplace ecosystem backend.
+  interop) and the marketplace ecosystem backend; the GRC self-certification
+  cluster (security_ops, evidence gateway, Model Risk officer, soc2/ropa/
+  dpia/ai-act scaffolds); the whole external-agent cluster — `agent_trust`,
+  `external_agents`, `external_identity`, `external_gateway`,
+  `federation_envelope`, `fleet_memory`, `memory_plane`, `agent_edr`, and the
+  LangChain/AutoGen/CrewAI adapters (operator decision, superseding the
+  fork-time retention of `federation_envelope.py`).
 - **Retained deliberately:** `agent-shield`; the multi-tenant/`tenant` layer
   (load-bearing — 227 source references, 163 test files, single-tenant is its
-  default path); `federation_envelope.py` (the Ed25519 primitive `agent_trust`
-  and the external-agent path share); `marketplace/storefront.py` +
+  default path); `marketplace/storefront.py` +
   `ratings.py` + `stats.py` (the pack/connector browser and YOUR OWN star
   ratings on goal templates — despite the package name, these are local, not
-  ecosystem); the Rust audit verifier and native scanner; the Go model proxy.
+  ecosystem); the Rust audit verifier and native scanner.
 
 ## Kernel rules (pre-existing, still enforced)
 

@@ -748,7 +748,6 @@ def base_registry(
     from .async_compaction import async_compaction
     from .audio_understanding import audio_understanding
     from .audit_mirror import audit_mirror
-    from .autogen_adapter import autogen_adapter
     from .bias_eval import bias_eval
     from .bitbucket_tool import bitbucket_tool
     from .breach_notification import breach_notification
@@ -783,7 +782,6 @@ def base_registry(
     from .cost_aware_router import cost_aware_router
     from .cost_guardrail import cost_guardrail
     from .cost_of_quality import cost_of_quality
-    from .crewai_adapter import crewai_adapter
     from .cross_repo_deps import cross_repo_deps
     from .crypto_budget_receipt import crypto_budget_receipt
     from .currency import currency
@@ -1116,8 +1114,6 @@ def base_registry(
     reg.register(data_residency())
     reg.register(polyglot_injection())
     reg.register(safety_regression_budget())
-    reg.register(autogen_adapter())
-    reg.register(crewai_adapter())
     if enable_ros:
         reg.register(ros_tool())
     reg.register(run_events_firehose())
