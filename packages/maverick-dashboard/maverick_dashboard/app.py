@@ -74,7 +74,6 @@ from .auth import (
     non_static_auth_configured,
     require_permission,
     require_principal_in_request_context,
-    require_suite,
     require_websocket_principal_in_context,
     stored_automation_identity,
     websocket_caller_principal,
@@ -698,13 +697,6 @@ _SECURITY_HUNTER_BODY_PATHS = {
     "/api/v1/security/threats/scan",
     "/api/v1/security/soc/ingest",
 }
-_FINANCE_LARGE_BODY_LIMITS = {
-    "/api/v1/finance-operations/regulatory/feeds/ingest": (
-        _MAX_FINANCE_REGULATORY_BODY_BYTES
-    ),
-    "/api/v1/finance-operations/aml/lists/ingest": _MAX_FINANCE_AML_LIST_BODY_BYTES,
-    "/api/v1/finance-operations/anomalies/scan": _MAX_FINANCE_ANOMALY_BODY_BYTES,
-}
 
 
 async def _read_limited_request_body(
@@ -764,39 +756,6 @@ async def bound_security_hunter_body(request: Request, call_next):
     # setting only ``_receive`` after consuming the stream makes that wrapper
     # emit an empty body. Populate both seams so downstream validation receives
     # the exact bounded bytes once.
-    request._body = body  # noqa: SLF001 - bounded ASGI body replay
-    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def bound_finance_operations_body(request: Request, call_next):
-    """Cap finance JSON before Starlette/Pydantic buffers nested records."""
-    path = request.url.path
-    if (
-        request.method != "POST"
-        or not path.startswith("/api/v1/finance-operations/")
-    ):
-        return await call_next(request)
-    maximum = _FINANCE_LARGE_BODY_LIMITS.get(path, _MAX_FINANCE_DEFAULT_BODY_BYTES)
-    try:
-        body = await _read_limited_request_body(
-            request,
-            max_bytes=maximum,
-            too_large_detail="finance operations request body too large",
-        )
-    except HTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-    delivered = False
-
-    async def replay_receive():
-        nonlocal delivered
-        if not delivered:
-            delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
-
     request._body = body  # noqa: SLF001 - bounded ASGI body replay
     request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
     return await call_next(request)
@@ -2536,113 +2495,6 @@ async def environment_threats_page(request: Request) -> HTMLResponse:
             "response_execution": env_hunt.response_execution_enabled(),
         },
     )
-
-
-@app.get("/finance/board", response_class=HTMLResponse)
-async def finance_board_page(request: Request) -> HTMLResponse:
-    """The finance command center: the board chassis parameterized to the
-    finance department — control tests, close readiness, SoD lint, the
-    coverage posture (never an audit opinion), the license renewal runway,
-    and the learning loop over finance decisions. Data from
-    GET /api/v1/finance/board."""
-    require_permission(request, "operate")
-    return templates.TemplateResponse(request, "finance_board.html", {})
-
-
-@app.get("/finance", response_class=HTMLResponse)
-async def finance_page(request: Request) -> HTMLResponse:
-    """The Finance workspace: the same chassis over the finance team's
-    assessment types — SOX controls, fraud risk, ITGC, credit risk, and
-    close readiness — with the shared review pop-out."""
-    require_permission(request, "operate")
-    require_suite(request, "finance")
-    operations = {
-        "enabled": False,
-        "degraded": False,
-        "error_type": "",
-        "regulatory_alerts": [],
-        "licensing_packs": [],
-        "anomaly_cases": [],
-        "aml_cases": [],
-        "aml_list_versions": 0,
-        "control_cycles": [],
-    }
-    try:
-        from dataclasses import asdict
-
-        from maverick.finance import aml_screening, control_testing
-        from maverick.finance.anomaly_engine import FinanceAnomalyCaseQueue
-        from maverick.finance.licensing import load_licensing_pack
-        from maverick.finance.regulatory_change import RegulatoryChangeEngine
-        from maverick.paths import data_dir
-
-        operations["enabled"] = aml_screening.enabled()
-        if operations["enabled"]:
-            engine = RegulatoryChangeEngine(
-                data_dir("finance_operations", "regulatory_change.sqlite3")
-            )
-            operations["regulatory_alerts"] = [
-                asdict(row) for row in engine.list_alerts(limit=20)
-            ]
-            operations["licensing_packs"] = [
-                {
-                    "vertical": pack.vertical,
-                    "title": pack.title,
-                    "version": pack.version,
-                    "as_of": pack.as_of,
-                    "jurisdictions": len(pack.requirements),
-                    "source_check_required": sum(
-                        row.determination == "source_check_required"
-                        for row in pack.requirements
-                    ),
-                    "content_sha256": pack.content_sha256,
-                }
-                for pack in (
-                    load_licensing_pack("money_transmitter"),
-                    load_licensing_pack("insurance_producer"),
-                )
-            ]
-            operations["anomaly_cases"] = [
-                {
-                    "id": row.get("id"),
-                    "finding_id": row.get("finding_id"),
-                    "rule_id": (row.get("finding") or {}).get("rule_id"),
-                    "severity": row.get("severity"),
-                    "status": row.get("status"),
-                    "revision": row.get("revision"),
-                }
-                for row in FinanceAnomalyCaseQueue().list_cases(limit=20)
-            ]
-            aml_cases = aml_screening.list_cases(limit=20)
-            operations["aml_cases"] = [
-                {
-                    "id": row.get("id"),
-                    "status": row.get("status"),
-                    "hit_count": len(row.get("hits") or []),
-                    "revision": row.get("revision"),
-                }
-                for row in aml_cases
-            ]
-            operations["aml_list_versions"] = len(
-                aml_screening.list_versions(limit=10_001)
-            )
-            operations["control_cycles"] = [
-                {
-                    "id": row.get("id"),
-                    "status": row.get("status"),
-                    "engagement_id": row.get("engagement_id"),
-                    "observed_at": row.get("observed_at"),
-                }
-                for row in control_testing.list_cycles(limit=20)
-            ]
-    except Exception as exc:  # failure-policy: visible_degradation
-        operations["degraded"] = True
-        operations["error_type"] = type(exc).__name__
-        log.warning("finance workspace operations summary degraded: %s", type(exc).__name__)
-    context = _workspace_ctx("finance", viewer=caller_principal(request) or "")
-    context["operations"] = operations
-    return templates.TemplateResponse(
-        request, "finance.html", context)
 
 
 @app.get("/savings", response_class=HTMLResponse)

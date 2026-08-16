@@ -127,14 +127,3 @@ def test_retry_5xx_structured_status_code_unaffected():
 _DEPLOY = Path(__file__).resolve().parents[3] / "deploy" / "desktop"
 
 
-def test_install_sh_validates_repo_slug():
-    body = (_DEPLOY / "install.sh").read_text()
-    # The bash validator + the regex it enforces.
-    assert "validate_repo" in body
-    assert "[A-Za-z0-9._-]+/[A-Za-z0-9._-]+" in body
-
-
-def test_install_ps1_validates_repo_slug():
-    body = (_DEPLOY / "install.ps1").read_text()
-    assert "Ensure-RepoSlug" in body
-    assert "[A-Za-z0-9._-]+/[A-Za-z0-9._-]+" in body

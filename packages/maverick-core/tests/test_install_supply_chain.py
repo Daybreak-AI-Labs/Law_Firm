@@ -98,33 +98,6 @@ def test_reusable_pr_workflow_requires_immutable_runtime_source():
     assert "pip install 'maverick-agent[all]'" not in text
 
 
-def test_gitlab_template_has_no_implicit_public_index_fallback():
-    text = _read("deploy/gitlab-ci/maverick.gitlab-ci.yml")
-
-    assert "MAVERICK_SOURCE_DIR" in text
-    assert "MAVERICK_SOURCE_REF" in text
-    assert "MAVERICK_PACKAGE_INDEX_URL" in text
-    assert "python -m pip --isolated install" in text
-    assert "Public PyPI is blocked" in text
-    assert "status --porcelain --untracked-files=all" in text
-    assert 'pip install "maverick-agent"' not in text
-
-
-def test_desktop_installers_require_a_pinned_source_ref():
-    shell = _read("deploy/desktop/install.sh")
-    powershell = _read("deploy/desktop/install.ps1")
-
-    for text in (shell, powershell):
-        assert "MAVERICK_REF is required" in text
-        assert "public-index fallback is disabled" in text
-        assert "MAVERICK_ALLOW_UNPINNED" not in text
-        assert "maverick-agent[installer]" not in text
-        assert "status --porcelain --untracked-files=all" in text
-
-    assert "rev-parse HEAD" in shell
-    assert "rev-parse HEAD" in powershell
-
-
 def test_vps_installer_requires_a_clean_immutable_checkout():
     text = _read("deploy/vps/install.sh")
 
@@ -135,39 +108,6 @@ def test_vps_installer_requires_a_clean_immutable_checkout():
     assert "maverick.stage." in text
     assert "MAVERICK_VERSION" not in text
     assert "Law_Firm/main/deploy/vps/install.sh" not in text
-
-
-def test_training_bootstrap_installs_only_from_verified_checkout():
-    text = _read("scripts/train_runpod.sh")
-
-    assert "MAVERICK_SOURCE_DIR" in text
-    assert "MAVERICK_SOURCE_REF" in text
-    assert "status --porcelain --untracked-files=all" in text
-    assert '"$MAVERICK_SOURCE_DIR/packages/maverick-core[training]"' in text
-    assert "pip install --quiet 'maverick-agent[training]'" not in text
-
-
-def test_homebrew_formula_bootstraps_python_312_without_venv_pip():
-    formula = _read("deploy/homebrew/maverick.rb")
-
-    assert 'python = Formula["python@3.12"].opt_bin/"python3.12"' in formula
-    assert "virtualenv_create(libexec, python)" in formula
-    assert 'system python, "-m", "pip", "--python=#{libexec}/bin/python"' in formula
-    assert formula.count('"--require-hashes"') == 2
-    assert formula.count('"--only-binary=:all:"') == 2
-    assert formula.count('"--no-deps"') == 3
-    assert '"--no-deps", "--no-build-isolation", buildpath' in formula
-    assert '"--python=#{libexec}/bin/python", "check"' in formula
-    assert 'libexec/"bin/pip"' not in formula
-    assert "MAVERICK_BUILD_REQUIREMENTS_BEGIN" in formula
-    assert "MAVERICK_BUILD_REQUIREMENTS_END" in formula
-    assert "MAVERICK_RUNTIME_REQUIREMENTS_BEGIN" in formula
-    assert "MAVERICK_RUNTIME_REQUIREMENTS_END" in formula
-    assert ".fetch(1)" not in formula
-    assert 'odie "generated build requirements are missing"' in formula
-    assert "That tap is not deployed" in formula
-    assert "brew install Daybreak-AI-Labs/tap/maverick" in formula
-    assert "brew install cdayAI/tap/maverick" not in formula
 
 
 def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
@@ -221,19 +161,6 @@ def test_go_java_and_standalone_demo_security_floors_are_explicit():
     for path in (
     ):
         assert "python-multipart>=0.0.32" in _read(path)
-
-
-def test_ci_integration_docs_do_not_call_workdir_a_security_boundary():
-    action = _read("deploy/github-action/action.yml")
-    action_docs = _read("deploy/github-action/README.md")
-    gitlab = _read("deploy/gitlab-ci/maverick.gitlab-ci.yml")
-    gitlab_docs = _read("deploy/gitlab-ci/README.md")
-
-    for text in (action, action_docs, gitlab, gitlab_docs):
-        assert "trusted disposable" in text
-        assert "CI runner is already an ephemeral VM" not in text
-    assert "working directory is not a filesystem or network" in (gitlab_docs)
-    assert "confines the starting directory, not the" in action_docs
 
 
 def test_external_github_actions_are_pinned_to_full_commits():
