@@ -53,7 +53,8 @@ def test_cohere_v1_flat_list_fallback(monkeypatch):
 def test_build_embedder_selects_cohere(monkeypatch):
     monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
     monkeypatch.setenv("COHERE_API_KEY", "ck")
-    emb = build_embedder({"embedder": "cohere", "model": "embed-v4.0"})
+    emb = build_embedder({"embedder": "cohere", "model": "embed-v4.0",
+                          "allow_external_embedding": True})
     assert isinstance(emb, CohereEmbedder)
     assert emb.model == "embed-v4.0"
     assert emb.api_key == "ck"  # pragma: allowlist secret
@@ -64,7 +65,7 @@ def test_build_embedder_cohere_requires_key(monkeypatch):
     monkeypatch.delenv("COHERE_API_KEY", raising=False)
     monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="cohere embedder selected but no API key"):
-        build_embedder({"embedder": "cohere"})
+        build_embedder({"embedder": "cohere", "allow_external_embedding": True})
 
 
 def test_cohere_query_input_type(monkeypatch):

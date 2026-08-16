@@ -807,14 +807,22 @@ def get_knowledge() -> dict:
     """Return the ``[knowledge]`` section (per-domain vector RAG).
 
     Off by default; the agent kernel never requires the maverick-knowledge
-    package. ``embedder`` selects hosted/local/deterministic; ``store`` selects
-    sqlite/pgvector. Provider details (model/base_url/dim/path) are read by
-    maverick_knowledge.build_embedder / build_store.
+    package. ``embedder`` selects hosted/cohere/local/deterministic; ``store``
+    selects sqlite/pgvector. Provider details (model/base_url/dim/path) are read
+    by maverick_knowledge.build_embedder / build_store.
+
+    ``allow_external_embedding`` is the acknowledgement that the hosted
+    providers send document text itself to a third-party vendor -- a different
+    exposure from the LLM chokepoint, which sends prompts and has its own
+    redaction knob. Off by default; build_embedder refuses hosted/cohere
+    without it.
     """
     cfg = load_config().get("knowledge", {}) or {}
     return {
         "enable": bool(cfg.get("enable", False)),
         "embedder": cfg.get("embedder", "hosted"),
+        "allow_external_embedding": _strict_config_bool(
+            cfg, "allow_external_embedding", False),
         "store": cfg.get("store", "sqlite"),
         "model": cfg.get("model", "voyage-3"),
         "base_url": cfg.get("base_url", "https://api.voyageai.com/v1"),

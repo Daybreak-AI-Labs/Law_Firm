@@ -103,7 +103,15 @@ All verified locally green; each is a build-failer:
   (3.10 support; this broke three PRs).
 - `shell=True` outside `maverick/sandbox/` (route shell through `sandbox.exec()`).
 - detect-secrets vs `.secrets.baseline` (new hashes fail; `pragma: allowlist
-  secret` for false positives).
+  secret` for false positives). **`detect_secrets scan` only sees git-TRACKED
+  files**, so running it on a new-but-unstaged file reports a clean scan and CI
+  then fails on it. `git add` first, or the check is theatre. Also note the
+  scan REWRITES the baseline you point it at — compare against a copy
+  (`cp .secrets.baseline /tmp/scan.baseline`) the way CI does, or you will
+  silently absorb the new hash into the baseline instead of being told about
+  it. Two heuristics bite test fixtures in particular: a variable named
+  `secret`/`token`/`key` (rename it — cheaper than an allowlist entry) and any
+  `user:pass@host` URL.
 - `python -m maverick.plugin_matrix --ci`, `python -m maverick.deprecations
   --ci` (past-due deprecations fail), `python -m maverick.grpc_api.contract
   --check` (proto removals/renumbers fail; additive only), `python -m

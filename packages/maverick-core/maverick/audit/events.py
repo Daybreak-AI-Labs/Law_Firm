@@ -18,6 +18,10 @@ Payload shapes (kind -> required fields, all events also carry
   shield_block:      stage:str (input|tool|output), reason:str, score:float|None
   capability_denied: tool:str, principal:str, channel:str|None, user_id:str|None
   egress_blocked:    provider:str (enterprise-mode egress lock denial)
+  knowledge_egress:  provider:str, host:str, model:str, chunks:int, bytes:int,
+                     content_sha256:str — a batch of document text was sent to a
+                     third-party embedding vendor. Bounded metadata and a content
+                     commitment only; never the chunk text itself.
   consent_prompt:    action:str, risk:str (low|medium|high|critical)
   consent_result:    decision:str (approve|deny|timeout)
   secret_redacted:   tool_name:str, pattern:str, count:int
@@ -123,6 +127,12 @@ class EventKind:
     AUTONOMY_ESCALATED = "autonomy_escalated"
     AUTONOMY_GATED = "autonomy_gated"
     EGRESS_BLOCKED  = "egress_blocked"
+    # Document text left the deployment for a third-party embedding vendor.
+    # Indexing a matter ships the documents themselves, not a prompt about
+    # them, so this is the one egress a privilege log has to be able to show.
+    # Bounded metadata and a content commitment only -- never the chunk text.
+    # payload: provider, host, model, chunks:int, bytes:int, content_sha256.
+    KNOWLEDGE_EGRESS = "knowledge_egress"
     CONSENT_PROMPT  = "consent_prompt"
     CONSENT_RESULT  = "consent_result"
     SECRET_REDACTED = "secret_redacted"
