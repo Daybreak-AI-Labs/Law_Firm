@@ -10354,8 +10354,6 @@ async def marketplace_connectors_api(request: Request, q: str = "") -> dict:
 # Department router: security/GRC records and both defensive hunters. Imported
 # at the end so its lazy actor resolver can call this module's strict
 # ``_request_actor`` without a circular import during module initialization.
-from .finance_api import router as finance_operations_router  # noqa: E402
 from .security_api import router as security_router  # noqa: E402
 
 router.include_router(security_router)
-router.include_router(finance_operations_router)

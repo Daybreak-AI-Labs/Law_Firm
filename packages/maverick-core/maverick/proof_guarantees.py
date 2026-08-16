@@ -100,16 +100,6 @@ def claim_fleet_can_read_but_not_write():
     return "finance_ap reaches billdotcom_read (GET-only); the write connector is refused + capability-denied"
 
 
-def claim_segregation_of_duties_clean():
-    """The finance roster is SoD-clean: no seal spans record/authorize/custody."""
-    from .domain import builtin_dir, load_domains
-    from .finance.sod_linter import lint_roster
-    d = _finance(load_domains(builtin_dir()))
-    conflicts = lint_roster(d)
-    _check(not conflicts, f"{len(conflicts)} SoD conflict(s): {conflicts[:2]}")
-    return f"all {len(d)} finance packs SoD-clean (no compartment unions incompatible duties)"
-
-
 def claim_handoffs_are_verified():
     """A peer handoff is signed + verified; a tampered copy is rejected."""
     from .bus_handoff import HandoffAuthority
@@ -191,7 +181,6 @@ GUARANTEES = [
     ("No money without a human", claim_no_money_without_a_human, False),
     ("Delegation-of-authority $ gate", claim_dollar_tier_authority_gate, False),
     ("Fleet can read, not write", claim_fleet_can_read_but_not_write, False),
-    ("Segregation of duties clean", claim_segregation_of_duties_clean, False),
     ("Verified peer handoffs", claim_handoffs_are_verified, True),
     ("Tamper-evident audit ledger", claim_audit_is_tamper_evident, True),
 ]

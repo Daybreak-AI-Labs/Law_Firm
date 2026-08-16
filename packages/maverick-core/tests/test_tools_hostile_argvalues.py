@@ -19,7 +19,6 @@ from maverick.tools import image_edit as ie_mod
 from maverick.tools import notebook_exec as nb_mod
 from maverick.tools import redact as redact_mod
 from maverick.tools import s3_attachments as s3_mod
-from maverick.tools import sanctions_screen as sanc_mod
 from maverick.tools import self_edit as se_mod
 from maverick.tools import semantic_code_search as scs_mod
 from maverick.tools import teams_tool as teams_mod
@@ -52,11 +51,6 @@ def test_redact_non_str_text():
     assert isinstance(out, str)
     out2 = redact_mod._run({"op": "verify", "text": [1, 2, 3]})
     assert isinstance(out2, str)
-
-
-def test_sanctions_screen_int_name():
-    out = sanc_mod._run({"name": 42})
-    assert isinstance(out, str)
 
 
 def test_self_edit_non_str_path_find_replace():

@@ -406,12 +406,6 @@ async def _lifespan(app: FastAPI):
         await run_in_threadpool(start_hunter_scheduler)
     except Exception:  # pragma: no cover - never block startup
         log.exception("security hunter scheduler not started")
-    try:
-        from maverick_dashboard.finance_scheduler import start_finance_scheduler
-
-        await run_in_threadpool(start_finance_scheduler)
-    except Exception:  # pragma: no cover - never block startup
-        log.exception("finance operations scheduler not started")
     # The connected-entitlement auto-refresh loop is not started. Upstream it
     # polled the vendor console for tier upgrades; that console is deleted and
     # nothing is gated here (see maverick.entitlements.GATED_FEATURES), so the
@@ -441,12 +435,6 @@ async def _lifespan(app: FastAPI):
         from maverick_dashboard.security_api import stop_hunter_scheduler
 
         await run_in_threadpool(stop_hunter_scheduler)
-    except Exception:  # pragma: no cover - shutdown must never raise
-        pass
-    try:
-        from maverick_dashboard.finance_scheduler import stop_finance_scheduler
-
-        await run_in_threadpool(stop_finance_scheduler)
     except Exception:  # pragma: no cover - shutdown must never raise
         pass
     await _stop_automation_scheduler()

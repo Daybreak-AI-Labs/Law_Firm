@@ -76,15 +76,3 @@ def test_license_mutation_refusal_restores_exact_prior_record(
     assert license_registry._load() == prior
 
 
-def test_platform_hunt_refusal_keeps_durable_outbox_pending(tmp_path):
-    from maverick.platform_hunt import HuntStore
-
-    def refuse(_kind, _payload):
-        raise AuditWriteRefused("off-host custody refused local signing")
-
-    store = HuntStore(tmp_path / "hunt.sqlite3", audit_recorder=refuse)
-
-    with pytest.raises(AuditRefused):
-        store.ensure_audit_custody_witness()
-
-    assert store.pending_audit_count() == 1

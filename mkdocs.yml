@@ -112,7 +112,6 @@ nav:
       - Security & GRC suite: SECURITY_GRC.md
       - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
       - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
-      - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
       - Threat model: security/threat-model.md
       - DGM evaluator evidence: security/dgm-evaluator-evidence.md
       - Capability attenuation (verified): security/capability-attenuation.md

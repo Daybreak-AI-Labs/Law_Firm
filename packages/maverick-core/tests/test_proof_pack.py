@@ -63,9 +63,11 @@ def test_build_runs_hard_sections_and_is_honest(monkeypatch, tmp_path):
     # The ASR harness is repo-only; either it ran or it degraded cleanly.
     assert secs["shield_asr"]["status"] in {"PASS", "SKIPPED"}
 
-    # The governance section carries all seven guarantees, none failed.
+    # The governance section carries every guarantee, none failed. The
+    # segregation-of-duties claim went with the finance subsystem; the count is
+    # asserted so a guarantee cannot go missing unnoticed.
     guarantees = secs["governance"]["data"]["guarantees"]
-    assert len(guarantees) == 7
+    assert len(guarantees) == 6
     assert not [g for g in guarantees if not g["passed"]]
 
 

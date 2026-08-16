@@ -293,10 +293,9 @@ class Policy:
             require_human_above=_policy_thresholds(cfg, "require_human_above"),
             require_fresh_human_approval=fresh,
         )
-        # Compliance profiles and finance regime packs tighten the same live
-        # policy strictest-wins. Lazy imports are deliberately below the Policy
-        # definition: finance.regimes constructs Policy values at module import,
-        # but never calls Policy.from_config, avoiding recursive compilation.
+        # Compliance profiles tighten the live policy strictest-wins. The lazy
+        # import is deliberately below the Policy definition so profile
+        # compilation cannot recurse into Policy.from_config.
         try:
             from . import compliance_profiles
             profiles = compliance_profiles.configured_profiles()
@@ -304,23 +303,11 @@ class Policy:
             raise GovernancePolicyError(
                 "compliance governance policy is unavailable"
             ) from exc
-        try:
-            from .finance import regimes as finance_regimes
-
-            regime_keys = finance_regimes.configured_regimes(snapshot)
-        except Exception as exc:
-            raise GovernancePolicyError(
-                "finance-regime governance policy is unavailable"
-            ) from exc
-        if not profiles and not regime_keys:
+        if not profiles:
             return base
-        policies = [base]
         try:
-            if profiles:
-                policies.append(compliance_profiles.compile_policy(profiles))
-            if regime_keys:
-                policies.append(finance_regimes.compile_policy(regime_keys))
-            return finance_regimes.union_policies(policies)
+            from .policy_union import union_policies
+            return union_policies([base, compliance_profiles.compile_policy(profiles)])
         except Exception as exc:
             raise GovernancePolicyError(
                 "configured governance overlays could not be compiled"
