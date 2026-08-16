@@ -6548,35 +6548,6 @@ def logs_cmd(pattern: str | None, num: int, day: str | None) -> None:
         click.echo(_json.dumps(r, default=str))
 
 
-# ----- SOC 2 evidence --------------------------------------------------
-
-_REQUIRED_SOC2_CONTROLS = (
-    "capability_enforcement",
-    "tenant_isolation",
-    "usage_quotas",
-    "oidc_auth",
-    "encryption_at_rest",
-)
-
-
-def _soc2_posture_ready(evidence) -> bool:
-    """Return True only when required SOC 2 controls report a ready posture."""
-    controls = evidence.get("controls", {}) if isinstance(evidence, dict) else {}
-    if not isinstance(controls, dict):
-        return False
-    for control in _REQUIRED_SOC2_CONTROLS:
-        probe = controls.get(control, {})
-        if not isinstance(probe, dict) or probe.get("status") != "enabled":
-            return False
-
-    audit_log = evidence.get("audit_log", {}) if isinstance(evidence, dict) else {}
-    if not isinstance(audit_log, dict) or audit_log.get("status") != "ok":
-        return False
-
-    signing_key = evidence.get("audit_signing_key", {}) if isinstance(evidence, dict) else {}
-    return isinstance(signing_key, dict) and signing_key.get("status") == "enabled"
-
-
 # Register command groups that have been split into submodules. Imported last,
 # so every shared helper and `main` is defined before the submodule decorators
 # run (@main.group/@main.command register onto `main` on import).
@@ -6597,3 +6568,5 @@ from . import (  # noqa: E402,F401
 
 if __name__ == "__main__":
     main()
+
+

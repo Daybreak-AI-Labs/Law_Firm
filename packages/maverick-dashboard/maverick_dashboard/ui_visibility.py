@@ -120,8 +120,6 @@ PAGES: tuple[dict, ...] = (
     # Security is the department workspace. The two hunter consoles are
     # governed child surfaces linked from it, so the sidebar keeps one clear
     # entry while role visibility still protects every direct URL.
-    {"path": "/security", "label": "Security & GRC", "group": "Govern",
-     "icon": "shield", "floor": "operate", "default": "operate"},
     # Permissions is deployment plumbing, not day-to-day governance work --
     # it lives with the rest of administration.
     {"path": "/permissions", "label": "Permissions", "group": "Admin",

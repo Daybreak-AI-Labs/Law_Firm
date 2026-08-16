@@ -61,11 +61,11 @@ KNOWN_SECTIONS = frozenset({
     "repl", "harness_refine", "session_tree",
     "retention", "role_assignments", "roles", "routing", "safety",
     "sandbox", "screening", "search", "security", "self_learning",
-    "sharing", "shield", "skill_synthesis", "skills", "security_ops",
+    "sharing", "shield", "skill_synthesis", "skills",
     "system", "telemetry", "template_registries", "tenancy", "thinking",
     "tools", "tui", "value", "verification", "voice", "webhooks", "workforce",
-    "workspace", "world_model", "threat_hunt", "env_hunt",
-    "evidence_gateway", "evidence_graph", "model_risk_assurance", "model_improvement",
+    "workspace", "world_model", "threat_hunt",
+    "evidence_graph",
     # Registry drift, again: these are all read by real load_config() call sites
     # AND written by the installer wizard, yet were missing here -- so an operator
     # who enabled a documented, wizard-offered feature got a false "unknown

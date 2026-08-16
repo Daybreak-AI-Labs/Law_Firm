@@ -357,37 +357,6 @@ def _derive_registry_and_intake(b: _Builder, sources: dict) -> None:
                detail=str(record.get("severity") or ""))
 
 
-def _derive_security(b: _Builder) -> None:
-    try:
-        from .security_ops import list_vendor_assessments
-        records = list_vendor_assessments()
-    except Exception as e:  # pragma: no cover -- security plane optional
-        log.debug("entity_graph: security sources unavailable: %s", e)
-        return
-    for record in records:
-        rid = str(record.get("id") or "")
-        created = float(record.get("created_at") or 0)
-        if not rid or not created:
-            continue
-        node = b.entity("security_review", rid)
-        b.edge(node, "reviews", b.entity("vendor", record.get("name")),
-               record_type="security_review", record_id=rid,
-               valid_from=created,
-               detail=str(record.get("residual_risk") or ""))
-        b.edge(node, "owned_by", _person(b, record.get("owner")),
-               record_type="security_review", record_id=rid,
-               valid_from=created)
-        decision = record.get("decision") or {}
-        decided = float(decision.get("decided_at") or 0)
-        choice = str(decision.get("decision") or "")
-        if decided and choice:
-            rel = {"approved": "approved_by", "rejected": "rejected_by",
-                   "needs_work": "sent_back_by"}.get(choice, "decided_by")
-            b.edge(node, rel, _person(b, decision.get("decided_by")),
-                   record_type="security_review", record_id=rid,
-                   valid_from=decided)
-
-
 def _derive_world(b: _Builder) -> None:
     """The episodic ring, on exact keys only: every episode belongs to a goal
     (foreign key), every goal names the specialist pack that ran it
@@ -542,7 +511,6 @@ def rebuild() -> dict:
                 b = _Builder(conn)
                 _derive_assessments(b)
                 _derive_privacy(b)
-                _derive_security(b)
                 _derive_world(b)
                 _derive_skills(b)
                 _close_superseded(conn)

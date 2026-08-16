@@ -40,39 +40,9 @@ Payload shapes (kind -> required fields, all events also carry
                      status:str, record_sha256:str (opaque control metadata and
                      a content commitment only; never DPA text, subject ids,
                      RoPA content, or export bodies)
-  security_suite_control_changed: actor:str, previous:dict, requested:dict
-                     (deployment-global enablement of GRC/platform-hunt/env-hunt
-                     and response execution; no connector credentials)
-  security_record_changed: event_id:str, occurred_at:float, actor:str, tenant:str,
-                     record_type:str, action:str, record_id:str, revision:int,
-                     status:str, record_sha256:str (opaque lifecycle metadata and
-                     a content commitment only; never evidence or case content)
-  platform_hunt_detection: finding_id:str, rule_id:str, severity:str, score:int,
-                     mitre_techniques:list[str], evidence_ids:list[str],
-                     finding_sha256:str
-  platform_hunt_custody_initialized: event_id:str, version:int, purpose:str,
-                     occurred_at:float (insert-once witness that the hunter's
-                     signed audit custody was successfully initialized)
   threat_hunt_record_changed: event_id:str, record_type:str, record_id:str,
                      revision:int, action:str, actor:str, record_sha256:str,
                      status:str, occurred_at:float
-  env_hunt_record_changed: same bounded derived-record mutation shape as
-                     threat_hunt_record_changed
-  env_hunt_ingestion: connector:str, query_sha256:str, events_received:int,
-                     events_accepted:int, events_discarded:int, raw_persisted:bool
-  env_hunt_detection: same bounded shape as platform_hunt_detection
-  env_hunt_enrichment: investigation_id:str, source:str,
-                     indicator_sha256:str, fields_sha256:str
-  env_hunt_response_proposed: proposal_id:str, proposal_sha256:str, action:str,
-                     target_sha256:str, evidence_ids:list[str]
-  env_hunt_response_authorized: proposal_id:str, proposal_sha256:str,
-                     approval_id:str, approver:str, executor:str
-  env_hunt_response_executed: proposal_id:str, proposal_sha256:str,
-      approval_id:str, approver:str, executor:str, outcome:str
-  env_hunt_response_ambiguous: proposal_id:str, proposal_sha256:str,
-      approval_id:str, executor:str, error_kind:str
-  env_hunt_response_execution_claimed: proposal_id:str, proposal_sha256:str,
-      approval_id:str, executor:str, actor:str
 """
 from __future__ import annotations
 
@@ -288,20 +258,7 @@ class EventKind:
     # A privacy record mutation. The originating record retains a durable
     # audit-outbox receipt until this event is accepted by the signed chain.
     PRIVACY_RECORD_CHANGED = "privacy_record_changed"
-    SECURITY_SUITE_CONTROL_CHANGED = "security_suite_control_changed"
-    SECURITY_RECORD_CHANGED = "security_record_changed"
-    PLATFORM_HUNT_CUSTODY_INITIALIZED = "platform_hunt_custody_initialized"
-    PLATFORM_HUNT_DETECTION = "platform_hunt_detection"
     THREAT_HUNT_RECORD_CHANGED = "threat_hunt_record_changed"
-    ENV_HUNT_RECORD_CHANGED = "env_hunt_record_changed"
-    ENV_HUNT_INGESTION = "env_hunt_ingestion"
-    ENV_HUNT_DETECTION = "env_hunt_detection"
-    ENV_HUNT_ENRICHMENT = "env_hunt_enrichment"
-    ENV_HUNT_RESPONSE_PROPOSED = "env_hunt_response_proposed"
-    ENV_HUNT_RESPONSE_AUTHORIZED = "env_hunt_response_authorized"
-    ENV_HUNT_RESPONSE_EXECUTED = "env_hunt_response_executed"
-    ENV_HUNT_RESPONSE_AMBIGUOUS = "env_hunt_response_ambiguous"
-    ENV_HUNT_RESPONSE_EXECUTION_CLAIMED = "env_hunt_response_execution_claimed"
 
 
 @dataclass

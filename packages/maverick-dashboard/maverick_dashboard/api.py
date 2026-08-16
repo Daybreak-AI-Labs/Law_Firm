@@ -562,9 +562,9 @@ def _external_platform_workforce(w, owner) -> list[dict]:
 
 
 def _board_workspace(department: str) -> dict:
-    """Compact department board (privacy / finance / security): the same
-    assessment records the workspace pages list, rolled into KPIs, a residual-
-    risk mix, a 12-month opened-vs-decided series, and per-framework volume.
+    """Compact department board (privacy / finance): the same assessment
+    records the workspace pages list, rolled into KPIs, a residual-risk mix,
+    a 12-month opened-vs-decided series, and per-framework volume.
     The deep executive view stays /privacy/board; this is the at-a-glance."""
     from datetime import datetime, timezone
 
@@ -573,11 +573,9 @@ def _board_workspace(department: str) -> dict:
     from .app import (
         FINANCE_ASSESSMENT_TYPES,
         PRIVACY_ASSESSMENT_TYPES,
-        SECURITY_ASSESSMENT_TYPES,
     )
     base = {"privacy": PRIVACY_ASSESSMENT_TYPES,
-            "finance": FINANCE_ASSESSMENT_TYPES,
-            "security": SECURITY_ASSESSMENT_TYPES}[department]
+            "finance": FINANCE_ASSESSMENT_TYPES}[department]
     types = set(base) | {
         t for t, rec in custom_template_records().items()
         if rec.get("department", "privacy") == department}
@@ -705,7 +703,7 @@ async def dashboard_board(request: Request, board: str,
     w = _world()
     owner = goal_owner_filter(request)
     d = _board_days(days)
-    if board in ("privacy", "finance", "security"):
+    if board in ("privacy", "finance"):
         payload = _board_workspace(board)
     elif board in ("overview", "spend", "workforce", "savings", "oversight"):
         build = {"overview": _board_overview, "spend": _board_spend,
@@ -7570,10 +7568,6 @@ _FEATURE_SWITCHES: dict = {
                   "before doing them for real."),
     "flows": ("Flow engine", "Runs the visual flow designer's automations "
               "end to end."),
-    "threat_hunt": ("Platform threat hunter", "Defensively scans "
-                    "Maverick's own signed telemetry for anomalies."),
-    "env_hunt": ("Environment threat hunter", "Reads your configured "
-                 "telemetry sources and flags suspicious activity."),
     "entity_graph": ("Entity graph", "Links vendors, documents, clauses, "
                      "and decisions into one queryable lineage."),
 }
@@ -7608,22 +7602,6 @@ async def set_feature_switch(request: Request,
     if body.section not in _FEATURE_SWITCHES:
         raise HTTPException(status_code=400,
                             detail=f"unknown system {body.section!r}")
-    if body.section in {"threat_hunt", "env_hunt"}:
-        from . import security_api
-        from .api_schemas import SecuritySuiteConfigIn
-
-        current = await security_api.security_config(request)
-        update = SecuritySuiteConfigIn(
-            security_ops=current["security_ops"],
-            threat_hunt=(bool(body.enabled) if body.section == "threat_hunt"
-                         else current["threat_hunt"]),
-            env_hunt=(bool(body.enabled) if body.section == "env_hunt"
-                      else current["env_hunt"]),
-            response_execution=current["response_execution"],
-            expected_revision=current["revision"],
-        )
-        await security_api.update_security_config(request, update)
-        return {"section": body.section, "enabled": bool(body.enabled)}
     from maverick_dashboard import settings_store
     await run_in_threadpool(settings_store.set_section_enable, body.section,
                             bool(body.enabled))
@@ -10158,9 +10136,3 @@ async def marketplace_connectors_api(request: Request, q: str = "") -> dict:
     return connector_marketplace(q or None)
 
 
-# Department router: security/GRC records and both defensive hunters. Imported
-# at the end so its lazy actor resolver can call this module's strict
-# ``_request_actor`` without a circular import during module initialization.
-from .security_api import router as security_router  # noqa: E402
-
-router.include_router(security_router)

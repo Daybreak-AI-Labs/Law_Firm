@@ -1307,20 +1307,6 @@ class EnvironmentExecuteIn(BaseModel):
     expected_revision: int = Field(..., ge=1)
 
 
-class SecuritySuiteConfigIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    security_ops: bool
-    threat_hunt: bool
-    env_hunt: bool
-    response_execution: bool = False
-    expected_revision: int = Field(..., ge=1)
-
-    @model_validator(mode="after")
-    def response_requires_environment_hunter(self):
-        if self.response_execution and not self.env_hunt:
-            raise ValueError("response execution requires env_hunt")
-        return self
 class ModelCostTierIn(BaseModel):
     model: str = Field(..., min_length=1, max_length=200)
     band: str | None = Field(None, pattern="^(low|medium|high|very_high)$")

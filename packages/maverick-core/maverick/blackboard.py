@@ -15,7 +15,6 @@ import json
 import os
 import threading
 import time
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -30,19 +29,6 @@ class Entry:
 
 
 class Blackboard:
-    _MODEL_DERIVED_KINDS = frozenset(
-        {
-            "artifact",
-            "finding",
-            "observation",
-            "plan",
-            "verify",
-        }
-    )
-    _WITHHELD_CONTENT = (
-        "[AI-generated run-event content withheld; the final "
-        "evidence-ready result is available after completion]"
-    )
     _REDACTION_UNAVAILABLE_CONTENT = (
         "[Run-event content withheld because secret redaction was unavailable]"
     )
@@ -92,42 +78,6 @@ class Blackboard:
     # cap is safe. Override via MAVERICK_BLACKBOARD_MAX_ENTRIES.
     _MAX_ENTRIES = max(100, int(os.environ.get("MAVERICK_BLACKBOARD_MAX_ENTRIES", "5000")))
 
-    @classmethod
-    def _is_model_derived_event(
-        cls,
-        kind: str,
-        meta: dict[str, Any],
-    ) -> bool:
-        """Classify mirror provenance while keeping legacy callers safe."""
-
-        explicit = meta.get("model_derived")
-        if isinstance(explicit, bool):
-            return explicit
-        raw_provenance = meta.get("provenance")
-        if isinstance(raw_provenance, Mapping):
-            raw_provenance = (
-                raw_provenance.get("source")
-                or raw_provenance.get("kind")
-                or raw_provenance.get("type")
-                or ""
-            )
-        provenance = str(raw_provenance or "").strip().lower()
-        if provenance in {"model", "model_derived", "llm"}:
-            return True
-        if provenance in {
-            "capability",
-            "compartment",
-            "operator",
-            "progress",
-            "safety",
-            "system",
-        }:
-            return False
-        # Legacy model-bearing kinds default to withholding. Error, status,
-        # denial, progress, and note events remain actionable after the normal
-        # secret-redaction pass.
-        return str(kind).strip().lower() in cls._MODEL_DERIVED_KINDS
-
     def post(self, agent: str, kind: str, content: str, **meta: Any) -> None:
         with self._lock:
             self.entries.append(Entry(time.time(), agent, kind, content, meta))
@@ -152,21 +102,6 @@ class Blackboard:
             # detector cannot load or execute, fail closed without disrupting
             # the agents' verbatim in-memory coordination record.
             mirror_content = self._REDACTION_UNAVAILABLE_CONTENT
-        # The evidence gateway governs the final human-facing prose output in
-        # the orchestrator.  Durable/live blackboard mirrors are also visible
-        # through dashboard, SSE, WebSocket, gRPC, trace, and observation
-        # surfaces, so they must not leak unreceipted model excerpts first.
-        # In-memory content remains intact for agent coordination.
-        try:
-            from . import ai_evidence_gateway
-
-            if (
-                ai_evidence_gateway.enabled()
-                and self._is_model_derived_event(kind, meta)
-            ):
-                mirror_content = self._WITHHELD_CONTENT
-        except Exception:  # pragma: no cover -- feature check is fail-soft
-            pass
         # Mirror to world.goal_events for live dashboard streaming. Best-effort:
         # if the world model write fails (e.g., disk full), the in-memory
         # blackboard still works for the agent loop.

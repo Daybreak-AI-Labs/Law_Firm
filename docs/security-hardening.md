@@ -16,9 +16,9 @@ and how to confirm it's actually on.
 > controls (capabilities, encryption-at-rest) are additionally **implied by
 > enterprise mode** — see [Enterprise mode](#enterprise-mode-the-umbrella-switch).
 
-> **Verify what's on.** `maverick soc2` prints a JSON posture snapshot of the
-> main toggles (capabilities, tenant isolation, quotas, OIDC, encryption-at-rest,
-> DSAR) plus audit-log verification. Use it after any change. See
+> **Verify what's on.** `maverick compliance` prints a control-coverage report
+> (which controls are active vs. need action), and `maverick enterprise verify`
+> actively exercises the load-bearing guarantees. Use them after any change. See
 > [Verifying your posture](#verifying-your-posture).
 
 ## Contents
@@ -252,8 +252,8 @@ that *require* verification must check for crypto first.
   still gives identity + least-privilege-on-spawn (children still attenuate).
 - **Enterprise mode forces this on** regardless of `[capabilities] enforce`.
 
-**Verify it's on:** `maverick soc2` →
-`controls.capability_enforcement.status == "enabled"`.
+**Verify it's on:** `maverick compliance` reports the capability-enforcement
+control as active; grep the audit log for `capability_denied` to see it bite.
 
 ---
 
@@ -301,7 +301,7 @@ intersects the ceiling, `deny_tools` unions it, `max_risk` only tightens, and
   less.
 
 **Verify it's on:** roles fold into the capability grant, so the same
-`maverick soc2` → `controls.capability_enforcement` signal applies; grep the
+capability-enforcement signal applies; grep the
 audit log for `capability_denied` to see a role's restrictions bite.
 
 ---
@@ -357,8 +357,8 @@ a path segment. The active tenant is resolved in order:
   your version which stores are routed through `maverick.paths.data_dir` before
   relying on isolation for a specific store.
 
-**Verify it's on:** `maverick soc2` →
-`controls.tenant_isolation.status == "enabled"`.
+**Verify it's on:** `maverick compliance` reports the tenant-isolation control
+as active.
 
 ---
 
@@ -402,8 +402,8 @@ writes starter caps of `25.0` dollars and `5000000` tokens).
   collected.
 - The day window is **UTC**, so it doesn't shift with the host timezone/DST.
 
-**Verify it's on:** `maverick soc2` →
-`controls.usage_quotas.status == "enabled"`.
+**Verify it's on:** `maverick compliance` reports the usage-quota control as
+active.
 
 ---
 
@@ -465,8 +465,8 @@ so OIDC does not 401 inbound webhooks.
   is a rejection (no fallback key). There is **no fail-open-to-authenticated**
   path — any failure raises and yields a `401`.
 
-**Verify it's on:** `maverick soc2` → `controls.oidc_auth.status == "enabled"`
-(reports `absent` if the optional module/extra isn't installed).
+**Verify it's on:** `maverick compliance` reports the OIDC/SSO control as
+active (or flags it if the optional module/extra isn't installed).
 
 **Session/token revocation + SCIM deprovisioning.** A leaked session cookie or a
 still-valid bearer is force-invalidated by a per-principal **revocation epoch**
@@ -767,8 +767,8 @@ export MAVERICK_ENCRYPT_AT_REST=0     # 1 to force-enable; 0 to force-disable
 - Precedence: `MAVERICK_ENCRYPT_AT_REST` (non-empty) wins over `[encryption]
   at_rest`, which wins over enterprise mode (which **implies** at-rest on).
 
-**Verify it's on:** `maverick soc2` →
-`controls.encryption_at_rest.status == "enabled"` (enterprise mode implies it).
+**Verify it's on:** `maverick enterprise verify` proves the at-rest seal
+round-trips on this box (enterprise mode implies the control on).
 
 ---
 
@@ -809,7 +809,7 @@ regardless of cost.
 Merkle-chained, tamper-evident** log: each row is hash-chained and signed, and a
 cross-file tip-ledger (`anchors.ndjson`) catches deletion/truncation of a whole
 day-file. This is what makes [`maverick audit verify`](#compliance-commands)
-and the `soc2` audit-chain probe meaningful. **On by default**
+meaningful. **On by default**
 ([Secure by default](#secure-by-default)); the signing key auto-generates. With
 it off the log is append-only NDJSON but not cryptographically tamper-evident
 (the probe reports `unsigned`).
@@ -833,11 +833,10 @@ export MAVERICK_AUDIT_SIGN=0     # 1 to force-enable; 0 to force-disable
   config > the secure-by-default posture (on).
 - Requires `cryptography` (from the reviewed checkout, run
   `python -m pip install -e './packages/maverick-core[audit-signing]'`).
-- The signing key lives under `~/.maverick/keys/`; `maverick soc2`'s
-  `audit_signing_key` probe reports whether a key is present.
+- The signing key lives under `~/.maverick/keys/`.
 
-**Verify it's on:** `maverick audit verify` (see below) and `maverick soc2` →
-`audit_log.status == "ok"` (vs `unsigned` when signing is off).
+**Verify it's on:** `maverick audit verify` (see below) exits non-zero unless
+the signed chain is intact (an unsigned log is a verification break).
 
 ---
 
@@ -948,7 +947,8 @@ returns **403** (vs **404** for an unknown approval).
 
 | Command | Purpose |
 | --- | --- |
-| `maverick soc2` | Print a SOC 2 technical-posture snapshot as JSON (which controls are ON + whether the audit log verifies). Add `--json` for compact single-line output. Fail-soft: always emits JSON, exits 0. |
+| `maverick compliance [--strict]` | Report control coverage (GDPR / EU AI Act / US frameworks): each active control mapped to the article it supports, opt-in controls that are off flagged. `--strict` exits non-zero on any `action_needed`, so it gates CI/deploys. |
+| `maverick enterprise verify` | Actively exercise the regulated-deployment guarantees (egress lock, at-rest seal round-trip, audit chain, consent, retention); exits non-zero if any fail. |
 | `maverick audit verify` | Verify the Ed25519 hash-chain (+ cross-file tip-ledger) of a signed audit log. Exits non-zero if the chain is not intact, so it can gate CI/cron. |
 | `maverick dsar export --user <id>` | GDPR Art. 15/20 (access / portability): export everything Maverick holds for a subject as a JSON bundle. |
 | `maverick erase --channel <c> --user <id>` | GDPR Art. 17 (right to erasure): erase everything Maverick knows about a `(channel, user_id)` pair. |
@@ -996,12 +996,6 @@ maverick erase --channel telegram --user <user_id> [--yes]
 > attachments, the conversation row, related facts/episodes, and an audit
 > re-anchor). `--yes` skips the confirmation prompt.
 
-**SOC 2 controls mapping.** The mapping of these technical controls to the SOC 2
-Trust Services Criteria lives in
-`maverick soc2` (the live posture snapshot). The
-machine-readable evidence collector behind `maverick soc2` is
-`maverick.soc2.collect_soc2_evidence()`.
-
 ---
 
 ## Verifying your posture
@@ -1009,28 +1003,18 @@ machine-readable evidence collector behind `maverick soc2` is
 After enabling anything, run:
 
 ```bash
-maverick soc2
+maverick compliance --strict   # control coverage; non-zero exit on any regression
+maverick enterprise verify     # actively exercise the load-bearing guarantees
 ```
 
-It reports each main control's `status` (`enabled` / `disabled` / `absent` /
-`unknown`) and the audit-chain state. The relevant keys:
-
-| `soc2` key | Backing control |
-| --- | --- |
-| `controls.capability_enforcement` | [Capability enforcement](#capability-enforcement) |
-| `controls.tenant_isolation` | [Multi-tenancy](#multi-tenancy-per-user-isolation) |
-| `controls.usage_quotas` | [Usage quotas](#usage-quotas) |
-| `controls.oidc_auth` | [OIDC SSO](#oidc-sso-authentication) (`absent` if the extra isn't installed) |
-| `controls.encryption_at_rest` | [Encryption at rest](#encryption-at-rest) |
-| `controls.data_subject_export` | DSAR export (`maverick dsar export`) is implemented |
-| `audit_log` | audit-chain verification: `ok` / `unsigned` / `broken` / `empty` / `no_crypto` / `unknown` |
-| `audit_signing_key` | whether an audit signing key is present |
+`maverick compliance` prints one row per control (capability enforcement,
+tenant isolation, quotas, OIDC, encryption at rest, DSAR tooling, audit
+signing, ...) with its status and the regulation it supports; `--format json`
+feeds a pipeline. `maverick enterprise verify` goes further than reading
+flags — it proves the egress lock refuses a real cloud provider and that the
+at-rest seal round-trips on *this* box.
 
 Then confirm tamper-evidence end-to-end with `maverick audit verify`.
-
-> Encryption-at-rest and risk-proportional verification have no dedicated
-> `soc2` field; confirm those via your config/env (and remember enterprise mode
-> implies at-rest).
 
 ---
 
@@ -1095,11 +1079,10 @@ export MAVERICK_ENCRYPTION_KEY="$(your-kms-fetch | xxd -p -c 32)"   # 32 bytes, 
 Then verify:
 
 ```bash
-maverick soc2
+maverick compliance --strict
 maverick audit verify
 ```
 
-**Further reading:** `maverick soc2` (the live posture snapshot)
-(SOC 2 TSC → control mapping), the enterprise-mode docs under
+**Further reading:** the enterprise-mode docs under
 [`docs/security/`](security/), and [`docs/env-vars.md`](env-vars.md) for the
 full environment-variable reference.

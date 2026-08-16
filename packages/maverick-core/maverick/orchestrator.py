@@ -6,7 +6,6 @@ v0.1.3: attaches blackboard to world model so every post mirrors into
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import os
 from contextlib import contextmanager
@@ -955,53 +954,6 @@ class _QuotaUsageSettlement:
                 pass
 
 
-def _evidence_ready_goal_output(
-    generated_text: str,
-    *,
-    brief: str,
-    goal_id: int,
-    conversation_id: int | None,
-    channel: str | None,
-    model: object,
-) -> str:
-    """Apply the opt-in evidence gateway at the real prose delivery seam.
-
-    The orchestrator is the common final-output path for CLI, dashboard, REST,
-    MCP, gRPC-dispatched, and channel-backed goals.  The stable idempotency key
-    makes a retry of the same goal/output replay the exact receipt and bytes.
-    Code-patch artifacts intentionally bypass this human-prose seam.
-    """
-
-    from . import ai_evidence_gateway as gateway
-
-    if not gateway.enabled():
-        return generated_text
-    output_sha = hashlib.sha256(generated_text.encode("utf-8")).hexdigest()
-    model_name = str(model or "")
-    model_sha = (
-        hashlib.sha256(model_name.encode("utf-8")).hexdigest()
-        if model_name
-        else ""
-    )
-    context_sha = hashlib.sha256(brief.encode("utf-8")).hexdigest()
-    conversation = (
-        f"{channel or 'maverick'}:{conversation_id}"
-        if conversation_id is not None
-        else f"goal:{goal_id}"
-    )
-    delivery = gateway.deliver_text(
-        generated_text,
-        input_text=brief,
-        conversation_id=conversation,
-        idempotency_key=f"goal:{goal_id}:output:{output_sha}",
-        actor="orchestrator",
-        policy_id="default",
-        model_sha256=model_sha,
-        context_sha256=context_sha,
-    )
-    return str(delivery["delivered_text"])
-
-
 async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
     llm: LLM,
     world: WorldModel,
@@ -1535,44 +1487,6 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
             except Exception:  # pragma: no cover -- fail open per kernel rule 1
                 log.exception("scan_output on summary failed (fail-open)")
 
-        if not is_rendered_diff:
-            try:
-                summary = _evidence_ready_goal_output(
-                    summary,
-                    brief=brief,
-                    goal_id=goal_id,
-                    conversation_id=conversation_id,
-                    channel=channel,
-                    model=getattr(root, "model", ""),
-                )
-            except Exception as exc:
-                from . import ai_evidence_gateway as gateway
-
-                if not isinstance(exc, gateway.EvidenceGatewayError):
-                    raise
-                refusal = (
-                    "AI evidence gateway withheld the generated output. "
-                    f"Operator action is required: {exc}"
-                )
-                _end_episode_with_spend(
-                    world,
-                    episode_id,
-                    refusal,
-                    "failure",
-                    budget,
-                    goal_id,
-                )
-                world.set_goal_status(goal_id, "blocked", result=refusal)
-                _record_quota_usage()
-                _fire_webhook(
-                    "goal_finished",
-                    {
-                        "goal_id": goal_id,
-                        "status": "blocked",
-                        "result": refusal,
-                    },
-                )
-                return refusal
 
         # Compartment observability: record a one-line summary of the run's
         # bulkhead activity (threats immunized, sealed agents/sectors) so it's

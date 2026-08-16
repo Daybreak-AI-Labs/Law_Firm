@@ -158,39 +158,10 @@ auto_apply  = false      # apply a proven improvement forward without a human
 backend = "auto"          # auto | local | postgres
 
 [evidence_graph]
-# Review-gated evidence metadata and cryptographic bindings. Required by the
-# Model Risk & AI Assurance Officer.
+# Review-gated evidence metadata and cryptographic bindings over the signed
+# audit chain. Closed-schema boolean; a misspelled knob is flagged, not
+# silently defaulted.
 enable = false
-
-[model_risk_assurance]
-# Governed AI inventory, evidence, findings, incidents, decisions, deployment
-# lineage, and signed assurance packs. Both switches must be true for the
-# fail-closed DGM promotion gate.
-enable = false
-gate_promotions = false
-
-[evidence_gateway]
-# AI delivery disclosures, hash-only interaction receipts, cited regulatory
-# impacts, and signed assurance packets. Enabling through the installer also
-# enables the companion evidence graph and Model Risk Officer controls. Runtime
-# use also requires an explicit authenticated tenant/client binding.
-enable = false
-
-[model_improvement]
-# Specialist-model tasksets, qualification, training receipts, and optional
-# external-backend exports. Inert until enabled. Hosted execution is a second
-# opt-in. Cross-tenant training remains structurally refused in v1 even though
-# the reserved key is explicit.
-enable = false
-allow_hosted = false
-allow_cross_tenant = false
-require_signed_receipt = true
-minimum_train_families = 20
-minimum_holdout_families = 20
-# Signed receipts are mandatory whenever enable = true. With an active tenant,
-# global enable/allow_hosted are ceilings and the tenant must opt in separately.
-# Family floors combine by maximum. Mutation boundaries reject malformed or
-# unknown keys instead of silently falling back.
 
 [finance]
 # Regime policies combine strictest-wins. Existing `pci` configurations now

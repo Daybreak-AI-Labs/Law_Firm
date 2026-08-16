@@ -1,7 +1,9 @@
-"""Live executive boards on /learning and /security: the payloads the pages
-fetch (/api/v1/learning and /api/v1/dashboards/security) and the board
-skeleton (stamp + card containers + board.js, no slicer — neither payload is
-windowed). Charts render client-side; the payload shape is the contract."""
+"""Live executive board on /learning: the payload the page fetches
+(/api/v1/learning) and the board skeleton (stamp + card containers +
+board.js, no slicer — the payload is not windowed). Charts render
+client-side; the payload shape is the contract. The /security records
+workspace and its board were deleted with the GRC cluster; the board
+endpoint must refuse the department rather than serve an orphaned payload."""
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -21,15 +23,9 @@ def _isolate(monkeypatch, tmp_path):
     consequence.reset_shared()
 
 
-def test_security_board_payload_survives_empty_world(monkeypatch, tmp_path):
+def test_security_board_is_gone_with_the_grc_cluster(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
-    r = _client().get("/api/v1/dashboards/security")
-    assert r.status_code == 200
-    d = r.json()
-    assert d["board"] == "security"
-    assert d["kpis"] == {"total": 0, "open": 0, "needs_more": 0,
-                         "approved": 0, "rejected": 0, "due_review": 0}
-    assert len(d["monthly"]) == 12
+    assert _client().get("/api/v1/dashboards/security").status_code == 404
 
 
 def test_learning_payload_has_component_counts(monkeypatch, tmp_path):
@@ -42,17 +38,14 @@ def test_learning_payload_has_component_counts(monkeypatch, tmp_path):
     assert d["components_total"] >= d["components_on"] >= 0
 
 
-def test_pages_ship_the_board_skeleton_without_slicer(monkeypatch, tmp_path):
+def test_learning_page_ships_the_board_skeleton_without_slicer(
+    monkeypatch, tmp_path,
+):
     _isolate(monkeypatch, tmp_path)
-    c = _client()
-    for path, markers in (
-        ("/learning", ("bd-systems", "bd-acc")),
-        ("/security", ("bd-flow", "bd-risk", "bd-frameworks")),
-    ):
-        t = c.get(path).text
-        assert "/static/board.js" in t, path
-        assert 'id="bd-stamp"' in t, path
-        for marker in markers:
-            assert marker in t, (path, marker)
-        # Neither payload is windowed — no time-range slicer on these boards.
-        assert "bd-slicer" not in t, path
+    t = _client().get("/learning").text
+    assert "/static/board.js" in t
+    assert 'id="bd-stamp"' in t
+    for marker in ("bd-systems", "bd-acc"):
+        assert marker in t
+    # The payload is not windowed — no time-range slicer on this board.
+    assert "bd-slicer" not in t

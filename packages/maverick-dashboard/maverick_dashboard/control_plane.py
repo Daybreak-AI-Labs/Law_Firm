@@ -487,8 +487,8 @@ def compliance_packet() -> dict[str, Any]:
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     try:
-        from maverick.soc2 import collect_soc2_evidence
-        packet["soc2"] = collect_soc2_evidence()
+        # SOC 2 self-certification was deleted with the GRC cluster.
+        packet["soc2"] = {"removed": True}
     except Exception as e:  # noqa: BLE001 -- evidence is fail-soft
         packet["soc2"] = {"error": str(e)}
     try:

@@ -20,11 +20,6 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
                 'backend = "local"',
                 "[evidence_graph]",
                 "enable = true",
-                "[evidence_gateway]",
-                "enable = true",
-                "[model_risk_assurance]",
-                "enable = true",
-                "gate_promotions = false",
                 "",
             ]
         ),
@@ -84,13 +79,3 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
     assert started.status_code == 200, started.text
     assert "ready to run" in started.text
     assert "Offline install preflight" in started.text
-
-    from maverick import ai_evidence_gateway
-
-    gateway_summary = ai_evidence_gateway.summary()
-    assert gateway_summary["current_policy_count"] == 0
-    assurance = client.get("/security/assurance")
-    assert assurance.status_code == 200, assurance.text
-    assert "Not started" in assurance.text
-    assert "Load synthetic no-network demo" in assurance.text
-    assert "production policy" in assurance.text

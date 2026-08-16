@@ -3,9 +3,8 @@
 Maverick can **conduct** structured compliance assessments of a subject — a
 processing activity, an AI system, or a vendor — running a questionnaire, scoring
 each answer, and producing a completed assessment with **findings** and an overall
-**risk rating**. This is distinct from [`maverick ropa` / `dpia` / `ai-act`](regulated-deployment.md#records-of-processing-art-30),
-which scaffold a document from Maverick's *own* deployment config — assessments
-evaluate an arbitrary third-party subject.
+**risk rating**. Assessments evaluate an arbitrary third-party subject — a client's
+vendor, a processing activity, an AI system — not Maverick's own deployment.
 
 ## Built-in assessments
 

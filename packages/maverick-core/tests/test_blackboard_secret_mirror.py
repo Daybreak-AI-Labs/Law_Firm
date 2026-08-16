@@ -14,7 +14,7 @@ persisted/displayed record is redacted).
 """
 from __future__ import annotations
 
-from maverick import ai_evidence_gateway, observation_channel
+from maverick import observation_channel
 from maverick.blackboard import Blackboard
 from maverick.safety import secret_detector
 from maverick.world_model import WorldModel
@@ -63,7 +63,6 @@ def test_redaction_failure_fails_closed_for_every_mirror(tmp_path, monkeypatch):
         "redact",
         lambda _content: (_ for _ in ()).throw(RuntimeError("detector unavailable")),
     )
-    monkeypatch.setattr(ai_evidence_gateway, "enabled", lambda: False)
     published = []
     monkeypatch.setattr(
         observation_channel,
@@ -93,68 +92,3 @@ def test_redaction_failure_fails_closed_for_every_mirror(tmp_path, monkeypatch):
     assert [row[2] for row in trace.rows] == [placeholder]
     assert [row[2] for row in published] == [placeholder]
     assert _SECRET in bb.entries[0].content
-
-
-def test_gateway_withholds_only_model_derived_mirrors(
-    tmp_path,
-    monkeypatch,
-):
-    """Every live transport consumes the same provenance-safe event mirror."""
-
-    monkeypatch.setattr(ai_evidence_gateway, "enabled", lambda: True)
-    published = []
-    monkeypatch.setattr(
-        observation_channel,
-        "maybe_publish",
-        lambda kind, agent, content: published.append(
-            (kind, agent, content)
-        ),
-    )
-
-    class Trace:
-        def __init__(self):
-            self.rows = []
-
-        def record(self, kind, **payload):
-            self.rows.append((kind, payload["agent"], payload["content"]))
-
-    world = WorldModel(tmp_path / "world.db")
-    goal_id = world.create_goal("provenance", "")
-    trace = Trace()
-    bb = Blackboard()
-    bb.attach_world(world, goal_id)
-    bb.attach_trace(trace)
-
-    model_excerpt = "unreceipted model conclusion"
-    denial = "capability denied: shell is outside this agent's grant"
-    compartment = "worker compartment sealed after deterministic policy check"
-    progress = "completed 3 of 5 deterministic checks"
-    bb.post("reviewer", "finding", model_excerpt)
-    bb.post("guard", "error", denial, provenance="capability")
-    bb.post(
-        "orchestrator",
-        "observation",
-        compartment,
-        provenance="compartment",
-    )
-    bb.post("operator", "status", progress, provenance="progress")
-
-    expected = [
-        Blackboard._WITHHELD_CONTENT,
-        denial,
-        compartment,
-        progress,
-    ]
-    events = world.goal_events(goal_id)
-    assert [event.content for event in events] == expected
-    assert [row[2] for row in trace.rows] == expected
-    assert [row[2] for row in published] == expected
-
-    # Agent coordination remains verbatim; only persisted/live mirrors are
-    # governed. The world event seam feeds dashboard, SSE, WebSocket, and gRPC.
-    assert [entry.content for entry in bb.entries] == [
-        model_excerpt,
-        denial,
-        compartment,
-        progress,
-    ]

@@ -1132,149 +1132,30 @@ def pick_assessments() -> dict[str, Any]:
 
 
 def pick_security_suite() -> dict[str, Any]:
-    """Configure the Security/GRC suite and both defensive hunters.
+    """Configure the surviving security surfaces.
 
-    The record-only GRC workspace follows Privacy's default-on posture.  The
-    hunters are explicit opt-ins because they consume operational telemetry.
-    Environment response execution is a second, independent opt-in and still
-    requires a human-approved playbook at runtime.
+    The GRC self-certification cluster (records workspace, Model Risk officer,
+    AI evidence gateway, environment hunter) was deleted; what remains is the
+    review-gated evidence graph and the read-only platform threat hunter.
     """
     console.print()
     console.print(
-        "[dim]Security & GRC maintains control, evidence, risk, POA&M, policy, "
-        "vendor, incident, and audit records locally. The platform hunter "
-        "defensively scans Maverick's signed telemetry; the environment "
-        "hunter reads configured customer telemetry. Hunters are OFF until "
-        "enabled. Approved response execution is a separate opt-in.[/dim]"
-    )
-    security_ops = _q_confirm(
-        "Enable Security & GRC records and readiness workspace?", default=True
+        "[dim]The evidence graph stores bounded evidence metadata and hashes "
+        "over the audit chain. The platform threat hunter defensively scans "
+        "Maverick's own signed telemetry. Both are OFF by default.[/dim]"
     )
     evidence_graph = _q_confirm(
         "Enable the review-gated evidence graph? It stores bounded evidence "
         "metadata and hashes, never raw telemetry.",
         default=False,
     )
-    model_risk_assurance = _q_confirm(
-        "Enable the Model Risk & AI Assurance Officer? Legal applicability, "
-        "risk acceptance, and deployment decisions remain human-owned.",
-        default=False,
-    )
-    if model_risk_assurance:
-        evidence_graph = True
-    evidence_gateway = _q_confirm(
-        "Enable the AI Evidence-Ready Gateway? It stores signed hash-only "
-        "interaction receipts and cited regulatory-impact records, never raw "
-        "prompts or generated text.",
-        default=False,
-    )
-    if evidence_gateway:
-        evidence_graph = True
-        model_risk_assurance = True
-    model_improvement = _q_confirm(
-        "Enable governed specialist-model improvement plumbing? Training and "
-        "weight promotion remain separately approval-gated.",
-        default=False,
-    )
-    allow_hosted_training = False
-    if model_improvement:
-        evidence_graph = True
-        model_risk_assurance = True
-        allow_hosted_training = _q_confirm(
-            "Allow hosted training only for cases with an exact hosted-training "
-            "consent scope? Cross-tenant training remains refused.",
-            default=False,
-        )
     threat_hunt = _q_confirm(
         "Enable the defensive Maverick platform threat hunter?", default=False
     )
-    env_hunt = _q_confirm(
-        "Enable the defensive customer-environment threat hunter?", default=False
-    )
-    response_execution = False
-    connectors: dict[str, dict[str, bool]] = {}
-    enrichment_sources: list[str] = []
-    poll_seconds = 300
-    if env_hunt:
-        response_execution = _q_confirm(
-            "Allow execution of human-approved response playbooks?",
-            default=False,
-        )
-        connector_labels = {
-            "AWS CloudTrail": "cloudtrail",
-            "AWS GuardDuty": "guardduty",
-            "Syslog": "syslog",
-            "Endpoint detection and response (EDR)": "edr",
-            "Splunk": "splunk",
-            "Elastic": "elastic",
-            "Microsoft Sentinel": "sentinel",
-            "Kubernetes audit logs": "kubernetes_audit",
-            "Okta": "okta",
-            "Microsoft Entra ID": "entra",
-        }
-        console.print(
-            "[dim]Choose the read-only telemetry connector types to prepare. "
-            "Credentials and vendor-specific transports are configured after "
-            "installation; selecting a type here does not grant access.[/dim]"
-        )
-        selected_labels = _q_checkbox(
-            "Prepare which read-only environment connectors?",
-            list(connector_labels),
-            default=[],
-        )
-        push_labels = _q_checkbox(
-            "Allow API push ingestion for which selected connector types?",
-            selected_labels,
-            default=[],
-        ) if selected_labels else []
-        pivot_labels = _q_checkbox(
-            "Allow bounded read-only investigation pivots for which selected connectors?",
-            selected_labels,
-            default=[],
-        ) if selected_labels else []
-        connectors = {
-            name: {
-                "enable": label in selected_labels,
-                "push_enable": label in push_labels,
-                "pivot_enable": label in pivot_labels,
-            }
-            for label, name in connector_labels.items()
-        }
-        enrichment_sources = [
-            value.strip().lower()
-            for value in _q_text(
-                "Allowlisted enrichment adapter names (comma-separated; optional)",
-                default="",
-            ).split(",")
-            if value.strip()
-        ]
-        poll_seconds = max(
-            30,
-            min(
-                3600,
-                int(_safe_float(
-                    _q_text("Hunter poll interval (seconds)", default="300"),
-                    default=300.0,
-                )),
-            ),
-        )
-    result = {
-        "security_ops": security_ops,
+    return {
         "evidence_graph": evidence_graph,
-        "model_risk_assurance": model_risk_assurance,
-        "evidence_gateway": evidence_gateway,
-        "model_improvement": model_improvement,
-        "allow_hosted_training": allow_hosted_training,
         "threat_hunt": threat_hunt,
-        "env_hunt": env_hunt,
-        "response_execution": response_execution,
     }
-    if env_hunt:
-        result["connectors"] = connectors
-        result["enrichment_sources"] = list(dict.fromkeys(enrichment_sources))
-        result["poll_seconds"] = poll_seconds
-    return result
-
 
 def pick_value() -> dict[str, Any]:
     """The savings (ROI) report's cost/value assumptions -- the CLIENT's own
@@ -3197,89 +3078,14 @@ def _cfg_assessments(assessments: dict[str, Any] | None) -> list[str]:
 def _cfg_security_suite(security_suite: dict[str, Any] | None) -> list[str]:
     if security_suite is None:
         return []
-    lines = [
-        "",
-        "[security_ops]",
-        f"enable = {'true' if security_suite.get('security_ops', True) else 'false'}",
-        "",
-        "[governed_records]",
-        'backend = "auto"',
+    return [
         "",
         "[evidence_graph]",
         f"enable = {'true' if security_suite.get('evidence_graph', False) else 'false'}",
         "",
-        "[model_risk_assurance]",
-        "enable = "
-        f"{'true' if security_suite.get('model_risk_assurance', False) else 'false'}",
-        "gate_promotions = "
-        f"{'true' if security_suite.get('model_risk_assurance', False) else 'false'}",
-        "",
-        "[evidence_gateway]",
-        "enable = "
-        f"{'true' if security_suite.get('evidence_gateway', False) else 'false'}",
-        "",
-        "[model_improvement]",
-        "enable = "
-        f"{'true' if security_suite.get('model_improvement', False) else 'false'}",
-        "allow_hosted = "
-        f"{'true' if security_suite.get('allow_hosted_training', False) else 'false'}",
-        "allow_cross_tenant = false",
-        "require_signed_receipt = true",
-        "minimum_train_families = 20",
-        "minimum_holdout_families = 20",
-        "",
         "[threat_hunt]",
         f"enable = {'true' if security_suite.get('threat_hunt', False) else 'false'}",
-        "",
-        "[env_hunt]",
-        f"enable = {'true' if security_suite.get('env_hunt', False) else 'false'}",
-        "response_execution = "
-        f"{'true' if security_suite.get('response_execution', False) else 'false'}",
-        f"poll_seconds = {max(30, min(3600, int(security_suite.get('poll_seconds', 300))))}",
     ]
-    enrichment_sources = security_suite.get("enrichment_sources") or []
-    enrichment_sources = list(dict.fromkeys(
-        str(value).strip().lower()
-        for value in enrichment_sources
-        if str(value).strip()
-    ))
-    for name in enrichment_sources:
-        lines += [
-            "",
-            f"[env_hunt.enrichment_sources.{name}]",
-            "enable = true",
-        ]
-    try:
-        from maverick.env_hunt import CONNECTOR_NAMES
-    except ImportError:  # installer can render before maverick-core is installed
-        CONNECTOR_NAMES = (
-            "cloudtrail",
-            "guardduty",
-            "syslog",
-            "edr",
-            "splunk",
-            "elastic",
-            "sentinel",
-            "kubernetes_audit",
-            "okta",
-            "entra",
-        )
-    configured = security_suite.get("connectors") or {}
-    configured = configured if isinstance(configured, dict) else {}
-    for name in CONNECTOR_NAMES:
-        value = configured.get(name, False)
-        enabled = value.get("enable", False) if isinstance(value, dict) else value
-        push_enabled = value.get("push_enable", False) if isinstance(value, dict) else False
-        pivot_enabled = value.get("pivot_enable", False) if isinstance(value, dict) else False
-        lines += [
-            "",
-            f"[env_hunt.connectors.{name}]",
-            f"enable = {'true' if enabled is True else 'false'}",
-            f"push_enable = {'true' if push_enabled is True else 'false'}",
-            f"pivot_enable = {'true' if pivot_enabled is True else 'false'}",
-        ]
-    return lines
-
 
 def _cfg_value(value: dict[str, Any] | None) -> list[str]:
     if not value:

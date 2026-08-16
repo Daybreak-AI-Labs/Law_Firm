@@ -233,78 +233,6 @@ def _authority_sha256(
     })).hexdigest()
 
 
-def _security_evidence_authority(record_id: str) -> tuple[dict[str, Any], dict[str, Any], str]:
-    from . import security_ops
-
-    authority = security_ops.get_evidence(record_id)
-    if not isinstance(authority, dict):
-        raise _InheritedAuthorityError("source_not_found")
-    decision = authority.get("decision")
-    if (
-        authority.get("status") != "approved"
-        or not isinstance(decision, dict)
-        or decision.get("decision") != "approved"
-    ):
-        raise _InheritedAuthorityError(
-            "source_not_approved",
-            current_revision=_valid_authority_revision(authority.get("revision")),
-        )
-    return authority, decision, "maverick.security_ops.evidence.v1"
-
-
-def _model_risk_evidence_authority(
-    record_id: str,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
-    """Load one exact, current human approval from Model Risk authority."""
-
-    # Keep this import local: model-risk recording projects raw observations to
-    # the graph, while approved reviews call back into the trusted projector.
-    from . import model_risk_assurance
-
-    authority = model_risk_assurance.get_evidence(record_id)
-    if not isinstance(authority, dict):
-        raise _InheritedAuthorityError("source_not_found")
-    revision = _valid_authority_revision(authority.get("revision"))
-    expected_schema = model_risk_assurance.EVIDENCE_SCHEMA
-    if authority.get("schema") != expected_schema:
-        raise _InheritedAuthorityError(
-            "source_identity_changed",
-            current_revision=revision,
-        )
-    decision = authority.get("review")
-    if (
-        authority.get("status") != "approved"
-        or not isinstance(decision, dict)
-        or decision.get("decision") != "approved"
-    ):
-        raise _InheritedAuthorityError(
-            "source_not_approved",
-            current_revision=revision,
-        )
-    if decision.get("payload_sha256") != authority.get("payload_sha256"):
-        raise _InheritedAuthorityError(
-            "source_authority_invalid",
-            current_revision=revision,
-        )
-    try:
-        valid_until = float(authority.get("valid_until"))
-    except (TypeError, ValueError) as exc:
-        raise _InheritedAuthorityError(
-            "source_expired",
-            current_revision=revision,
-        ) from exc
-    if (
-        not math.isfinite(valid_until)
-        or valid_until <= time.time()
-        or authority.get("freshness") != "current"
-    ):
-        raise _InheritedAuthorityError(
-            "source_expired",
-            current_revision=revision,
-        )
-    return authority, decision, expected_schema
-
-
 def _valid_authority_revision(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
         return value
@@ -315,15 +243,10 @@ def _load_inherited_authority(
     node: dict[str, Any],
     record_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
-    source = str(node.get("source") or "")
-    evidence_type = str(node.get("evidence_type") or "")
-    if source == "security_ops" and evidence_type == "reviewed_control_evidence":
-        return _security_evidence_authority(record_id)
-    if (
-        source == "model_risk_assurance"
-        and evidence_type.startswith("approved_ai_assurance_")
-    ):
-        return _model_risk_evidence_authority(record_id)
+    # The security_ops and model_risk_assurance authorities were deleted with
+    # the GRC self-certification cluster; no inherited source remains. Existing
+    # graph nodes citing them fail closed here rather than validating against
+    # an authority that no longer exists.
     raise _InheritedAuthorityError("unsupported_inherited_source")
 
 
@@ -610,187 +533,6 @@ def coverage_report(required_controls) -> dict[str, Any]:
     return _coverage_report(required_controls, list_nodes())
 
 
-def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
-    """Project approved GRC evidence into the continuous graph."""
-    from . import security_ops
-
-    imported: list[dict[str, Any]] = []
-    for listed in security_ops.list_evidence():
-        # Re-read by governed id instead of trusting a caller/list projection to
-        # carry approval.  The persisted revision and exact decision are bound
-        # into the graph review provenance below.
-        evidence = security_ops.get_evidence(str(listed.get("id") or ""))
-        if not isinstance(evidence, dict) or evidence.get("status") != "approved":
-            continue
-        verdicts = list(evidence.get("verdicts") or [])
-        controls = sorted({
-            str(verdict.get("control_id") or "")
-            for verdict in verdicts
-            if verdict.get("status") in {"present", "partial"}
-            and str(verdict.get("control_id") or "")
-        })
-        decision = dict(evidence.get("decision") or {})
-        if decision.get("decision") != "approved":
-            continue
-        review = _persisted_review(
-            evidence,
-            decision=decision,
-            reviewer=decision.get("decided_by"),
-            rationale=decision.get("rationale"),
-            reviewed_at=decision.get("decided_at"),
-            authority_schema="maverick.security_ops.evidence.v1",
-        )
-        imported.append(_ingest(
-            source="security_ops",
-            source_id=(
-                f"{evidence.get('id')}:review:{evidence.get('revision')}"
-            ),
-            evidence_type="reviewed_control_evidence",
-            title=str(evidence.get("title") or "Security evidence"),
-            summary=(
-                "Human-approved deterministic control mapping; raw source content "
-                "remains in the governed Security/GRC evidence store."
-            ),
-            controls=controls,
-            attributes={
-                "source_sha256": str(evidence.get("source_sha256") or ""),
-                "mapping_method": str(evidence.get("mapping_method") or ""),
-                "present": int((evidence.get("counts") or {}).get("present") or 0),
-                "partial": int((evidence.get("counts") or {}).get("partial") or 0),
-            },
-            links=[{
-                "relation": "projects",
-                "target_type": "security_evidence",
-                "target_id": str(evidence.get("id") or ""),
-            }],
-            actor=actor,
-            observed_at=float(evidence.get("created_at") or time.time()),
-            persisted_review=review,
-        ))
-    return imported
-
-
-def project_model_risk_evidence(
-    evidence_id: str,
-    *,
-    actor: str,
-) -> dict[str, Any]:
-    """Project one freshly loaded, approved Model Risk evidence record.
-
-    Callers provide only an id.  Approval, freshness, content identity, and
-    reviewer provenance are always re-read from the governed Model Risk store;
-    a caller-supplied graph observation can never manufacture this binding.
-    """
-
-    record_id = _required(evidence_id, "model-risk evidence id", 64)
-    try:
-        evidence, decision, authority_schema = _model_risk_evidence_authority(
-            record_id,
-        )
-    except _InheritedAuthorityError as exc:
-        raise ValueError(
-            "model-risk evidence has no current approved governed authority "
-            f"({exc.reason})"
-        ) from exc
-    review = _persisted_review(
-        evidence,
-        decision=decision,
-        reviewer=decision.get("reviewer"),
-        rationale=decision.get("rationale"),
-        reviewed_at=decision.get("reviewed_at"),
-        authority_schema=authority_schema,
-    )
-    kind = _required(evidence.get("evidence_kind"), "evidence kind", 80)
-    result = _required(evidence.get("result"), "evidence result", 80)
-    asset_id = _required(evidence.get("asset_id"), "asset id", 128)
-    payload_sha256 = _sha256_digest(
-        evidence.get("payload_sha256"),
-        "evidence payload digest",
-    )
-    attributes: dict[str, Any] = {
-        "artifact_digest": _sha256_digest(
-            evidence.get("artifact_digest"),
-            "artifact digest",
-        ),
-        "asset_id": asset_id,
-        "evidence_kind": kind,
-        "evidence_payload_sha256": payload_sha256,
-        "evidence_revision": int(evidence["revision"]),
-        "result": result,
-        "scope_digest": _sha256_digest(
-            evidence.get("scope_digest"),
-            "scope digest",
-        ),
-    }
-    evaluator_digest = evidence.get("evaluator_digest")
-    if evaluator_digest is not None:
-        attributes["evaluator_digest"] = _sha256_digest(
-            evaluator_digest,
-            "evaluator digest",
-        )
-    return _ingest(
-        source="model_risk_assurance",
-        source_id=(
-            f"{record_id}:{payload_sha256}:review:{evidence['revision']}"
-        ),
-        evidence_type=f"approved_ai_assurance_{kind}",
-        title=f"Approved AI assurance {kind.replace('_', ' ')}",
-        summary=(
-            f"Human-approved, expiring {kind.replace('_', ' ')} evidence; "
-            f"the governed result is {result}."
-        ),
-        controls=["AI-RMF:MEASURE", "ISO42001:performance_evaluation"],
-        attributes=attributes,
-        links=[
-            {
-                "relation": "supports",
-                "target_type": "ai_asset",
-                "target_id": asset_id,
-            },
-            {
-                "relation": "projects",
-                "target_type": "model_risk_evidence",
-                "target_id": record_id,
-            },
-        ],
-        actor=actor,
-        observed_at=float(evidence["observed_at"]),
-        valid_until=float(evidence["valid_until"]),
-        persisted_review=review,
-    )
-
-
-def collect_model_risk_evidence(*, actor: str) -> list[dict[str, Any]]:
-    """Project a bounded snapshot of current approved Model Risk evidence."""
-
-    from . import model_risk_assurance
-
-    listed = model_risk_assurance.list_evidence()
-    if not isinstance(listed, list):
-        raise ValueError("model-risk evidence inventory must be a list")
-    if len(listed) > _MAX_MODEL_RISK_PROJECTIONS:
-        raise ValueError(
-            "model-risk evidence inventory exceeds the 2048-record projection limit"
-        )
-    imported: list[dict[str, Any]] = []
-    for summary in listed:
-        if not isinstance(summary, dict):
-            raise ValueError("model-risk evidence inventory contains an invalid record")
-        review = summary.get("review")
-        if (
-            summary.get("status") != "approved"
-            or summary.get("freshness") != "current"
-            or not isinstance(review, dict)
-            or review.get("decision") != "approved"
-        ):
-            continue
-        imported.append(project_model_risk_evidence(
-            str(summary.get("id") or ""),
-            actor=actor,
-        ))
-    return imported
-
-
 def render_pack(*, required_controls=None) -> dict[str, Any]:
     nodes = sorted(
         (
@@ -847,15 +589,12 @@ def verify_pack(
 
 
 __all__ = [
-    "collect_model_risk_evidence",
-    "collect_security_evidence",
     "coverage_report",
     "decide",
     "enabled",
     "get",
     "ingest",
     "list_nodes",
-    "project_model_risk_evidence",
     "render_pack",
     "verify_pack",
 ]

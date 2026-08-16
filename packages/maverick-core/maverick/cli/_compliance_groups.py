@@ -1,4 +1,4 @@
-"""Compliance & governance CLI commands: soc2, enterprise, ropa, dpia, ai-act,
+"""Compliance & governance CLI commands: enterprise, clause-playbook, graph,
 controls, hunt, remediate, assess, dsar.
 
 Split out of cli/__init__.py; registered via import at the end of the package
@@ -12,32 +12,7 @@ from pathlib import Path
 
 import click
 
-from . import _soc2_posture_ready, main
-
-
-@main.command("soc2")
-@click.option("--json", "compact", is_flag=True,
-              help="Emit compact single-line JSON (default: pretty, indent=2).")
-def soc2(compact: bool) -> None:
-    """Print a SOC 2 technical-posture snapshot as JSON.
-
-    Serializes ``collect_soc2_evidence()`` -- which controls are ON in this
-    deployment and whether the audit log verifies -- for auditors / CI /
-    automation. The collector is fail-soft (it never raises), so this command
-    always emits a JSON object. The command exits non-zero when required
-    controls or audit-log checks are not in a SOC 2-ready state.
-    """
-    import json as _json
-
-    from ..soc2 import collect_soc2_evidence
-    evidence = collect_soc2_evidence()
-    if compact:
-        click.echo(_json.dumps(evidence, default=str))
-    else:
-        click.echo(_json.dumps(evidence, default=str, indent=2))
-    if not _soc2_posture_ready(evidence):
-        sys.exit(1)
-
+from . import main
 
 # ----- Enterprise (regulated-deployment) posture -----------------------
 
@@ -85,36 +60,6 @@ def enterprise_verify(fmt: str, require: bool) -> None:
         click.echo(_preflight_summary(checks), err=True)
     if not passed:
         sys.exit(1)
-
-
-@main.command("ropa")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text",
-              help="Output format.")
-@click.option("--output", "-o", type=click.Path(), default=None,
-              help="Write to file (default stdout).")
-def ropa_cmd(fmt: str, output) -> None:
-    """Generate a GDPR Art. 30 record-of-processing scaffold for this deployment.
-
-    Pre-fills the technical half from the live config and schema -- personal-data
-    categories, recipients / international transfers (from the egress lock),
-    retention, and the active Art. 32 security measures -- and marks the
-    organizational fields (controller, DPO, lawful basis, purposes) for the
-    controller to complete. A scaffold for a DPO to finish, not a legal
-    attestation.
-    """
-    from ..ropa import generate_ropa, render_ropa_json, render_ropa_text
-    record = generate_ropa()
-    payload = render_ropa_json(record) if fmt == "json" else render_ropa_text(record)
-    if output:
-        try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
-        except OSError as e:
-            raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
-    else:
-        click.echo(payload)
 
 
 @main.group("clause-playbook")
@@ -273,52 +218,6 @@ def graph_blast_cmd(kind: str, name: str) -> None:
     click.echo(_json.dumps(
         {k: result[k] for k in ("records", "vendors", "skills", "decisions")
          if k in result}, indent=2, default=str))
-
-
-@main.command("dpia")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text",
-              help="Output format.")
-@click.option("--output", "-o", type=click.Path(), default=None,
-              help="Write to file (default stdout).")
-def dpia_cmd(fmt: str, output) -> None:
-    """Generate a GDPR Art. 35 DPIA scaffold for this deployment.
-
-    Pre-fills the processing description (consistent with 'maverick ropa') and a
-    risk register of the agent-on-personal-data risks -- each mapped to the
-    Maverick control that mitigates it and whether that control is active right
-    now -- leaving necessity/proportionality and residual-risk sign-off to the
-    controller. A scaffold for a DPO to finish, not a completed DPIA.
-    """
-    from ..dpia import generate_dpia, render_dpia_json, render_dpia_text
-    dpia = generate_dpia()
-    payload = render_dpia_json(dpia) if fmt == "json" else render_dpia_text(dpia)
-    if output:
-        try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
-        except OSError as e:
-            raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
-    else:
-        click.echo(payload)
-
-
-@main.command("ai-act")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text",
-              help="Output format.")
-def ai_act_cmd(fmt: str) -> None:
-    """Classify this deployment under the EU AI Act (self-assessment).
-
-    Reports the live Art. 50 transparency posture and hands you a checklist of
-    the prohibited (Art. 5) and high-risk (Annex III) categories plus the
-    obligations each tier triggers. A conversational agent that discloses it is
-    AI is limited-risk by default -- but you must rule out those lists for your
-    use case. A self-assessment aid, not a legal classification.
-    """
-    from ..ai_act import assess_ai_act, render_ai_act_json, render_ai_act_text
-    report = assess_ai_act()
-    click.echo(render_ai_act_json(report) if fmt == "json" else render_ai_act_text(report))
 
 
 @main.command("controls")

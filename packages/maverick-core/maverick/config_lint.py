@@ -106,28 +106,13 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     "dashboard": {"token", "theme", "density", "allow_extension", "themes", "public_url",
                   "default_suites", "group_roles", "group_suites"},
     "analytics": {"mcp_client_language"},
-    # Work discovery is a high-trust client-controlled sensor.  Keep this
-    # section fixed-key so misspelled retention/privacy knobs do not silently
-    # fall back to defaults.
-    # Specialist-model training and promotion is a high-authority mutation
-    # boundary.  Keep its schema closed so misspelled receipt, boundary, or
-    # sample-floor controls cannot silently fall back to defaults.
-    "model_improvement": {
-        "enable",
-        "allow_hosted",
-        "allow_cross_tenant",
-        "require_signed_receipt",
-        "minimum_train_families",
-        "minimum_holdout_families",
-    },
     # Definition import reaches third-party APIs and can materialize recurring
     # work, so both opt-ins are closed-schema booleans rather than permissive
     # string truthiness.
     "automation_import": {"enable", "create_schedules"},
-    # Evidence release is a high-trust, fail-closed boundary.  V1 deliberately
-    # exposes only the master opt-in; misspelled enforcement keys must not
-    # silently create an open-ended policy surface.
-    "evidence_gateway": {"enable"},
+    # Evidence ingestion is review-gated and fail-closed.  Keep the section a
+    # closed-schema boolean so a misspelled knob cannot silently fall back.
+    "evidence_graph": {"enable"},
     # --- dynamic / open-ended sections (any subkey accepted) ---
     "providers": None,
     "models": None,
@@ -204,13 +189,8 @@ _NUMERIC_KEYS: dict[str, set[str]] = {
 
 # Integer-valued controls. These are kept separate from ``_NUMERIC_KEYS``:
 # accepting ``20.5`` as a number would make config lint report success while
-# the runtime safely falls back to 20, obscuring an operator mistake.
-_INTEGER_KEYS: dict[str, set[str]] = {
-    "model_improvement": {
-        "minimum_train_families",
-        "minimum_holdout_families",
-    },
-}
+# the runtime safely falls back to the default, obscuring an operator mistake.
+_INTEGER_KEYS: dict[str, set[str]] = {}
 
 # Keys that, when present, must be a bool. Section -> key. Plus the universal
 # ``enabled``/``enable`` toggle, handled separately for every known section.
@@ -235,20 +215,12 @@ _BOOL_KEYS: dict[str, set[str]] = {
         "preflight", "create_tools", "provision_packs",
         "allow_mcp_acquisition", "allow_provider_egress", "distill_local",
     },
-    "model_improvement": {
-        "enable",
-        "allow_hosted",
-        "allow_cross_tenant",
-        "require_signed_receipt",
-    },
     "automation_import": {"enable", "create_schedules"},
     "models": {"cascade"},
     "routing": {"cost_aware"},
 }
 
 _UNIVERSAL_BOOL_KEYS = ("enabled", "enable")
-_MODEL_IMPROVEMENT_FAMILY_MIN = 20
-_MODEL_IMPROVEMENT_FAMILY_MAX = 1_000_000
 
 
 # Key names that carry secrets. A literal (non-``${ENV}``) string under one of
@@ -403,27 +375,6 @@ def lint_config(cfg: dict) -> list[Finding]:
                         ),
                     )
                 )
-            elif (
-                section == "model_improvement"
-                and key in integer_keys
-                and not (
-                    _MODEL_IMPROVEMENT_FAMILY_MIN
-                    <= kval
-                    <= _MODEL_IMPROVEMENT_FAMILY_MAX
-                )
-            ):
-                findings.append(
-                    Finding(
-                        section=section,
-                        key=key,
-                        severity="error",
-                        message=(
-                            f"{section}.{key} must be between "
-                            f"{_MODEL_IMPROVEMENT_FAMILY_MIN} and "
-                            f"{_MODEL_IMPROVEMENT_FAMILY_MAX}, got {kval!r}"
-                        ),
-                    )
-                )
             elif key in numeric_keys and not _is_number(kval):
                 findings.append(
                     Finding(
@@ -466,35 +417,6 @@ def lint_config(cfg: dict) -> list[Finding]:
                         ),
                     )
                 )
-            elif (
-                section == "model_improvement"
-                and key == "allow_cross_tenant"
-                and kval is True
-            ):
-                findings.append(Finding(
-                    section=section,
-                    key=key,
-                    severity="error",
-                    message=(
-                        "model_improvement.allow_cross_tenant is reserved and "
-                        "unsupported; it must remain false"
-                    ),
-                ))
-            elif (
-                section == "model_improvement"
-                and key == "require_signed_receipt"
-                and kval is False
-                and value.get("enable") is True
-            ):
-                findings.append(Finding(
-                    section=section,
-                    key=key,
-                    severity="error",
-                    message=(
-                        "enabled model improvement requires "
-                        "model_improvement.require_signed_receipt = true"
-                    ),
-                ))
 
     findings.extend(_lint_inline_secrets(cfg))
     findings.extend(_lint_group_mappings(cfg))
