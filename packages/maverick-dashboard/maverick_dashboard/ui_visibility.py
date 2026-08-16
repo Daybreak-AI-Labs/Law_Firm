@@ -126,22 +126,6 @@ PAGES: tuple[dict, ...] = (
     # entry while role visibility still protects every direct URL.
     {"path": "/security", "label": "Security & GRC", "group": "Govern",
      "icon": "shield", "floor": "operate", "default": "operate"},
-    {"path": "/security/threats", "label": "Platform Threat Hunter",
-     "group": "Govern", "icon": "shield", "floor": "operate",
-     "default": "operate", "in_nav": False},
-    {"path": "/security/soc", "label": "Environment Threat Hunter",
-     "group": "Govern", "icon": "shield", "floor": "operate",
-     "default": "operate", "in_nav": False},
-    # The Finance workspace: the same chassis over the finance assessment
-    # types (SOX control / fraud risk / ITGC / credit risk / close readiness).
-    # "Financial Risk", not "Finance": this workspace is the SOX / fraud /
-    # ITGC / credit-risk control record, not day-to-day finance operations.
-    {"path": "/finance", "label": "Financial Risk", "group": "Govern",
-     "icon": "spend", "floor": "operate", "default": "operate"},
-    # The partner fleet console: client deployments a partner operates.
-    # Operate floor -- rows carry probe endpoints; mutations are admin (API).
-    {"path": "/partner", "label": "Partner fleet", "group": "Govern",
-     "icon": "graph", "floor": "operate", "default": "operate"},
     # Permissions is deployment plumbing, not day-to-day governance work --
     # it lives with the rest of administration.
     {"path": "/permissions", "label": "Permissions", "group": "Admin",

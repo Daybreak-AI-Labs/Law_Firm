@@ -399,12 +399,6 @@ async def _lifespan(app: FastAPI):
     await _reclaim_orphans()
     await _install_queue_dispatcher()
     await _install_automation_scheduler()
-    try:
-        from maverick_dashboard.security_api import start_hunter_scheduler
-
-        await run_in_threadpool(start_hunter_scheduler)
-    except Exception:  # pragma: no cover - never block startup
-        log.exception("security hunter scheduler not started")
     # The connected-entitlement auto-refresh loop is not started. Upstream it
     # polled the vendor console for tier upgrades; that console is deleted and
     # nothing is gated here (see maverick.entitlements.GATED_FEATURES), so the
@@ -428,12 +422,6 @@ async def _lifespan(app: FastAPI):
     try:
         from maverick.entitlements import stop_refresher
         await run_in_threadpool(stop_refresher)
-    except Exception:  # pragma: no cover - shutdown must never raise
-        pass
-    try:
-        from maverick_dashboard.security_api import stop_hunter_scheduler
-
-        await run_in_threadpool(stop_hunter_scheduler)
     except Exception:  # pragma: no cover - shutdown must never raise
         pass
     await _stop_automation_scheduler()
@@ -693,10 +681,6 @@ _MAX_FINANCE_ANOMALY_BODY_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_GATEWAY_BODY_BYTES = 3 * 1024 * 1024
 _MAX_EVIDENCE_GATEWAY_DELIVERY_BODY_BYTES = 34 * 1024 * 1024
 _EVIDENCE_GATEWAY_PREFIX = "/api/v1/security/assurance/gateway/"
-_SECURITY_HUNTER_BODY_PATHS = {
-    "/api/v1/security/threats/scan",
-    "/api/v1/security/soc/ingest",
-}
 
 
 async def _read_limited_request_body(
@@ -727,38 +711,6 @@ async def _read_limited_request_body(
         if len(body) > max_bytes:
             raise HTTPException(status_code=413, detail=too_large_detail)
     return bytes(body)
-
-
-@app.middleware("http")
-async def bound_security_hunter_body(request: Request, call_next):
-    """Cap hunter JSON before FastAPI/Pydantic parses nested telemetry."""
-    if request.method != "POST" or request.url.path not in _SECURITY_HUNTER_BODY_PATHS:
-        return await call_next(request)
-    try:
-        body = await _read_limited_request_body(
-            request,
-            max_bytes=_MAX_SECURITY_HUNTER_HTTP_BODY_BYTES,
-            too_large_detail="security hunter request body too large",
-        )
-    except HTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-    delivered = False
-
-    async def replay_receive():
-        nonlocal delivered
-        if not delivered:
-            delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.disconnect"}
-
-    # BaseHTTPMiddleware wraps this Request and consults its cached-body marker;
-    # setting only ``_receive`` after consuming the stream makes that wrapper
-    # emit an empty body. Populate both seams so downstream validation receives
-    # the exact bounded bytes once.
-    request._body = body  # noqa: SLF001 - bounded ASGI body replay
-    request._receive = replay_receive  # noqa: SLF001 - bounded ASGI body replay
-    return await call_next(request)
 
 
 @app.middleware("http")
@@ -2470,33 +2422,6 @@ async def model_risk_assurance_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/security/threats", response_class=HTMLResponse)
-async def platform_threats_page(request: Request) -> HTMLResponse:
-    """Internal Maverick platform threat-hunter console."""
-    require_permission(request, "operate")
-    from maverick import platform_hunt
-
-    return templates.TemplateResponse(
-        request, "security_threats.html", {"enabled": platform_hunt.enabled()}
-    )
-
-
-@app.get("/security/soc", response_class=HTMLResponse)
-async def environment_threats_page(request: Request) -> HTMLResponse:
-    """Customer-environment defensive SOC hunter console."""
-    require_permission(request, "operate")
-    from maverick import env_hunt
-
-    return templates.TemplateResponse(
-        request,
-        "security_soc.html",
-        {
-            "enabled": env_hunt.enabled(),
-            "response_execution": env_hunt.response_execution_enabled(),
-        },
-    )
-
-
 @app.get("/savings", response_class=HTMLResponse)
 async def savings_page(request: Request, days: int = 90) -> HTMLResponse:
     """The value dashboard: money saved vs the typical human cost, computed
@@ -2639,16 +2564,6 @@ async def audit_page(request: Request) -> HTMLResponse:
         request, "audit.html",
         {"events": events, "n": n, "day": day, "kind": kind, "kinds": kinds},
     )
-
-
-@app.get("/partner", response_class=HTMLResponse)
-async def partner_page(request: Request) -> HTMLResponse:
-    """The partner fleet console: every client deployment this partner
-    operates -- health, latency, agent version, white-label theme, and the
-    summed value ledgers. Reading is operate-tier; adding/removing tenants
-    (which carry probe URLs + optional tokens) is admin via the API."""
-    require_permission(request, "operate")
-    return templates.TemplateResponse(request, "partner.html", {})
 
 
 @app.get("/audit/binder", response_class=HTMLResponse)

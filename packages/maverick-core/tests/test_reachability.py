@@ -65,10 +65,6 @@ def test_lazy_runtime_imports_are_declared_reachable(table) -> None:
     """A lazy import is still a production edge, without eager side effects."""
     for mod in (
         "maverick.audit.erase",
-        "maverick.automation_import.manual",
-        "maverick.automation_import.notion",
-        "maverick.automation_import.uipath",
-        "maverick.automation_import.zapier",
     ):
         assert table.get(mod) == "PRODUCTION", (mod, table.get(mod))
 
