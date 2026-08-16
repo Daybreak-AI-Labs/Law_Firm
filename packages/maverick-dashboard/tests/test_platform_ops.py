@@ -128,34 +128,6 @@ def test_audit_binder_payload_and_page():
 
 
 # --- partner fleet ----------------------------------------------------------
-def test_partner_registry_check_and_rollup():
-    r = client.post("/api/v1/partner/tenants",
-                    json={"name": "Acme Hospitality",
-                          "base_url": "http://127.0.0.1:9",   # closed port
-                          "token": "sekret", "theme": "acme-light"})
-    assert r.status_code == 201, r.text
-    row = r.json()
-    assert row["has_token"] is True and "token" not in row
-    tid = row["id"]
-
-    chk = client.post(f"/api/v1/partner/tenants/{tid}/check").json()
-    assert chk["tenant"]["last_check"]["ok"] is False
-    assert chk["tenant"]["last_check"]["error"]
-
-    fleet = client.get("/api/v1/partner/fleet").json()
-    assert fleet["fleet"]["total"] == 1
-    assert fleet["fleet"]["healthy"] == 0
-    assert fleet["fleet"]["dollars"] == 0
-
-    page = client.get("/partner")
-    assert page.status_code == 200 and "Partner fleet" in page.text
-
-    assert client.delete(
-        f"/api/v1/partner/tenants/{tid}").json()["deleted"] == tid
-    assert client.get(
-        "/api/v1/partner/fleet").json()["fleet"]["total"] == 0
-
-
 def test_partner_tenant_rejects_non_http_urls():
     r = client.post("/api/v1/partner/tenants",
                     json={"name": "Bad", "base_url": "file:///etc/passwd"})

@@ -2656,14 +2656,6 @@ async def partner_fleet(request: Request, check: int = 0) -> dict:
 
 # ---- audit binder (the regulator-grade evidence pack) ----------------------
 
-def _binder_finance_section() -> dict:
-    """Finance evidence for the binder: posture (with its disclaimer), the
-    structural SoD lint, and the license renewal runway."""
-    from maverick.license_registry import runway
-    return {"posture": _finance_posture(), "sod": _finance_sod(),
-            "licenses": runway()}
-
-
 def _binder_payload(days: int = 90) -> dict:
     """Everything an auditor asks for, assembled from the records themselves:
     per-day chain verification over the signed audit log, the event summary,
@@ -2764,7 +2756,6 @@ def _binder_payload(days: int = 90) -> dict:
         # Finance evidence: control coverage, not an audit opinion — the
         # disclaimer travels with the numbers. Plus the SoD lint and the
         # regulatory-license renewal runway.
-        "finance": _binder_finance_section(),
     }
 
 

@@ -68,7 +68,9 @@ def test_board_payload_with_data(monkeypatch, tmp_path):
 def test_pages_ship_the_board_skeleton_without_slicer(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     c = _client()
-    for path in ("/privacy", "/finance"):
+    # The /finance page went with the finance subsystem; the finance *board
+    # API* is the generic department board and still answers (see above).
+    for path in ("/privacy",):
         r = c.get(path)
         assert r.status_code == 200, (path, r.status_code)
         t = r.text

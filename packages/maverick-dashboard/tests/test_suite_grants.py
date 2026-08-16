@@ -148,31 +148,6 @@ def test_scoped_user_sees_only_granted_departments(monkeypatch, tmp_path):
     assert c.get("/api/v1/departments/nope").status_code == 404
 
 
-def test_finance_operations_and_workspace_require_finance_grant(monkeypatch, tmp_path):
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("[finance_operations]\nenable = true\n", encoding="utf-8")
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "maverick-home"))
-    monkeypatch.setenv("MAVERICK_CONFIG", str(config_path))
-    monkeypatch.setenv("MAVERICK_DASHBOARD_ADMINS", "")
-    from maverick import config
-    from maverick_dashboard import rbac, suite_grants
-
-    config.reset_config_cache()
-    c = _client(monkeypatch, tmp_path)
-    rbac.set_role("user:legal-only", "operator")
-    suite_grants.set_suites("user:legal-only", ["legal"])
-    _as(monkeypatch, "user:legal-only")
-    assert c.get("/api/v1/finance-operations/summary").status_code == 403
-    assert c.get("/finance").status_code == 403
-
-    rbac.set_role("user:finance", "operator")
-    suite_grants.set_suites("user:finance", ["finance"])
-    _as(monkeypatch, "user:finance")
-    assert c.get("/api/v1/finance-operations/summary").status_code == 200
-    assert c.get("/finance").status_code == 200
-    config.reset_config_cache()
-
-
 def test_unscoped_user_and_admin_are_unrestricted(monkeypatch, tmp_path):
     c = _client(monkeypatch, tmp_path)
     from maverick_dashboard import suite_grants
