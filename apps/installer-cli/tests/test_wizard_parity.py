@@ -201,6 +201,51 @@ def test_write_config_omits_knowledge_by_default(tmp_path: Path, monkeypatch):
     assert "knowledge" not in parsed
 
 
+def test_write_config_round_trips_the_vendor_acknowledgement(
+    tmp_path: Path, monkeypatch,
+):
+    """The wizard's answer has to reach the thing that enforces it.
+
+    build_embedder refuses a hosted provider unless this key is true, so a
+    wizard that asked the question and dropped the answer would leave the
+    operator with a knowledge base that will not index and no clue why.
+    """
+    from maverick import config
+    from maverick_knowledge.embed import HostedEmbedder, build_embedder
+
+    parsed = _write_full_config(
+        tmp_path, monkeypatch,
+        knowledge={"enable": True, "embedder": "hosted", "store": "sqlite",
+                   "allow_external_embedding": True},
+    )
+    assert parsed["knowledge"]["allow_external_embedding"] is True
+
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: parsed)
+    monkeypatch.delenv("MAVERICK_KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING", raising=False)
+    monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
+    resolved = config.get_knowledge()
+    assert resolved["allow_external_embedding"] is True
+    resolved["api_key"] = "k"
+    assert isinstance(build_embedder(resolved), HostedEmbedder)
+
+
+def test_knowledge_defaults_refuse_external_embedding(monkeypatch):
+    """Answering no (or never being asked) leaves documents on the box."""
+    from maverick import config
+    from maverick_knowledge.embed import build_embedder
+
+    monkeypatch.setattr(
+        config, "load_config",
+        lambda *a, **k: {"knowledge": {"enable": True, "embedder": "hosted"}},
+    )
+    monkeypatch.delenv("MAVERICK_KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING", raising=False)
+    monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
+    resolved = config.get_knowledge()
+    assert resolved["allow_external_embedding"] is False
+    with pytest.raises(RuntimeError, match="sends document text to a third-party"):
+        build_embedder(resolved)
+
+
 def test_write_config_emits_regulated_scalars(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,

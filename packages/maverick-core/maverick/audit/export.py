@@ -27,6 +27,7 @@ _CEF_SEVERITY = {
     "shield_block": 7,
     "capability_denied": 7,
     "egress_blocked": 7,
+    "knowledge_egress": 6,
     "halt": 9,
     "consent_result": 5,
     "secret_redacted": 5,

@@ -1246,6 +1246,19 @@ def pick_knowledge() -> dict[str, Any]:
         default="hosted        - Voyage AI (needs VOYAGE_API_KEY)",
     ).split()[0]
     out["embedder"] = embedder
+    if embedder in ("hosted", "cohere"):
+        console.print(
+            "[dim]  Indexing sends the DOCUMENTS themselves to that vendor, in "
+            "full — not a prompt about them. For privileged client material "
+            "that is a decision to make on purpose, so it is off until you say "
+            "yes here. Every batch that leaves is written to the audit record "
+            "(vendor, model, chunk count, content hash — never the text). "
+            "Answer no and pick 'local' instead to embed on-box with no "
+            "egress.[/dim]"
+        )
+        out["allow_external_embedding"] = _q_confirm(
+            "  Send document text to the embedding vendor?", default=False,
+        )
     store = _q_select(
         "  Vector store:",
         [

@@ -337,14 +337,17 @@ class TestBuildEmbedderFailLoud:
         monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
         # Default provider is hosted; with no key it must raise, not quietly
         # return a hash embedder that scores garbage against the corpus.
+        # allow_external_embedding is set so this reaches the key check --
+        # the vendor-acknowledgement gate is covered in test_embed_egress.py.
         with pytest.raises(RuntimeError, match="API key"):
-            build_embedder({})
+            build_embedder({"allow_external_embedding": True})
 
     def test_hosted_with_key_builds_hosted(self, monkeypatch):
         from maverick_knowledge.embed import HostedEmbedder, build_embedder
 
         monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        e = build_embedder({"embedder": "hosted", "api_key": "k", "dim": 8})
+        e = build_embedder({"embedder": "hosted", "api_key": "k", "dim": 8,
+                            "allow_external_embedding": True})
         assert isinstance(e, HostedEmbedder) and e.dim == 8
 
     def test_unknown_provider_raises(self, monkeypatch):
@@ -725,7 +728,8 @@ class TestCohereEmbedder:
         from maverick_knowledge.embed import CohereEmbedder, build_embedder
 
         monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        e = build_embedder({"embedder": "cohere", "api_key": "k", "dim": 1024})
+        e = build_embedder({"embedder": "cohere", "api_key": "k", "dim": 1024,
+                            "allow_external_embedding": True})
         assert isinstance(e, CohereEmbedder) and e.dim == 1024
 
     def test_build_cohere_without_key_raises(self, monkeypatch):
@@ -735,7 +739,8 @@ class TestCohereEmbedder:
         monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
         monkeypatch.delenv("COHERE_API_KEY", raising=False)
         with pytest.raises(RuntimeError, match="API key"):
-            build_embedder({"embedder": "cohere"})
+            build_embedder({"embedder": "cohere",
+                            "allow_external_embedding": True})
 
     def test_build_cohere_reads_cohere_api_key_env(self, monkeypatch):
         from maverick_knowledge.embed import CohereEmbedder, build_embedder
@@ -743,7 +748,8 @@ class TestCohereEmbedder:
         monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
         monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
         monkeypatch.setenv("COHERE_API_KEY", "from-env")
-        e = build_embedder({"embedder": "cohere"})
+        e = build_embedder({"embedder": "cohere",
+                            "allow_external_embedding": True})
         assert isinstance(e, CohereEmbedder) and e.api_key == "from-env"
 
 
