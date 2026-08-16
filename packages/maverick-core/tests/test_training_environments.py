@@ -9,9 +9,9 @@ import pytest
 from maverick.training import environments as env
 
 EXPECTED_PACK_DIGESTS = {
-    "article28_clause_v1": "1f8ac110e1b974300fcb9e2826787770efbdc34eb036ba2f28bcdfdeb8dba613",
-    "dsar_routing_v1": "eb34df2f26185fa39441eab8a4007cb26c26228f954dd2856a613075d8ad2a9b",
-    "privacy_assessment_v1": "d8c2bd1b2d644b148082272c12a540c8003ae7c7bd26a5b889c0a8083f2cba75",
+    "article28_clause_v1": "1f8ac110e1b974300fcb9e2826787770efbdc34eb036ba2f28bcdfdeb8dba613",  # pragma: allowlist secret
+    "dsar_routing_v1": "eb34df2f26185fa39441eab8a4007cb26c26228f954dd2856a613075d8ad2a9b",  # pragma: allowlist secret
+    "privacy_assessment_v1": "d8c2bd1b2d644b148082272c12a540c8003ae7c7bd26a5b889c0a8083f2cba75",  # pragma: allowlist secret
 }
 
 
