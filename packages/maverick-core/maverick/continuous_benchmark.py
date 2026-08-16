@@ -1,12 +1,19 @@
-"""Continuous benchmarking: record benchmark scores over time, flag regressions.
+"""Score history over time, with regression detection.
 
-The benchmark *harnesses* (swe_bench, eval_gaia, eval_tau2, terminal_bench) score
-a single run; this is the durable layer on top — append each run's score to a
-per-benchmark history (keyed by name + commit) and detect when a new score
-regresses materially below the recent baseline. Pure, dependency-free, JSON-backed
-so it runs in CI and locally. ``record_result`` / ``detect_regression`` are the
+Append a scored run to a per-suite history (keyed by name + commit) and detect
+when a new score regresses materially below the recent baseline. Whoever
+produces the score decides what it means — this layer only remembers it. Pure,
+dependency-free, JSON-backed. ``record_result`` / ``detect_regression`` are the
 unit-tested core; the ``bench_track`` tool persists history under
 ``~/.maverick/benchmarks/``.
+
+This survived the prune for one reason: :func:`maverick.dreaming.benchmark_regressed`
+reads it as the learning-safety canary. While a tracked suite is regressing,
+that cycle's freshly distilled skills are quarantined rather than promoted —
+never add learned behavior on red. The competitive eval harnesses that used to
+feed it (GAIA, SWE-bench, tau2, terminal-bench) are gone; the canary now reads
+whatever this deployment chooses to score, and reads an empty history as "not
+regressing".
 """
 from __future__ import annotations
 

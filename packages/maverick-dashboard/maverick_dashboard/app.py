@@ -6136,37 +6136,6 @@ async def embed_demo_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "embed_demo.html", {})
 
 
-def _sparkline_points(values: list[float], width: int = 160, height: int = 36,
-                      pad: int = 3) -> str:
-    """SVG polyline ``points`` for a score series (server-side sparkline)."""
-    if not values:
-        return ""
-    lo, hi = min(values), max(values)
-    span = (hi - lo) or 1.0
-    n = len(values)
-    pts = []
-    for i, v in enumerate(values):
-        x = pad + (width - 2 * pad) * (i / (n - 1) if n > 1 else 0.5)
-        y = pad + (height - 2 * pad) * (1 - (v - lo) / span)
-        pts.append(f"{x:.1f},{y:.1f}")
-    return " ".join(pts)
-
-
-@app.get("/benchmarks", response_class=HTMLResponse)
-async def benchmarks_page(request: Request) -> HTMLResponse:
-    """Continuous-benchmark history: this deployment's recorded runs only.
-
-    Per-suite trend sparklines + a comparison table over the real
-    ``~/.maverick/benchmarks/history.json`` store. No competitor numbers are
-    shown or invented here — see docs/comparison.md for the qualitative
-    comparison."""
-    from .api import _benchmark_snapshot
-    snap = _benchmark_snapshot()
-    for s in snap["suites"]:
-        s["spark"] = _sparkline_points([e["score"] for e in s["entries"]])
-    return templates.TemplateResponse(request, "benchmarks.html", snap)
-
-
 @app.get("/walkthroughs", response_class=HTMLResponse)
 async def walkthroughs_page(request: Request) -> HTMLResponse:
     """Locally exported run walkthrough videos (no external hosting).

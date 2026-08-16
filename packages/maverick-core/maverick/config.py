@@ -2079,37 +2079,6 @@ def get_self_modify() -> dict:
     return {"enable": cfg.get("enable") is True, "editable_paths": editable}
 
 
-def get_adapter_rung() -> dict:
-    """Return the ``[adapter_rung]`` section (governed in-tenant weights adaptation).
-
-    OFF by default AND inert until ``base_model`` is set: the rung trains LoRA
-    adapters on tenant-provenance data and promotes them through the existing
-    ``weights`` rung (evidence + non-escalation + Ed25519 approval + rollback,
-    maverick.adapter_rung). ``base_model`` is an operator-chosen local spec
-    (e.g. ``ollama:<model-id>``; never hard-coded). Auto-serving of a promoted
-    adapter is wired for the ``ollama``/``local`` providers (via the Ollama
-    Modelfile ``ADAPTER`` directive); other providers promote and ledger
-    normally but are served by operator wiring. For the ``dpo-lora`` trainer the
-    provider prefix is stripped and the remaining id must resolve for
-    ``transformers.from_pretrained`` (an HF id or local path) -- the Ollama
-    serving tag and the HF training id are not always the same string, so pick a
-    ``base_model`` valid for both, or a local path. ``allow_model_output`` opts
-    in to training on frontier-model completions -- refused by default (the
-    distillation-ToS guard); ``allow_synthetic`` likewise for generated data.
-    ``trainer`` is ``stub`` (deterministic, proof/test path) or ``dpo-lora``
-    (real QLoRA via the [training] extra)."""
-    cfg = load_config().get("adapter_rung", {})
-    return {
-        "enable": _strict_config_bool(cfg, "enable", False),
-        "base_model": (str(cfg.get("base_model", "")).strip() or None),
-        "store_dir": (str(cfg.get("store_dir", "")).strip() or None),
-        "trainer": (str(cfg.get("trainer", "")).strip() or "stub"),
-        "allow_synthetic": _strict_config_bool(cfg, "allow_synthetic", False),
-        "allow_model_output": _strict_config_bool(
-            cfg, "allow_model_output", False),
-    }
-
-
 def get_model_improvement() -> dict:
     """Return fail-closed specialist-model improvement settings.
 

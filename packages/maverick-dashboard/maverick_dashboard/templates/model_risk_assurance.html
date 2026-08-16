@@ -260,10 +260,10 @@
       Download exact signed packet
     </button>
     {% endif %}
-    <a class="btn" href="/benchmarks">Governance benchmark dashboard</a>
-    {# The published-benchmark link pointed at the upstream repo's
-       benchmarks/GOVERNANCE_FRONTIER_RESULTS.md, which this fork does not
-       carry. Dropped rather than left pointing at a 404. #}
+    {# Both benchmark links are gone: the published one pointed at the upstream
+       repo's GOVERNANCE_FRONTIER_RESULTS.md, and the local /benchmarks page
+       viewed a score store whose harnesses this fork does not carry. Dropped
+       rather than left pointing at a 404. #}
     {% if gateway_admin and gateway_view.demo_seed_allowed %}
     <span class="assurance-demo">SYNTHETIC DEMO</span>
     <button class="btn" id="gateway-demo-seed" type="button">

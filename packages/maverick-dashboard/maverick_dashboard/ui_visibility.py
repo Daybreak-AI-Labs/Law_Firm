@@ -97,8 +97,6 @@ PAGES: tuple[dict, ...] = (
      "floor": "view", "default": "view", "in_nav": False},
     {"path": "/providers", "label": "Providers", "group": "Observe", "icon": "providers",
      "floor": "view", "default": "view"},
-    {"path": "/benchmarks", "label": "Benchmarks", "group": "Observe", "icon": "bench",
-     "floor": "view", "default": "view"},
     {"path": "/flows/analytics", "label": "Flow Analytics", "group": "Observe", "icon": "bench",
      "floor": "view", "default": "view"},
     {"path": "/learning", "label": "Learning", "group": "Observe", "icon": "learned",
@@ -205,7 +203,7 @@ _NAV_FOLD: frozenset[str] = frozenset({
     # Operate — reached from Goals / Agent Factory / Workforce
     "/start", "/projects", "/roles", "/fleets",
     # Observe — analytical/advanced views reached from Overview & friends
-    "/discovery", "/providers", "/benchmarks", "/flows/analytics",
+    "/discovery", "/providers", "/flows/analytics",
     "/walkthroughs", "/facts", "/plan-tree-3d",
     # Govern — advanced governance surfaces
     "/simulate", "/compartments", "/replay", "/trust",

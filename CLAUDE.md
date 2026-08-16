@@ -59,6 +59,18 @@
   cryptography needs cffi — post-create.sh now installs it).
 - pytest aborts the WHOLE run on any collection error — 5 broken imports kept
   9000 green tests from running. Fix imports before judging the suite.
+- **DELETING A PACKAGE LEAVES A `__pycache__` DIR THAT KEEPS IT IMPORTABLE.**
+  `git rm -r maverick/foo/` removes the tracked `.py` files, but `foo/` itself
+  survives on disk holding `__pycache__/`, and Python then imports `foo` as an
+  implicit NAMESPACE PACKAGE. `import maverick.foo` keeps working locally while
+  failing on a fresh CI checkout. Git cannot warn you — it does not track empty
+  directories, so `git status` is clean. This masked a real breakage for a whole
+  CI round-trip: the local suite was 17,669 green while CI failed on
+  `No module named 'maverick.training'`. After deleting any package, run
+  `find packages -type d -name __pycache__ -prune -o -type d -empty -print` (or
+  just `git clean -xdf` the package tree) and confirm the directory is gone.
+  `python -m maverick.reachability --regen` is the other detector: entries
+  vanishing from the lock that you did NOT intend to delete are the signal.
 - `pip install -e .` at repo root fails: the root pyproject.toml is uv-workspace
   + tool config only (no `[project]`). Install per-package.
 - `python3 -m build` without pypa-build installed produces a misleading
@@ -248,6 +260,25 @@ and never mark the PR work done until the body has been verified clean.
 | Bulk-rename pack references | caught in review | A blanket `\bfinance_anomaly\b` rewrite also hit `maverick/tools/finance_anomaly.py` — several pack names are ALSO tool/module names. Check for a `packages/**/<name>.py` collision before any roster-wide rename. |
 | Prune a subsystem by name | caught twice | `marketplace/` is NOT all ecosystem: `storefront.py` backs the dashboard's pack/connector browser and `ratings.py` is the operator's OWN star ratings on goal templates. Deleting the package wholesale broke both. Read each module's docstring before deleting a package whose *name* sounds like product surface. |
 | Bulk-rebrand prose | failed, then fixed | A regex swapping the old product name -> `the platform` produced "The the platform Handbook" and `cd the platform` in shell blocks. The fix was to swap **proper noun for proper noun** (-> `Maverick`, the name the CLI/packages/env vars already used): grammar and sentence position are preserved exactly, so no per-site judgement is needed. Reach for a noun-for-noun swap before a phrase substitution. |
+| Delete a package, run the suite | green locally, RED in CI | Leftover `__pycache__` dirs kept deleted packages importable as namespace packages. Local: 17,669 passed. CI: `No module named 'maverick.training'`. See the `__pycache__` rule under Environment — trust a fresh checkout, not a warm tree. |
+| Prune the OSV lockfile surface | red in CI, green locally | The `audit` job passed `--lockfile apps/desktop/src-tauri/Cargo.lock` after the desktop app was deleted; `osv-scanner` exits **127** on a missing lockfile, so the vulnerability scan died before scanning anything. `test_install_supply_chain` asserted that same path was present *in the workflow text*, so test and workflow agreed with each other and neither agreed with the tree. A path asserted as a string is not a path that exists — assert `.exists()`. |
+
+## Double-entry records (the recurring shape of every miss above)
+
+Several artifacts commit to the same fact in two places, and CI only compares
+the two copies — never either copy against reality. Change one, regenerate the
+other, and confirm the pair still describes the tree:
+
+- `environment_packs.lock.json` <-> `EXPECTED_PACK_DIGESTS`
+- `migrations.lock.json` <-> the migration SQL
+- `.secrets.baseline` <-> the source hashes
+- `reachability.lock.json` <-> the real import graph
+- `osv-scanner.toml` + the `--lockfile` list <-> the lockfiles on disk
+- `PAGES`/`_SECONDARY` in `ui_visibility.py` <-> the registered dashboard routes
+
+Regenerate a lock only by REPLAYING THE LOADER'S OWN VALIDATION (e.g. monkeypatch
+`validate_environment_pack` to stash the pack before the digest comparison), never
+by disabling the check that is failing.
 
 ## Pack-reference gotchas
 
