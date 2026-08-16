@@ -179,14 +179,14 @@ def test_cohere_embed_records_the_batch(monkeypatch, recorded):
 
 def test_record_never_carries_the_chunk_text(monkeypatch, recorded):
     """The event documents the departure; it must not copy the exposure."""
-    secret = "Bjerken and Day client memo, privileged and confidential"
+    privileged_text = "Bjerken and Day client memo, privileged and confidential"
     monkeypatch.setitem(sys.modules, "httpx", _fake_httpx(
         {}, {"data": [{"index": 0, "embedding": [0.0]}]}))
     HostedEmbedder(model="m", base_url="https://vendor.example/v1",
-                   api_key="k").embed([secret])
+                   api_key="k").embed([privileged_text])
 
     blob = repr(recorded[0])
-    assert secret not in blob
+    assert privileged_text not in blob
     for word in ("Bjerken", "privileged", "memo"):
         assert word not in blob
 
@@ -274,6 +274,7 @@ def test_deterministic_embedder_records_nothing(recorded):
 def test_host_of_strips_everything_but_the_host():
     """The audit record names the vendor, not a URL that could carry a key."""
     assert embed_mod._host_of(
-        "https://user:tok@api.voyageai.com:443/v1/embeddings?k=v"
+        # A deliberately credential-bearing URL: stripping it is the assertion.
+        "https://user:tok@api.voyageai.com:443/v1/embeddings?k=v"  # pragma: allowlist secret
     ) == "api.voyageai.com"
     assert embed_mod._host_of("not a url") == ""
