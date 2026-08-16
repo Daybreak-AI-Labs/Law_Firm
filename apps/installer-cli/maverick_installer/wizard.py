@@ -2141,15 +2141,6 @@ def pick_advanced() -> dict[str, Any]:
             "provide approver public keys (fails closed until you do).",
             default=False,
         ),
-        "self_modify": _q_confirm(
-            "Enable RESEARCH-ONLY code evolution? The workforce may propose diffs to a "
-            "narrow editable allowlist, evaluate them in isolated no-egress containers, "
-            "and archive development telemetry (maverick.self_modify). It NEVER adopts "
-            "code: production adoption remains disabled until an external one-shot "
-            "evaluator and PREPARE/CAS/COMMIT integration exist. Off by default and inert "
-            "until editable_paths plus at least two discriminating eval_tests are set.",
-            default=False,
-        ),
         "skill_synthesis": _q_confirm(
             "Test-time skill synthesis? Write a short task-specific cheat-sheet for "
             "each goal before working on it.",
@@ -3887,25 +3878,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             lines.append("require_signed_approval = true")
             lines.append('# approver_keys = ["<ed25519-pubkey-hex>"]')
             lines.append('# approver_keys_dir = "/etc/maverick/approvers"')
-    if advanced.get("self_modify"):
-        lines.append("")
-        lines.append("[self_modify]")
-        lines.append("# Research-only DGM cycles (maverick.self_modify): propose a diff,")
-        lines.append("# enforce the reference monitor, evaluate baseline/candidate in distinct")
-        lines.append("# no-egress non-root containers, and archive development telemetry.")
-        lines.append("# This runner NEVER applies or promotes code. Production adoption remains")
-        lines.append("# disabled until a one-shot external evaluator, evidence/base/tenant-bound")
-        lines.append("# approval manifest, and durable PREPARE/CAS/COMMIT integration exist.")
-        lines.append("# Inert until both gates are on, editable_paths is narrow, and at least")
-        lines.append("# two discriminating eval_tests are configured. The tests are visible to")
-        lines.append("# the candidate and are a development challenge corpus, not sealed proof.")
-        lines.append("# Also select a container sandbox with require_container=true,")
-        lines.append("# allow_network=false, allow_root=false, and finite process/memory limits.")
-        lines.append("enable = true")
-        lines.append('# editable_paths = ["packages/maverick-core/maverick/domains/*.toml"]')
-        lines.append('# eval_tests = ["path/test_feature.py::case_a",')
-        lines.append('#               "path/test_feature.py::case_b"]')
-        lines.append('# eval_command = "python3 -m pytest -q"')
     if advanced.get("rehearsal"):
         lines.append("")
         lines.append("[rehearsal]")

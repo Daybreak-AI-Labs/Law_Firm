@@ -293,16 +293,6 @@ class LearningToggleIn(BaseModel):
     enabled: bool
 
 
-class DgmToggleIn(BaseModel):
-    """Request the separate, default-off DGM research harness.
-
-    Enabling requires an explicit acknowledgement because this permits code
-    proposal/evaluation. It still never authorizes live adoption.
-    """
-    enabled: bool
-    acknowledge_research_only: bool = False
-
-
 class FlowAutonomyIn(BaseModel):
     """Toggle the autonomous flow self-improvement loop ([flows] auto_evolve /
     auto_apply). Its own opt-in, distinct from the blanket learning button. Only

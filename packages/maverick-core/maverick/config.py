@@ -2095,21 +2095,6 @@ def get_jit_rl() -> dict:
     }
 
 
-def get_self_modify() -> dict:
-    """Return the ``[self_modify]`` section (governed code self-modification).
-
-    OFF by default AND inert until an editable allowlist is set: the engine
-    (maverick.self_modify) refuses any patch outside ``editable_paths`` and every
-    control-plane path unconditionally. ``editable_paths`` is a list of
-    repo-relative fnmatch globs the agent MAY propose changes to; empty (the
-    default) means nothing is editable."""
-    cfg = load_global_config().get("self_modify", {})
-    paths = cfg.get("editable_paths")
-    editable = ([str(p).strip() for p in paths if str(p).strip()]
-                if isinstance(paths, list) else [])
-    return {"enable": cfg.get("enable") is True, "editable_paths": editable}
-
-
 def get_model_improvement() -> dict:
     """Return fail-closed specialist-model improvement settings.
 

@@ -343,7 +343,7 @@ def _dump(data: dict) -> str:
     ]
     # "flows" carries the autonomous self-improvement knobs (auto_evolve/auto_apply,
     # both booleans) -- persisted here so set_flow_autonomy survives a restart.
-    for section in ("capabilities", "features", "flows", "self_modify", "ekko",
+    for section in ("capabilities", "features", "flows", "ekko",
                     "security_ops", "threat_hunt", "env_hunt",
                     "security_suite_control",
                     *_LEARNING_SECTIONS):
@@ -633,65 +633,6 @@ def set_learning(enabled: bool, *, actor: str = "local") -> None:
             raise RuntimeError("global learning control audit could not be persisted")
         _write(data)
         reset_config_cache()
-
-
-def set_dgm(
-    enabled: bool,
-    *,
-    actor: str = "local",
-    acknowledged: bool = False,
-) -> dict:
-    """Set only the canonical, default-off DGM request bit.
-
-    Editable surfaces, challenge tests, evaluator policy and adoption authority
-    are deliberately not dashboard-editable. The production runner rechecks all
-    of them and never adopts code.
-    """
-    with _locked():
-        from maverick import self_modify
-        from maverick.config import reset_config_cache
-
-        before_status = self_modify.production_status()
-        blocker_codes = {item["code"] for item in before_status["blockers"]}
-        if before_status["control_managed"]:
-            raise PermissionError("a higher-precedence deployment policy owns DGM")
-        if "config_source_error" in blocker_codes:
-            raise PermissionError("an active global config source is invalid")
-        if enabled and not acknowledged:
-            raise ValueError("research-only acknowledgement is required")
-        if enabled and any(code.startswith("invalid_") for code in blocker_codes):
-            raise PermissionError("DGM boolean configuration is invalid")
-        before = _load_overlay_for_update()
-        data = json.loads(json.dumps(before))
-        data.setdefault("self_modify", {})["enable"] = bool(enabled)
-        # The global audit entry is the durable authorization record; the
-        # subsequent atomic overlay replacement is the commit. Record the
-        # authorization before publishing so an audit failure can never leave
-        # even a transiently observable enabled state.
-        from maverick.audit import EventKind, audit_event
-
-        audited = audit_event(
-            EventKind.LEARNING_CONTROL_CHANGED,
-            _global=True,
-            control="self_modify",
-            enabled=bool(enabled),
-            actor=actor,
-            acknowledged=bool(acknowledged),
-            previous_requested=bool(before_status["requested"]),
-            previous_effective=bool(before_status["effective"]),
-            previous_state=before_status["state"],
-            phase="authorized",
-        )
-        if not audited:
-            raise RuntimeError("global DGM control audit could not be persisted")
-        _write(data)
-        reset_config_cache()
-        after = self_modify.production_status()
-        if bool(after["requested"]) != bool(enabled):
-            _write(before)
-            reset_config_cache()
-            raise PermissionError("a higher-precedence deployment policy owns DGM")
-        return after
 
 
 def _higher_precedence_ekko_enable_owner() -> str | None:
@@ -1007,7 +948,7 @@ __all__ = [
     "LEARNING_SUBSYSTEMS", "load_overlay", "set_provider", "clear_provider",
     "SecuritySuiteConfigUnavailable", "SecuritySuiteRevisionConflict",
     "security_suite_revision",
-    "set_dgm", "set_ekko", "set_security_suite",
+    "set_ekko", "set_security_suite",
     "set_toggle", "set_learning", "set_flow_autonomy", "state", "set_channel", "clear_channel",
     "channels_state",
 ]

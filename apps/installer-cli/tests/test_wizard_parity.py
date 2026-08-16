@@ -917,49 +917,6 @@ def test_pick_advanced_includes_learning_toggles(monkeypatch):
         assert key in adv, f"{key} missing from pick_advanced()"
 
 
-def test_pick_advanced_defaults_governed_learning_on_but_dgm_off(monkeypatch):
-    """The advanced wizard's Enter path keeps DGM as a separate opt-in."""
-    from maverick_installer import wizard
-
-    monkeypatch.setattr(
-        wizard,
-        "_q_confirm",
-        lambda *a, default=False, **kw: default,
-    )
-    monkeypatch.setattr(
-        wizard,
-        "_q_select",
-        lambda *a, default=None, **kw: default,
-    )
-    monkeypatch.setattr(
-        wizard,
-        "_q_text",
-        lambda *a, default="", **kw: default,
-    )
-
-    advanced = wizard.pick_advanced()
-
-    governed_learning = {
-        "reflexion",
-        "self_harness",
-        "dreaming",
-        "skill_synthesis",
-        "experience_guidance",
-        "credit_assignment",
-        "causal_promotion",
-        "factory_learning",
-        "evaluator_evolution",
-        "rehearsal",
-        "data_engine",
-        "operations_scientist",
-        "consequence",
-    }
-    assert all(advanced[key] is True for key in governed_learning)
-    assert advanced["structured_verifier_off"] is False
-    assert advanced["jit_rl_off"] is False
-    assert advanced["self_modify"] is False
-
-
 def test_write_config_disables_reasoning_reward(tmp_path: Path, monkeypatch):
     # The rubric verifier is on by default; the wizard opt-out writes enable=false.
     parsed = _write_full_config(
@@ -1026,33 +983,9 @@ def test_write_config_reasoning_reward_both_keys_one_table(tmp_path: Path, monke
     assert parsed["reasoning_reward"]["audit_rewards"] is True
 
 
-def test_pick_advanced_includes_self_modify(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_advanced
-    assert "self_modify" in pick_advanced()
-
-
-def test_write_config_emits_self_modify(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced={"self_modify": True})
-    assert parsed["self_modify"]["enable"] is True
-    from maverick import config
-    monkeypatch.setattr(config, "load_global_config", lambda *a, **k: parsed)
-    resolved = config.get_self_modify()
-    assert resolved["enable"] is True
-    assert resolved["editable_paths"] == []  # allowlist stays commented -> inert
-    body = (tmp_path / "config.toml").read_text(encoding="utf-8")
-    assert "Research-only DGM cycles" in body
-    assert "runner NEVER applies or promotes code" in body
-    assert "two discriminating eval_tests" in body
-    assert "require_container=true" in body
-    assert '# eval_tests = ["path/test_feature.py::case_a",' in body
-
-
-@pytest.mark.parametrize("advanced", [{}, {"self_modify": False}])
-def test_write_config_omits_self_modify_when_off(
-    tmp_path: Path, monkeypatch, advanced,
-):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced=advanced)
+def test_write_config_never_emits_self_modify(tmp_path: Path, monkeypatch):
+    """The DGM rung is deleted; no wizard path may write its section back."""
+    parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
     assert "self_modify" not in parsed
 
 

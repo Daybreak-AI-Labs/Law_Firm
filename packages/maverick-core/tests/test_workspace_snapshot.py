@@ -91,22 +91,6 @@ def test_restore_removes_files_added_after_snapshot(tmp_path):
     assert res["removed"] == 3   # added.txt + newdir/nested.txt + empty newdir
 
 
-def test_revert_change_reports_success_and_drops_added_file(tmp_path):
-    """End-to-end via revert_change: it returns True AND the additive file is
-    removed (the finding: revert returned True while the added file lingered)."""
-    from maverick.self_modify_apply import revert_change
-
-    src = _src(tmp_path)
-    store = tmp_path / "snaps"
-    man = create_snapshot(src, store, label="cp")
-    (src / "leftover.txt").write_text("added by a patch", encoding="utf-8")
-
-    ok = revert_change(man["id"], tree=src, store=store)
-
-    assert ok is True
-    assert not (src / "leftover.txt").exists()
-
-
 def test_ids_increment_and_list_newest_first(tmp_path):
     src = _src(tmp_path)
     store = tmp_path / "snaps"

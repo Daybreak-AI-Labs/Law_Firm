@@ -63,7 +63,6 @@ from .api_schemas import (
     ConnectionIn,
     CopilotIn,
     DeliverableEditIn,
-    DgmToggleIn,
     DocDiscoverIn,
     DpaFromDocumentIn,
     DpaReviewIn,
@@ -10056,16 +10055,8 @@ def _learning_snapshot(request: Request) -> dict:
             }
         except Exception:  # pragma: no cover -- the moat view never 500s on a sub-read
             flow_autonomy = None
-    dgm = None
-    if owner is None:
-        try:
-            from maverick import self_modify
-            dgm = self_modify.production_status()
-        except Exception:  # pragma: no cover -- status is fail-closed in core
-            dgm = None
     return {
         "components": components,
-        "dgm": dgm,
         "flow_autonomy": flow_autonomy,
         "accumulated": accumulated,
         "components_on": sum(1 for c in components if c["on"]),
@@ -10106,59 +10097,6 @@ async def set_learning_endpoint(request: Request, payload: LearningToggleIn) -> 
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     from maverick.config import reset_config_cache
-    reset_config_cache()
-    return _learning_snapshot(request)
-
-
-@router.post("/learning/dgm")
-async def set_dgm_endpoint(request: Request, payload: DgmToggleIn) -> dict:
-    """Arm/disarm research-only DGM without starting a cycle.
-
-    This deployment-global control changes only ``[self_modify] enable``. The
-    runner independently attests its editable surface, challenge corpus,
-    budget, Git snapshot, HALT and evaluator before model execution, and has no
-    live code-adoption path.
-    """
-    require_global_permission(request, "admin")
-    if payload.enabled and not payload.acknowledge_research_only:
-        raise HTTPException(
-            status_code=400,
-            detail="acknowledge_research_only=true is required to enable DGM",
-        )
-    from maverick import self_modify
-    from maverick.config import reset_config_cache
-    before = self_modify.production_status()
-    blocker_codes = {item["code"] for item in before["blockers"]}
-    if "config_source_error" in blocker_codes:
-        raise HTTPException(
-            status_code=409,
-            detail="DGM control refused while an active global config source is invalid",
-        )
-    if before["control_managed"]:
-        owner = {
-            "environment": "MAVERICK_SELF_MODIFY in the deployment environment",
-            "config_overlay": "MAVERICK_CONFIG_OVERLAY",
-        }.get(before["managed_by"], "deployment policy")
-        raise HTTPException(
-            status_code=409,
-            detail=f"DGM is managed by higher-precedence {owner}",
-        )
-    if payload.enabled and any(code.startswith("invalid_") for code in blocker_codes):
-        raise HTTPException(
-            status_code=409,
-            detail="DGM enable refused until its boolean configuration is valid",
-        )
-    from maverick_dashboard import settings_store
-    try:
-        settings_store.set_dgm(
-            payload.enabled,
-            actor=caller_principal(request) or "local",
-            acknowledged=payload.acknowledge_research_only,
-        )
-    except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     reset_config_cache()
     return _learning_snapshot(request)
 

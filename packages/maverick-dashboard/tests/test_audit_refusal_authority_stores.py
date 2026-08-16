@@ -113,32 +113,6 @@ def test_learning_control_refusal_happens_before_overlay_write(monkeypatch):
     assert writes == []
 
 
-def test_dgm_control_refusal_happens_before_overlay_write(monkeypatch):
-    from maverick import self_modify
-    from maverick_dashboard import settings_store
-
-    status = {
-        "control_managed": False,
-        "blockers": [],
-        "requested": False,
-        "effective": False,
-        "state": "disabled",
-    }
-    writes = []
-    monkeypatch.setattr(self_modify, "production_status", lambda: status)
-    monkeypatch.setattr(settings_store, "_write", writes.append)
-    _audit_refuses(monkeypatch)
-
-    with pytest.raises(AuditRefused):
-        settings_store.set_dgm(
-            True,
-            actor="user:admin",
-            acknowledged=True,
-        )
-
-    assert writes == []
-
-
 def test_ekko_control_refusal_happens_before_overlay_write(monkeypatch):
     from maverick import config, ekko_control
     from maverick_dashboard import settings_store
