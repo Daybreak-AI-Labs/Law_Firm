@@ -288,7 +288,6 @@ jobs:
             --config osv-scanner.toml \
             --lockfile "$python_lock" \
             --lockfile rust/Cargo.lock \
-            --lockfile go/model-proxy/go.mod \
             --format json \
             --output-file "$report"
       - name: Upload cross-ecosystem vulnerability report
@@ -310,7 +309,6 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-channels \
-            -e ./packages/maverick-evolve \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
@@ -504,7 +502,6 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-channels \
-            -e ./packages/maverick-evolve \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
@@ -599,7 +596,6 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-channels \
-            -e ./packages/maverick-evolve \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
@@ -763,4 +759,4 @@ jobs:
           docker run --rm maverick:ci dashboard --help
           docker run --rm maverick:ci mcp --help
           docker run --rm --entrypoint python maverick:ci -c \
-            "import maverick_evolve, maverick_knowledge"
+            "import maverick_knowledge"

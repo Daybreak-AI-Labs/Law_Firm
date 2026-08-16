@@ -6,7 +6,7 @@ set -euo pipefail
 pip install -e ./packages/maverick-core
 pip install --no-deps -e ./packages/maverick-shield
 pip install --no-deps -e ./packages/maverick-channels
-pip install --no-deps -e ./packages/maverick-evolve
+pip install --no-deps -e ./
 pip install --no-deps -e ./packages/maverick-dashboard
 pip install --no-deps -e ./packages/maverick-mcp
 pip install --no-deps -e ./packages/maverick-knowledge

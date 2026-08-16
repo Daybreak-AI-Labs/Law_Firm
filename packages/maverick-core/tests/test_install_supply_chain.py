@@ -126,7 +126,6 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
     for dependency_surface in (
         "requirements/ci.txt",
         "rust/Cargo.lock",
-        "go/model-proxy/go.mod",
     ):
         assert dependency_surface in step
     # Every --lockfile the gate scans must exist, or the scanner exits 127 and
@@ -149,9 +148,6 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
 
 
 def test_go_java_and_standalone_demo_security_floors_are_explicit():
-    model_proxy = _read("go/model-proxy/go.mod")
-    assert "\ngo 1.26.6\n" in model_proxy
-
     demo_requirements = (
     )
     for path in demo_requirements:

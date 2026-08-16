@@ -223,7 +223,6 @@ jobs:
             "$source_root/packages/maverick-core[all]" \
             "$source_root/packages/maverick-shield" \
             "$source_root/packages/maverick-channels" \
-            "$source_root/packages/maverick-evolve" \
             "$source_root/packages/maverick-dashboard" \
             "$source_root/packages/maverick-mcp" \
             "$source_root/packages/maverick-knowledge" \
