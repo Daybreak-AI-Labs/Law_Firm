@@ -264,22 +264,11 @@ and DGM code self-modification retain separate controls. If an active config
 source is invalid, the learning defaults fail closed instead of enabling.
 
 ```toml
-[telemetry]                # trajectory donation -> the training corpus (default off)
-donate_trajectories = true # write scrubbed run records to ~/.maverick/outbox/
-donate_text = false        # ALSO keep raw draft/candidate text -- DPO needs it,
-                           #   but it's an egress decision (off => metadata only)
-donate_min_entropy = 0.5   # swarm-disagreement floor; a single-agent run has
-                           #   entropy 0, so set 0 to capture EVERY successful run
-donate_min_confidence = 0.75  # verifier-confidence floor to donate a run
-# Feeds `maverick.training.ingest` / `export_texts` -> PRM/DPO. Full recipe
-# (incl. best-of-N pair mining) in docs/self-learning-runbook.md.
-
 [dreaming]                 # offline experience consolidation (default on)
 enable = true
 # min_cluster / insight_ttl_days / retire_skills / rehearse / prune_facts /
 # snapshots / promote_shared -- see FEATURES.md "Dreaming".
 user_notes = false         # separate privacy opt-in: verbatim cross-chat preferences
-trusted_insight_pubkeys = []   # peers for `maverick insights-import`
 
 [data_engine]              # Cognitive Data Engine flywheel (default on)
 enable = true              # causal failure triage -> guardrails -> habits

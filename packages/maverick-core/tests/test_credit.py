@@ -77,7 +77,7 @@ class TestNormalize:
 class TestCreditIsSignal:
     """Eval-first: prove the credit ranking tracks true contribution before any
     consumer learns from it. Planted contributions of known value; credit must
-    rank them in the same order (the property the donation/routing consumers
+    rank them in the same order (the property the routing consumers
     rely on)."""
 
     @pytest.mark.asyncio
@@ -95,33 +95,6 @@ class TestCreditIsSignal:
         assert ranked == ["a", "b", "c", "d"]  # exact rank match with truth
         # And a zero-value contributor gets ~zero credit.
         assert abs(cmap["d"]) < 1e-9
-
-
-class TestDonationCarriesCredit:
-    @pytest.mark.asyncio
-    async def test_agent_credit_persisted_in_record(self, tmp_path, monkeypatch):
-        from maverick import donation
-        from maverick.donation import TrajectoryRecord
-
-        monkeypatch.setattr(donation, "_donations_enabled", lambda: True)
-        monkeypatch.setattr(donation, "_text_donations_enabled", lambda: False)
-        monkeypatch.setattr("maverick.calibration.learning_frozen", lambda: False)
-        rec = TrajectoryRecord(
-            task_brief_hash="h", outcome="success",
-            verifier_confidence=0.95, disagreement_entropy=0.9,
-            agent_credit={"researcher-1": 0.6, "coder-2": -0.1},
-            sub_trajectories=[
-                {"role": "researcher", "name": "researcher-1",
-                 "actions": ["web_search"], "credit": 0.6, "weight": 1.0},
-            ],
-        )
-        path = donation.write_record(rec, outbox=tmp_path / "outbox")
-        assert path is not None
-        import json
-        data = json.loads(path.read_text())
-        assert data["agent_credit"]["researcher-1"] == 0.6
-        assert data["sub_trajectories"][0]["actions"] == ["web_search"]
-        assert data["sub_trajectories"][0]["weight"] == 1.0
 
 
 class TestSubTrajectories:

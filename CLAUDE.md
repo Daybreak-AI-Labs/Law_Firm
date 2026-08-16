@@ -6,9 +6,8 @@
 ## Project
 
 - **Stack:** Python uv-workspace monorepo (8 pip packages under `packages/` +
-  `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps, one TypeScript
-  plugin SDK (`sdks/plugin-ts`, Node 22). pip editable installs; npm only for
-  that SDK. CI runs **3.12 only** — the 3.10/3.11/3.12 matrix was for
+  `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps. pip editable
+  installs. CI runs **3.12 only** — the 3.10/3.11/3.12 matrix was for
   strangers' interpreters. Manifests still say `requires-python = ">=3.10"`
   (an installability floor, not a tested promise), so the tomllib try/except
   shim and its lint gate stay.
@@ -35,7 +34,6 @@
 - **Lint:** `python -m ruff check .` and `python -m vulture` (no args).
 - **Build:** `python3 -m build --wheel` per package dir (setup installs build).
 - **CLI smoke:** `maverick version`, `maverick doctor`.
-- **TS SDK:** `cd sdks/plugin-ts && npm install && npm test` (tsc + node --test).
 
 ## Rules
 
@@ -216,6 +214,20 @@ What changed from upstream, and why:
   `federation_envelope`, `fleet_memory`, `memory_plane`, `agent_edr`, and the
   LangChain/AutoGen/CrewAI adapters (operator decision, superseding the
   fork-time retention of `federation_envelope.py`).
+- **Confirmed-orphan sweep (dead-weight audit):** 29 core modules with no
+  live consumer (attestation/proof_pack/proof_guarantees, donation +
+  insight_exchange, predictive_approvals, budget_tuner, perf_sla + glance +
+  offline_bundle + keymap, plugin_ca/plugin_telemetry/plugin_reliability +
+  ts_plugin_host, residency, speculative_exec, tiered_storage,
+  duckdb_analytics, compounding_metric, quorum, model_cards, chaos_gameday,
+  shield_updates, release_update, reliability_cert, trace_pin,
+  voice_personas, audio_analysis) and 12 hardware/media tools (ros, serial,
+  embedded_device, hardware_sensors, audio_understanding, ios_sim, obsidian,
+  replicate, vertex, image_edit, chaos/tiered wrappers). Kept:
+  `operations_scientist` (flywheel imports it), `entitlements`,
+  `speculative.py` (the async overlap primitive — distinct from the deleted
+  speculative_exec), `tools/data_residency.py`, `tools/quorum_approval.py`,
+  the `android` tool.
 - **Retained deliberately:** `agent-shield`; the multi-tenant/`tenant` layer
   (load-bearing — 227 source references, 163 test files, single-tenant is its
   default path); `marketplace/storefront.py` +

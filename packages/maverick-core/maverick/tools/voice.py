@@ -526,13 +526,6 @@ def _next_output_path(sandbox: Any = None) -> Path:
 
 
 def _run_speak(args: dict[str, Any], sandbox: Any = None) -> str:
-    # Voice personas / per-language voices ([voice.personas]/[voice.languages]):
-    # explicit voice/backend args still win; unknown presets degrade silently.
-    try:
-        from ..voice_personas import resolve_speech_args
-        args = resolve_speech_args(args)
-    except Exception:
-        pass
     text = (args.get("text") or "").strip()
     if not text:
         return "ERROR: text is required"

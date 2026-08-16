@@ -101,24 +101,6 @@ def test_killswitch_stays_armed_and_pages_before_refusal_propagates(monkeypatch)
     assert pages and pages[0][0][0] == "killswitch_tripped"
 
 
-def test_attestation_export_is_not_published_after_refusal(tmp_path, monkeypatch):
-    from maverick import attestation
-
-    bundle = {
-        "commitments": {"audit_days": []},
-        "signature": {"key_id": "test-key"},
-    }
-    monkeypatch.setattr(attestation, "build", lambda **_kwargs: {})
-    monkeypatch.setattr(attestation, "sign", lambda _bundle: bundle)
-    _audit_refuses(monkeypatch)
-    out = tmp_path / "attestation.json"
-
-    with pytest.raises(AuditRefused):
-        attestation.export(out)
-
-    assert not out.exists()
-
-
 def test_operating_capsule_is_not_published_after_refusal(tmp_path, monkeypatch):
     from maverick import operating_record
     from maverick.audit import signing

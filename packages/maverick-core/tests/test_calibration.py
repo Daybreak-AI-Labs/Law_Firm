@@ -1,8 +1,8 @@
 """Verifier calibration interlock: the self-improvement safety guardrail.
 
-The verifier's confidence is the label the donation flywheel learns from, so a
+The verifier's confidence is the label the learning lifecycle learns from, so a
 drifted verifier must freeze learning. These cover the assessment math, the
-persisted-verdict freeze gate, and the interlock wired into donation.write_record.
+persisted-verdict freeze gate.
 """
 from __future__ import annotations
 
@@ -186,37 +186,3 @@ class TestCollectFromCoding:
             **calibration._DEFAULTS, "collect_from_coding": True,
         })
         assert calibration.collect_from_coding_enabled() is True
-
-
-class TestDonationInterlock:
-    def test_frozen_learning_blocks_gold_trajectory(self, tmp_path, monkeypatch):
-        """A trajectory that WOULD donate is refused when calibration is frozen."""
-        from maverick import donation
-        from maverick.donation import TrajectoryRecord
-
-        monkeypatch.setattr(donation, "_donations_enabled", lambda: True)
-        monkeypatch.setattr(donation, "_text_donations_enabled", lambda: False)
-        # Drifted verifier -> learning frozen.
-        monkeypatch.setattr("maverick.calibration.learning_frozen", lambda: True)
-
-        rec = TrajectoryRecord(
-            task_brief_hash="abc", outcome="success",
-            verifier_confidence=0.95, disagreement_entropy=0.9,
-        )
-        out = donation.write_record(rec, outbox=tmp_path / "outbox")
-        assert out is None  # gold trajectory, but frozen -> not written
-
-    def test_unfrozen_learning_allows_gold_trajectory(self, tmp_path, monkeypatch):
-        from maverick import donation
-        from maverick.donation import TrajectoryRecord
-
-        monkeypatch.setattr(donation, "_donations_enabled", lambda: True)
-        monkeypatch.setattr(donation, "_text_donations_enabled", lambda: False)
-        monkeypatch.setattr("maverick.calibration.learning_frozen", lambda: False)
-
-        rec = TrajectoryRecord(
-            task_brief_hash="abc", outcome="success",
-            verifier_confidence=0.95, disagreement_entropy=0.9,
-        )
-        out = donation.write_record(rec, outbox=tmp_path / "outbox")
-        assert out is not None and out.exists()

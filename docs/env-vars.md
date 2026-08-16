@@ -265,15 +265,12 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_AI_DISCLOSURE` | config `[compliance] disclosure_text` | AI-disclosure text appended to outputs; empty string opts out. |
 | `MAVERICK_STRIPE_ENABLE_REFUNDS` | unset (off) | Required to allow the Stripe tool to issue real refunds. |
 
-## Secrets, residency & audit forwarding
+## Secrets & audit forwarding
 
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_SECRETS_BACKEND` | config `[secrets] backend` (`env`) | Where deployment secrets are read from. `env` = process environment (default, unchanged). `file` = mounted secret files (Vault Agent / Secrets Store CSI / Docker/podman secrets), one secret per file, with env fallback. Applies to OIDC client/session secrets, the inbound webhook secret, and the SCIM bearer. |
 | `MAVERICK_SECRETS_DIR` | config `[secrets] dir` | Directory the `file` backend reads (`<dir>/MAVERICK_OIDC_CLIENT_SECRET`, etc.; trailing newline trimmed). |
-| `MAVERICK_RESIDENCY_STRICT` | config `[residency] strict` (off) | Refuse to boot when the declared data region is missing or outside the allowed set (`require_residency_or_die`). Off = informational only. |
-| `MAVERICK_DATA_REGION` | config `[residency] region` | The deployment's declared data region (ISO code or group, e.g. `DE`, `EU`). |
-| `MAVERICK_RESIDENCY_ALLOWED` | config `[residency] allowed_regions` | Comma-separated permitted storage regions; `EU`/`EEA` groups expand to members. Empty = region unconstrained. |
 | `MAVERICK_SIEM_DEST` | config `[audit] siem_dest` | Destination for `maverick audit forward`: `tcp://host:port` / `udp://host:port` (syslog) or `http(s)://host/path` (Splunk HEC `/raw`, etc.). |
 | `MAVERICK_SIEM_TOKEN` | — | Bearer sent on HTTP(S) audit forwarding (read via the secret provider). |
 
@@ -286,7 +283,6 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_LOG_TURNS` | unset | Set to log full LLM turns (verbose). |
 | `MAVERICK_OTEL_EXPORTER` | unset (off) | Set to enable the OpenTelemetry trace exporter. |
 | `MAVERICK_OTEL_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP collector endpoint. |
-| `MAVERICK_RESIDENCY_REGION` | config `[residency] region` (unset) | Declare a data-residency requirement (e.g. `eu`). `maverick doctor` then warns about any residency-sensitive feature still defaulting to a US region (`AWS_REGION`→us-east-1, `VERTEX_LOCATION`→us-central1). No effect unset. |
 | `MAVERICK_PROMETHEUS_PORT` | unset (off) | Set a port to expose Prometheus metrics. |
 | `MAVERICK_PROMETHEUS_ADDR` | `127.0.0.1` | Bind address for the Prometheus metrics server. |
 | `MAVERICK_ALERTS` | config `[alerts] enabled` (off) | Enable OPERATIONAL alerts — page the operator (via the configured notification backends) on infrastructure events like a killswitch trip or a deployment-wide provider cost-cap exhaustion. Distinct from agent-task notifications. |

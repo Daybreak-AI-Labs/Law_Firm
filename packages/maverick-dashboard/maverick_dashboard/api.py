@@ -203,9 +203,6 @@ def _require_halt_permission(request: Request) -> None:
     require_permission(request, "admin" if _shared_halt_backend() else "operate")
 
 
-_PERF_SLA_CACHE_TTL_SECONDS = 60.0
-_PERF_SLA_LOCK = asyncio.Lock()
-_PERF_SLA_CACHE: tuple[float, list[dict], str | None] | None = None
 _COMPLIANCE_PACKET_CACHE_TTL_SECONDS = 60.0
 _COMPLIANCE_PACKET_LOCK = asyncio.Lock()
 _COMPLIANCE_PACKET_CACHE: tuple[float, str] | None = None
@@ -8677,97 +8674,6 @@ async def redact_preview(request: Request, payload: RedactIn) -> dict:
         "proven_clean": proven,
         "residual": verify_redacted(redacted),
     }
-
-
-@router.get("/glance")
-async def watch_glance(request: Request) -> dict:
-    """The Apple Watch glance payload (tiny fixed shape; see maverick.glance)."""
-    from maverick.glance import build_glance
-    from maverick.world_model import close_world_if_owned, open_world
-    world = open_world()
-    try:
-        return build_glance(world, owner=goal_owner_filter(request))
-    finally:
-        try:
-            close_world_if_owned(world)
-        except Exception:  # pragma: no cover -- best-effort response teardown
-            pass
-
-
-@router.get("/offline/bundle")
-async def offline_bundle(request: Request) -> dict:
-    """Bounded, versioned snapshot (``maverick-offline/1``) for the mobile
-    companion's offline cache. Read-only; owner-scoped like ``/goals``."""
-    from maverick.offline_bundle import build_bundle
-    return await run_in_threadpool(
-        build_bundle, _world(), owner=goal_owner_filter(request),
-    )
-
-
-@router.get("/perf")
-async def perf_dashboard() -> dict:
-    """Public perf dashboard data: the live perf-SLA measurements.
-
-    One JSON face for the perf story: each hot-path measurement against its
-    published threshold (docs/perf-sla.md), probed on this machine. Nothing
-    fabricated; a failed probe reports its error rather than a number.
-    """
-    out: dict = {"sla": []}
-    try:
-        sla, error = await _cached_perf_sla()
-        out["sla"] = sla
-        if error:
-            out["sla_error"] = error
-    except Exception as e:  # measurement/cache must never 500 the dashboard
-        out["sla_error"] = f"{type(e).__name__}: {e}"
-    return out
-
-
-async def _cached_perf_sla() -> tuple[list[dict], str | None]:
-    """Return perf-SLA rows with a short single-flight cache.
-
-    ``run_all()`` performs live CPU/IO probes.  The dashboard exposes this data
-    via a GET endpoint, so cache the expensive portion and serialize refreshes
-    to keep cross-site/simple GET floods from starting unbounded worker-thread
-    measurements in no-token loopback mode.
-    """
-    global _PERF_SLA_CACHE
-
-    now = time.monotonic()
-    if _PERF_SLA_CACHE is not None:
-        expires_at, rows, error = _PERF_SLA_CACHE
-        if now < expires_at:
-            return rows, error
-
-    async with _PERF_SLA_LOCK:
-        now = time.monotonic()
-        if _PERF_SLA_CACHE is not None:
-            expires_at, rows, error = _PERF_SLA_CACHE
-            if now < expires_at:
-                return rows, error
-
-        try:
-            from maverick.perf_sla import run_all
-
-            # run_all's dispatch probe drives its own event loop; run it in a
-            # worker thread so it never nests inside the server's running loop.
-            results = await asyncio.to_thread(run_all)
-            rows = [
-                {
-                    "name": r.name,
-                    "measured": r.measured,
-                    "threshold": r.threshold,
-                    "unit": r.unit,
-                    "passed": r.passed,
-                }
-                for r in results
-            ]
-            error = None
-        except Exception as e:  # measurement must never 500 the dashboard
-            rows = []
-            error = f"{type(e).__name__}: {e}"
-        _PERF_SLA_CACHE = (now + _PERF_SLA_CACHE_TTL_SECONDS, rows, error)
-        return rows, error
 
 
 @router.get("/cache/stats")

@@ -105,14 +105,9 @@ def _run_self_harness_nightly(world) -> None:
 @click.option("--rollback", default=None, metavar="SNAPSHOT",
               help="Restore every learned store from a snapshot "
                    "('latest' or a name from --list-snapshots), then exit.")
-@click.option("--donations-dir", default=None, type=click.Path(),
-              help="Also replay donated trajectory records from this "
-                   "directory (fleet-level aggregation on a central "
-                   "instance).")
 @click.pass_context
 def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
-          dry_run: bool, list_snaps: bool, rollback: str | None,
-          donations_dir: str | None) -> None:
+          dry_run: bool, list_snaps: bool, rollback: str | None) -> None:
     """Run one offline dreaming cycle (experience consolidation).
 
     Replays recent successes and failure reflexions, groups them by
@@ -158,9 +153,7 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
     world = open_world(ctx.obj["db"])
     if dry_run:
         report = _run_dreaming_guarded(
-            lambda: dreaming.dream_cycle_dry(
-                world, max_goals=max_goals, donations_dir=donations_dir,
-            ),
+            lambda: dreaming.dream_cycle_dry(world, max_goals=max_goals),
         )
         click.echo("(dry run -- nothing written) " + report.summary())
         return
@@ -193,7 +186,7 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
             dream_shield = None
     report = _run_dreaming_guarded(
         lambda: dreaming.dream_cycle(
-            world, max_goals=max_goals, donations_dir=donations_dir,
+            world, max_goals=max_goals,
             llm=dream_llm, budget=dream_budget, shield=dream_shield,
         ),
     )

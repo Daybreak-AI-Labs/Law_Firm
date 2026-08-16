@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from ..budget_tuner import percentile
 from .runner import (
     PAUSED_STATUSES,
     STATUS_COMPLETED,
@@ -19,6 +18,21 @@ from .runner import (
 from .store import FlowRun, list_runs
 
 _TOP_ERRORS = 3
+
+
+def percentile(values: list[float], p: float) -> float:
+    """Linear-interpolated ``p``-th percentile of ``values`` (0 <= p <= 100)."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    if len(s) == 1:
+        return float(s[0])
+    p = max(0.0, min(100.0, p))
+    rank = (p / 100.0) * (len(s) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(s) - 1)
+    frac = rank - lo
+    return float(s[lo] + (s[hi] - s[lo]) * frac)
 
 
 def run_duration(run: FlowRun) -> float:

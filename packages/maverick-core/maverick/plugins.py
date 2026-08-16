@@ -54,13 +54,10 @@ Each plugin entry must conform to a contract:
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import os
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from .embeddable import no_cli
@@ -352,51 +349,6 @@ def _warn_permissions_advisory(ep, group: str, manifest, dist: str | None) -> No
     )
 
 
-def _plugin_signing_policy() -> tuple[str | None, bool, set[str]]:
-    """Resolve the plugin-signing policy: ``(ca_root_pubkey, require, revoked)``.
-
-    Driven by ``[plugins] ca_root_pubkey`` / ``require_signing`` / ``ca_revoked``
-    in config, and forced on by enterprise mode. A configured root pubkey implies
-    verification is required (otherwise it would be set for nothing). Default
-    config sets none of these, so ``require`` is False and signing is a no-op --
-    behavior is unchanged unless an operator opts in.
-    """
-    root = ""
-    require = False
-    revoked: set[str] = set()
-    try:
-        from .config import load_config
-        cfg = (load_config() or {}).get("plugins") or {}
-        root = str(cfg.get("ca_root_pubkey") or "").strip()
-        require = bool(cfg.get("require_signing"))
-        rev = cfg.get("ca_revoked") or []
-        if isinstance(rev, (list, tuple)):
-            revoked = {str(s) for s in rev}
-    except Exception:  # pragma: no cover -- config never blocks discovery
-        pass
-    try:
-        from .enterprise import enterprise_enabled
-        if enterprise_enabled():
-            require = True
-    except Exception:  # pragma: no cover
-        pass
-    # Honor the CA's *signed* CRL (maverick plugin-ca revoke), not just the
-    # config list -- otherwise revoking a compromised publisher via the CA had
-    # zero effect at load time. A present-but-unverifiable CRL (tampered sig /
-    # bad JSON) is a security event: we can't prove a cert ISN'T revoked, so
-    # fail closed (revoked=None -> verify_artifact refuses every signed plugin).
-    # A genuinely-absent CRL just means "no CA revocations yet" -> config-only.
-    if root:
-        try:
-            from .plugin_ca import PluginCA
-            ca = PluginCA()
-            if ca._crl_path.exists():
-                revoked |= ca.revoked_serials(root_pub=root)
-        except Exception:
-            return (root or None, True, None)
-    return (root or None, require or bool(root), revoked)
-
-
 def _ep_module_name(ep) -> str:
     module = (getattr(ep, "value", "") or "").split(":", 1)[0].strip()
     if not module:
@@ -404,205 +356,9 @@ def _ep_module_name(ep) -> str:
     return module
 
 
-def _ep_module_file(ep):
-    """On-disk path of the entry point's module WITHOUT importing it."""
-    from pathlib import Path
-    module = _ep_module_name(ep)
-    dist = getattr(ep, "dist", None)
-    if not module or dist is None:
-        return None
-    rel = module.replace(".", "/")
-    candidates = {rel + ".py", rel + "/__init__.py"}
-    try:
-        files = list(dist.files or [])
-    except Exception:
-        return None
-    for f in files:
-        if str(f).replace("\\", "/") in candidates:
-            try:
-                return Path(dist.locate_file(f))
-            except Exception:
-                return None
-    return None
-
-
-# Non-source distribution files that still execute (or steer execution) once
-# the package is importable: native extensions, byte-compiled code, and .pth
-# startup hooks. Hashing only ``.py`` left these OUTSIDE the signature, so a
-# swapped ``.so`` ran as "verified" native code under a signed plugin. The
-# on-disk coverage scan (``_ondisk_files_covered``) flags any of these that a
-# tamperer dropped next to signed modules without touching the dist RECORD.
-_SIGNED_ONDISK_SUFFIXES = (".so", ".pyd", ".dylib", ".pth")
-
-
-def _ep_importable_files(ep) -> dict[str, str] | None:
-    """Return the signed file set (relpath -> sha256) without importing code.
-
-    Covers EVERY distribution file under the plugin's package root -- not just
-    ``.py``. Native extensions (``.so``/``.pyd``/``.dylib``), byte-compiled
-    ``.pyc``, and shipped data files all execute or steer execution once the
-    package is importable, so a signature that hashed only ``.py`` left them
-    swappable under a "verified" plugin. Also hashes any top-level ``.pth`` the
-    dist ships (a site-packages ``.pth`` runs code at interpreter startup). The
-    signing and verify paths both call this, so the recomputed manifest mirrors
-    the signed one exactly -- an added, changed, or removed distribution file
-    makes the manifests differ and verification fails closed. The signature
-    bundle itself is excluded (it embeds this manifest, so it cannot hash
-    itself).
-    """
-    module = _ep_module_name(ep)
-    dist = getattr(ep, "dist", None)
-    if not module or dist is None:
-        return None
-    top = module.split(".", 1)[0]
-    module_rel = module.replace(".", "/")
-    try:
-        dist_files = list(dist.files or [])
-    except Exception:
-        return None
-    files: dict[str, str] = {}
-    for f in dist_files:
-        rel = str(f).replace("\\", "/")
-        if rel.rsplit("/", 1)[-1] == "maverick_plugin.sig.json":
-            continue
-        is_module = rel in {module_rel + ".py", module_rel + "/__init__.py"}
-        under_pkg = rel.startswith(top + "/")
-        # A .pth at the site-packages root (outside the package dir) injects
-        # code at interpreter startup -- bring it inside the signature too.
-        is_pth = rel.endswith(".pth") and "/" not in rel
-        if not (is_module or under_pkg or is_pth):
-            continue
-        try:
-            data = Path(dist.locate_file(f)).read_bytes()
-        except Exception:
-            return None
-        files[rel] = hashlib.sha256(data).hexdigest()
-    if module_rel + ".py" not in files and module_rel + "/__init__.py" not in files:
-        return None
-    return dict(sorted(files.items()))
-
-
-def _ondisk_files_covered(ep, signed_rels: dict) -> bool:
-    """Fail-closed: refuse if the on-disk package tree carries an auto-loading
-    or native file (``.so``/``.pyd``/``.dylib``/``.pth``) absent from the signed
-    manifest.
-
-    The manifest is recomputed from the dist RECORD, which is itself an on-disk,
-    editable text file -- a tamperer could drop a rogue extension next to signed
-    modules WITHOUT listing it in RECORD, and RECORD-based enumeration alone
-    would miss it. This walks the actual package directory as a second, RECORD-
-    independent check. ``__pycache__`` is skipped (its ``.pyc`` files are
-    generated at import time and are legitimately absent from the manifest).
-    Returns False (deny) on any uncertainty.
-    """
-    module = _ep_module_name(ep)
-    dist = getattr(ep, "dist", None)
-    if not module or dist is None:
-        return False
-    top = module.split(".", 1)[0]
-    try:
-        pkg_dir = Path(dist.locate_file(top))
-        base = pkg_dir.parent
-    except Exception:
-        return False
-    if not pkg_dir.is_dir():
-        # Single-module plugin (top.py, no package dir): nothing extra to walk.
-        return True
-    try:
-        for p in pkg_dir.rglob("*"):
-            if "__pycache__" in p.parts or not p.is_file():
-                continue
-            if p.suffix.lower() not in _SIGNED_ONDISK_SUFFIXES:
-                continue
-            rel = str(p.relative_to(base)).replace("\\", "/")
-            if rel not in signed_rels:
-                log.warning(
-                    "plugin package %r carries un-signed file %s on disk; "
-                    "refusing to load (not covered by the signed manifest)",
-                    top, rel,
-                )
-                return False
-    except Exception:
-        return False
-    return True
-
-
-def _plugin_manifest_digest(manifest: dict) -> str:
-    payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _expected_plugin_signature_manifest(ep) -> dict | None:
-    files = _ep_importable_files(ep)
-    if not files:
-        return None
-    return {
-        "schema": "maverick-plugin-signature-manifest-v1",
-        "dist": _ep_dist_name(ep) or "",
-        "entry_point": getattr(ep, "name", "") or "",
-        "module": _ep_module_name(ep),
-        "files": files,
-    }
-
-
-def _ep_signature_bundle(ep):
-    """The plugin's signing bundle (plugin_ca: digest/sig/cert), or ``None``.
-
-    Convention: the publisher ships ``maverick_plugin.sig.json`` -- a
-    :func:`maverick.plugin_ca.sign_digest` bundle over a manifest that binds the
-    distribution, entry point, module path, and importable package file digests.
-    """
-    from pathlib import Path
-    dist = getattr(ep, "dist", None)
-    if dist is None:
-        return None
-    try:
-        files = list(dist.files or [])
-    except Exception:
-        return None
-    for f in files:
-        if Path(str(f)).name == "maverick_plugin.sig.json":
-            try:
-                import json
-                return json.loads(Path(dist.locate_file(f)).read_text("utf-8"))
-            except Exception:
-                return None
-    return None
-
-
-def _plugin_signature_ok(ep, root_pub: str | None, revoked: set[str]) -> bool:
-    """Fail-closed plugin-artifact verification against the configured CA root.
-
-    Returns True only when the plugin distribution carries a manifest bundle that
-    chains to ``root_pub`` (cert signed by root, unexpired, unrevoked, artifact
-    digest + signature valid). require_signing with no root anchor (``root_pub``
-    None) cannot be satisfied safely, so it returns False.
-    """
-    if not root_pub:
-        return False
-    from .plugin_ca import verify_digest
-    bundle = _ep_signature_bundle(ep)
-    manifest = _expected_plugin_signature_manifest(ep)
-    if not bundle or not manifest or bundle.get("manifest") != manifest:
-        return False
-    # The equality above proves the RECORD-listed file set matches the signed
-    # manifest byte-for-byte. RECORD is itself editable on disk, so also refuse
-    # if the package directory carries a native/.pth file NOT in the signed set.
-    if not _ondisk_files_covered(ep, manifest.get("files", {})):
-        return False
-    try:
-        res = verify_digest(
-            _plugin_manifest_digest(manifest), bundle, root_pub=root_pub, revoked=revoked
-        )
-    except Exception as e:  # pragma: no cover -- verifier bug must fail closed
-        log.warning("plugin signature verification error: %s", e)
-        return False
-    return bool(getattr(res, "ok", False))
-
-
 def _gate(ep, group: str, allow, name_dists, granted, enforce) -> bool:
-    """Decide whether ``ep`` may load: allowlist + name-squat + permission +
-    signature gate.
+    """Decide whether ``ep`` may load: allowlist + name-squat + permission
+    gate.
 
     Returns True to load. Never invokes the entry point, so a rejected plugin's
     code never executes.
@@ -649,22 +405,6 @@ def _gate(ep, group: str, allow, name_dists, granted, enforce) -> bool:
     # plugin only), warned under "warn", ignored under "off" (default).
     from .plugin_lock import dist_allowed_by_lock
     if not dist_allowed_by_lock(dist):
-        return False
-    # Plugin signing CA ([plugins] ca_root_pubkey / require_signing, or enterprise
-    # mode): the entry point's module file must carry a bundle that chains to the
-    # configured root. Fail-closed -- a missing/invalid signature (or
-    # require_signing with no root anchor) refuses the load, so the plugin's code
-    # never runs. Default config enables none of this, so it's a no-op. This is
-    # the gate that makes plugin_ca.verify_artifact actually enforce trust.
-    root_pub, require_sig, revoked = _plugin_signing_policy()
-    if require_sig and not _plugin_signature_ok(ep, root_pub, revoked):
-        log.warning(
-            "plugin %s.%s (%s) failed signature verification; refusing to load. "
-            "Ship a signed maverick_plugin.sig.json bundle that chains to "
-            "[plugins] ca_root_pubkey, or disable require_signing for unsigned "
-            "plugins.",
-            group, name, dist or "unknown-dist",
-        )
         return False
     # The plugin will load. If it declares permissions but nothing confines it
     # at runtime (isolation 'none'), tell the operator the grant is advisory.
@@ -731,21 +471,15 @@ def discover_tools() -> list[Any]:
     seam (see :mod:`maverick.plugin_isolation`).
     """
     from .plugin_isolation import isolation_mode
-    from .plugin_telemetry import enabled as telemetry_enabled
-    from .plugin_telemetry import wrap_factory as telemetry_wrap
     isolate = isolation_mode() != "none"
-    count = telemetry_enabled()
     out: list[tuple[str, Callable[[], Any]]] = []
-    for name, target, ep_value, dist in _iter_loaded_with_value("maverick.tools", "tools"):
+    for name, target, ep_value, _dist in _iter_loaded_with_value("maverick.tools", "tools"):
         if not callable(target):
             log.warning("plugin tool %s is not callable; skipping", name)
             continue
         factory = target
         if isolate and ep_value:
             factory = _isolated_factory(name, ep_value, factory)
-        if count:
-            # Applied last so the tick covers isolated calls too.
-            factory = telemetry_wrap(name, dist, factory)
         out.append((name, factory))
     return out
 

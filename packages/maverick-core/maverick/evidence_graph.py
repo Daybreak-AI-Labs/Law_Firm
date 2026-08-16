@@ -562,9 +562,7 @@ def render_pack(*, required_controls=None) -> dict[str, Any]:
             "is not a certification or legal determination."
         ),
     }
-    from .proof_pack import sign
-
-    return sign(pack)
+    return _sign_manifest(pack)
 
 
 def verify_pack(
@@ -583,9 +581,62 @@ def verify_pack(
     expected = hashlib.sha256(_canonical(bound)).hexdigest()
     if pack.get("graph_sha256") != expected:
         return False, "evidence graph content digest does not verify"
-    from .proof_pack import verify
+    return _verify_manifest(pack, trusted_pubkey_hex=trusted_pubkey_hex)
 
-    return verify(pack, trusted_pubkey_hex=trusted_pubkey_hex)
+
+def _sign_manifest(manifest: dict) -> dict:
+    """Attach an Ed25519 signature over the canonical payload (reuses the
+    audit signing key); unsigned when crypto/key is unavailable (the manifest
+    says which)."""
+    payload = json.dumps(
+        {k: v for k, v in manifest.items() if k != "signature"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        from .audit.signing import _load_or_create_keypair
+        priv, pub, key_id = _load_or_create_keypair()
+        signer = ed25519.Ed25519PrivateKey.from_private_bytes(priv)
+        manifest["signature"] = {
+            "alg": "ed25519", "key_id": key_id,
+            "pubkey": pub.hex(), "sig": signer.sign(payload).hex(),
+        }
+    except Exception:
+        manifest["signature"] = None  # honest: unsigned
+    return manifest
+
+
+def _verify_manifest(
+    manifest: dict, *, trusted_pubkey_hex: str | None = None,
+) -> tuple[bool, str]:
+    """Verify a manifest's Ed25519 signature against a trusted anchor.
+
+    Fail-closed: an unsigned manifest, a missing anchor, or a bad signature
+    returns False. A manifest-embedded key is attacker-controlled and cannot
+    establish provenance on its own, so the anchor is required.
+    """
+    sig = manifest.get("signature")
+    if not isinstance(sig, dict) or not sig.get("sig"):
+        return False, "manifest is unsigned (no signature to verify)"
+    embedded = str(sig.get("pubkey") or "").strip()
+    pub = (trusted_pubkey_hex or "").strip()
+    if not pub:
+        return False, "trusted pubkey is required for provenance verification"
+    if embedded and pub.lower() != embedded.lower():
+        return False, "manifest pubkey does not match the trusted anchor (provenance fail)"
+    payload = json.dumps(
+        {k: v for k, v in manifest.items() if k != "signature"},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    try:
+        from .audit.signing import verify_ed25519
+        ok = verify_ed25519(pub, str(sig.get("sig")), payload)
+    except Exception as e:  # pragma: no cover -- crypto absent / malformed sig
+        return False, f"verification error: {e}"
+    if not ok:
+        return False, "signature does not verify over the canonical payload"
+    return True, "signature verified against the trusted anchor"
 
 
 __all__ = [

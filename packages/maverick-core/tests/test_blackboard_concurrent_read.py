@@ -1,12 +1,12 @@
 """Reading the blackboard from a worker thread must not race post().
 
-Concurrency finding: orchestrator._donate runs on a worker thread
+Concurrency finding: a finalize step once ran on a worker thread
 (asyncio.to_thread) and read blackboard.entries directly -- a lock-free
 iteration racing the event loop's post() append/trim. Concurrent
 iterate-vs-append on a plain list raises "list changed size during
-iteration", which _donate's blanket except swallowed (silently lost
-trajectory donations). by_kind() snapshots under the lock; this pins that
-the locked accessors are safe under concurrent posting.
+iteration", which a blanket except swallowed. by_kind() snapshots under
+the lock; this pins that the locked accessors are safe under concurrent
+posting.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def test_by_kind_is_safe_under_concurrent_post():
     writer = threading.Thread(target=hammer_post, daemon=True)
     writer.start()
     try:
-        # Mirror _donate's read pattern many times while posts stream in.
+        # Mirror the worker-thread read pattern many times while posts stream in.
         for _ in range(3000):
             _ = sorted({e.kind for e in bb.by_kind("observation")})
     finally:

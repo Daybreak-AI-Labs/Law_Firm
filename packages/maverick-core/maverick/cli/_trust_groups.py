@@ -1,4 +1,4 @@
-"""Trust-plane CLI groups: capability, client, backup, attest.
+"""Trust-plane CLI groups: capability, client, backup.
 
 Split out of cli/__init__.py. Registered by importing this module at the end
 of the package __init__ so the @main.group decorators fire on package import.
@@ -176,82 +176,3 @@ def backup_info_cmd(tarball) -> None:
     click.echo(f"created_at:           {when}")
     click.echo(f"world_schema_version: {m.get('world_schema_version')}")
     click.echo(f"files:                {len(m.get('files') or {})}")
-
-
-@main.group("attest")
-def attest_group() -> None:
-    """Portable attestation: prove past behaviour to somebody who trusts nobody.
-
-    A bundle binds three claims -- actions stayed inside the declared policy
-    envelope, self-improvement never widened its own authority, the decision
-    history is intact -- to evidence a third party can re-derive. Verification
-    requires the publisher's key obtained OUT OF BAND (``attest key``); a key
-    read out of the bundle proves only that somebody signed it.
-    """
-
-
-@attest_group.command("key")
-def attest_key_cmd() -> None:
-    """Print this instance's public key -- publish it out of band."""
-    from ..attestation import publisher_key
-    key_id, pub = publisher_key()
-    click.echo(f"key_id: {key_id}")
-    click.echo(f"pubkey: {pub}")
-    click.echo("")
-    click.echo("Give a verifier this key through a channel that does NOT run "
-               "through the bundle (key page, contract, existing engagement).")
-
-
-@attest_group.command("export")
-@click.argument("out", type=click.Path())
-@click.option("--since", type=float, default=None,
-              help="Unix timestamp bounding the promotion window.")
-@click.option("--audit-dir", type=click.Path(), default=None,
-              help="Audit directory to attest (default: this instance's).")
-def attest_export_cmd(out: str, since: float | None, audit_dir: str | None) -> None:
-    """Build and sign an attestation bundle at OUT."""
-    from ..attestation import export
-    try:
-        path = export(out, audit_dir=audit_dir, since=since)
-    except RuntimeError as e:
-        raise click.ClickException(str(e)) from e
-    click.echo(f"attestation -> {path}")
-    import json as _json
-    bundle = _json.loads(path.read_text(encoding="utf-8"))
-    for warning in bundle.get("warnings") or []:
-        click.echo(click.style(f"  ! {warning}", fg="yellow"))
-
-
-@attest_group.command("verify")
-@click.argument("bundle", type=click.Path(exists=True))
-@click.option("--key", "key_hex", default="", metavar="HEX",
-              help="Publisher's Ed25519 public key, obtained OUT OF BAND.")
-@click.option("--evidence", type=click.Path(), default=None,
-              help="Audit directory, to check commitments against the files.")
-def attest_verify_cmd(bundle: str, key_hex: str, evidence: str | None) -> None:
-    """Verify BUNDLE against a trusted key (fails closed without one)."""
-    from ..attestation import verify
-    from ..attestation_verify import format_report
-    result = verify(bundle, trusted_key_hex=key_hex, evidence_root=evidence)
-    click.echo(format_report(result))
-    if not result.ok:
-        raise click.ClickException("attestation verification failed")
-
-
-@attest_group.command("export-verifier")
-@click.argument("out", type=click.Path())
-def attest_export_verifier_cmd(out: str) -> None:
-    """Write the standalone verifier to OUT (runs with no maverick install)."""
-    import pathlib
-
-    from ..attestation import verifier_source
-    text, digest = verifier_source()
-    path = pathlib.Path(out)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    click.echo(f"verifier -> {path}")
-    click.echo(f"sha256:     {digest}")
-    click.echo("")
-    click.echo(f"  python {path.name} <bundle.json> --key <pubkey-hex> "
-               "[--evidence <audit-dir>]")
-    click.echo("Needs only Python and 'cryptography'.")

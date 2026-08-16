@@ -258,8 +258,8 @@ _STEP_BUDGET_WARNING = max(0, env_int("MAVERICK_STEP_BUDGET_WARNING", 3))
 # outside Docker's read-only bind mounts, so every workspace path they read or
 # write is described here and enforced at the common dispatch chokepoint.
 #
-# Path-level access matters: image_edit reads input_path but writes output_path;
-# wasm_run reads its module but grants write-capable preopens in dirs. A
+# Path-level access matters: wasm_run reads its module but grants
+# write-capable preopens in dirs. A
 # tool-level "mutates" flag cannot express either safely. Conditional tools
 # declare their operation selector and complete known operation set. A new or
 # misspelled operation is treated as write-capable for every supplied path,
@@ -389,30 +389,6 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
         operation_argument="op",
         known_operations=frozenset({"mathml", "render"}),
     ),
-    "image_edit": _FileToolPolicy(
-        (
-            _rule(
-                "image",
-                operations={"inpaint", "variation", "upscale"},
-                skip_remote_references=True,
-            ),
-            _rule(
-                "mask",
-                operations={"inpaint"},
-                skip_remote_references=True,
-            ),
-            _rule("input_path", operations={"crop", "resize", "rotate"}),
-            _rule(
-                "output_path",
-                operations={"crop", "resize", "rotate"},
-                mutates=True,
-            ),
-        ),
-        operation_argument="op",
-        known_operations=frozenset(
-            {"inpaint", "variation", "upscale", "crop", "resize", "rotate"}
-        ),
-    ),
     "speak": _FileToolPolicy((_rule("output", mutates=True),)),
     "html_to_app": _FileToolPolicy(
         (
@@ -459,35 +435,8 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
             }
         ),
     ),
-    "ios_sim": _FileToolPolicy(
-        (
-            _rule("app_path", operations={"install"}),
-            _rule("out_path", operations={"screenshot"}, mutates=True),
-        ),
-        operation_argument="op",
-        known_operations=frozenset(
-            {
-                "list_devices",
-                "boot",
-                "shutdown",
-                "install",
-                "uninstall",
-                "launch",
-                "terminate",
-                "screenshot",
-                "open_url",
-            }
-        ),
-    ),
-    # Obsidian paths are resolved against its configured vault by the custom
-    # extractor below. They cannot be treated as workdir-relative raw notes.
-    "obsidian": _FileToolPolicy(
-        (),
-        operation_argument="op",
-        known_operations=frozenset({"list", "read", "create", "append", "search"}),
-    ),
-    # Like Obsidian, memory paths are rooted by operator configuration rather
-    # than relative to workdir and need a custom extractor below.
+    # Memory paths are rooted by operator configuration rather than
+    # relative to workdir and need a custom extractor below.
     "memory": _FileToolPolicy(
         (),
         operation_argument="command",
@@ -543,13 +492,10 @@ _IN_PROCESS_WORKSPACE_WRITERS = frozenset(
         "wasm_run",
         "diagram",
         "latex",
-        "image_edit",
         "speak",
         "html_to_app",
         "workspace_snapshot",
         "android",
-        "ios_sim",
-        "obsidian",
         "memory",
         "browser",
         "oauth_helper",
@@ -638,47 +584,6 @@ def _one_workspace_access(
         _workspace_relative_path(sandbox, str(target)),
         mutates_subtree=mutates_subtree,
     )
-
-
-def _obsidian_path_accesses(
-    args: dict[str, Any],
-    sandbox: Any,
-    *,
-    mutating_only: bool,
-) -> list[_ResolvedWorkspacePath] | None:
-    """Resolve vault-relative notes to their actual workspace identity."""
-    operation = args.get("op")
-    known_operations = (
-        "list",
-        "read",
-        "create",
-        "append",
-        "search",
-    )
-    mutates = (
-        operation in ("create", "append")
-        or operation not in known_operations
-    )
-    if mutating_only and not mutates:
-        return []
-    try:
-        from .tools.obsidian import _resolve, _vault
-
-        vault = _vault().resolve()
-        if operation in ("read", "create", "append"):
-            target = _resolve(vault, args.get("note") or "")
-        else:
-            target = vault
-    except (OSError, RuntimeError, ValueError):
-        # The tool will return its own actionable validation/config error.
-        return None
-    return [
-        _one_workspace_access(
-            sandbox,
-            target,
-            mutates_subtree=mutates and operation not in ("create", "append"),
-        )
-    ]
 
 
 def _memory_path_accesses(
@@ -824,7 +729,6 @@ def _workspace_path_accesses_for_tool(
         ]
 
     custom = {
-        "obsidian": _obsidian_path_accesses,
         "memory": _memory_path_accesses,
         "sql_query": _sql_query_path_accesses,
         "browser": _browser_path_accesses,
@@ -1525,7 +1429,6 @@ class Agent:
             enable_browser=bool(caps.get("browser", False)),
             enable_web_search=bool(caps.get("web_search", False)),
             enable_mobile_tools=bool(caps.get("mobile_tools", False)),
-            enable_ros=bool(caps.get("ros", False)),
         )
         # Cross-agent bus tools, bound to this agent's id so send records
         # the right sender and recv drains the right inbox.
@@ -2857,22 +2760,6 @@ class Agent:
         acts = getattr(self, "_actions", None)
         return acts[-2] if acts and len(acts) >= 2 else ""
 
-    def _speculative_turn_model(self) -> str:
-        """Pick the model for this turn: a cheap draft when the Operating Twin's
-        world-model is confident the turn is predictable, else the normal model.
-
-        No-op (returns ``self.model``) unless ``[speculative]`` is enabled with a
-        configured draft model and the state is speculatable; fail-open on any
-        error. At turn start the last EXECUTED tool is ``_actions[-1]``.
-        """
-        try:
-            from .speculative_exec import draft_model_for_turn
-            acts = getattr(self, "_actions", None)
-            last = acts[-1] if acts else ""
-            return draft_model_for_turn(self.domain, self.role, last) or self.model
-        except Exception:  # pragma: no cover -- never break the loop
-            return self.model
-
     def _twin_denial(self, name: str) -> str | None:
         """The Operating-Twin pre-execution gates, first hold wins: rehearsal
         (world-model can't vouch) then learned guardrails (causally harmful)."""
@@ -3288,7 +3175,7 @@ class Agent:
                     budget=self.ctx.budget,
                     max_tokens=self._turn_max_tokens(),
                     thinking_budget=self._thinking_budget(),
-                    model=self._speculative_turn_model(),
+                    model=self.model,
                     **_effort_kw,
                 )
             except BudgetExceeded as e:

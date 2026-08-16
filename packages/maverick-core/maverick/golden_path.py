@@ -10,9 +10,8 @@ move, and leaves a signed, verifiable trail either way.
 
 Writes ``OUTDIR/GOLDEN_PATH.md`` (the narrated story) and ``OUTDIR/audit.ndjson``
 (the signed hash-chain). Every verdict here comes from real enforcement code —
-nothing is mocked and no model is called. Distinct from
-:mod:`maverick.proof_pack` (which proves the guarantees in aggregate); this is
-the human-readable walkthrough that makes them visceral.
+nothing is mocked and no model is called. This is the human-readable
+walkthrough that makes the guarantees visceral.
 """
 from __future__ import annotations
 

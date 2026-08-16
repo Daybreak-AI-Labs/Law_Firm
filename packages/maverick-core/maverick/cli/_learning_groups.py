@@ -1,4 +1,4 @@
-"""Learning-proof, domains, and insights CLI commands.
+"""Learning-proof and domains CLI commands.
 
 Split out of cli/__init__.py. Registered by importing this module at the end
 of the package __init__ so the @main.command decorators fire on package import.
@@ -323,46 +323,3 @@ def domains_eval(check_only: bool) -> None:
                    "maverick.domain_eval.run_eval(cases, runner).")
     if problems:
         raise click.ClickException(f"{len(problems)} eval-suite problem(s)")
-
-
-@main.command("insights-export")
-@click.argument("out", type=click.Path())
-@click.option("--max", "max_insights", default=50, show_default=True,
-              help="How many of the most recent insights to bundle.")
-def insights_export(out: str, max_insights: int) -> None:
-    """Export local dream insights as a SIGNED bundle for a trusted peer.
-
-    Federated insight exchange: only consolidated lessons cross the boundary
-    (never raw trajectories or user content). The bundle is signed with this
-    instance's Ed25519 audit key; give the peer your public key (printed
-    here) to add to their [dreaming] trusted_insight_pubkeys. Transport is
-    yours: move the file however your security policy allows.
-    """
-    from ..insight_exchange import export_insights
-    try:
-        path = export_insights(out, max_insights=max_insights)
-    except RuntimeError as e:
-        raise click.ClickException(str(e)) from e
-    import json as _json
-    bundle = _json.loads(Path(path).read_text(encoding="utf-8"))
-    click.echo(f"Wrote {len(bundle['insights'])} insight(s) -> {path}")
-    click.echo(f"Your public key (for the peer's trusted_insight_pubkeys):\n"
-               f"  {bundle['peer_key']}")
-
-
-@main.command("insights-import")
-@click.argument("bundle", type=click.Path(exists=True))
-def insights_import(bundle: str) -> None:
-    """Import a peer's signed insight bundle (fail-closed verification).
-
-    Requires the peer's public key in [dreaming] trusted_insight_pubkeys;
-    unsigned, untrusted, or tampered bundles are rejected outright. Each
-    imported lesson is redacted, Shield-scanned, provenance-tagged, and
-    merged through the same dedup gate local dreaming uses.
-    """
-    from ..insight_exchange import import_insights
-    from ..orchestrator import _build_shield
-    imported, reason = import_insights(bundle, shield=_build_shield())
-    if reason != "ok":
-        raise click.ClickException(reason)
-    click.echo(f"Imported {imported} peer insight(s).")

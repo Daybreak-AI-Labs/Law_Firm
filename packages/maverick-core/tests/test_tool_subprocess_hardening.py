@@ -91,7 +91,7 @@ def test_subprocess_tools_import_scrub_helper():
     import maverick.tools as T
     tdir = pathlib.Path(T.__file__).parent
     for name in ["git_advanced", "preview_diff", "apply_patch", "ffmpeg_tool",
-                 "imagemagick_tool", "pandoc_tool", "ocr", "a11y", "android", "ios_sim"]:
+                 "imagemagick_tool", "pandoc_tool", "ocr", "a11y", "android"]:
         src = (tdir / f"{name}.py").read_text()
         assert (
             "sandbox_run" in src
@@ -152,7 +152,7 @@ def test_pandoc_string_op_feeds_stdin_through_sandbox(tmp_path, monkeypatch):
 def test_media_tools_route_through_sandbox_chokepoint():
     """The sandboxable media tools must mediate shell via ``sandbox_run``,
     not call subprocess directly (CLAUDE.md rule #4). The host-local tools
-    (clipboard/android/ios_sim) are intentionally excluded — they drive
+    (clipboard/android) are intentionally excluded — they drive
     host-only resources and cannot run inside the sandbox."""
     import pathlib
 
@@ -226,21 +226,6 @@ def test_android_adb_routes_through_host_exec(monkeypatch):
     code, out, err = android._adb(["devices", "-l"])
     assert code == 0 and out == "device-list"
     assert calls["argv"][0] == "adb"
-
-
-def test_ios_simctl_routes_through_host_exec(monkeypatch):
-    import maverick.tools as tools_pkg
-    from maverick.tools import ios_sim
-    calls = {}
-
-    def fake_host_exec(argv, *, timeout=60.0, text=True):
-        calls["argv"] = argv
-        return 0, "booted", ""
-
-    monkeypatch.setattr(tools_pkg, "host_exec", fake_host_exec)
-    code, out, err = ios_sim._simctl(["list", "devices"])
-    assert code == 0 and out == "booted"
-    assert calls["argv"][:2] == ["xcrun", "simctl"]
 
 
 # ---------- option-injection / path hardening (issue #476) ----------

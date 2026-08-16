@@ -809,29 +809,6 @@ def test_saml_off_writes_no_section(tmp_path, monkeypatch):
     assert "[auth.saml]" not in cfg
 
 
-def test_donate_trajectories_writes_and_is_read(tmp_path, monkeypatch):
-    """Rule-6 loop: the wizard's donation toggle writes [telemetry]
-    donate_trajectories, and the kernel reads it back -- the entry point to the
-    self-learning training corpus (donation -> ingest -> DPO)."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {"donate_trajectories": True})
-    assert "[telemetry]" in cfg
-    assert "donate_trajectories = true" in cfg
-    # Metadata-only by default: the wizard step does not turn on text egress.
-    assert "donate_text" not in cfg
-
-    from maverick.donation import _donations_enabled
-    assert _donations_enabled() is True
-
-
-def test_donate_trajectories_off_writes_no_section(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"donate_trajectories": False})
-    assert "[telemetry]" not in cfg
-
-
 def test_department_access_writes_dashboard_scoping(tmp_path, monkeypatch):
     # The department-access step writes [dashboard] default_suites + the SCIM
     # group-mapping tables, and the result must be valid, round-trippable TOML

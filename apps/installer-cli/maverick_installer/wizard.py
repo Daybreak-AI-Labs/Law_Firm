@@ -682,24 +682,10 @@ def pick_capabilities() -> dict[str, bool]:
         "Enable browser? Lets the agent navigate the web via Playwright.",
         default=False,
     )
-    use_ros = _q_confirm(
-        "Enable ROS robotics? Lets the agent publish topics or call services "
-        "against ROS_BRIDGE_URL over rosbridge. Only enable for trusted robot/sim "
-        "operators.",
-        default=False,
-    )
     use_code_exec = _q_confirm(
         "Enable code_exec? Lets the agent run a sandboxed Python script that "
         "orchestrates several tool calls in one turn (keeps large intermediate "
         "outputs out of context). Runs code in the sandbox, like the shell tool.",
-        default=False,
-    )
-    # The embedded-device tool (JTAG/I2C) is always registered, but its
-    # DESTRUCTIVE ops (flash write, target reset) stay refused until the
-    # operator opts in here -> [embedded] allow_flash. Default off.
-    embedded_flash = _q_confirm(
-        "Allow embedded-device flashing? The JTAG tool can erase/reflash YOUR "
-        "OWN connected device's firmware (OpenOCD). Off = it refuses flash/reset.",
         default=False,
     )
     deferred_tools = _q_confirm(
@@ -719,9 +705,7 @@ def pick_capabilities() -> dict[str, bool]:
     return {
         "computer_use": use_computer,
         "browser": use_browser,
-        "ros": use_ros,
         "code_exec": use_code_exec,
-        "embedded_flash": embedded_flash,
         "deferred_tools": deferred_tools,
         "jd_hiring": jd_hiring,
     }
@@ -1572,18 +1556,9 @@ def pick_advanced() -> dict[str, Any]:
             default=True,
         ),
         "calibration_enforce": _q_confirm(
-            "Calibration interlock? Freeze self-improvement (trajectory donation) "
+            "Calibration interlock? Freeze self-improvement "
             "if the verifier stops telling correct answers from incorrect ones on "
             "your labeled set, so the system never learns from a drifted evaluator.",
-            default=False,
-        ),
-        "donate_trajectories": _q_confirm(
-            "Donate run trajectories for training? Write scrubbed records of your "
-            "runs to ~/.maverick/outbox/ so you can train the self-learning loop "
-            "(PRM + DPO) on your OWN data -- nothing is uploaded, the records stay "
-            "on this machine until you choose to ingest/train. Metadata-only by "
-            "default; raw text stays local unless you also set [telemetry] "
-            "donate_text. Off by default. See docs/self-learning-runbook.md.",
             default=False,
         ),
         "adaptive_compute": _q_confirm(
@@ -1684,14 +1659,6 @@ def pick_advanced() -> dict[str, Any]:
             "ESCALATE to a human when the model is unsure or has never seen the move. "
             "Governance that lets agents be bolder where it's earned; on by default.",
             default=True,
-        ),
-        "speculative": _q_confirm(
-            "Speculative execution? On turns where the world-model is highly confident "
-            "what comes next (a well-trodden, near-deterministic step), draft with a cheap "
-            "model instead of the frontier one -- reserving the expensive model for novel "
-            "or uncertain turns. Cuts cost/latency on repetitive workflows; off by default "
-            "and a no-op until you set a draft model.",
-            default=False,
         ),
         "data_engine": _q_confirm(
             "Cognitive Data Engine? The Tesla-style improvement flywheel: production "
@@ -1859,12 +1826,6 @@ def pick_advanced() -> dict[str, Any]:
             "on demand. Big context savings when many tools are enabled.",
             default=False,
         ),
-        "shield_updates": _q_confirm(
-            "Pull signed shield-rule updates? Fetches a publisher-signed rules "
-            "bundle ([shield] update_url + update_pubkey; Ed25519-verified, "
-            "downgrades refused) and stages it for the shield. Off by default.",
-            default=False,
-        ),
         "ebpf_monitor": _q_confirm(
             "Enable the eBPF syscall monitor? An operator-run bpftrace "
             "supervisor tracing execve/connect/openat for the agent's PID tree "
@@ -1882,12 +1843,6 @@ def pick_advanced() -> dict[str, Any]:
         "output_cache": _q_confirm(
             "Cache tool outputs? Memoize side-effect-free (read-only) tool calls "
             "within a run so a repeated read isn't re-done. Off by default.",
-            default=False,
-        ),
-        "hardware_sensors": _q_confirm(
-            "Enable host hardware sensors? Lets agents read this machine's "
-            "temperatures, fans, and battery via the [sensors] extra. Off by "
-            "default because it exposes host telemetry to tool calls.",
             default=False,
         ),
         "local_first": _q_confirm(
@@ -1921,20 +1876,6 @@ def pick_advanced() -> dict[str, Any]:
             default=False,
         ),
     }
-    # Federated insight exchange rides on dreaming: trusted peer keys are
-    # only worth asking for when the loop that produces/consumes insights is
-    # on. Imports are fail-closed without them.
-    if advanced.get("dreaming") and _q_confirm(
-        "  Exchange consolidated insights with trusted peer instances? "
-        "(signed bundles via `maverick insights-export/-import`)",
-        default=False,
-    ):
-        raw = _q_text(
-            "  Trusted peer insight pubkeys (comma-separated hex Ed25519)",
-            default="",
-        )
-        advanced["insight_pubkeys"] = [k.strip() for k in raw.split(",")
-                                       if k.strip()]
     # Autonomous self-correction only makes sense once flows are on. Human apply
     # + surfaced proposals work without it; this governs whether the loop may
     # UNDO a change on its own.
@@ -2056,21 +1997,12 @@ def pick_advanced() -> dict[str, Any]:
         )
         advanced["tax_pubkeys"] = [k.strip() for k in raw.split(",")
                                    if k.strip()]
-    # Regulated-deployment posture: data-residency region + a compliance
-    # disclosure line. These map to the independent [residency]/[compliance]
-    # scalar tables a regulated deployment needs; previously only hand-editable.
-    # (Action-level [governance] guards stay config-only: they share the
-    # [governance] table the finance step already owns.)
+    # Regulated-deployment posture: a compliance disclosure line. Maps to the
+    # independent [compliance] scalar table; previously only hand-editable.
     if _q_confirm(
-        "  Set regulated-deployment knobs (data residency, compliance "
-        "disclosure)?",
+        "  Set a compliance disclosure line shown to users?",
         default=False,
     ):
-        region = _q_text(
-            "  Data-residency region (e.g. us / eu / us-east-1; blank = none)",
-            default="").strip()
-        if region:
-            advanced["residency_region"] = region
         disclosure = _q_text(
             "  Compliance disclosure line shown to users (blank = none)",
             default="").strip()
@@ -2318,27 +2250,6 @@ def pick_plugins() -> list[str]:
     ):
         return []
     return _q_checkbox("Enable plugins:", sorted(discovered))
-
-
-def pick_ts_plugins() -> list[list[str]]:
-    """TypeScript (NDJSON stdio) plugin commands — writes ``[plugins].ts``.
-
-    Each entry is the argv that serves the plugin (e.g.
-    ``node /path/to/plugin.js``); Maverick discovers its tools via
-    ``--describe`` at boot. Skipped by default — most setups have none.
-    """
-    if not _q_confirm(
-        "Add any TypeScript plugins? (commands like: node /path/plugin.js)",
-        default=False,
-    ):
-        return []
-    commands: list[list[str]] = []
-    while True:
-        raw = _q_text("  Plugin command (blank to finish)", default="")
-        if not raw.strip():
-            break
-        commands.append(raw.split())
-    return commands
 
 
 def pick_plugin_permissions() -> tuple[list[str], bool]:
@@ -3055,7 +2966,6 @@ def _cfg_finance(finance: dict[str, Any] | None) -> list[str]:
 
 def _cfg_capabilities(
     capability_config: dict[str, Any],
-    embedded_flash: bool,
 ) -> list[str]:
     lines: list[str] = []
     if capability_config:
@@ -3063,10 +2973,6 @@ def _cfg_capabilities(
         lines.append("[capabilities]")
         for k, v in capability_config.items():
             lines.append(f"{k} = {str(v).lower()}")
-    if embedded_flash:
-        lines.append("")
-        lines.append("[embedded]")
-        lines.append("allow_flash = true")
     return lines
 
 
@@ -3179,13 +3085,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             lines.append("# of its edge on natural traffic (the judge is being gamed). Needs")
             lines.append("# adversarial probes recorded (calibration.record_probe) to bite.")
             lines.append("min_resistance = 0.5")
-    if advanced.get("donate_trajectories"):
-        lines.append("")
-        lines.append("[telemetry]")
-        lines.append("donate_trajectories = true")
-        # Metadata-only by default. For DPO, add donate_text + the
-        # donate_min_entropy/donate_min_confidence knobs by hand;
-        # see docs/self-learning-runbook.md.
     if advanced.get("adaptive_compute"):
         lines.append("")
         lines.append("[adaptive_compute]")
@@ -3273,14 +3172,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("# runs; proceed when confidently safe, block a poor outcome, escalate")
         lines.append("# the unknown (maverick.rehearsal). Fail-open while disabled.")
         lines.append("enable = true")
-    if advanced.get("speculative"):
-        lines.append("")
-        lines.append("[speculative]")
-        lines.append("# Draft a confidently-predictable turn with a cheap model, keeping the")
-        lines.append("# frontier model for novel/uncertain turns (maverick.speculative_exec).")
-        lines.append("# Set draft_model to a cheap spec to activate; a no-op until you do.")
-        lines.append("enable = true")
-        lines.append('# draft_model = "anthropic:claude-haiku-4-5-20251001"')
     if advanced.get("data_engine"):
         lines.append("")
         lines.append("[data_engine]")
@@ -3376,12 +3267,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("")
         lines.append("[enterprise]")
         lines.append("mode = true")
-    if advanced.get("residency_region"):
-        lines.append("")
-        lines.append("# Data-residency region hint (maverick.residency); strict")
-        lines.append("# mode is a separate [residency] strict knob.")
-        lines.append("[residency]")
-        _emit_kv(lines, "region", advanced["residency_region"])
     if advanced.get("compliance_disclosure_text"):
         lines.append("")
         lines.append("# AI-disclosure line surfaced to users (maverick.compliance).")
@@ -3562,12 +3447,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("enable = true")
         if advanced.get("dreaming_llm_consolidation"):
             lines.append("llm_consolidation = true")
-        keys = advanced.get("insight_pubkeys") or []
-        if keys:
-            # Free-text user input: route through _emit_kv so each key is
-            # escaped via _toml_str (a key with a quote/backslash would
-            # otherwise corrupt the config the wizard writes).
-            _emit_kv(lines, "trusted_insight_pubkeys", keys)
     if advanced.get("tax_update_url") or advanced.get("tax_pubkeys"):
         lines.append("")
         lines.append("[tax]")
@@ -3578,7 +3457,8 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             _emit_kv(lines, "update_url", advanced["tax_update_url"])
         tax_keys = advanced.get("tax_pubkeys") or []
         if tax_keys:
-            # Same escaping concern as the insight pubkeys above.
+            # Free-text user input: escape via _emit_kv/_toml_str so a key
+            # with a quote/backslash cannot corrupt the written config.
             _emit_kv(lines, "trusted_constants_pubkeys", tax_keys)
     if advanced.get("effort"):
         lines.append("")
@@ -3597,18 +3477,10 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         tool_lines.append("deferred_loading = true")
     if advanced.get("output_cache"):
         tool_lines.append("output_cache = true")
-    if advanced.get("hardware_sensors"):
-        tool_lines.append("hardware_sensors = true")
     if tool_lines:
         lines.append("")
         lines.append("[tools]")
         lines.extend(tool_lines)
-    if advanced.get("shield_updates"):
-        lines.append("")
-        lines.append("[shield]")
-        lines.append("federated_updates = true")
-        lines.append('# update_url    = "https://..."  # REQUIRED')
-        lines.append('# update_pubkey = "<ed25519 hex>"  # REQUIRED')
     if advanced.get("ebpf_monitor"):
         lines.append("")
         lines.append("[ebpf_monitor]")
@@ -3717,9 +3589,8 @@ def _cfg_plugins(
     plugins: list[str] | None,
     plugin_grant: list[str] | None,
     plugin_enforce: bool,
-    ts_plugins: list[list[str]] | None,
 ) -> list[str]:
-    if not (plugins or ts_plugins):
+    if not plugins:
         return []
     lines = ["", "[plugins]"]
     if plugins:
@@ -3728,8 +3599,6 @@ def _cfg_plugins(
         _emit_kv(lines, "grant", plugin_grant)
     if plugin_enforce:
         _emit_kv(lines, "enforce_permissions", plugin_enforce)
-    if ts_plugins:
-        _emit_kv(lines, "ts", ts_plugins)
     return lines
 
 
@@ -3888,7 +3757,6 @@ def write_config(
     plugins: list[str] | None = None,
     plugin_grant: list[str] | None = None,
     plugin_enforce: bool = False,
-    ts_plugins: list[list[str]] | None = None,
     tool_acl: dict[str, Any] | None = None,
     rate_limits: dict[str, str] | None = None,
     retention: dict[str, int] | None = None,
@@ -3989,11 +3857,10 @@ def write_config(
 
     # The embedded-device flash gate lives under [embedded], not
     # [capabilities] -- pull it out before emitting the capabilities block.
-    embedded_flash = bool(capability_config.pop("embedded_flash", False))
     # JD hiring lives under [agent_factory] (kernel: maverick.jd_hiring).
     jd_hiring = bool(capability_config.pop("jd_hiring", True))
 
-    lines += _cfg_capabilities(capability_config, embedded_flash)
+    lines += _cfg_capabilities(capability_config)
     lines += _cfg_agent_factory(jd_hiring)
     lines += _cfg_suites(suites)
     lines += _cfg_license(license_cfg)
@@ -4001,7 +3868,7 @@ def write_config(
     lines += _cfg_mcp_servers(mcp_servers)
     lines += _cfg_registries("mcp_registries", mcp_registries)
     lines += _cfg_registries("template_registries", template_registries)
-    lines += _cfg_plugins(plugins, plugin_grant, plugin_enforce, ts_plugins)
+    lines += _cfg_plugins(plugins, plugin_grant, plugin_enforce)
     lines += _cfg_security(tool_acl, bool((advanced or {}).get("security_autofix")),
                            dual_approval=bool((advanced or {}).get("dual_approval")))
     lines += _cfg_rate_limits(rate_limits)
@@ -4136,7 +4003,7 @@ def run_fast() -> int:
             "[bold]local[/bold] sandbox with host-mutating tools disabled. "
             "Run [bold]maverick init[/bold] to switch to docker once it's up."
         )
-    capabilities = {"computer_use": False, "browser": False, "ros": False}
+    capabilities = {"computer_use": False, "browser": False}
     # Pick up the API key from the env if it's already there;
     # otherwise the wizard's later run can populate ~/.maverick/.env.
     keys: dict[str, str] = {}
@@ -4313,7 +4180,7 @@ def write_consumer_config(
             "timeout": 60,
         },
         keys,
-        {"computer_use": False, "browser": False, "ros": False},  # capabilities
+        {"computer_use": False, "browser": False},  # capabilities
         advanced=dict(preset["advanced"]),
         self_learning=dict(preset["self_learning"]),
         tool_acl={"denied_tools": denied_tools},
@@ -4644,7 +4511,7 @@ def run_express() -> int:
             keys=keys,
             # Host-mutating capabilities require explicit opt-in even in express.
             capabilities={"computer_use": False, "browser": False,
-                          "ros": False, "code_exec": False},
+                          "code_exec": False},
             advanced={**_EXPRESS_ADVANCED, **preset["advanced"]},
             persona={"name": "Maverick", "style": "balanced", "user_name": user_name},
             web_search_enabled=True,
@@ -4890,12 +4757,6 @@ def _run_plugin_picks(
         state["plugins"] = plugins
         _save_partial(state)
 
-    ts_plugins = state.get("ts_plugins")
-    if ts_plugins is None:
-        ts_plugins = pick_ts_plugins()
-        state["ts_plugins"] = ts_plugins
-        _save_partial(state)
-
     # Only ask about plugin permissions when at least one plugin is enabled --
     # most setups have none, so the step is skipped entirely.
     plugin_grant = state.get("plugin_grant")
@@ -4937,7 +4798,6 @@ def _run_plugin_picks(
     return {
         "mcp_servers": mcp_servers,
         "plugins": plugins,
-        "ts_plugins": ts_plugins,
         "plugin_grant": plugin_grant,
         "plugin_enforce": plugin_enforce,
         "tool_acl": tool_acl,
@@ -5064,7 +4924,6 @@ def run(fast: bool = False, resume: bool = False) -> int:
     _plugins_block = _run_plugin_picks(state, _announce, channels)
     mcp_servers = _plugins_block["mcp_servers"]
     plugins = _plugins_block["plugins"]
-    ts_plugins = _plugins_block["ts_plugins"]
     plugin_grant = _plugins_block["plugin_grant"]
     plugin_enforce = _plugins_block["plugin_enforce"]
     tool_acl = _plugins_block["tool_acl"]
@@ -5133,7 +4992,6 @@ def run(fast: bool = False, resume: bool = False) -> int:
         mcp_servers=mcp_servers,
         plugins=plugins,
         plugin_grant=plugin_grant,
-        ts_plugins=ts_plugins,
         plugin_enforce=plugin_enforce,
         tool_acl=tool_acl,
         rate_limits=rate_limits,

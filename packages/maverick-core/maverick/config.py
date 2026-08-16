@@ -671,7 +671,7 @@ def get_budget_overrides() -> dict:
 
 def get_capabilities() -> dict:
     """Return the [capabilities] section (computer_use / browser / web_search /
-    mobile_tools / ros). These gate the optional high-impact tools in
+    mobile_tools). These gate the optional high-impact tools in
     ``tools.base_registry``; all default off."""
     cfg = load_config().get("capabilities", {}) or {}
     return {
@@ -679,7 +679,6 @@ def get_capabilities() -> dict:
         "browser": bool(cfg.get("browser", False)),
         "web_search": bool(cfg.get("web_search", False)),
         "mobile_tools": bool(cfg.get("mobile_tools", False)),
-        "ros": bool(cfg.get("ros", False)),
         # Programmatic tool calling: a sandboxed Python script that orchestrates
         # declared tool calls (also enableable via MAVERICK_CODE_EXEC).
         "code_exec": bool(cfg.get("code_exec", False)),
@@ -1344,7 +1343,7 @@ def get_calibration() -> dict:
 
     The verifier-calibration interlock (``maverick.calibration``) is OFF by
     default: ``enforce`` must be true for a failed assessment to freeze
-    self-improvement (trajectory donation). ``min_samples`` is the minimum
+    self-improvement. ``min_samples`` is the minimum
     labeled samples before an assessment is trusted; ``min_discrimination`` is
     the floor on mean(confidence|correct) - mean(confidence|incorrect) below
     which the verifier is judged to have drifted.
@@ -1643,9 +1642,6 @@ def get_dreaming() -> dict:
         # Shared promotion is disabled by default: department-scoped failures
         # must not be written into globally recallable insights.
         "promote_shared": bool(cfg.get("promote_shared", False)),
-        # Mine verifier critiques out of donated trajectory records (empty
-        # unless [telemetry] donate_trajectories has produced any).
-        "mine_critiques": bool(cfg.get("mine_critiques", True)),
         # Insights unconfirmed for this many days retire; 0 = never expire.
         "insight_ttl_days": _nonneg_int("insight_ttl_days", 90),
         # Retire a failure insight once this many NEWER similar successes
@@ -1749,8 +1745,8 @@ def get_self_improvement() -> dict:
         "min_improvement": min_improvement,
         "promotion_policy_valid": margin_valid,
         "max_auto_rung": str(cfg.get("max_auto_rung", "policy")).strip().lower() or "policy",
-        # Phase-0 capture fuels the default-on flywheel. Raw-text donation and
-        # provider egress remain separate opt-ins.
+        # Phase-0 capture fuels the default-on flywheel. Provider egress
+        # remains a separate opt-in.
         "capture": _strict_config_bool(cfg, "capture", True),
         "prm_guidance": _strict_config_bool(
             cfg, "prm_guidance", governed_learning_default()),
@@ -1876,33 +1872,6 @@ def get_rehearsal() -> dict:
         "max_uncertainty": _num("max_uncertainty", 0.25),
         "horizon": _num("horizon", 8, int),
         "rollouts": _num("rollouts", 200, int),
-    }
-
-
-def get_speculative() -> dict:
-    """Return the ``[speculative]`` section (speculative agent execution).
-
-    Draft a turn with a cheap model when the Operating Twin's world-model is
-    confident the turn is predictable, reserving the frontier model for novel /
-    uncertain turns. OFF by default and fail-open -- when ``enable`` is false (or
-    no ``draft_model`` is configured) the agent always uses its normal model.
-    ``draft_model`` is an operator-chosen cheap model spec (never hard-coded);
-    ``min_confidence``/``min_support`` set how dominant + well-observed an action
-    must be before its turn is drafted.
-    """
-    cfg = load_config().get("speculative", {})
-
-    def _num(key: str, default: float, cast=float):
-        try:
-            return cast(cfg.get(key, default))
-        except (TypeError, ValueError):
-            return default
-
-    return {
-        "enable": bool(cfg.get("enable", False)),
-        "draft_model": (str(cfg.get("draft_model", "")).strip() or None),
-        "min_confidence": _num("min_confidence", 0.85),
-        "min_support": _num("min_support", 8, int),
     }
 
 

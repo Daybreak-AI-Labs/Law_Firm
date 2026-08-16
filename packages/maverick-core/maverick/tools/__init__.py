@@ -26,21 +26,6 @@ def _env_true(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _hardware_sensors_enabled() -> bool:
-    """Opt-in gate for host hardware telemetry.
-
-    The tool reads host state and imports the optional psutil dependency in the
-    Maverick process, so keep it out of the default model-visible registry
-    unless an operator enables it explicitly.
-    """
-    if _env_true("MAVERICK_ENABLE_HARDWARE_SENSORS"):
-        return True
-    try:
-        return bool(load_config().get("tools", {}).get("hardware_sensors", False))
-    except Exception:  # pragma: no cover -- config never blocks the registry
-        return False
-
-
 def as_bool(value: Any) -> bool:
     """Strict confirm gate for destructive or costly tool ops.
 
@@ -601,10 +586,10 @@ AUTHENTICATED_AMBIENT_CRED_TOOL_NAMES = AMBIENT_CRED_TOOL_NAMES | frozenset({
     "hubspot", "huggingface", "jira", "linear", "mixpanel",
     "mongodb", "msgraph", "newsapi", "notion", "onetrust", "oracle",
     "pagerduty", "plaid", "plausible", "posthog", "reddit", "redis",
-    "replicate", "s3", "salesforce", "sap", "sentry", "servicenow", "ses",
+    "s3", "salesforce", "sap", "sentry", "servicenow", "ses",
     "semantic_scholar", "shopify", "slack_bot", "slack_workflow", "snowflake",
     "sns", "speak", "spotify", "stripe", "teams", "transcribe_audio", "translate",
-    "trello", "truelayer", "twilio", "vertex", "wolfram", "workday", "zoom",
+    "trello", "truelayer", "twilio", "wolfram", "workday", "zoom",
 })
 
 
@@ -632,8 +617,7 @@ def _deferred_loading_enabled() -> bool:
     if _env_true("MAVERICK_DEFERRED_TOOLS"):
         return True
     try:
-        from ..config import load_config
-        return bool(load_config().get("tools", {}).get("deferred_loading", False))
+                return bool(load_config().get("tools", {}).get("deferred_loading", False))
     except Exception:  # pragma: no cover -- config never blocks the registry
         return False
 
@@ -647,7 +631,6 @@ def base_registry(
     enable_browser: bool = False,
     enable_web_search: bool = False,
     enable_mobile_tools: bool = False,
-    enable_ros: bool = False,
     channel: str | None = None,
     user_id: str | None = None,
     budget: Any = None,
@@ -663,8 +646,8 @@ def base_registry(
     filter returns nothing and "PAUSED: 0 open question(s)" is shown
     even though the agent asked.
 
-    ``enable_computer_use`` / ``enable_browser`` / ``enable_mobile_tools`` /
-    ``enable_ros`` register optional high-impact tools. Computer/browser require
+    ``enable_computer_use`` / ``enable_browser`` / ``enable_mobile_tools``
+    register optional high-impact tools. Computer/browser require
     optional extras
     (``maverick-agent[computer-use]`` / ``[browser]``); when missing
     the tool factories raise an actionable ImportError at registration
@@ -746,7 +729,6 @@ def base_registry(
     from .asana_tool import asana_tool
     from .ast_edit import ast_edit
     from .async_compaction import async_compaction
-    from .audio_understanding import audio_understanding
     from .audit_mirror import audit_mirror
     from .bias_eval import bias_eval
     from .bitbucket_tool import bitbucket_tool
@@ -761,7 +743,6 @@ def base_registry(
     from .capability_leak_fuzzer import capability_leak_fuzzer
     from .capability_negotiation import capability_negotiation
     from .capability_revocation import capability_revocation
-    from .chaos_gameday import chaos_gameday
     from .cidr_check import cidr_check
     from .citation_verifier import citation_verifier
     from .clickup_tool import clickup_tool
@@ -801,7 +782,6 @@ def base_registry(
     from .dynamodb_tool import dynamodb_tool
     from .elasticsearch_tool import elasticsearch_tool
     from .email_tool import email_tool
-    from .embedded_device import embedded_device
     from .embeddings import embeddings
     from .energy_accounting import energy_accounting
     from .erp_tool import erp_tool
@@ -828,9 +808,7 @@ def base_registry(
     from .http_fetch import http_fetch
     from .hubspot_tool import hubspot_tool
     from .huggingface import huggingface
-    from .image_edit import image_edit
     from .imagemagick_tool import imagemagick_tool
-    from .ios_sim import ios_sim
     from .jira import jira
     from .jwt_inspect import jwt_inspect
     from .k_anonymity import k_anonymity
@@ -861,7 +839,6 @@ def base_registry(
     from .notify import notify_tool
     from .notion import notion
     from .observation_channel import observation_channel
-    from .obsidian import obsidian
     from .ocr import ocr
     from .office_convert import office_convert
     from .openapi_runner import openapi_runner
@@ -895,12 +872,10 @@ def base_registry(
     from .redis_tool import redis_tool
     from .reflect_loop import reflect_loop
     from .reliability_harness import reliability_harness
-    from .replicate_tool import replicate_tool
     from .retention_check import retention_check
     from .right_to_explanation import right_to_explanation
     from .risk_tier import risk_tier
     from .risk_tier_classifier import risk_tier_classifier
-    from .ros_tool import ros_tool
     from .run_events_firehose import run_events_firehose
     from .s3_attachments import s3_attachments
     from .s3_tool import s3_tool
@@ -912,7 +887,6 @@ def base_registry(
     from .semantic_scholar import semantic_scholar
     from .semver_check import semver_check
     from .sentry_tool import sentry_tool
-    from .serial_tool import serial_tool
     from .ses_tool import ses_tool
     from .shopify_tool import shopify_tool
     from .skill_distill_v2 import skill_distill_v2
@@ -933,7 +907,6 @@ def base_registry(
     from .template_generator import template_generator
     from .test_gen import test_gen
     from .test_impact import test_impact
-    from .tiered_storage import tiered_storage
     from .tool_call_inspector import tool_call_inspector
     from .translate import translate
     from .trello_tool import trello_tool
@@ -1008,13 +981,11 @@ def base_registry(
     reg.register(differential_privacy())
     if enable_mobile_tools:
         reg.register(android(sandbox))
-        reg.register(ios_sim(sandbox))
     reg.register(spend_report())
     reg.register(budget_status(budget=budget))
     reg.register(test_impact())
     reg.register(youtube())
     reg.register(notion())
-    reg.register(obsidian())
     reg.register(spreadsheet(sandbox))
     reg.register(translate())
     reg.register(slack_bot())
@@ -1090,7 +1061,6 @@ def base_registry(
     reg.register(capability_leak_fuzzer())
     reg.register(right_to_explanation())
     reg.register(audit_mirror())
-    reg.register(tiered_storage())
     reg.register(async_compaction())
     reg.register(wal_contention())
     reg.register(memleak_quarantine())
@@ -1107,15 +1077,12 @@ def base_registry(
     reg.register(cost_aware_router())
     reg.register(multiregion_failover())
     reg.register(reliability_harness())
-    reg.register(chaos_gameday())
     reg.register(pia_generator())
     reg.register(capability_negotiation())
     reg.register(key_rotation())
     reg.register(data_residency())
     reg.register(polyglot_injection())
     reg.register(safety_regression_budget())
-    if enable_ros:
-        reg.register(ros_tool())
     reg.register(run_events_firehose())
     reg.register(marketplace_ratings())
     reg.register(local_embeddings_cache())
@@ -1139,7 +1106,6 @@ def base_registry(
     reg.register(agent_identity())
     from .adversarial_eval import adversarial_eval
     from .gui_element_memory import gui_element_memory
-    from .hardware_sensors import hardware_sensors
     from .voice_command_grammar import voice_command_grammar
     from .what_changed_digest import what_changed_digest
     reg.register(voice_command_grammar())
@@ -1188,7 +1154,6 @@ def base_registry(
     _defer(hubspot_tool())
     _defer(twilio_tool())
     _defer(s3_tool())
-    reg.register(serial_tool())
     _defer(elasticsearch_tool())
     reg.register(github_actions())
     # Strategic-fit connectors (ITSM / data / cloud-ML / GRC). Explicit-token
@@ -1201,13 +1166,11 @@ def base_registry(
     from .sap_tool import sap_tool
     from .servicenow_tool import servicenow_tool
     from .snowflake_tool import snowflake_tool
-    from .vertex_tool import vertex_tool
     from .workday_tool import workday_tool
     _defer(servicenow_tool())
     _defer(snowflake_tool())
     _defer(databricks_tool())
     _defer(onetrust_tool())
-    _defer(vertex_tool())
     _defer(oracle_tool())
     _defer(sap_tool())
     _defer(workday_tool())
@@ -1241,7 +1204,6 @@ def base_registry(
         reg.register(gdrive_tool())
     _defer(trello_tool())
     _defer(confluence_tool())
-    _defer(replicate_tool())
     _defer(newsapi_tool())
     _defer(wolfram_tool())
     _defer(dropbox_tool())
@@ -1261,12 +1223,7 @@ def base_registry(
     reg.register(pandoc_tool(sandbox))
     reg.register(office_convert(sandbox))
     reg.register(wasm_run(sandbox))
-    if _hardware_sensors_enabled():
-        reg.register(hardware_sensors())
     reg.register(imagemagick_tool(sandbox))
-    reg.register(audio_understanding(sandbox))
-    reg.register(image_edit(sandbox))
-    reg.register(embedded_device(sandbox))
     _defer(ga4_tool())
     _defer(plaid_tool())
     _defer(truelayer_tool())
@@ -1355,7 +1312,6 @@ def base_registry(
     # register below and pick up their own limits via a second pass.
     _apply_rate_limits(reg)
     _apply_python_plugins(reg)
-    _apply_ts_plugins(reg)
     _apply_grpc_plugins(reg)
     if _include_generated_tools:
         _apply_generated_tools(reg, sandbox)
@@ -1524,25 +1480,6 @@ def _apply_python_plugins(reg: ToolRegistry) -> None:
                     "plugin tool %s factory raised: %s", name, e
                 )
     except Exception:  # pragma: no cover -- importlib quirks
-        pass
-
-
-def _apply_ts_plugins(reg: ToolRegistry) -> None:
-    # TypeScript plugins (the NDJSON stdio SDK): each `[plugins] ts` command
-    # contributes its described tools. Same no-shadowing rule as Python
-    # plugins; a broken plugin logs but never takes the swarm down.
-    try:
-        from ..ts_plugin_host import load_configured_ts_plugins
-        for t in load_configured_ts_plugins():
-            if t.name in reg._tools:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "ts plugin tool %r conflicts with an existing tool; skipping",
-                    t.name,
-                )
-                continue
-            reg.register(t)
-    except Exception:  # pragma: no cover -- plugin failure never blocks boot
         pass
 
 

@@ -374,8 +374,6 @@ async def _lifespan(app: FastAPI):
     """
     from maverick.deployment import require_enterprise_or_die
     require_enterprise_or_die()
-    from maverick.residency import require_residency_or_die
-    require_residency_or_die()  # strict region pin (#41); no-op unless opted in
     # Exactly one control plane may write a data root. Until now that was
     # enforced only by a `helm template` guard, which a raw kubectl apply,
     # `compose up --scale`, or a second local `maverick dashboard` walks past
@@ -1617,12 +1615,6 @@ async def learning_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "learning.html", {"snap": _learning_snapshot(request)},
     )
-
-
-@app.get("/perf", response_class=HTMLResponse)
-async def perf_page(request: Request) -> HTMLResponse:
-    """Public perf dashboard: SLA + benchmark history (data via /api/v1/perf)."""
-    return templates.TemplateResponse(request, "perf.html", {})
 
 
 @app.get("/goals", response_class=HTMLResponse)

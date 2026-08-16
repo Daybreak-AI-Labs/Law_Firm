@@ -15,7 +15,6 @@ from maverick.sandbox.local import LocalBackend
 from maverick.tools import compute as compute_mod
 from maverick.tools import file_watcher as fw_mod
 from maverick.tools import github_repo_search as ghrs_mod
-from maverick.tools import image_edit as ie_mod
 from maverick.tools import notebook_exec as nb_mod
 from maverick.tools import redact as redact_mod
 from maverick.tools import s3_attachments as s3_mod
@@ -81,10 +80,6 @@ def test_compute_unhashable_op():
 
 def test_s3_attachments_unhashable_op():
     assert s3_mod._run({"op": ["x"]}).startswith("ERROR")
-
-
-def test_image_edit_unhashable_op(sandbox):
-    assert ie_mod._run({"op": [1, 2]}, sandbox).startswith("ERROR")
 
 
 # --- overlong / non-str path -> OSError(ENAMETOOLONG) on Path.exists() ------

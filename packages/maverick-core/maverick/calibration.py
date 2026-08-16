@@ -1,8 +1,8 @@
 """Verifier calibration: keep the evaluator honest before the system learns.
 
 Self-improvement closes the loop between the evaluator and the policy. The
-verifier's confidence is the *label* the trajectory-donation flywheel
-(:func:`maverick.donation.should_donate`) and the skill distiller learn from.
+verifier's confidence is the *label* the learning lifecycle and the skill
+distiller learn from.
 If the verifier drifts -- starts assigning high confidence to wrong answers --
 the system trains on its own mistakes and compounds them (reward hacking /
 model collapse). The single most important guardrail for safe self-improvement
@@ -13,8 +13,8 @@ This module is that interlock. It mirrors the standard "judge calibration set"
 pattern: hold a set of ``(verifier_confidence, ground_truth)`` samples and
 require that the verifier's mean confidence on correct answers exceeds its mean
 on incorrect answers by a margin, over enough samples. When an assessment finds
-the verifier inadequate, :func:`learning_frozen` returns True and
-``donation.write_record`` refuses to harvest new trajectories.
+the verifier inadequate, :func:`learning_frozen` returns True and the
+learning stores refuse to harvest new trajectories.
 
 Samples come from a labeled set the operator feeds (``maverick calibrate
 --sample ...``) or any ground-truth source (e.g. coding-mode test outcomes
@@ -76,7 +76,7 @@ def _risk_verdict_path() -> Path:
 
     Kept separate from the general learning-freeze verdict: a narrow current-
     cycle assessment that is intentionally inadequate until enough judge calls
-    complete must not overwrite the broader donation interlock's state.
+    complete must not overwrite the broader learning interlock's state.
     """
     try:
         return data_dir("self_harness_calibration_receipt.json")

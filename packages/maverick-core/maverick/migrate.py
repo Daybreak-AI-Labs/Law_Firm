@@ -46,7 +46,7 @@ KNOWN_SECTIONS = frozenset({
     "context", "credit", "data_engine",
     "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress",
     "emergent_codec", "emergent_protocol",
-    "email", "embedded", "encryption", "energy", "enterprise", "entity_graph",
+    "email", "encryption", "energy", "enterprise", "entity_graph",
     "erp",
     "experience", "features", "federation", "finance", "finance_operations", "flows", "github",
     "governance", "governed_connectors", "governed_records", "grpc", "grpc_dispatch", "intake",
@@ -55,7 +55,7 @@ KNOWN_SECTIONS = frozenset({
     "logging", "lsp", "mcp_registries", "mcp_servers", "memory",
     "model_cost_tiers", "model_proxy", "models", "notifications", "oauth", "observability",
     "paper_review",
-    "obsidian", "operations_scientist",
+    "operations_scientist",
     "perf", "persona", "planning", "plugins", "privacy",
     "privacy_ops", "provider_failover", "providers", "queue", "quotas", "reflexion",
     "repl", "harness_refine", "session_tree",
@@ -73,19 +73,15 @@ KNOWN_SECTIONS = frozenset({
     # with actively-wrong suggestions ("self_harness -> did you mean
     # self_learning?", which is a *different* feature). The self-learning
     # lifecycle (self_harness/self_improvement/dreaming/rehearsal/
-    # memory_guard) plus actions/domains/fairness_monitor/speculative/tax.
+    # memory_guard) plus actions/domains/fairness_monitor/tax.
     # Guarded against future drift by test_wizard_parity's wizard-section check.
     "actions", "domains", "dreaming", "earned_autonomy", "fairness_monitor",
     "memory_guard", "rehearsal",
-    "self_harness", "self_improvement", "speculative", "tax",
+    "self_harness", "self_improvement", "tax",
     # Structured rubric verifier + JitRL test-time adaptation: read by
     # load_config (config.get_reasoning_reward / get_jit_rl) and written by the
     # wizard's advanced opt-out steps.
     "reasoning_reward", "jit_rl",
-    # Data-residency region pinning (maverick.residency): read by real
-    # load_config() call sites and written by the wizard's regulated-posture
-    # step, yet was missing here -- a false "unknown section" for [residency].
-    "residency",
 })
 
 

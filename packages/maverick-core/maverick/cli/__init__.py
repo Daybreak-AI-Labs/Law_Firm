@@ -2230,38 +2230,6 @@ def budget(ctx) -> None:
         )
 
 
-@main.command("budget-tune")
-@click.option("--percentile", type=float, default=90.0,
-              help="Percentile of historical goal cost to size the cap to.")
-@click.option("--min-samples", type=int, default=5,
-              help="Minimum priced goals before a recommendation is made.")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.pass_context
-def budget_tune(ctx, percentile: float, min_samples: int, as_json: bool) -> None:
-    """Recommend a max_dollars cap learned from historical goal spend.
-
-    Sizes the default to the percentile of what goals actually cost plus a
-    margin, so the common case fits while a runaway still trips it. Read-only —
-    set the value yourself in config.
-    """
-    import json as _json
-
-    from ..budget_tuner import recommend_for_world
-    world = open_world(ctx.obj["db"])
-    recs = recommend_for_world(world, pct=percentile, min_samples=min_samples)
-    if as_json:
-        click.echo(_json.dumps(recs))
-        return
-    if not recs:
-        click.echo(f"not enough priced goals yet (need >= {min_samples}).")
-        return
-    click.echo(click.style("Recommended max_dollars (learned):", bold=True))
-    for cls, info in sorted(recs.items()):
-        click.echo(f"  {cls}: ${info['recommended_max_dollars']:.2f}  "
-                   f"(p{int(percentile)}=${info[f'p{int(percentile)}']:.2f}, "
-                   f"{info['samples']} goal(s))")
-
-
 @main.command("confidential-compute")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def confidential_compute_cmd(as_json: bool) -> None:
@@ -2454,11 +2422,11 @@ def canary_compare(baseline: str, candidate: str, tolerance: float) -> None:
 def calibrate(sample, as_json) -> None:
     """Assess verifier calibration -- the self-improvement safety interlock.
 
-    The verifier's confidence is the label the trajectory-donation flywheel
-    learns from, so a drifted verifier would teach the system its own mistakes.
+    The verifier's confidence is the label the learning lifecycle learns
+    from, so a drifted verifier would teach the system its own mistakes.
     With ``--sample`` append one ``(confidence, ground_truth)`` pair to the
     calibration set; with no arguments, assess the set and persist the verdict
-    that gates donation. If the verifier no longer separates correct from
+    that gates learning. If the verifier no longer separates correct from
     incorrect answers (and ``[calibration] enforce`` is on), learning freezes.
     """
     import json as _json
@@ -2499,7 +2467,7 @@ def calibrate(sample, as_json) -> None:
         from ..config import get_calibration
         if get_calibration()["enforce"]:
             click.echo(click.style(
-                "  learning is FROZEN (trajectory donation gated) until this passes.",
+                "  learning is FROZEN until this passes.",
                 fg="yellow",
             ))
         else:
@@ -4446,26 +4414,6 @@ def plugin_verify_cmd() -> None:
         sys.exit(1)
 
 
-@plugin.command("stats")
-def plugin_stats_cmd() -> None:
-    """Show local plugin-tool usage counts (opt-in [plugins] telemetry)."""
-    import time as _time
-
-    from ..plugin_telemetry import enabled as _ptel_enabled
-    from ..plugin_telemetry import stats as _ptel_stats
-    data = _ptel_stats()
-    if not _ptel_enabled():
-        click.echo("plugin telemetry is OFF ([plugins] telemetry = true to enable).")
-    if not data:
-        click.echo("no plugin tool calls recorded.")
-        return
-    for name, entry in sorted(data.items(), key=lambda kv: -kv[1].get("calls", 0)):
-        last = entry.get("last_used")
-        ago = f"{(_time.time() - last) / 86400:.0f}d ago" if last else "never"
-        dist = f" [{entry['dist']}]" if entry.get("dist") else ""
-        click.echo(f"  {name}{dist}: {entry.get('calls', 0)} call(s), last {ago}")
-
-
 @plugin.command("new")
 @click.argument("name")
 @click.option(
@@ -5440,50 +5388,6 @@ def gc(ctx, days: int, events_days: int, yes: bool) -> None:
         f"pruned {convs} conversation(s), {events} goal_event row(s), "
         f"{dedup} processed-message row(s)"
     )
-
-
-@main.group("donate")
-def donate() -> None:
-    """Opt-in trajectory donation. Default OFF.
-
-    Enable in ~/.maverick/config.toml:
-      [telemetry]
-      donate_trajectories = true
-      donate_text = false  # set true to include task text (off by default)
-    """
-
-
-@donate.command("status")
-def donate_status() -> None:
-    """Show pending records in the outbox (NOT yet uploaded)."""
-    from ..donation import _donations_enabled, _text_donations_enabled, list_pending
-    click.echo(f"donate_trajectories: {_donations_enabled()}")
-    click.echo(f"donate_text:         {_text_donations_enabled()}")
-    pending = list_pending()
-    if not pending:
-        click.echo("outbox: empty")
-        return
-    click.echo(f"outbox: {len(pending)} record(s) pending")
-    for p in pending[:10]:
-        click.echo(f"  {p.name}  ({p.stat().st_size} bytes)")
-
-
-@donate.command("clear")
-@click.option("--yes", is_flag=True)
-def donate_clear(yes: bool) -> None:
-    """Delete every pending donation record without uploading."""
-    from ..donation import clear_outbox, list_pending
-    pending = list_pending()
-    if not pending:
-        click.echo("outbox: empty (nothing to clear)")
-        return
-    if not yes:
-        click.echo(f"This will delete {len(pending)} pending record(s).")
-        click.confirm("Proceed?", abort=True)
-    n = clear_outbox()
-    click.echo(f"cleared {n} record(s)")
-
-
 
 
 def _watch_goal_allowed(goal_text: str) -> tuple[bool, str | None]:

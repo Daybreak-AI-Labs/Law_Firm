@@ -373,13 +373,10 @@ def test_every_known_in_process_workspace_writer_has_mutating_path_metadata():
         "wasm_run",
         "diagram",
         "latex",
-        "image_edit",
         "speak",
         "html_to_app",
         "workspace_snapshot",
         "android",
-        "ios_sim",
-        "obsidian",
         "memory",
         "browser",
         "oauth_helper",
@@ -387,7 +384,6 @@ def test_every_known_in_process_workspace_writer_has_mutating_path_metadata():
     assert expected == _IN_PROCESS_WORKSPACE_WRITERS
     declared = {
         "apply_patch",
-        "obsidian",
         "memory",
         "browser",
         "oauth_helper",
@@ -397,58 +393,6 @@ def test_every_known_in_process_workspace_writer_has_mutating_path_metadata():
         if any(rule.mutates for rule in policy.paths)
     }
     assert expected <= declared
-
-
-@pytest.mark.asyncio
-async def test_sandbox_read_only_path_blocks_real_image_edit_overwrite(tmp_path):
-    image_module = pytest.importorskip("PIL.Image")
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-    source = tmp_path / "source.png"
-    protected = tmp_path / "evidence" / "proof.png"
-    protected.parent.mkdir()
-    image_module.new("RGB", (2, 2), color="blue").save(source)
-    image_module.new("RGB", (5, 5), color="green").save(protected)
-
-    out = await agent._run_tool(
-        "image_edit",
-        {
-            "op": "resize",
-            "input_path": "source.png",
-            "output_path": "evidence/proof.png",
-            "width": 1,
-            "height": 1,
-        },
-    )
-
-    assert "DENIED by sandbox policy" in out
-    with image_module.open(protected) as image:
-        assert image.size == (5, 5)
-
-
-@pytest.mark.asyncio
-async def test_sandbox_read_only_path_blocks_in_place_image_edit(tmp_path):
-    image_module = pytest.importorskip("PIL.Image")
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-    protected = tmp_path / "evidence" / "proof.png"
-    protected.parent.mkdir()
-    image_module.new("RGB", (5, 5), color="green").save(protected)
-
-    out = await agent._run_tool(
-        "image_edit",
-        {
-            "op": "resize",
-            "input_path": "evidence/proof.png",
-            "output_path": "evidence/proof.png",
-            "width": 1,
-            "height": 1,
-        },
-    )
-
-    assert "DENIED by sandbox policy" in out
-    with image_module.open(protected) as image:
-        assert image.size == (5, 5)
 
 
 @pytest.mark.asyncio
@@ -552,11 +496,6 @@ async def test_snapshot_archive_store_honors_protected_workspace(
             {"op": "screenshot", "out_path": "evidence/android.png"},
             "evidence",
         ),
-        (
-            "ios_sim",
-            {"op": "screenshot", "out_path": "evidence/ios.png"},
-            "evidence",
-        ),
     ],
 )
 async def test_declared_host_writers_honor_read_only_paths(
@@ -581,62 +520,6 @@ async def test_declared_host_writers_honor_read_only_paths(
 
     assert "DENIED by sandbox policy" in out
     assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_obsidian_write_is_blocked_when_vault_overlaps_protected_workspace(
-    tmp_path,
-    monkeypatch,
-):
-    from maverick.tools import obsidian as obsidian_module
-
-    vault = tmp_path / "evidence" / "vault"
-    vault.mkdir(parents=True)
-    monkeypatch.setattr(obsidian_module, "_vault", lambda: vault)
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-    calls: list = []
-    agent.tools.register(
-        Tool(
-            name="obsidian",
-            description="writer spy",
-            fn=lambda payload: calls.append(payload) or "ran",
-            input_schema={"type": "object", "properties": {}},
-        )
-    )
-
-    out = await agent._run_tool(
-        "obsidian",
-        {"op": "create", "note": "proof.md", "body": "tampered"},
-    )
-
-    assert "DENIED by sandbox policy" in out
-    assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_external_obsidian_vault_remains_usable_with_allow_all_paths(
-    tmp_path,
-    monkeypatch,
-):
-    from maverick.file_lock import prepare_private_directory
-    from maverick.tools import obsidian as obsidian_module
-
-    workdir = tmp_path / "work"
-    prepare_private_directory(workdir)
-    vault = tmp_path / "external-vault"
-    vault.mkdir()
-    monkeypatch.setattr(obsidian_module, "_vault", lambda: vault)
-    agent = _agent(workdir)
-    agent.capability = Capability(principal="agent:coder-1")
-
-    out = await agent._run_tool(
-        "obsidian",
-        {"op": "create", "note": "proof.md", "body": "allowed"},
-    )
-
-    assert "DENIED" not in out
-    assert (vault / "proof.md").read_text(encoding="utf-8") == "allowed"
 
 
 @pytest.mark.asyncio
@@ -890,10 +773,6 @@ async def test_speak_dynamic_default_is_frozen_before_hooks(
     ("name", "args"),
     [
         ("latex", {"op": "mathml", "latex": "x"}),
-        (
-            "image_edit",
-            {"op": "variation", "image": "https://example.test/image.png"},
-        ),
         ("workspace_snapshot", {"op": "snapshot", "path": "evidence"}),
     ],
 )

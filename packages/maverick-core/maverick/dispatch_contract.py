@@ -7,7 +7,7 @@ gated. The live ungated one (``flow/execution.py``, bound at
 salesforce, sap, workday -- with a partial check and no audit row.
 
 The missing audit row is the structural problem, not just the missing checks.
-The attestation bundle asserts that *no recorded action violated the policy
+The audit record asserts that *no recorded action violated the policy
 envelope*; an action dispatched through an ungated path is never recorded, so
 it satisfies that sentence by construction. That turns the platform's central
 governance claim from incomplete into **unfalsifiable**, and a claim a hostile
@@ -53,9 +53,7 @@ SANCTIONED = frozenset({
 #: Dispatches whose tool name is a fixed literal are not model- or
 #: template-routable, so they cannot be steered into a connector. Recorded with
 #: the literal so the exemption is auditable rather than a blanket pass.
-LITERAL_EXEMPT = {
-    ("packages/maverick-core/maverick/perf_sla.py", "noop"),
-}
+LITERAL_EXEMPT: set[tuple[str, str]] = set()
 
 #: Sites exempt only because nothing in production reaches them. This is the
 #: dangerous kind of exemption -- the premise rots the moment somebody wires the
@@ -256,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nRoute it through maverick.tool_authz.authorize(tool, params, "
           "origin=...) first, which applies the agent-independent gate subset "
           "AND records the dispatch on the signed chain. Without that record "
-          "the attestation's policy_envelope claim is unfalsifiable for this "
+          "the audit record's policy-envelope claim is unfalsifiable for this "
           "path. If the tool name is a fixed literal that cannot be steered, "
           "add it to LITERAL_EXEMPT with the literal.", file=sys.stderr)
     return 1 if args.ci else 0

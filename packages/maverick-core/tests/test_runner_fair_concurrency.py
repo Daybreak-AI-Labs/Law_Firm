@@ -54,7 +54,6 @@ def _stub_run(monkeypatch, *, gate: threading.Event, started: dict):
     monkeypatch.setattr("maverick.sandbox.build_sandbox", lambda *a, **k: _Sandbox())
     monkeypatch.setattr("maverick.budget.budget_from_config",
                         lambda *a, **k: object())
-    monkeypatch.setattr("maverick.trace_pin.pin_trace", lambda *a, **k: None)
 
     def _blocking_run(llm, world, budget, goal_id, **kw):
         started.setdefault(kw.get("user_id"), []).append(goal_id)

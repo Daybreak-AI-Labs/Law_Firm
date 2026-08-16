@@ -9,9 +9,7 @@ import pytest
 from maverick import (
     attachments,
     failure_telemetry,
-    shield_updates,
     supply_chain,
-    tiered_storage,
     voice_macros,
 )
 from maverick.encryption_migrate import backup_world_db
@@ -130,27 +128,6 @@ def test_best_effort_failure_telemetry_preserves_shared_parent(
     assert private_path_is_restricted(path)
 
 
-def test_shield_rules_refuse_shared_custom_parent_without_mutation(
-    tmp_path, monkeypatch,
-):
-    shared, unrelated, before = _shared_fixture(tmp_path)
-    path = shared / "shield-rules.json"
-    monkeypatch.setattr(
-        shield_updates,
-        "verify_bundle",
-        lambda _bundle, _key: (2, [{"id": "signed-rule"}]),
-    )
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        shield_updates.apply_update(
-            {"sig": "verified"}, pubkey_hex="publisher", path=path,
-        )
-
-    _assert_shared_unchanged(shared, unrelated, before)
-    assert not path.exists()
-    assert not (shared / "shield-rules.json.lock").exists()
-
-
 def test_supply_chain_pins_refuse_shared_custom_parent_without_mutation(
     tmp_path, monkeypatch,
 ):
@@ -175,27 +152,3 @@ def test_voice_macros_refuse_shared_custom_parent_without_mutation(tmp_path):
     _assert_shared_unchanged(shared, unrelated, before)
     assert not path.exists()
     assert not (shared / "voice-macros.json.lock").exists()
-
-
-def test_cold_archive_refuses_shared_custom_directory_without_mutation(
-    tmp_path, monkeypatch,
-):
-    shared, unrelated, before = _shared_fixture(tmp_path)
-    monkeypatch.setenv("MAVERICK_WORLD_COLD_CODEC", "gzip")
-    rows = [{"id": 1, "ended_at": 1_700_000_000.0, "summary": "private"}]
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        tiered_storage._write_cold_file(
-            shared, "episodes", "ended_at", rows,
-        )
-
-    class FakeWorld:
-        _writing = object()
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        tiered_storage.archive(
-            FakeWorld(), older_than_days=30, cold_dir=shared, tables=(),
-        )
-
-    _assert_shared_unchanged(shared, unrelated, before)
-    assert {path.name for path in shared.iterdir()} == {unrelated.name}
