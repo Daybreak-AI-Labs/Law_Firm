@@ -477,6 +477,8 @@ def recall(
     n_reflexion = n_dream = 0
     try:
         from . import reflexion
+        if not reflexion.recall_enabled():
+            raise LookupError("reflexion recall is disabled")
         hits = _in_scope(reflexion.recall(
             safe_query, k=3, domain=domain,
             channel=channel, user_id=user_id,

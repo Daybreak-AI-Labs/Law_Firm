@@ -466,6 +466,35 @@ def enabled() -> bool:
         return False
 
 
+def recall_enabled() -> bool:
+    """Whether recorded lessons may be RE-INJECTED into new runs' context.
+
+    Off by default, and deliberately a separate knob from :func:`enabled`:
+    recording lessons and consolidating them offline (``maverick dream``) is
+    how the loop learns, but recall re-injects text derived from one goal into
+    another goal's prompt, and its only scoping today is channel/user/domain.
+    In a practice whose goals belong to different clients, that is a
+    cross-matter path -- a lesson distilled from one client's failed filing can
+    surface, content and all, while working for another client.
+
+    ``[reflexion] recall = true`` (or ``MAVERICK_REFLEXION_RECALL=1``) turns it
+    back on for single-tenant/single-client deployments that accept that.
+    When matters exist as a first-class scope, recall should come back
+    matter-bound by default rather than through this blanket knob.
+    """
+    try:
+        from .config import governed_learning_env_flag, load_config
+        override = governed_learning_env_flag("MAVERICK_REFLEXION_RECALL")
+        if override is not None:
+            return override and enabled()
+        cfg = load_config()
+        return bool(
+            cfg.get("reflexion", {}).get("recall", False)
+        ) and enabled()
+    except Exception:  # pragma: no cover -- config never blocks a run
+        return False
+
+
 def tools_from_blackboard(blackboard) -> list[str]:
     """Tool names a run invoked, parsed from the blackboard's observation
     posts (``tool=<name> -> ...``). Order-preserving + de-duplicated.

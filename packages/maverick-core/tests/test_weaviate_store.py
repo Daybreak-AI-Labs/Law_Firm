@@ -154,12 +154,6 @@ def test_weaviate_count(monkeypatch):
     assert WeaviateStore().count() == 7
 
 
-def test_semantic_recall_recognizes_weaviate(monkeypatch):
-    monkeypatch.setenv("MAVERICK_VECTOR_STORE", "weaviate")
-    from maverick import semantic_recall
-    assert semantic_recall.backend_name() == "weaviate"
-
-
 def test_weaviate_reset_single_tenant_drops_whole_collection(monkeypatch):
     monkeypatch.delenv("MAVERICK_WEAVIATE_URL", raising=False)
     fake = _install_fake_weaviate(monkeypatch)

@@ -434,3 +434,50 @@ class TestReflexionSemanticRecall:
         )
         hits = reflexion.recall("fix the flaky parser test", path=path)
         assert any("parser" in r.goal_text for _, r in hits)
+
+
+class TestRecallGate:
+    """Recall into new runs is a separate, default-off knob.
+
+    Recording lessons and consolidating them offline is how the loop learns;
+    RE-INJECTING them into another goal's prompt is a cross-matter path until
+    recall is matter-scoped, so it defaults off even while reflexion itself is
+    on. The env override wins in both directions.
+    """
+
+    def test_recall_defaults_off_even_with_reflexion_on(self, monkeypatch):
+        monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.delenv("MAVERICK_REFLEXION_RECALL", raising=False)
+        assert reflexion.enabled() is True
+        assert reflexion.recall_enabled() is False
+
+    def test_config_knob_opts_in(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+        monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.delenv("MAVERICK_REFLEXION_RECALL", raising=False)
+        monkeypatch.setattr(
+            "maverick.config.load_config",
+            lambda *a, **k: {"reflexion": {"enable": True, "recall": True}},
+        )
+        assert reflexion.recall_enabled() is True
+
+    def test_env_opts_in(self, monkeypatch):
+        monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
+        assert reflexion.recall_enabled() is True
+
+    def test_env_off_beats_config_on(self, monkeypatch):
+        monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "0")
+        monkeypatch.setattr(
+            "maverick.config.load_config",
+            lambda *a, **k: {"reflexion": {"enable": True, "recall": True}},
+        )
+        assert reflexion.recall_enabled() is False
+
+    def test_recall_never_outlives_reflexion_itself(self, monkeypatch):
+        # The knob authorizes recall WITHIN an enabled loop; it must not
+        # resurrect recall when reflexion as a whole is off.
+        monkeypatch.setenv("MAVERICK_REFLEXION", "0")
+        monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
+        assert reflexion.recall_enabled() is False

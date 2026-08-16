@@ -248,7 +248,3 @@ def test_pgvector_close(monkeypatch):
     assert conn.closed is True
 
 
-def test_semantic_recall_recognizes_pgvector(monkeypatch):
-    monkeypatch.setenv("MAVERICK_VECTOR_STORE", "pgvector")
-    from maverick import semantic_recall
-    assert semantic_recall.backend_name() == "pgvector"

@@ -372,6 +372,9 @@ def test_fleet_recall_hard_filters_cross_department_content(monkeypatch):
     from maverick import reflexion
     reg = _reg(TrustedAgent(id="bot", data_scopes=frozenset({"support"})))
     fleet_memory = _fleet(monkeypatch, registry=reg)
+    # Recall is default-off (cross-matter path); this test is about the
+    # data_scopes hard filter, which only runs when recall does.
+    monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
     monkeypatch.setattr(reflexion, "recall", lambda *a, **k: [
         (0.9, SimpleNamespace(domain="support")),
         (0.8, SimpleNamespace(domain="finance")),  # must be filtered out

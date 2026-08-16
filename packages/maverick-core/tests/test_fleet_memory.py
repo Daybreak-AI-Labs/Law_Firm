@@ -8,6 +8,9 @@ from maverick import dreaming, fleet_memory, reflexion
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_FLEET_MEMORY", "1")
+    # Recall is a separate default-off knob (cross-matter path); this suite
+    # tests the fleet-memory scoping mechanics, which need it on.
+    monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setattr(reflexion, "default_path",
                         lambda: tmp_path / "reflexions.ndjson")
