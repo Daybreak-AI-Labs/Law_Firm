@@ -288,7 +288,6 @@ jobs:
             --config osv-scanner.toml \
             --lockfile "$python_lock" \
             --lockfile rust/Cargo.lock \
-            --lockfile apps/desktop/src-tauri/Cargo.lock \
             --lockfile go/model-proxy/go.mod \
             --format json \
             --output-file "$report"

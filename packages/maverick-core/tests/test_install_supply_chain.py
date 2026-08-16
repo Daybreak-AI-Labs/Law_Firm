@@ -126,26 +126,26 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_expiring():
     for dependency_surface in (
         "requirements/ci.txt",
         "rust/Cargo.lock",
-        "apps/desktop/src-tauri/Cargo.lock",
         "go/model-proxy/go.mod",
     ):
         assert dependency_surface in step
+    # Every --lockfile the gate scans must exist, or the scanner exits 127 and
+    # the whole audit job dies without scanning anything. That is exactly how
+    # the deleted apps/desktop/src-tauri/Cargo.lock failed: the workflow and
+    # this test agreed with each other and neither agreed with the tree.
+    for line in step.splitlines():
+        surface = line.strip().removeprefix("--lockfile ").strip().rstrip("\\").strip()
+        if line.strip().startswith("--lockfile") and not surface.startswith('"'):
+            assert (REPO_ROOT / surface).exists(), f"{surface} is scanned but absent"
 
     policy = tomllib.loads(_read("osv-scanner.toml"))
-    ignored = policy["IgnoredVulns"]
-    expected = {
-        "GHSA-wrw7-89jp-8q8g",
-        "RUSTSEC-2024-0370",
-        *(f"RUSTSEC-2024-{number:04d}" for number in range(411, 421)),
-        "RUSTSEC-2025-0075",
-        "RUSTSEC-2025-0080",
-        "RUSTSEC-2025-0081",
-        "RUSTSEC-2025-0098",
-        "RUSTSEC-2025-0100",
-    }
-    assert {item["id"] for item in ignored} == expected
-    assert all(item["ignoreUntil"] == date(2026, 10, 31) for item in ignored)
-    assert all("Tauri" in item["reason"] for item in ignored)
+    ignored = policy.get("IgnoredVulns", [])
+    # No exceptions is the desired state — the seventeen that used to live here
+    # were all Tauri-transitive and left with the desktop app. Any future entry
+    # must expire rather than quietly becoming permanent policy.
+    assert ignored == []
+    assert all(isinstance(item.get("ignoreUntil"), date) for item in ignored)
+    assert all(item.get("reason") for item in ignored)
 
 
 def test_go_java_and_standalone_demo_security_floors_are_explicit():
