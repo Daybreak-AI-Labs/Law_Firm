@@ -1,9 +1,9 @@
 """Tests for maverick.perceptual_hash (8x8 average-hash + hamming).
 
-The load-bearing assertion: Python and the JS twin
-(extensions/webgpu-vision/ahash.js) hash the shared synthetic gradient to the
-SAME constant. Both sides assert GRADIENT_HASH; when node is available we run
-the JS self-test for a direct cross-language comparison.
+The load-bearing assertion: Python and the Rust twin
+(rust/mvk-scan/src/phash.rs) hash the shared synthetic gradient to the SAME
+constant. Both sides assert GRADIENT_HASH; the Rust side does it in its own
+`cargo test`, so this file pins the Python half of that contract.
 """
 from __future__ import annotations
 
@@ -16,9 +16,6 @@ from maverick.perceptual_hash import (
     average_hash_from_pixels,
     hamming,
     synthetic_gradient,
-)
-
-AHASH_JS = (
 )
 
 
