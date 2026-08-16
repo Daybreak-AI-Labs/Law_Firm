@@ -424,19 +424,7 @@ def shared_authority_key_identity_required() -> bool:
             or "auto"
         )
         backend = str(configured).strip().lower()
-        if backend not in {"auto", "local", "postgres"}:
-            return True
-        world_backend = str(
-            os.environ.get("MAVERICK_WORLD_BACKEND")
-            or world.get("backend")
-            or "sqlite"
-        ).strip().lower()
-        # Postgres is shared process authority even for an explicitly declared
-        # single replica. Its encrypted rows must never depend on a node-local
-        # rotation keyring that another process cannot resolve.
-        if backend == "postgres" or (
-            backend != "local" and world_backend == "postgres"
-        ):
+        if backend not in {"auto", "local"}:
             return True
         return deployment_enterprise_enabled(
             config=config,

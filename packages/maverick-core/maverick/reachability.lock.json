@@ -3,8 +3,8 @@
   "counts": {
     "CI_ONLY": 12,
     "CLI_ONLY": 23,
-    "PRODUCTION": 773,
-    "TEST_ONLY": 67,
+    "PRODUCTION": 770,
+    "TEST_ONLY": 62,
     "UNREACHED": 4
   },
   "modules": {
@@ -796,11 +796,6 @@
     "maverick.user_notes": "PRODUCTION",
     "maverick.ux_retrospective": "CLI_ONLY",
     "maverick.ux_store": "PRODUCTION",
-    "maverick.vector_store": "TEST_ONLY",
-    "maverick.vector_store.chroma_store": "TEST_ONLY",
-    "maverick.vector_store.pgvector_store": "TEST_ONLY",
-    "maverick.vector_store.qdrant_store": "TEST_ONLY",
-    "maverick.vector_store.weaviate_store": "TEST_ONLY",
     "maverick.verifier": "PRODUCTION",
     "maverick.verifier_head": "PRODUCTION",
     "maverick.vision_click": "TEST_ONLY",
@@ -819,9 +814,6 @@
     "maverick.workspace": "PRODUCTION",
     "maverick.workspace_snapshot": "PRODUCTION",
     "maverick.world_model": "PRODUCTION",
-    "maverick.world_model_backends": "PRODUCTION",
-    "maverick.world_model_backends.pg_rls": "PRODUCTION",
-    "maverick.world_model_backends.postgres": "PRODUCTION",
     "maverick_dashboard": "PRODUCTION",
     "maverick_dashboard._shared": "PRODUCTION",
     "maverick_dashboard.admin_pages": "PRODUCTION",

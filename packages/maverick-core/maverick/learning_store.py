@@ -30,7 +30,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import sqlite3
 import time
 from pathlib import Path
@@ -59,7 +58,6 @@ _SQLITE_DDL = (
 # Session-scoped Postgres advisory lock serializing the store's whole
 # load-modify-save across HOSTS (flock only serializes one host). Fixed
 # arbitrary key, distinct from the migration lock.
-_PG_RMW_LOCK = 0x6D766B6C726E  # 'mvklrn'
 
 
 def enabled() -> bool:
@@ -71,14 +69,6 @@ def enabled() -> bool:
         return False
 
 
-def _postgres() -> bool:
-    try:
-        from .world_model_backends import is_postgres_configured
-        return is_postgres_configured()
-    except Exception:  # pragma: no cover -- backends extra absent
-        return False
-
-
 def _sqlite_path() -> Path:
     """The same tenant-aware world DB location ``open_world()`` resolves
     (``data_dir`` scopes to the active tenant) -- computed at CALL time, so
@@ -86,21 +76,6 @@ def _sqlite_path() -> Path:
     ``world_model.DEFAULT_DB`` constant."""
     from .paths import data_dir
     return data_dir("world.db")
-
-
-def _pg_dsn() -> str:
-    dsn = os.environ.get("MAVERICK_PG_DSN") or ""
-    if not dsn:
-        try:
-            from .config import load_config
-            dsn = str(((load_config() or {}).get("world_model") or {})
-                      .get("dsn") or "")
-        except Exception:  # pragma: no cover
-            dsn = ""
-    if not dsn:
-        raise RuntimeError("world learning store: postgres selected but no "
-                           "MAVERICK_PG_DSN / [world_model] dsn configured")
-    return dsn
 
 
 @contextlib.contextmanager
@@ -121,48 +96,16 @@ def _sqlite_conn():
         conn.close()
 
 
-@contextlib.contextmanager
-def _pg_conn():
-    import psycopg  # the [postgres] extra; same dependency rule as the world
-    conn = psycopg.connect(_pg_dsn(), autocommit=False)
-    try:
-        with conn.cursor() as cur:
-            for ddl in _SQLITE_DDL:  # DDL is portable: TEXT/REAL map fine
-                cur.execute(ddl.replace(" REAL ", " DOUBLE PRECISION "))
-        yield conn
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
 def _conn():
-    return _pg_conn() if _postgres() else _sqlite_conn()
+    return _sqlite_conn()
 
 
 @contextlib.contextmanager
 def rmw_lock():
-    """DB-side serialization for a whole load-modify-save. A no-op on SQLite
-    (the callers' flock already serializes the single host that can reach a
-    SQLite file); on Postgres, a session advisory lock held for the critical
-    section so two HOSTS can't interleave a read-modify-write."""
-    if not _postgres():
-        yield
-        return
-    import psycopg
-    conn = psycopg.connect(_pg_dsn(), autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT pg_advisory_lock(%s)", (_PG_RMW_LOCK,))
-        yield
-    finally:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT pg_advisory_unlock(%s)", (_PG_RMW_LOCK,))
-        finally:
-            conn.close()
+    """DB-side serialization for a whole load-modify-save. A no-op on SQLite:
+    the callers' flock already serializes the single host that can reach a
+    SQLite file."""
+    yield
 
 
 def _rows(conn, sql: str, params: tuple = ()) -> list[tuple]:
@@ -182,9 +125,8 @@ def _exec(conn, sql: str, params: tuple = ()) -> None:
 
 
 def _ph(n: int) -> str:
-    """Placeholder list for the active backend's paramstyle."""
-    mark = "%s" if _postgres() else "?"
-    return ", ".join([mark] * n)
+    """Placeholder list for the SQLite paramstyle."""
+    return ", ".join(["?"] * n)
 
 
 def load_addenda_db() -> dict[str, str]:

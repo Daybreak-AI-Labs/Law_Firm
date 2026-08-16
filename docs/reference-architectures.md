@@ -9,8 +9,7 @@ store, never the image. Pick the one that matches where you already run things.
 > `ghcr.io/daybreak-ai-labs/maverick`), expose the dashboard on port **8765**, and
 > use auth-exempt **`/readyz`** readiness and **`/livez`** liveness probes where
 > the platform supports both. Keep exactly **one** dashboard/control-plane
-> instance, including with `[world_model] backend = "postgres"`; Postgres and
-> the queue let you scale the separate `maverick worker` tier, not the web tier.
+> instance.
 
 | Platform | Manifest | State | Secrets |
 |---|---|---|---|
@@ -65,9 +64,6 @@ health-checks `/readyz`.
 
 ## Scaling to multi-tenant / multi-worker
 
-These blueprints use one dashboard/control-plane node. To add processing
-capacity, see the enterprise architecture (`docs/architecture.md`): the Postgres
-world-model backend (tenant isolation + migrations), the `QueueDispatcher`
-(arq) worker pool, per-tenant KMS/egress, and the operator console. Once
-Postgres + queue are configured, keep one web/control-plane replica (`maverick
-dashboard`) and scale only the separate worker tier (`maverick worker`).
+These blueprints use one dashboard/control-plane node; the SQLite world
+store is single-writer, so keep one web/control-plane replica (`maverick
+dashboard`).

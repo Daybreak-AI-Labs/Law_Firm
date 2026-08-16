@@ -1,8 +1,6 @@
 """Multi-tenant view (/tenants/overview + /api/v1/tenants/overview)."""
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import maverick_dashboard.auth as auth
 import pytest
 from fastapi.testclient import TestClient
@@ -73,46 +71,6 @@ def test_overview_api_rollup(monkeypatch, tmp_path):
     assert acme["total_goals"] == 2
     assert acme["spend_today"] == 1.25
     assert acme["max_daily_dollars"] == 100.0
-
-
-def test_overview_queries_postgres_without_local_sqlite_sentinel(monkeypatch, tmp_path):
-    import maverick.paths as paths
-    import maverick.world_model as world_model
-    import maverick.world_model_backends as backends
-    import maverick_dashboard.app as app_mod
-    from maverick.tenant import registry as tr
-
-    tenant = SimpleNamespace(
-        id="acme",
-        display_name="Acme",
-        plan="enterprise",
-        status="active",
-        active=True,
-        max_daily_dollars=100.0,
-    )
-    seen_tenants = []
-
-    class _PostgresWorld:
-        def goal_status_counts(self):
-            seen_tenants.append(paths.current_tenant_id())
-            return {"done": 1, "active": 1}
-
-    world = _PostgresWorld()
-    closed = []
-    monkeypatch.setattr(tr, "list_tenants", lambda: [tenant])
-    monkeypatch.setattr(tr, "tenant_spend_today", lambda _tenant: 0.0)
-    monkeypatch.setattr(backends, "is_postgres_configured", lambda: True)
-    monkeypatch.setattr(world_model, "open_world", lambda: world)
-    monkeypatch.setattr(
-        world_model, "close_world_if_owned", lambda candidate: closed.append(candidate)
-    )
-
-    rows = app_mod._tenant_overview_rows()
-
-    assert rows[0]["goals"] == {"done": 1, "active": 1}
-    assert seen_tenants == ["acme"]
-    assert paths.current_tenant_id() is None
-    assert closed == [world]
 
 
 def _as_user(monkeypatch, name: str) -> dict:

@@ -188,17 +188,6 @@ def test_purge_missing_db_safe(tmp_path: Path):
     assert res["deleted"] == 0
 
 
-def test_unscoped_postgres_retention_fails_closed(monkeypatch):
-    """A maintenance process may not turn an absent tenant into DELETE ALL."""
-    from maverick.audit.retention import RetentionScopeError, purge_world_episodes
-
-    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    monkeypatch.setattr("maverick.client.client_id", lambda: None)
-    with pytest.raises(RetentionScopeError, match="unscoped Postgres"):
-        purge_world_episodes(days=30)
-
-
 def test_enforce_covers_every_registered_tenant(monkeypatch):
     """The operator command fans out under an explicit tenant context."""
     from maverick.audit import retention

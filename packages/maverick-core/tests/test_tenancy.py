@@ -250,24 +250,6 @@ def test_tenant_scope_explicit_tenant_ignores_flag(monkeypatch):
         assert current_tenant() == "acme"  # explicit tenant works even when flag off
 
 
-def test_lazy_default_paths_follow_active_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_CHROMA_PATH", raising=False)
-    monkeypatch.delenv("MAVERICK_QDRANT_PATH", raising=False)
-
-    from maverick.paths import tenant_scope
-    from maverick.vector_store import chroma_store, qdrant_store
-
-    with tenant_scope(tenant="tenant-a"):
-        # Simulate a lazy import/use while tenant-a is active.
-        assert chroma_store._default_path() == tmp_path / "tenants" / "tenant-a" / "vector_store"
-        assert qdrant_store._default_path() == tmp_path / "tenants" / "tenant-a" / "qdrant"
-
-    with tenant_scope(tenant="tenant-b"):
-        assert chroma_store._default_path() == tmp_path / "tenants" / "tenant-b" / "vector_store"
-        assert qdrant_store._default_path() == tmp_path / "tenants" / "tenant-b" / "qdrant"
-
-
 def test_lazy_skill_distillation_store_follows_active_tenant(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
 

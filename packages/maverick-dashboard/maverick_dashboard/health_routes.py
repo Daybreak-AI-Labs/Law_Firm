@@ -282,19 +282,16 @@ def _storage_metrics() -> list[str]:
         import shutil
 
         from maverick.world_model import default_db_path
-        from maverick.world_model_backends import is_postgres_configured
 
         db_path = default_db_path()
         probe = db_path.parent if db_path.parent.exists() else None
         usage = shutil.disk_usage(str(probe) if probe else ".")
-        lines: list[str] = []
-        if not is_postgres_configured():
-            db_bytes = db_path.stat().st_size if db_path.exists() else 0
-            lines += [
-                "# HELP maverick_world_db_bytes Size of the world.db file on disk",
-                "# TYPE maverick_world_db_bytes gauge",
-                f"maverick_world_db_bytes {db_bytes}",
-            ]
+        db_bytes = db_path.stat().st_size if db_path.exists() else 0
+        lines: list[str] = [
+            "# HELP maverick_world_db_bytes Size of the world.db file on disk",
+            "# TYPE maverick_world_db_bytes gauge",
+            f"maverick_world_db_bytes {db_bytes}",
+        ]
         lines += [
             "# HELP maverick_data_disk_free_bytes Free space on the data volume",
             "# TYPE maverick_data_disk_free_bytes gauge",

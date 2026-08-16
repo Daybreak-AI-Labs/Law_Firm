@@ -430,14 +430,6 @@ def _storage_state(cfg: dict[str, Any] | None) -> Check:
         or (cfg.get("world_model") or {}).get("backend")
         or "sqlite"
     ).strip().lower()
-    if backend == "postgres":
-        return Check(
-            "storage",
-            "Runtime storage",
-            "attention",
-            "Postgres is configured; this offline preflight does not open it.",
-            "maverick doctor",
-        )
     if backend != "sqlite":
         return Check(
             "storage",

@@ -42,7 +42,6 @@ written before it was enabled are returned unchanged until rewritten (run
 | Per-agent goal events | world DB | `goal_events.content` |
 | Episode summaries | world DB | `episodes.summary`, `episodes.outcome` |
 | Parked approvals | world DB | `approvals.action`, `approvals.scope`, `approvals.detail` |
-| Semantic-recall documents | `vector_store` (chroma/pgvector) | sealed document; vector from plaintext |
 
 Sealing is transparent — values are encrypted on write and decrypted on read, so
 application behaviour is unchanged. A value written **before** encryption was enabled
@@ -98,13 +97,6 @@ Store the copies at least as well-protected as the originals, and not next to th
 data they unlock. Operators who inject `MAVERICK_ENCRYPTION_KEY` already hold the
 key in their secrets manager and need no on-disk backup.
 
-**Backend:** at-rest sealing is implemented in the **SQLite** backend only. The
-**Postgres** backend does not seal content at rest yet, so `open_world` **fails closed**
-— selecting Postgres (`[world_model] backend = "postgres"` / `MAVERICK_WORLD_BACKEND`)
-while encryption-at-rest is enabled raises `PostgresAtRestUnsupported` rather than
-silently storing plaintext. Use the SQLite backend for encrypted / regulated
-deployments until Postgres sealing lands.
-
 ## Search trade-off
 
 `messages.content` is full-text indexed (SQLite FTS5). Under encryption the index
@@ -121,13 +113,6 @@ key matches still work.
   live append + signing path, so there is a confidentiality window on today's file
   until it rolls and is sealed. Secrets in audit payloads are redacted before write
   regardless.
-- **The semantic-recall vector store** (`~/.maverick/vector_store/**` and external
-  chroma/qdrant/weaviate/pgvector) — under at-rest encryption the stored document
-  **is sealed** for the **chroma** and **pgvector** backends: the query/goal text is
-  embedded client-side (local all-MiniLM) from the plaintext and only the *sealed*
-  document + the vector are stored, so similarity search still works while no
-  verbatim text lives in the store (a separate `_s` collection keeps sealed data
-  apart from any legacy plaintext-embedded vectors — re-indexing repopulates it).
   The **qdrant**/**weaviate** backends embed server-side, so the sealed path isn't
   wired for them yet: under at-rest the semantic path is **disabled** for those two
   (it falls back to lexical recall over the sealed world DB rather than ship them

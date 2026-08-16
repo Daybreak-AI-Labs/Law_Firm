@@ -473,14 +473,10 @@ def _check_channels(cfg: dict) -> None:
 
 
 def _check_world_db() -> None:
-    # Open the SAME configured backend as the runtime.  Inspecting a local
-    # workspace path here used to report a healthy SQLite mirror even when the
-    # deployment's authoritative world was Postgres.
     from .workspace import Workspace
     from .world_model import close_world_if_owned, open_world
-    from .world_model_backends import is_postgres_configured
 
-    label = "Postgres" if is_postgres_configured() else str(Workspace.current().db_path)
+    label = str(Workspace.current().db_path)
     try:
         w = open_world()
         try:

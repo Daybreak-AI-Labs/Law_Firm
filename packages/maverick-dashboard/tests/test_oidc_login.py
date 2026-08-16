@@ -471,40 +471,11 @@ class _FakeSharedWorld:
         self.seen.discard(key)
 
 
-def test_callback_releases_shared_tx_when_token_exchange_fails(
-    login_env, client, monkeypatch
-):
-    """Bogus unauthenticated callbacks must not leave durable HA replay rows."""
-    import maverick_dashboard._shared as shared
-    from maverick import world_model_backends
-
-    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: True)
-    fake = _FakeSharedWorld()
-    monkeypatch.setattr(shared, "_world", lambda: fake)
-    state, tx_cookie, _ = _do_login(client)
-    tx = verify_session(tx_cookie, SESSION_SECRET)
-
-    async def _fail_exchange(*a, **k):
-        raise RuntimeError("bad code")
-
-    monkeypatch.setattr(ol, "_exchange_code_for_tokens", _fail_exchange)
-
-    resp = client.get(
-        f"/auth/callback?code=bogus&state={state}", follow_redirects=False
-    )
-    assert resp.status_code == 303
-    key = (ol._OIDC_TX_CHANNEL, tx["jti"])
-    assert key in fake.released
-    assert key not in fake.seen
-
-
 def test_consume_tx_in_process_guard_is_default(monkeypatch):
     """No shared backend (the default SQLite / single-process deployment): the
     in-process dict consumes once and rejects the replay."""
     import asyncio
 
-    from maverick import world_model_backends
-    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: False)
     ol._CONSUMED_TX_IDS.clear()
 
     assert asyncio.run(ol._consume_tx_once("tx-1", ol._now() + 600)) is True
@@ -512,41 +483,3 @@ def test_consume_tx_in_process_guard_is_default(monkeypatch):
     assert "tx-1" in ol._CONSUMED_TX_IDS  # recorded in-process
 
 
-def test_consume_tx_uses_shared_store_under_postgres(monkeypatch):
-    """HA / Postgres: the id is consumed in the SHARED store (so the guard holds
-    across replicas), and the in-process dict is bypassed entirely."""
-    import asyncio
-
-    import maverick_dashboard._shared as shared
-    from maverick import world_model_backends
-    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: True)
-    fake = _FakeSharedWorld()
-    monkeypatch.setattr(shared, "_world", lambda: fake)
-    ol._CONSUMED_TX_IDS.clear()
-
-    assert asyncio.run(ol._consume_tx_once("tx-A", ol._now() + 600)) is True
-    assert asyncio.run(ol._consume_tx_once("tx-A", ol._now() + 600)) is False
-    # consumed in the shared store under the namespaced channel...
-    assert (ol._OIDC_TX_CHANNEL, "tx-A") in fake.seen
-    # ...and the in-process guard was never touched.
-    assert ol._CONSUMED_TX_IDS == {}
-
-
-def test_consume_tx_falls_back_when_shared_store_errors(monkeypatch):
-    """A broken shared store degrades to the in-process guard rather than
-    hard-failing every login (defense-in-depth: cookie+PKCE+state still hold)."""
-    import asyncio
-
-    import maverick_dashboard._shared as shared
-    from maverick import world_model_backends
-    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: True)
-
-    def _boom():
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(shared, "_world", _boom)
-    ol._CONSUMED_TX_IDS.clear()
-
-    assert asyncio.run(ol._consume_tx_once("tx-Z", ol._now() + 600)) is True
-    assert asyncio.run(ol._consume_tx_once("tx-Z", ol._now() + 600)) is False
-    assert "tx-Z" in ol._CONSUMED_TX_IDS  # fell back to in-process recording

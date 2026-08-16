@@ -119,58 +119,6 @@ systemctl start maverick
 
 To restore: stop the writers, replace `world.db`, restart.
 
-## Postgres backup & disaster recovery
-
-When the world model runs on Postgres (`[world_model] backend = "postgres"` /
-`MAVERICK_WORLD_BACKEND=postgres`) the SQLite `.backup` path above does **not**
-apply — back up the database itself. The runtime's own `maverick backup`
-snapshot covers the single-node SQLite layout; Postgres DR is owned by your
-database, the same as any other Postgres-backed service.
-
-Recommended, in order of RPO:
-
-1. **Managed Postgres point-in-time recovery (PITR).** If you run RDS / Cloud
-   SQL / Aurora / a managed PG, enable automated backups + PITR. This is the
-   lowest-RPO option (seconds–minutes) and needs no Maverick-specific steps.
-
-2. **Continuous archiving (self-managed).** Enable WAL archiving
-   (`archive_mode = on`) + base backups (`pg_basebackup`) for PITR on a
-   self-managed cluster.
-
-3. **Logical dumps (portable, higher RPO).** A scheduled `pg_dump` is the
-   simplest portable backup:
-
-   ```sh
-   # Keep dump contents owner-only, and keep DB credentials out of argv.
-   umask 077
-   install -d -m 700 "$HOME/.maverick/backups/postgres"
-
-   # Configure connection secrets with PGSERVICE, ~/.pgpass, peer auth, or your
-   # secret manager instead of embedding passwords in the command line.
-   pg_dump --format=custom --no-owner \
-     --dbname=service=maverick \
-     --file="$HOME/.maverick/backups/postgres/maverick-pg-$(date +%Y%m%d).dump"
-
-   # restore into a fresh database/service target:
-   pg_restore --no-owner --dbname=service=maverick_restore \
-     "$HOME/.maverick/backups/postgres/maverick-pg-YYYYMMDD.dump"
-   ```
-
-Notes:
-
-- **Encryption at rest:** with `MAVERICK_ENCRYPT_AT_REST=1`, sensitive columns
-  are AES-256-GCM ciphertext in the dump too, so a `pg_dump` does not expose
-  plaintext — but the dump is only restorable with the **same at-rest key**
-  (`~/.maverick/keys/at_rest.key`). Back up that key separately and securely;
-  losing it makes sealed columns unrecoverable.
-- **Schema migrations are forward-only and idempotent**, applied on first
-  connect. Restoring an older dump and starting a newer Maverick re-applies any
-  pending migrations automatically (see `world_model_backends/postgres.py`).
-- **Database HA:** managed Postgres can fail over the shared world model. The
-  Maverick dashboard/serve control plane must still run as one replica because
-  other durable stores remain file-backed; replace that replica against the
-  same persistent data root instead of running active-active control-plane pods.
-  The single-node `maverick backup` cold-standby model is for the SQLite default.
 - **Single-writer enforcement:** this is no longer a convention. On startup the
   control plane takes an exclusive advisory lock on `control-plane.lock` in its
   data root and holds it for the process lifetime; a second process refuses to

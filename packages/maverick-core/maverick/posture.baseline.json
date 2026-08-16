@@ -1,6 +1,6 @@
 {
   "_comment": "Tests that fail under the PRODUCTION security posture (MAVERICK_TEST_SECURE_DEFAULT=1). A debt register to shrink, not an exemption list. Regenerate with `python -m maverick.posture_gate --regen --report <f>`.",
-  "count": 78,
+  "count": 77,
   "failures": [
     "packages/maverick-core/tests/test_acl_max_risk.py::test_resolve_max_risk_unset_is_none",
     "packages/maverick-core/tests/test_audit_sealing.py::test_seal_is_idempotent_and_refuses_without_at_rest",
@@ -34,7 +34,6 @@
     "packages/maverick-core/tests/test_governed_tools.py::TestWrap::test_graphql_mutation_with_approver_commits",
     "packages/maverick-core/tests/test_governed_tools.py::TestWrap::test_write_with_approver_commits",
     "packages/maverick-core/tests/test_q2_2026_batch1.py::test_clipboard_read_via_pyperclip",
-    "packages/maverick-core/tests/test_q2_2026_batch4.py::test_postgres_goal_child_reads_join_tenant_scoped_goals",
     "packages/maverick-core/tests/test_reclaim_orphan_encryption.py::test_reclaim_under_strict_mode_preserves_legacy_plaintext_result",
     "packages/maverick-core/tests/test_remediation.py::test_plan_separates_auto_fixable_from_gated",
     "packages/maverick-core/tests/test_self_learning.py::TestGeneratedToolIsolationAndConsent::test_allowed_import_and_runtime_side_effects_never_touch_host_modules",

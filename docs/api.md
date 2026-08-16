@@ -89,7 +89,7 @@ curl -X POST http://127.0.0.1:8765/api/v1/goals \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MAVERICK_DASHBOARD_TOKEN" \
   -d '{
-    "title": "Compare pgvector and Qdrant",
+    "title": "Compare two research memos",
     "description": "Side by side, write to report.md",
     "max_dollars": 2.0,
     "max_wall_seconds": 1800
@@ -102,7 +102,7 @@ Response::
 {
   "id": 42,
   "status": "pending",
-  "title": "Compare pgvector and Qdrant",
+  "title": "Compare two research memos",
   "description": "Side by side, write to report.md",
   "result": null
 }

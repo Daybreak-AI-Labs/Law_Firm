@@ -103,27 +103,6 @@ def test_chroma_store_delete_and_reset(tmp_path):
     assert store.count() == 0
 
 
-def test_chroma_store_missing_dep_raises_importable_error(tmp_path, monkeypatch):
-    """When chromadb isn't installed, instantiation raises a useful error."""
-    if _HAS_CHROMA:
-        # Hide it.
-        monkeypatch.setitem(sys.modules, "chromadb", None)
-    # Force reimport so the lazy check trips.
-    import maverick.vector_store.chroma_store as cs
-    importlib.reload(cs)
-    if _HAS_CHROMA:
-        # If chromadb is really installed, setting sys.modules to None
-        # turns `import chromadb` into ImportError. So our error path
-        # should still fire.
-        with pytest.raises(ImportError, match="packages/maverick-core\\[chroma\\]"):
-            cs.ChromaStore(path=tmp_path)
-    else:
-        with pytest.raises(ImportError, match="packages/maverick-core\\[chroma\\]"):
-            cs.ChromaStore(path=tmp_path)
-
-
-# ---------- Bluesky channel ----------
-
 def test_wizard_catalog_includes_tgi():
     from maverick_installer import models
     assert "tgi" in models.PROVIDERS

@@ -917,7 +917,7 @@ def pick_knowledge() -> dict[str, Any]:
 
     Off by default; the kernel never requires maverick-knowledge. When on,
     ``embedder`` selects the embedding provider (hosted Voyage / local /
-    deterministic) and ``store`` selects the vector backend (sqlite / pgvector).
+    deterministic); the vector store is the embedded SQLite one.
     Returns a dict written under ``[knowledge]``.
     """
     console.print()
@@ -952,25 +952,6 @@ def pick_knowledge() -> dict[str, Any]:
         out["allow_external_embedding"] = _q_confirm(
             "  Send document text to the embedding vendor?", default=False,
         )
-    store = _q_select(
-        "  Vector store:",
-        [
-            "sqlite   - single-file, local (default; fine to a few million chunks)",
-            "pgvector - Postgres + pgvector (enterprise: one DB to encrypt/back up/audit)",
-            "qdrant   - Qdrant (scale / dedicated retrieval infra)",
-        ],
-        default="sqlite   - single-file, local (default; fine to a few million chunks)",
-    ).split()[0]
-    out["store"] = store
-    if store == "pgvector":
-        dsn = _q_text("  pgvector DSN (blank = MAVERICK_KNOWLEDGE_DSN env)",
-                      default="").strip()
-        if dsn:
-            out["dsn"] = dsn
-    elif store == "qdrant":
-        url = _q_text("  Qdrant URL (blank = QDRANT_URL env)", default="").strip()
-        if url:
-            out["url"] = url
     return out
 
 
@@ -1830,16 +1811,6 @@ def pick_advanced() -> dict[str, Any]:
             "data — the posture a hosted multi-tenant store needs. Requires "
             "at-rest encryption; reads of existing data stay transparent. "
             "Off by default (single-tenant boxes don't need it).",
-            default=False,
-        ),
-        "pg_rls": _q_confirm(
-            "Database-enforced tenant isolation (Postgres Row-Level Security)? "
-            "Only for the shared Postgres backend with MULTIPLE tenants: the DB "
-            "itself rejects cross-tenant rows as defense-in-depth over the "
-            "app-layer scoping. REQUIRES one-time prep first — assign legacy rows "
-            "with `maverick tenant backfill --tenant <id>` and verify with "
-            "`maverick tenant rls-preflight`, or pre-tenancy rows become invisible. "
-            "Off by default; leave off for SQLite or single-tenant installs.",
             default=False,
         ),
         "audit_sign": _q_confirm(
@@ -3426,17 +3397,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("at_rest = true")
         if advanced.get("encrypt_per_tenant"):
             lines.append("per_tenant = true")
-    if advanced.get("pg_rls"):
-        lines.append("")
-        lines.append("[world_model]")
-        # Database-enforced tenant isolation (Postgres backend only; ignored on
-        # SQLite). The policy is strict, fail-closed equality, so prep BEFORE the
-        # first start or pre-tenancy (NULL-tenant) rows become invisible:
-        #   maverick tenant rls-preflight         # ownership + legacy-row check
-        #   maverick tenant backfill --tenant ID  # assign pre-tenancy NULL rows
-        lines.append("# Run `maverick tenant rls-preflight` + `maverick tenant "
-                     "backfill` before first start (see docs/multi-tenancy.md).")
-        lines.append("rls = true")
     if advanced.get("audit_sign"):
         lines.append("")
         lines.append("[audit]")

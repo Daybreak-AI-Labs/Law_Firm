@@ -3,7 +3,7 @@
 Maverick ships **defense in depth**. The protective controls that don't break
 the happy path are now **on by default** ([Secure by default](#secure-by-default)
 — at-rest encryption, audit signing, fail-closed consent for high/critical
-actions, a sane tool-risk ceiling); the rest (OIDC, egress lock, Postgres RLS,
+actions, a sane tool-risk ceiling); the rest (OIDC, the egress lock,
 ...) stay **opt-in** so a personal install isn't forced into operational burden.
 Either way the controls are easy to miss, so this guide is the single place that
 lists every one — what it does, the exact `~/.maverick/config.toml` block, the
@@ -89,8 +89,8 @@ old behaviour. On by default:
 | Fail-closed consent | high/critical-risk actions require confirmation (not auto-approved) | per-action consent config |
 | Tool-risk ceiling | caps at `high` (CRITICAL tools need an explicit raise) | set `[security] max_risk` |
 
-Still **opt-in** (operational burden / can break a working deployment): OIDC,
-the egress lock (enterprise mode), and [Postgres RLS](multi-tenancy.md#enabling-rls-safely-guided-opt-in).
+Still **opt-in** (operational burden / can break a working deployment): OIDC
+and the egress lock (enterprise mode).
 The Shield stays **fail-open** (the kernel runs without it).
 
 **Master switch.** Turn the whole posture off with:
@@ -745,11 +745,10 @@ export MAVERICK_ENCRYPT_AT_REST=0     # 1 to force-enable; 0 to force-disable
 
 - **Scope.** Sealed: the **memory store**, the sensitive **world-DB content
   columns** (goal title/description/result, facts, turns/messages, questions,
-  goal events, episode summaries/outcomes, parked approvals), and the
-  **semantic-recall documents** on the chroma/pgvector backends. Run
+  goal events, episode summaries/outcomes, parked approvals). Run
   `maverick encryption migrate` to seal rows written before it was on. Not sealed:
-  the live audit day-file (seal closed ones with `maverick audit seal`) and the
-  qdrant/weaviate vector backends — see [encryption.md](encryption.md) for the
+  the live audit day-file (seal closed ones with `maverick audit seal`)
+  — see [encryption.md](encryption.md) for the
   full map.
 - **Back up the key.** The auto-generated `~/.maverick/keys/at_rest.key` is the
   only way to read sealed data — escrow it with `maverick encryption backup-key

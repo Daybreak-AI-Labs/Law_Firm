@@ -29,21 +29,6 @@ def test_open_world_defaults_to_sqlite(tmp_path, monkeypatch):
         world.close()
 
 
-def test_open_world_selects_postgres_when_configured(monkeypatch):
-    """backend=postgres -> PostgresWorldModel, via the lazily-imported
-    factory, without opening SQLite or a real PG connection."""
-    import maverick.world_model_backends as backends
-
-    sentinel = object()
-    monkeypatch.setattr(backends, "is_postgres_configured", lambda: True)
-    monkeypatch.setattr(backends, "open_postgres_world", lambda: sentinel)
-
-    from maverick.world_model import open_world
-
-    # path is ignored for the postgres branch.
-    assert open_world() is sentinel
-
-
 def test_open_world_no_path_floors_to_client(tmp_path, monkeypatch):
     """No explicit path + a bound client -> the canonical world resolves to
     that client's isolated tenants/<client>/world.db (not the shared root), so

@@ -100,7 +100,6 @@ def test_repository_constraints_are_exact_and_cover_current_environment():
 
     assert canonicalize_name("maverick-agent") in first_party
     assert constraints["tzdata"].specifier.contains("2026.3")
-    assert constraints["psycopg-pool"].specifier.contains("3.3.1")
 
 
 def test_parser_allows_explicit_additional_first_party_distributions():

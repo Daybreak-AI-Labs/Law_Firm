@@ -79,16 +79,6 @@ def test_voice_defaults_write_no_voice_table(tmp_path, monkeypatch):
     assert "[voice]" not in cfg
 
 
-def test_pg_rls_writes_world_model_section_with_prep_reminder(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"pg_rls": True})
-    assert "[world_model]" in cfg
-    assert "rls = true" in cfg
-    # The guided opt-in must point at the prep commands, or NULL-tenant rows vanish.
-    assert "rls-preflight" in cfg and "backfill" in cfg
-    parsed = tomllib.loads(cfg)
-    assert parsed["world_model"]["rls"] is True
-
-
 def test_kernel_modules_read_what_the_wizard_writes(tmp_path, monkeypatch):
     """End-to-end: write via the wizard, then the kernel sees each flag."""
     monkeypatch.setenv("HOME", str(tmp_path))

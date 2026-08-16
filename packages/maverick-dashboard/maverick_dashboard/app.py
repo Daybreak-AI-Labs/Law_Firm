@@ -1393,41 +1393,12 @@ _RL_GLOBAL_KEY = "__rl_goal_global__"
 
 
 def _shared_rate_limit_check(key: str, cap: int, global_cap: int) -> bool:
-    """Cross-replica goal-creation rate check, backed by the shared world store.
+    """Cross-replica goal-creation rate check.
 
-    The in-process windows below only bound ONE replica, so N replicas admit N x
-    the cap. When Postgres (the HA backend) is configured, count admitted events
-    in the shared ``rate_events`` table across a 60s wall-clock window (shared
-    across replicas, unlike the in-process monotonic clock) and record this one.
-    Returns True when it admitted the request, raises ``HTTPException(429)`` when
-    a cap is exceeded, and returns False when there is no shared backend / it is
-    unavailable (the caller then applies the in-process limiter). A small
-    over-admission race is acceptable for a spend backstop -- it is not a hard
-    security boundary."""
-    try:
-        from maverick.world_model_backends import is_postgres_configured
-        if not is_postgres_configured():
-            return False
-        w = _world()
-        result = w.reserve_rate_events(key, cap, _RL_GLOBAL_KEY, global_cap, time.time())
-        if result == "global":
-            raise HTTPException(
-                status_code=429,
-                detail=f"goal rate limit reached ({global_cap}/min total). Try again shortly.",
-                headers={"Retry-After": "60"},
-            )
-        if result == "key":
-            raise HTTPException(
-                status_code=429,
-                detail=f"goal rate limit reached ({cap}/min). Try again shortly.",
-                headers={"Retry-After": "60"},
-            )
-        return True
-    except HTTPException:
-        raise
-    except Exception:  # pragma: no cover - never fail the request closed on a store blip
-        log.warning("shared rate limiter unavailable, using in-process window")
-        return False
+    There is no shared world backend on this SQLite-only deployment, so the
+    in-process windows below are the whole mechanism. Returns False so the
+    caller applies the in-process limiter."""
+    return False
 
 
 def check_goal_rate_limit(
@@ -1861,16 +1832,14 @@ def _tenant_overview_rows() -> list[dict]:
     scope through the canonical backend selector.
     """
     from maverick.tenant.registry import list_tenants, tenant_spend_today
-    from maverick.world_model_backends import is_postgres_configured
 
-    postgres = is_postgres_configured()
     rows: list[dict] = []
     for t in list_tenants():
         counts: dict[str, int] = {}
         try:
             from maverick.workspace import Workspace
             db = Workspace(t.id).db_path
-            if postgres or db.exists():
+            if db.exists():
                 from maverick.paths import tenant_scope
                 from maverick.world_model import close_world_if_owned, open_world
 
@@ -4636,35 +4605,13 @@ _ISSUE_WEBHOOK_SEEN_MAX = 4096
 _ISSUE_WEBHOOK_CHANNEL = "__issue_webhook__"
 
 
-def _shared_issue_webhook_seen(signature: str) -> bool | None:
-    """Record/check ``signature`` in the shared store when Postgres (HA) is
-    configured. Returns True if already seen (replay), False on first delivery,
-    or None when there is no shared backend / it is unavailable (caller falls
-    back to the in-process window). Never raises -- a degraded store must not
-    drop webhooks; the HMAC + freshness checks still hold."""
-    try:
-        from maverick.world_model_backends import is_postgres_configured
-        if not is_postgres_configured():
-            return None
-        # True == first writer (not previously seen) -> NOT a replay.
-        first = bool(_world().mark_message_processed(_ISSUE_WEBHOOK_CHANNEL, signature))
-        return not first
-    except Exception:  # pragma: no cover - shared dedup must never drop a webhook
-        log.warning("issue webhook dedup: shared store unavailable, using in-process window")
-        return None
-
-
 def _issue_webhook_replay_seen(signature: str, ttl_seconds: int) -> bool:
     """True if ``signature`` was already delivered within ``ttl_seconds``.
 
-    Prefers the shared store (cross-replica) when Postgres is configured;
-    otherwise records the signature in the per-process window and evicts
+    Records the signature in the per-process window and evicts
     expired/overflow entries. The first delivery returns False (and is
     recorded); a replay returns True.
     """
-    shared = _shared_issue_webhook_seen(signature)
-    if shared is not None:
-        return shared
     now = time.time()
     with _issue_webhook_seen_lock:
         for k, t in list(_issue_webhook_seen.items()):

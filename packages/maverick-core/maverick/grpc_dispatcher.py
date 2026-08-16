@@ -190,7 +190,7 @@ class GrpcDispatcher:
         if not getattr(status, "found", False):
             log.warning(
                 "gRPC worker has no goal %s — are the API and worker sharing "
-                "the world DB ([world_model] backend = 'postgres')?", goal_id)
+                "the same world DB?", goal_id)
             return None
         return str(status.status or "") or None
 

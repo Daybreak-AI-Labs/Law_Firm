@@ -819,9 +819,10 @@ def get_knowledge() -> dict:
     """Return the ``[knowledge]`` section (per-domain vector RAG).
 
     Off by default; the agent kernel never requires the maverick-knowledge
-    package. ``embedder`` selects hosted/cohere/local/deterministic; ``store``
-    selects sqlite/pgvector. Provider details (model/base_url/dim/path) are read
-    by maverick_knowledge.build_embedder / build_store.
+    package. ``embedder`` selects hosted/cohere/local/deterministic; the
+    vector store is the embedded SQLite one. Provider details
+    (model/base_url/dim/path) are read by maverick_knowledge.build_embedder /
+    build_store.
 
     ``allow_external_embedding`` is the acknowledgement that the hosted
     providers send document text itself to a third-party vendor -- a different
@@ -851,8 +852,6 @@ def get_knowledge() -> dict:
         "base_url": cfg.get("base_url", "https://api.voyageai.com/v1"),
         "dim": int(cfg.get("dim", dim_default)),
         "path": cfg.get("path", ""),
-        # DSN for the pgvector scale backend (falls back to env in build_store).
-        "dsn": cfg.get("dsn", ""),
     }
 
 

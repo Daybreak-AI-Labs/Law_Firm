@@ -9,7 +9,7 @@ requires `maverick-knowledge`, and RAG is off until you enable it.
 [knowledge]
 enable   = true
 embedder = "local"     # hosted | cohere | local | deterministic
-store    = "sqlite"    # sqlite | pgvector | qdrant
+store    = "sqlite"
 ```
 
 ## Storage: pick a backend per deployment
@@ -20,37 +20,11 @@ line, not a fork — the agent-facing behaviour is identical.
 | Backend    | When                                            | Notes |
 |------------|-------------------------------------------------|-------|
 | **sqlite** (default) | Single box, SMB, air-gapped                | Dependency-free brute-force cosine, sealed by the platform's encryption-at-rest. Comfortable to a few million chunks per tenant. |
-| **pgvector** | Enterprise self-hosted — **the recommended default for regulated clients** | Rides the Postgres you already run and the platform already supports (world model + knowledge in one database to encrypt, back up, audit, and isolate with RLS). Hybrid keyword+vector in one engine. Adequate to ~5M vectors/tenant. Needs `maverick-knowledge[pgvector]` + the Postgres `vector` extension. |
-| **qdrant** | Very large corpora / dedicated retrieval infra  | Apache-2.0, self-hosted single binary, fast filtered search. The certified escape hatch when a client outgrows pgvector. Needs `maverick-knowledge[qdrant]`. |
 
 We do **not** ship a managed-only vector service as the default: the platform
 sells "your data never leaves your boundary," so the knowledge store — the
 client's most sensitive documents — must be self-hostable. A hosted backend can
 be added later as an option, never the baseline.
-
-### pgvector
-
-```toml
-[knowledge]
-enable = true
-store  = "pgvector"
-dsn    = "postgresql://db-host/maverick"   # credentials via MAVERICK_KNOWLEDGE_DSN / MAVERICK_PG_DSN env
-dim    = 1024                               # must match your embedder's width
-```
-
-Per-workspace isolation is preserved: rows are namespaced by a hash of the
-workspace, so one shared cluster still keeps tenants apart.
-
-### qdrant
-
-```toml
-[knowledge]
-enable  = true
-store   = "qdrant"
-url     = "http://qdrant:6333"     # or QDRANT_URL
-dim     = 1024
-# api_key via QDRANT_API_KEY
-```
 
 ## Embedders
 

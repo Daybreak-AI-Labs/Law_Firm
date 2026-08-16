@@ -151,11 +151,8 @@ auto_apply  = false      # apply a proven improvement forward without a human
                          # (needs auto_evolve on for the revert safety net)
 
 [governed_records]
-# Shared CAS record authority used by assurance products. "auto" keeps
-# single-replica installs local and selects configured Postgres when required.
-# Postgres requires application encryption plus MAVERICK_ENCRYPTION_KEY and a
-# matching MAVERICK_ENCRYPTION_KEY_DIGEST="sha256:..." on every replica.
-backend = "auto"          # auto | local | postgres
+# CAS record authority for review-gated records. Local single-replica store.
+backend = "auto"          # auto | local
 
 [evidence_graph]
 # Review-gated evidence metadata and cryptographic bindings over the signed

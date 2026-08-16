@@ -111,13 +111,10 @@ for false unless noted otherwise.
 | `MAVERICK_EKKO` | config `[ekko] enable` (off) | Controls only Ekko's master policy switch. It never enrolls a device, grants an application, starts a collector, or enables provider egress. Invalid values fail closed. |
 | `MAVERICK_SKILL_DECAY` | `1` (on) | Set `0` to disable time-decay of skill usefulness stats. |
 | `MAVERICK_ALLOW_SKILL_INSTALL` | unset (off) | Opt in to installing skills from free-text URLs. |
-| `MAVERICK_VECTOR_STORE` | config `[memory] backend` | Semantic-recall backend: `chroma`, `qdrant`, `weaviate`, `pgvector`, or unset/`none` to disable. |
 | `MAVERICK_CHROMA_PATH` | `~/.maverick/...` default | On-disk path for the Chroma vector store. |
 | `MAVERICK_QDRANT_URL` | unset | Qdrant server URL (remote mode). |
 | `MAVERICK_QDRANT_PATH` | default path | Qdrant local on-disk path (embedded mode). |
 | `MAVERICK_QDRANT_API_KEY` | unset | API key for a remote Qdrant server. |
-| `MAVERICK_WORLD_BACKEND` | config-driven | Set `postgres` to use the Postgres world-model backend. |
-| `MAVERICK_PG_DSN` | unset | Postgres DSN for the Postgres world model (e.g. `postgres://user@host:5432/maverick`; prefer `PGSERVICE`, `~/.pgpass`, peer auth, or a secret manager over embedding passwords). |
 | `MAVERICK_ORPHAN_RECLAIM_SECONDS` | code default | Seconds before orphaned world-model goal locks are reclaimed. |
 | `MAVERICK_BLACKBOARD_MAX_ENTRIES` | `5000` (min 100) | Max entries retained in the shared blackboard. |
 
@@ -125,8 +122,6 @@ for false unless noted otherwise.
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `MAVERICK_STRICT_TENANT_ISOLATION` | config `[world_model] strict_tenant_isolation`; **auto-on under enterprise mode** | Postgres reads return ONLY the active tenant's rows (drop NULL-legacy tolerance). Enable after backfilling `tenant_id`. Env wins over config wins over enterprise default. |
-| `MAVERICK_PG_RLS` | config `[world_model] rls`; **auto-on under enterprise mode** | DB-native Postgres Row-Level Security on the tenant tables (defense-in-depth over the app predicate). When auto-enabled by enterprise mode, a boot preflight refuses to start on legacy `tenant_id IS NULL` rows (run `maverick tenant backfill`); explicit `=1` keeps the fail-closed opt-in path. |
 | `MAVERICK_KMS_KEK` | derived from the at-rest key | The per-tenant-DEK Key Encryption Key (32 bytes, hex/base64) for `tenant/kms.py`. |
 | `MAVERICK_KMS_DEK_CACHE_TTL` | config `[kms] dek_cache_ttl` (`0` = process lifetime) | Seconds a tenant DEK stays cached before it must be re-unwrapped by the KMS. A positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data (the next access re-hits the KMS and fails closed). Per-tenant **BYOK** is configured in each tenant's own `tenants/<id>/config.toml` `[kms]` section (provider/key_id/region), resolved deterministically by `get_kms(tenant_id)`. **Rolling the local KEK** across the fleet: `maverick tenant kms-rotate --old-kek-file /run/secrets/old-kek --new-kek-file /run/secrets/new-kek` (re-wrap only, idempotent/resumable, `--dry-run` to preview; omit file options to use hidden prompts). Avoid passing KEKs in command-line arguments; set `MAVERICK_KMS_KEK` to the new value live only after rotation reports 0 failed. Cloud/BYOK rotation uses `tenant.kms.rotate_kek_fleet` with per-tenant resolvers. |
 | `MAVERICK_MCP_ANALYTICS` | config `[analytics] mcp_client_language` (off) | Opt-in, consent-gated tally of MCP-client language (feeds the language-bindings gate). |
@@ -157,9 +152,9 @@ arq maverick.arq_worker.WorkerSettings
 Use a dedicated Redis database and ACL identity per Maverick deployment. ARQ
 stores job bodies under global Redis key prefixes even when its ready queue is
 namespaced, so a dedicated database/ACL is defense in depth against accidental
-cross-fleet access. Network workers also require the same Postgres world-model
-backend for durable, tenant-aware replay claims. The worker refuses to poll if
-the HMAC key or shared claim store is unavailable. The unsafe
+cross-fleet access. Network workers additionally require a shared world store
+for durable, tenant-aware replay claims, which this SQLite-only deployment
+does not provide — network queue dispatch is refused. The unsafe
 `MAVERICK_ALLOW_INSECURE_QUEUE_REDIS=1` escape hatch is only for isolated local
 development networks.
 

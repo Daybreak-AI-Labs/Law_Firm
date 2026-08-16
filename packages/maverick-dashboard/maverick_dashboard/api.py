@@ -189,15 +189,10 @@ _IDEMPOTENCY_CHANNEL = "idempotency:api:goals"
 
 
 def _shared_halt_backend() -> bool:
-    """Whether the cluster-wide (shared-store) halt is in play. Only on a shared
-    backend (Postgres); on single-host SQLite the local HALT file is the whole
-    mechanism and the killswitch never consults the shared row, so the dashboard
-    leaves it untouched (keeps single-host behavior unchanged)."""
-    try:
-        from maverick.world_model_backends import is_postgres_configured
-        return bool(is_postgres_configured())
-    except Exception:
-        return False
+    """Whether a cluster-wide (shared-store) halt is in play. Never on the
+    single-host SQLite deployment: the local HALT file is the whole
+    mechanism."""
+    return False
 
 
 def _require_halt_permission(request: Request) -> None:
