@@ -190,7 +190,7 @@ def _python_records(
     expected_distributions = {
         item["distribution"] for item in cohort.get("packages", [])
     }
-    if cohort.get("version") != version or len(expected_distributions) != 8:
+    if cohort.get("version") != version or len(expected_distributions) != 7:
         raise ValueError("release cohort does not match this release")
 
     records: dict[str, str] = {}
