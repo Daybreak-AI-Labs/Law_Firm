@@ -803,6 +803,18 @@ def get_sandbox() -> dict:
     }
 
 
+#: Per-embedder (model, dim) defaults. A vector dimension that disagrees with
+#: the model that produced it is not a cosmetic mismatch -- the store raises on
+#: a dim mismatch rather than returning garbage, so a wrong default here reads
+#: as a broken knowledge base.
+_EMBEDDER_DEFAULTS: dict[str, tuple[str, int]] = {
+    "hosted": ("voyage-3", 1024),
+    "cohere": ("embed-v4.0", 1024),
+    "local": ("all-MiniLM-L6-v2", 384),
+    "deterministic": ("", 256),
+}
+
+
 def get_knowledge() -> dict:
     """Return the ``[knowledge]`` section (per-domain vector RAG).
 
@@ -816,17 +828,28 @@ def get_knowledge() -> dict:
     exposure from the LLM chokepoint, which sends prompts and has its own
     redaction knob. Off by default; build_embedder refuses hosted/cohere
     without it.
+
+    ``model`` and ``dim`` default PER EMBEDDER. They used to default to
+    ``voyage-3``/1024 whichever embedder was chosen, so ``embedder = "local"``
+    with no explicit model resolved to ``SentenceTransformer("voyage-3")`` --
+    not a model id that exists -- and advertised 1024 dimensions for a 384-dim
+    MiniLM. build_embedder's own ``all-MiniLM-L6-v2`` fallback could never fire
+    because this function had already filled the key in. An explicit
+    ``[knowledge] model``/``dim`` still wins.
     """
     cfg = load_config().get("knowledge", {}) or {}
+    embedder = cfg.get("embedder", "hosted")
+    model_default, dim_default = _EMBEDDER_DEFAULTS.get(
+        str(embedder).lower(), _EMBEDDER_DEFAULTS["hosted"])
     return {
         "enable": bool(cfg.get("enable", False)),
-        "embedder": cfg.get("embedder", "hosted"),
+        "embedder": embedder,
         "allow_external_embedding": _strict_config_bool(
             cfg, "allow_external_embedding", False),
         "store": cfg.get("store", "sqlite"),
-        "model": cfg.get("model", "voyage-3"),
+        "model": cfg.get("model", model_default),
         "base_url": cfg.get("base_url", "https://api.voyageai.com/v1"),
-        "dim": int(cfg.get("dim", 1024)),
+        "dim": int(cfg.get("dim", dim_default)),
         "path": cfg.get("path", ""),
         # DSN for the pgvector scale backend (falls back to env in build_store).
         "dsn": cfg.get("dsn", ""),

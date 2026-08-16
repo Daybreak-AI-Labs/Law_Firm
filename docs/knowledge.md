@@ -8,7 +8,7 @@ requires `maverick-knowledge`, and RAG is off until you enable it.
 ```toml
 [knowledge]
 enable   = true
-embedder = "local"     # hosted | local | deterministic
+embedder = "local"     # hosted | cohere | local | deterministic
 store    = "sqlite"    # sqlite | pgvector | qdrant
 ```
 
@@ -61,6 +61,10 @@ semantic recall needs `local` or `hosted`.** If you change embedder or model,
 the vector dimension changes — re-embed the corpus (the store raises rather than
 silently returning garbage on a dim mismatch).
 
+`model` and `dim` default **per embedder** — `local` resolves to
+`all-MiniLM-L6-v2` at 384 dimensions, `hosted` to `voyage-3` at 1024 — so
+picking an embedder is enough. Set them explicitly only to override.
+
 ### The hosted embedders send the documents themselves
 
 This is worth stating separately because it is easy to file under the same
@@ -91,7 +95,8 @@ so a batch still appears if the vendor errors or the connection drops; the bytes
 were on the wire either way. If the audit subsystem refuses to write, the batch
 does not go out.
 
-For privileged client material, `local` is the setting that needs no argument.
+For privileged client material, `local` is the setting that needs no argument:
+it embeds on the box, needs no key, and nothing leaves.
 
 ## Governance
 
