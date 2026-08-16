@@ -299,7 +299,7 @@ def acquire(
             other = _read_holder(holder_path(path.parent))
             who = other.describe() if other else "an unidentified process"
             raise ControlPlaneBusy(
-                f"another Lightwork control plane already owns {path.parent}: "
+                f"another Maverick control plane already owns {path.parent}: "
                 f"{who}. Exactly one may write this data root -- flows, A2A "
                 f"claims, and the audit, budget-receipt, fleet-memory and "
                 f"learning ledgers are hash-chained and assume a single "

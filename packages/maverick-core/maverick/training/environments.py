@@ -1,6 +1,6 @@
 """Vendor-neutral, deterministic training/evaluation environment contracts.
 
-The contract deliberately lives below any one RL vendor.  A Lightwork
+The contract deliberately lives below any one RL vendor.  A Maverick
 environment is a versioned set of provenance-bearing cases plus a deterministic
 JSON rubric.  The same pack can be evaluated locally, exported to Verifiers, or
 handed to another training backend without changing its decision boundary.
@@ -22,15 +22,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-CASE_SCHEMA = "lightwork.training-environment-case.v1"
-PACK_SCHEMA = "lightwork.training-environment-pack.v1"
-EVALUATION_SCHEMA = "lightwork.training-environment-evaluation.v1"
-CONSENT_SCHEMA = "lightwork.training-consent.v1"
-REDACTION_EVIDENCE_SCHEMA = "lightwork.training-redaction-evidence.v1"
-PACK_LOCK_SCHEMA = "lightwork.training-environment-lock.v1"
-ADMITTED_CONTENT_SCHEMA = "lightwork.training-admitted-content.v1"
-TRUSTED_EVIDENCE_REGISTRY_SCHEMA = "lightwork.training-evidence-registry.v1"
-BOUNDARY_DECISION_SCHEMA = "lightwork.training-boundary-decision.v1"
+CASE_SCHEMA = "maverick.training-environment-case.v1"
+PACK_SCHEMA = "maverick.training-environment-pack.v1"
+EVALUATION_SCHEMA = "maverick.training-environment-evaluation.v1"
+CONSENT_SCHEMA = "maverick.training-consent.v1"
+REDACTION_EVIDENCE_SCHEMA = "maverick.training-redaction-evidence.v1"
+PACK_LOCK_SCHEMA = "maverick.training-environment-lock.v1"
+ADMITTED_CONTENT_SCHEMA = "maverick.training-admitted-content.v1"
+TRUSTED_EVIDENCE_REGISTRY_SCHEMA = "maverick.training-evidence-registry.v1"
+BOUNDARY_DECISION_SCHEMA = "maverick.training-boundary-decision.v1"
 TRUSTED_EVIDENCE_REGISTRY_BASENAME = "trusted_evidence_registry.json"
 
 MAX_CASES = 5_000
@@ -823,7 +823,7 @@ class EnvironmentCase:
     evidence_text: str = ""
     provenance: str = "synthetic"
     source_uri: str = ""
-    license: str = "Lightwork synthetic benchmark"
+    license: str = "Maverick synthetic benchmark"
     data_classification: str = "public"
     consent: ConsentEvidence | None = None
     redaction_evidence: RedactionEvidence = RedactionEvidence(status="not_applicable")
@@ -1516,7 +1516,7 @@ def check_boundary(
     consented records. ``hosted`` permits public data only; tenant-derived public
     data additionally needs exact hosted-training consent and bound redaction
     evidence.
-    Cross-tenant training remains structurally unsupported until Lightwork has a
+    Cross-tenant training remains structurally unsupported until Maverick has a
     separately reviewed secure-aggregation and privacy-accounting subsystem.
     """
     validate_environment_pack(pack)

@@ -1,6 +1,6 @@
 # Recipe: Log triage
 
-Point Lightwork at a noisy log file and get the error spike, its first
+Point Maverick at a noisy log file and get the error spike, its first
 occurrence, and the likely cause.
 
 ## Goal text

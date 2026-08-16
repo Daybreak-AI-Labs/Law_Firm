@@ -1,6 +1,6 @@
 # The self-extending agent factory — agent & skill genesis
 
-> **Status (June 2026):** counts and plans in this document are historical. The shipped catalog is 2,020 lint-clean agents across 53 suites with a full learning lifecycle — see [`docs/FEATURES.md`](../FEATURES.md).
+> **Status:** counts and plans in this document are historical. The firm's roster is 125 packs; see `README.md` for the current shape.
 
 > **Status: Implemented** — the self-extending factory has shipped to main: capability provisioning at pack-birth (`maverick/provision.py`), programming by demonstration (`maverick/demonstration.py`), and the self-improving factory loop (`maverick/factory_learning.py`); CLI `maverick learn-demo` / `maverick factory-learn`.
 
@@ -12,7 +12,7 @@ agent suites (the agent-suites overview) and the
 
 > **The thesis, from first principles.** Every other "agent platform" ships a *fixed*
 > roster — a human writes each agent by hand, forever. That doesn't scale to "every
-> business function for every customer," and it isn't of the future. Lightwork's
+> business function for every customer," and it isn't of the future. Maverick's
 > difference: **the platform engineers its own agents and skills.** It studies a
 > customer, *synthesizes* the agents and skills that customer needs, *proves* they're
 > safe, and routes them to a human to **promote to production** — then watches them in
@@ -47,7 +47,7 @@ the same **without a human hand-authoring each of the ~346 agents per customer**
 manual roster (the eight suites) is the *seed stock*; the factory is what turns a seed
 into a living, customer-specific org that adapts.
 
-The head-turning claim is narrow and defensible: **Lightwork writes, tests, and proposes
+The head-turning claim is narrow and defensible: **Maverick writes, tests, and proposes
 its own workforce, and improves it from its own track record — under a human's signature.**
 Not an "AI-native OS," not a chatbot that "has agents." A self-extending system with the
 safety rails built into the substrate.
@@ -179,7 +179,7 @@ The whole point is autonomy *up to* the gate. Five rails make that safe:
    customer's Operating-Profile ceiling; a synthesized agent can never out-scope what the
    customer authorized.
 4. **The self-modification floor.** The factory never authors/edits the kernel, safety,
-   capability, or governance. This single line is what separates Lightwork's
+   capability, or governance. This single line is what separates Maverick's
    self-extension from the unsafe kind; it is enforced as a denied tool surface, not a
    policy promise.
 5. **Signed provenance + instant containment.** Every synthesis and promotion is signed

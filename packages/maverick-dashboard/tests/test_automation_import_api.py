@@ -1,4 +1,4 @@
-"""Dashboard endpoints for importing external automations into Lightwork.
+"""Dashboard endpoints for importing external automations into Maverick.
 
 Hermetic like the other dashboard tests: HOME/MAVERICK_HOME isolated to tmp,
 USER_TEMPLATES (import-time bound) monkeypatched, the world DB under tmp. The

@@ -2,7 +2,7 @@
 
 Runs SQL against Snowflake via the stateless SQL API. Read statements run
 directly; anything that isn't a plain read (INSERT/UPDATE/DELETE/MERGE/DDL)
-requires confirm=true, matching the rest of Lightwork's mutation gating.
+requires confirm=true, matching the rest of Maverick's mutation gating.
 
 Auth (key-pair JWT or OAuth Bearer, pre-acquired):
   - ``SNOWFLAKE_ACCOUNT``     (account identifier, e.g. xy12345.us-east-1)

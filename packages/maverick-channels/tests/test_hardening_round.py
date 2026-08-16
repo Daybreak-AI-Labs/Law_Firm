@@ -10,7 +10,7 @@ def test_incoming_message_truncates_oversized_text(monkeypatch):
     big = "x" * 5000
     msg = IncomingMessage(user_id="u", text=big, channel="test")
     assert len(msg.text) < 5000
-    assert "truncated by Lightwork inbound cap" in msg.text
+    assert "truncated by Maverick inbound cap" in msg.text
 
 
 def test_incoming_message_cap_disabled_with_zero(monkeypatch):

@@ -3,21 +3,21 @@
 # Vast, a cloud VM, or any GPU host). Runs the whole flow with ZERO laptop
 # involvement: install -> train the CPU step PRM (L2) -> real DPO fine-tune of
 # the proposer (L3, GPU) -> optionally prove the lift. Installation is only
-# allowed from a checked-out Lightwork tree at an exact commit; there is no
+# allowed from a checked-out Maverick tree at an exact commit; there is no
 # fallback to an unclaimed public package name.
 #
 # Quick start on a fresh GPU pod (paste once):
 #
-#   LIGHTWORK_REF=<full-40-character-commit-sha>
-#   git clone https://github.com/Daybreak-AI-Labs/Lightwork lightwork
-#   git -C lightwork checkout --detach "$LIGHTWORK_REF"
+#   MAVERICK_REF=<full-40-character-commit-sha>
+#   git clone https://github.com/Daybreak-AI-Labs/Law_Firm maverick
+#   git -C maverick checkout --detach "$MAVERICK_REF"
 #   # upload your two inputs to the pod first (see below), then:
-#   MAVERICK_SOURCE_DIR="$PWD/lightwork" MAVERICK_SOURCE_REF="$LIGHTWORK_REF" \
-#     bash lightwork/scripts/train_runpod.sh    # cheap 0.5B proof run (default)
+#   MAVERICK_SOURCE_DIR="$PWD/maverick" MAVERICK_SOURCE_REF="$MAVERICK_REF" \
+#     bash maverick/scripts/train_runpod.sh    # cheap 0.5B proof run (default)
 #   # …or graduate to the strongest ownable model on one 80GB GPU:
 #   BASE_MODEL=Qwen/Qwen3-Coder-30B-A3B LORA=1 BITS=4 \
-#     MAVERICK_SOURCE_DIR="$PWD/lightwork" MAVERICK_SOURCE_REF="$LIGHTWORK_REF" \
-#     bash lightwork/scripts/train_runpod.sh
+#     MAVERICK_SOURCE_DIR="$PWD/maverick" MAVERICK_SOURCE_REF="$MAVERICK_REF" \
+#     bash maverick/scripts/train_runpod.sh
 #
 # Inputs: the script GENERATES both from your maverick data if they're absent,
 # so you bring EITHER the two JSONL files OR your ~/.maverick (outbox + world DB):
@@ -41,7 +41,7 @@
 #                   (default ~/.maverick/outbox)
 #   SCORES          default ./scores.json (prove-learning runs only if present)
 #   INSTALL         1 (install from MAVERICK_SOURCE_DIR) | 0 to skip
-#   MAVERICK_SOURCE_DIR  checked-out Lightwork root (required when INSTALL=1)
+#   MAVERICK_SOURCE_DIR  checked-out Maverick root (required when INSTALL=1)
 #   MAVERICK_SOURCE_REF  lowercase full commit SHA required when INSTALL=1
 #   SKIP_DPO        0 | 1 to run only the CPU PRM step
 #   DRY_RUN         0 | 1 to print the commands without executing
@@ -82,19 +82,19 @@ say() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 run() { printf '+ %s\n' "$*"; [ "$DRY_RUN" = "1" ] || eval "$*"; }
 die() { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-say "Lightwork self-learning training run"
+say "Maverick self-learning training run"
 printf 'base_model=%s\nout_dir=%s\nskip_dpo=%s dry_run=%s\n' \
   "$BASE_MODEL" "$OUT_DIR" "$SKIP_DPO" "$DRY_RUN"
 run "mkdir -p '$OUT_DIR'"
 
 if [ "$INSTALL" = "1" ]; then
   say "1/4 Install (torch + transformers via the [training] extra)"
-  [ -n "$MAVERICK_SOURCE_DIR" ] || die "INSTALL=1 requires MAVERICK_SOURCE_DIR pointing to a checked-out Lightwork repository."
+  [ -n "$MAVERICK_SOURCE_DIR" ] || die "INSTALL=1 requires MAVERICK_SOURCE_DIR pointing to a checked-out Maverick repository."
   [ -d "$MAVERICK_SOURCE_DIR/.git" ] || die "MAVERICK_SOURCE_DIR is not a git checkout: $MAVERICK_SOURCE_DIR"
-  [ -f "$MAVERICK_SOURCE_DIR/packages/maverick-core/pyproject.toml" ] || die "MAVERICK_SOURCE_DIR is not a complete Lightwork checkout: $MAVERICK_SOURCE_DIR"
+  [ -f "$MAVERICK_SOURCE_DIR/packages/maverick-core/pyproject.toml" ] || die "MAVERICK_SOURCE_DIR is not a complete Maverick checkout: $MAVERICK_SOURCE_DIR"
   [[ "$MAVERICK_SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || die "MAVERICK_SOURCE_REF must be a lowercase, full 40-character commit SHA."
   actual_ref="$(git -c core.fsmonitor=false -C "$MAVERICK_SOURCE_DIR" rev-parse HEAD)"
-  [ "$actual_ref" = "$MAVERICK_SOURCE_REF" ] || die "Lightwork source is at $actual_ref, not required ref $MAVERICK_SOURCE_REF."
+  [ "$actual_ref" = "$MAVERICK_SOURCE_REF" ] || die "Maverick source is at $actual_ref, not required ref $MAVERICK_SOURCE_REF."
   [ -z "$(git -c core.fsmonitor=false -C "$MAVERICK_SOURCE_DIR" status --porcelain --untracked-files=all)" ] \
     || die "MAVERICK_SOURCE_DIR contains local or untracked changes; refusing to train from unreviewed source."
   printf '+ python -m pip install --quiet %q\n' "$MAVERICK_SOURCE_DIR/packages/maverick-core[training]"

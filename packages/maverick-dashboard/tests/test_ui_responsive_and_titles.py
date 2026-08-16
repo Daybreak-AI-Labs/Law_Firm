@@ -35,7 +35,7 @@ def test_panel_has_horizontal_overflow(monkeypatch, tmp_path):
     r = _client().get("/spend")
     assert 'class="panel' in r.text
     # The base stylesheet gives panels overflow-x so tables don't overflow.
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert ".panel" in css and "overflow-x: auto" in css
 
 
@@ -48,7 +48,7 @@ def test_mobile_topbar_cannot_widen_the_document(monkeypatch, tmp_path):
     from maverick_dashboard import app as dash_app
 
     dash_app._world_cache.clear()
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert "@media (max-width: 560px)" in css
     assert ".brand__name { display: none; }" in css
     assert "flex-wrap: nowrap;" in css

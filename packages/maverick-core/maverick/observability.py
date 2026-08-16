@@ -465,7 +465,7 @@ def is_enabled() -> bool:
 
 # --- OpenTelemetry GenAI semantic conventions (gen_ai.*) -------------------
 # These attribute names are the cross-vendor standard for LLM/agent
-# telemetry (OTel semconv). Emitting them means traces Lightwork produces are
+# telemetry (OTel semconv). Emitting them means traces Maverick produces are
 # legible to any OTel-aware backend (Grafana, Honeycomb, Arize Phoenix, ...)
 # without custom attribute mapping -- the convention that became the
 # observability standard for agents in 2026.

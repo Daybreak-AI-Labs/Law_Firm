@@ -1,6 +1,6 @@
 ------------------------- MODULE SandboxInterface -------------------------
 (***************************************************************************)
-(* Formal model of Lightwork's sandbox interface (CLAUDE.md rule 4 and the *)
+(* Formal model of Maverick's sandbox interface (CLAUDE.md rule 4 and the *)
 (* sandbox SDK v2 contract): every model-driven shell command is mediated  *)
 (* by the selected backend, runs with a secret-scrubbed environment, and   *)
 (* always reaches a terminal state (completed / timed-out / refused) —     *)

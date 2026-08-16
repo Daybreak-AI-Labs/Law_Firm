@@ -1,4 +1,4 @@
-"""Map an :class:`~.ir.ImportedAutomation` onto Lightwork's existing primitives.
+"""Map an :class:`~.ir.ImportedAutomation` onto Maverick's existing primitives.
 
 The actions become a signed user ``Template`` (so the whole run path -- render →
 ``create_goal`` → orchestrator, with budget guardrails -- is reused unchanged).
@@ -149,7 +149,7 @@ def materialize(
         result.suggested_trigger = {"kind": trig.kind, "template": tname, "name": tname,
                                     "event": f"{trig.app} {trig.event}".strip(),
                                     "params": field_defaults}
-        notes.append(f"source trigger ({trig.render()}) has no direct Lightwork equivalent; "
+        notes.append(f"source trigger ({trig.render()}) has no direct Maverick equivalent; "
                      "bind the template to a webhook/schedule, or run it on demand")
     if fields:
         notes.append("trigger payload fields mapped to template params (fill on fire): "

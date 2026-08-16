@@ -315,7 +315,7 @@ class TestExec:
         reply = (
             "Let me look that up.\n\n"
             '```json\n{"tool_call": {"name": "web_search", '
-            '"input": {"query": "lightwork"}}}\n```'
+            '"input": {"query": "maverick"}}}\n```'
         )
         fake = _FakeRun(text=reply)
         client = self._client(codex_env, monkeypatch, fake)
@@ -328,7 +328,7 @@ class TestExec:
         assert len(resp.tool_calls) == 1
         tc = resp.tool_calls[0]
         assert tc.name == "web_search"
-        assert tc.input == {"query": "lightwork"}
+        assert tc.input == {"query": "maverick"}
         assert tc.id.startswith("codex_")
         assert resp.text == "Let me look that up."
         # The protocol instructions and schema made it into the prompt.

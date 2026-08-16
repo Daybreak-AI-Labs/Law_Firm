@@ -1,6 +1,6 @@
 # Ekko work discovery
 
-Ekko turns repeated, observable work into evidence-backed Lightwork drafts. A
+Ekko turns repeated, observable work into evidence-backed Maverick drafts. A
 typical candidate is “download a scheduled report, open PowerPoint, and assemble
 the same management deck.” Ekko can identify that repeated sequence and propose
 a first-pass flow and agent profile. It does not execute, save, schedule, or
@@ -12,7 +12,7 @@ Windows metadata observer deliberately knows only that the user moved between
 allowlisted applications; it never guesses a document action from a process
 name.
 
-Ekko is a client-controlled sensor, so it is independent of Lightwork's
+Ekko is a client-controlled sensor, so it is independent of Maverick's
 default-on governed learning. A client must complete all three gates:
 
 1. set `[ekko] enable = true` (or `MAVERICK_EKKO=1`);
@@ -116,11 +116,11 @@ Service is the wrong host for foreground-window discovery because it cannot
 observe the signed-in user's desktop. The current release has no
 provider-analysis egress path.
 
-Lightwork does not install a Windows service, launch agent, systemd unit, login
+Maverick does not install a Windows service, launch agent, systemd unit, login
 item, or accessibility/screen-recording permission from `maverick init`. This
 keeps policy consent distinct from endpoint privilege. A production rollout
 should also surface an always-visible recording indicator and bind pause/stop to
-the local user session. Lightwork intentionally does not self-detach or install
+the local user session. Maverick intentionally does not self-detach or install
 autostart: the client owns that deployment decision, visible indicator, restart
 policy, and content-free log collection.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verify a deployment's compliance posture (SOC 2 / ISO 27001 / ISO 42001).
 #
-# Runs the bundled Lightwork posture checks and aggregates their exit codes.
+# Runs the bundled Maverick posture checks and aggregates their exit codes.
 # Intended as a deploy gate or a periodic evidence-collection job: a non-zero
 # exit means at least one required technical control is not in a ready state.
 # See ./hardening-checklist.md. Read-only — it inspects posture, changes nothing.

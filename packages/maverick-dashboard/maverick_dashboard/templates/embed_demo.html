@@ -9,7 +9,7 @@
     total spend, the cost trend, and work by status, and it updates every time
     the page loads:
   </p>
-  <lightwork-analytics></lightwork-analytics>
+  <maverick-analytics></maverick-analytics>
 </div>
 
 <h2>Add it to another page</h2>
@@ -19,10 +19,10 @@
     Replace <code>YOUR-DASHBOARD</code> with this dashboard's address, and ask
     your administrator for an access token if your workspace requires sign-in:
   </p>
-  <pre style="overflow-x: auto;">&lt;script src="http://YOUR-DASHBOARD:8765/static/lightwork-analytics.js"&gt;&lt;/script&gt;
-&lt;lightwork-analytics
+  <pre style="overflow-x: auto;">&lt;script src="http://YOUR-DASHBOARD:8765/static/maverick-analytics.js"&gt;&lt;/script&gt;
+&lt;maverick-analytics
     endpoint="http://YOUR-DASHBOARD:8765"
-    token="YOUR-ACCESS-TOKEN"&gt;&lt;/lightwork-analytics&gt;</pre>
+    token="YOUR-ACCESS-TOKEN"&gt;&lt;/maverick-analytics&gt;</pre>
   <h3 style="font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;">Good to know</h3>
   <ul class="muted" style="font-size: 0.9rem;">
     <li><strong>Works on pages served alongside Bjerken and Day.</strong> For
@@ -41,5 +41,5 @@
       working unchanged.</li>
   </ul>
 </div>
-<script src="/static/lightwork-analytics.js"></script>
+<script src="/static/maverick-analytics.js"></script>
 {% endblock %}

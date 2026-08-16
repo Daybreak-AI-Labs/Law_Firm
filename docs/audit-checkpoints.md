@@ -1,6 +1,6 @@
 # Independent audit checkpoints
 
-Lightwork's signed row chain proves that the rows still present are authentic
+Maverick's signed row chain proves that the rows still present are authentic
 and ordered. It cannot prove that somebody did not remove a valid signed
 suffix. Closed day-files have the signed anchor ledger and optional WORM
 export. Checkpoints provide an independently retainable commitment while a day
@@ -74,9 +74,9 @@ signed, explicit lifecycle records:
   prefix.
 - After an authorized GDPR rewrite, publish with
   `--lifecycle-reason gdpr_reanchor` and
-  `--supersede-digest <latest-checkpoint-sha256>`. Lightwork requires matching
+  `--supersede-digest <latest-checkpoint-sha256>`. Maverick requires matching
   signed re-anchor evidence or, for a live day, a signed erase marker that
-  names the exact superseded checkpoint digest. Lightwork binds that evidence
+  names the exact superseded checkpoint digest. Maverick binds that evidence
   and the exact superseded checkpoint into the new signed record.
 - After signed retention has removed a day, retire its latest commitment:
 

@@ -51,7 +51,7 @@ def test_wikipedia_search_returns_hits():
     # URL constructed from title:
     assert "en.wikipedia.org/wiki/Python_%28programming_language%29" in out
     # User-Agent sent:
-    assert mock_get.call_args.kwargs["headers"]["User-Agent"].startswith("Lightwork/")
+    assert mock_get.call_args.kwargs["headers"]["User-Agent"].startswith("Maverick/")
 
 
 def test_wikipedia_search_no_results():

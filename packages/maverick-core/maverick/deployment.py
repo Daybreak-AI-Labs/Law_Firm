@@ -218,7 +218,7 @@ def _verify_shield() -> GuaranteeCheck:
         return GuaranteeCheck(
             name, False,
             "maverick-shield not installed; input/tool/output screening is off. "
-            "Install Shield from the same reviewed Lightwork checkout; "
+            "Install Shield from the same reviewed Maverick checkout; "
             "public-index lookup is disabled",
         )
     try:

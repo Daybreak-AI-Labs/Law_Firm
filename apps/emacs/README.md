@@ -1,6 +1,6 @@
 # maverick.el
 
-Drive the [Lightwork](https://github.com/Daybreak-AI-Labs/Lightwork) agent runtime
+Drive the [Maverick](https://github.com/Daybreak-AI-Labs/Law_Firm) agent runtime
 from Emacs — a dependency-free front end over the locally installed
 `maverick` CLI (Emacs 27.1+).
 
@@ -9,7 +9,7 @@ from Emacs — a dependency-free front end over the locally installed
 Add to `load-path` and require:
 
 ```elisp
-(add-to-list 'load-path "/path/to/Lightwork/apps/emacs")
+(add-to-list 'load-path "/path/to/Law_Firm/apps/emacs")
 (require 'maverick)
 (setq maverick-cli-path "maverick")           ; if not on PATH
 (setq maverick-default-max-dollars nil)       ; optional per-run cap

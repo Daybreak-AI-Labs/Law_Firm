@@ -2,7 +2,7 @@ name: GitHub Action
 
 # Smoke-tests the composite action in deploy/github-action against itself.
 # The full swarm needs a provider key + budget (out of scope for CI), so this
-# exercises the dry-run path: it proves action.yml is well-formed, Lightwork
+# exercises the dry-run path: it proves action.yml is well-formed, Maverick
 # installs, and the command-resolution logic runs for both the freeform-goal
 # and template entry points -- the parts that break without an LLM.
 

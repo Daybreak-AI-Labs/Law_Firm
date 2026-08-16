@@ -42,11 +42,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
     import tomli as tomllib
 
-TRAINING_RUN_SPEC_SCHEMA = "lightwork.training-run-spec.v1"
-TRAINING_RUN_RESULT_SCHEMA = "lightwork.training-run-result.v1"
-TRAINING_ADMISSION_SCHEMA = "lightwork.training-admission.v1"
-TRAINING_CHECKPOINT_MANIFEST_SCHEMA = "lightwork.training-checkpoint-manifest.v1"
-TRAINING_CHECKPOINT_MANIFEST_BASENAME = "lightwork-checkpoint-manifest.json"
+TRAINING_RUN_SPEC_SCHEMA = "maverick.training-run-spec.v1"
+TRAINING_RUN_RESULT_SCHEMA = "maverick.training-run-result.v1"
+TRAINING_ADMISSION_SCHEMA = "maverick.training-admission.v1"
+TRAINING_CHECKPOINT_MANIFEST_SCHEMA = "maverick.training-checkpoint-manifest.v1"
+TRAINING_CHECKPOINT_MANIFEST_BASENAME = "maverick-checkpoint-manifest.json"
 
 PRIME_RL_BACKEND = "prime-rl"
 PRIME_RL_VERSION = "0.7.0"
@@ -493,7 +493,7 @@ def _verify_requested_resume_checkpoint(
     _require_within(checkpoint_dir, root, "resume checkpoint path")
     expected = (
         root
-        / "lightwork-runs"
+        / "maverick-runs"
         / training_tenant_namespace(tenant_id)
         / run_id
         / f"attempt-{attempt - 1}"
@@ -597,7 +597,7 @@ def admit_training_boundary(
     bundle_digest: str,
     hosted_boundary_permission: bool = False,
 ) -> BoundaryDecision:
-    """Apply Lightwork's boundary contract plus explicit anti-federation rules."""
+    """Apply Maverick's boundary contract plus explicit anti-federation rules."""
 
     tenant = canonical_training_tenant_id(tenant_id)
     destination = normalize_training_target(target).value
@@ -968,13 +968,13 @@ class TrainingRunSpec:
         namespace = training_tenant_namespace(self.tenant_id)
         expected_bundle = (
             root
-            / "lightwork-bundles"
+            / "maverick-bundles"
             / namespace
             / self.environment_package_id
         ).resolve(strict=False)
         expected_run = (
             root
-            / "lightwork-runs"
+            / "maverick-runs"
             / namespace
             / self.run_id
             / f"attempt-{self.attempt}"
@@ -1014,7 +1014,7 @@ class TrainingRunSpec:
         _require_within(resume_path, root, "resume checkpoint path")
         expected_resume_path = (
             root
-            / "lightwork-runs"
+            / "maverick-runs"
             / training_tenant_namespace(self.tenant_id)
             / self.run_id
             / f"attempt-{self.attempt - 1}"
@@ -1735,7 +1735,7 @@ def generate_prime_rl_run_spec(
     _require_within(bundle_path, root, "environment bundle path")
     namespace = training_tenant_namespace(tenant)
     expected_bundle_path = (
-        root / "lightwork-bundles" / namespace / package_id
+        root / "maverick-bundles" / namespace / package_id
     ).resolve(strict=False)
     if bundle_path != expected_bundle_path:
         raise TrainingBackendError(
@@ -1764,7 +1764,7 @@ def generate_prime_rl_run_spec(
 
     run_root = (
         root
-        / "lightwork-runs"
+        / "maverick-runs"
         / namespace
         / identifier
         / f"attempt-{attempt_number}"

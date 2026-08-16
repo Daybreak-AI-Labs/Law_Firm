@@ -1,4 +1,4 @@
-"""AES-256-GCM encryption at rest for Lightwork's sensitive local stores.
+"""AES-256-GCM encryption at rest for Maverick's sensitive local stores.
 
 The kernel keeps its state in plaintext on disk by default (the world model, the
 audit log, and the cross-session memory directory). That is fine for a personal
@@ -67,7 +67,7 @@ from .paths import data_dir
 
 log = logging.getLogger(__name__)
 
-_MAGIC = b"MVKAR1\n"          # versioned header: Lightwork At-Rest v1 (single key)
+_MAGIC = b"MVKAR1\n"          # versioned header: Maverick At-Rest v1 (single key)
 _MAGIC_V2 = b"MVKAR2\n"       # v2: keyring header -- MAGIC || keyid(8) || nonce || ct
 # Per-tenant envelope-sealed blob header. MUST equal tenant_kms._SEAL_MAGIC (a
 # test asserts this); duplicated here so is_sealed() stays cheap and we avoid a
@@ -867,7 +867,7 @@ def _unseal_with_key_cache(
     if len(body) < _NONCE_BYTES + 16:
         raise EncryptionUnavailable(
             "sealed blob is truncated (too short to hold a nonce + GCM tag); "
-            "the data is corrupt or not a Lightwork at-rest blob"
+            "the data is corrupt or not a Maverick at-rest blob"
         )
     nonce, ct = body[:_NONCE_BYTES], body[_NONCE_BYTES:]
     cache_key = ("v1", b"")

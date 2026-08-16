@@ -1,6 +1,6 @@
 """Per-call scoped capability tokens -- "token exchange for every tool call".
 
-Lightwork's capability layer (:mod:`maverick.capability`) binds an agent to a
+Maverick's capability layer (:mod:`maverick.capability`) binds an agent to a
 single, run-long grant. That grant is *static* for the whole run: once an agent
 is spawned, every tool call it makes rides on the same broad authority, so one
 mid-run compromise (a poisoned tool result that steers the agent, a leaked

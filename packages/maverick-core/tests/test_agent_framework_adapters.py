@@ -29,7 +29,7 @@ def _fake_delegation(monkeypatch, result="swarm did it"):
     return calls
 
 
-# ---- Lightwork -> AutoGen ----
+# ---- Maverick -> AutoGen ----
 
 def test_autogen_callable_delegates(monkeypatch):
     calls = _fake_delegation(monkeypatch)
@@ -67,7 +67,7 @@ def test_autogen_tool_missing_package(monkeypatch):
         maverick_autogen_tool()
 
 
-# ---- Lightwork -> CrewAI ----
+# ---- Maverick -> CrewAI ----
 
 def test_crewai_tool_delegates(monkeypatch):
     _fake_delegation(monkeypatch)
@@ -91,7 +91,7 @@ def test_crewai_missing_package(monkeypatch):
         maverick_crewai_tool()
 
 
-# ---- Lightwork -> OpenAI ----
+# ---- Maverick -> OpenAI ----
 
 def test_openai_tool_schema_shape_and_executor(monkeypatch):
     calls = _fake_delegation(monkeypatch)
@@ -120,7 +120,7 @@ def test_openai_executor_caps_model_supplied_budget(monkeypatch):
     assert calls["kw"]["max_dollars"] == 2.0
 
 
-# ---- AutoGen tool -> Lightwork ----
+# ---- AutoGen tool -> Maverick ----
 
 def test_wrap_autogen_run_style():
     class _Args:
@@ -165,7 +165,7 @@ def test_wrap_autogen_no_callable():
     assert t.fn({}).startswith("ERROR")
 
 
-# ---- CrewAI tool -> Lightwork ----
+# ---- CrewAI tool -> Maverick ----
 
 def test_wrap_crewai_tool():
     tool = types.SimpleNamespace(
@@ -221,7 +221,7 @@ def test_wrap_crewai_rejects_deep_schema():
         wrap_crewai_tool(tool)
 
 
-# ---- OpenAI tool -> Lightwork ----
+# ---- OpenAI tool -> Maverick ----
 
 def _openai_tool_def(name="lookup", description="looks things up", **extra):
     fn_def = {"name": name, "description": description, **extra}

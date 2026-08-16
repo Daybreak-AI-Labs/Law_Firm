@@ -111,7 +111,7 @@ def test_ekko_page_and_agent_factory_entry_explain_the_safe_boundary(
         "Ekko is off by default",
         "Never captures",
         "not employee productivity",
-        "lightwork.authoring-handoff",
+        "maverick.authoring-handoff",
     ):
         assert phrase in page.text
     assert "collector online" not in page.text.lower()

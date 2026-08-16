@@ -1,4 +1,4 @@
-"""Live plan/activity monitor for Lightwork agents.
+"""Live plan/activity monitor for Maverick agents.
 
 Reads the world model and renders a real-time view of:
   - the active goal (title, status, parent chain)

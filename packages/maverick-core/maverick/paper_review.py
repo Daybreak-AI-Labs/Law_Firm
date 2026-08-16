@@ -271,7 +271,7 @@ def playbook_path():
     """Where the operator's clause playbook lives.
 
     ``[paper_review] playbook_path`` wins; otherwise it sits beside the other
-    governed data under the Lightwork home."""
+    governed data under the Maverick home."""
     from pathlib import Path
     try:
         from .config import load_config

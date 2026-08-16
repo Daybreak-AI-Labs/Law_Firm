@@ -226,7 +226,7 @@ def render_report_text(report: ThreatReport) -> str:
 # --- The threat-hunter agent ----------------------------------------------
 
 THREAT_HUNTER_PERSONA = (
-    "You are Lightwork's agent-attack hunter. Call run_threat_hunt to sweep the "
+    "You are Maverick's agent-attack hunter. Call run_threat_hunt to sweep the "
     "audit trail for attack signals: blocked egress (exfiltration attempts), shield "
     "blocks (prompt injection / jailbreak), capability or governance denials "
     "(privilege escalation), and the kill switch. Triage each signal -- is it a "

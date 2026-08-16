@@ -73,7 +73,7 @@ CATALOG: tuple[Achievement, ...] = (
                 "One goal fanned out into 5+ sub-goals.",
                 lambda s: s["max_subgoals"] >= 5),
     Achievement("multichannel", "Everywhere at once",
-                "Drove Lightwork from 3+ different channels.",
+                "Drove Maverick from 3+ different channels.",
                 lambda s: len(s["channels"]) >= 3),
     Achievement("reviewer", "Human in the loop",
                 "Decided 10 approval requests.",

@@ -2,7 +2,7 @@
 
 SOTA (agentic memory taxonomy, arXiv 2602.19320; Titans/nested-memory): the
 bottleneck for long-horizon agents is *which* memories survive and whether they
-carry provenance. Lightwork's world model stores facts/episodes but recall is
+carry provenance. Maverick's world model stores facts/episodes but recall is
 flat. This adds a working-memory layer that (1) tags every item with provenance
 (source agent, timestamp, confidence), (2) ranks recall by relevance × salience
 so important items resist eviction, and (3) decays salience over time and on

@@ -1,10 +1,10 @@
-# Lightwork on Postgres — managed world-model state
+# Maverick on Postgres — managed world-model state
 
-By default Lightwork keeps run state in SQLite under `~/.maverick/world.db`:
+By default Maverick keeps run state in SQLite under `~/.maverick/world.db`:
 simple, zero-dependency, and a **single writer**. That caps a deployment at one
 control-plane replica per state volume. Postgres provides managed HA, pooling,
 and DB-enforced isolation for the world model, but does not yet centralize every
-file-backed Lightwork control-plane store.
+file-backed Maverick control-plane store.
 
 ## When to switch
 
@@ -76,7 +76,7 @@ CREATE ROLE maverick LOGIN PASSWORD '***';
 CREATE DATABASE maverick OWNER maverick;
 ```
 
-Lightwork creates and migrates its own schema on first connect (the same
+Maverick creates and migrates its own schema on first connect (the same
 forward-only migration machinery as SQLite). No manual DDL is required.
 
 ## Backups & restore

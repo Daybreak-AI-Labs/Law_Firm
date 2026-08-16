@@ -5,7 +5,7 @@ and it returns the EU AI Act risk tier it most likely falls under —
 **prohibited** (Art. 5), **high-risk** (Annex III), **limited-risk**
 (transparency obligations), or **minimal** — with the matched category and the
 headline obligations. It is a screening helper for the regulated-enterprise
-audience Lightwork targets, NOT legal advice; the output says so.
+audience Maverick targets, NOT legal advice; the output says so.
 
 ops:
   - classify(description)  — tier + matched categories + obligations.

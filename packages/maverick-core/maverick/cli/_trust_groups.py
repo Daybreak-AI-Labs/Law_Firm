@@ -229,7 +229,7 @@ def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
 
 @main.group("client")
 def client_group() -> None:
-    """Inspect / export / erase THIS deployment's bound client (one per Lightwork).
+    """Inspect / export / erase THIS deployment's bound client (one per Maverick).
 
     Since one deployment serves exactly one client, the client's whole data set
     lives under one root — so export and right-to-erasure are provably complete."""

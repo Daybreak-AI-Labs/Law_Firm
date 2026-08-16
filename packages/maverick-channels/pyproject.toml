@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maverick-channels"
 version = "0.1.7"
-description = "Channel adapters for Lightwork (Telegram, Discord, Slack, Signal, ...)"
+description = "Channel adapters for Maverick (Telegram, Discord, Slack, Signal, ...)"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
@@ -47,7 +47,7 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Daybreak-AI-Labs/Lightwork"
+Homepage = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [tool.setuptools.packages.find]
 where = ["."]

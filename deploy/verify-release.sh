@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify a Lightwork release artifact's Sigstore (cosign keyless) signature.
+# Verify a Maverick release artifact's Sigstore (cosign keyless) signature.
 #
 # Every release binary, standalone source archive, checksum manifest, and SBOM
 # ships with a detached `.sig` (signature) and `.pem` (signing certificate).
@@ -10,7 +10,7 @@
 # trust on faith.
 #
 #   deploy/verify-release.sh maverick-linux-x86_64 v1.2.3
-#   deploy/verify-release.sh lightwork-grc-concierge-1.2.3.zip v1.2.3
+#   deploy/verify-release.sh maverick-grc-concierge-1.2.3.zip v1.2.3
 #   deploy/verify-release.sh maverick-linux-x86_64 v1.2.3 maverick-linux-x86_64.sig maverick-linux-x86_64.pem
 #
 # Pass the release tag you intend to install (for example, v1.2.3). Verification
@@ -41,7 +41,7 @@ esac
 # OIDC issuer is GitHub. Escape regex metacharacters in the user-supplied tag so
 # the certificate identity is anchored to the literal tag value.
 ESCAPED_TAG="$(printf '%s' "$TAG" | sed -e 's/[.[\\*^$()+?{}|]/\\&/g')"
-# Daybreak-AI-Labs/Lightwork is canonical. The two Day-AI-Labs identities are
+# Daybreak-AI-Labs/Law_Firm is canonical. The two Day-AI-Labs identities are
 # historical. Alternate complete owner/repository pairs so the regex cannot
 # accidentally trust the never-valid Daybreak-AI-Labs/Maverick cross-product.
 IDENTITY_REGEXP="^https://github.com/([Dd]aybreak-[Aa][Ii]-[Ll]abs/[Ll]ightwork|[Dd]ay-[Aa][Ii]-[Ll]abs/([Ll]ightwork|[Mm]averick))/\.github/workflows/release\.yml@refs/tags/${ESCAPED_TAG}$"

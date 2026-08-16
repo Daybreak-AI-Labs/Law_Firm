@@ -3,7 +3,7 @@
 SOTA (SkillTTA arXiv 2605.16986; Trace2Skill 2603.25158): instead of relying
 only on a global skill library distilled *after* success, synthesize a
 short skill conditioned on *this* task's metadata + retrieved prior experience,
-inject it for the current run, and discard it. Complements Lightwork's existing
+inject it for the current run, and discard it. Complements Maverick's existing
 post-hoc distillation (``skills.py``): distillation is long-term memory, this is
 working-memory scaffolding for the task in front of you.
 

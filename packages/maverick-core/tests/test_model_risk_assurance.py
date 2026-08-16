@@ -19,7 +19,7 @@ def _hex(label: str) -> str:
 
 def _training_commitment(artifact_digest: str, *, label: str = "one") -> dict[str, str]:
     return {
-        "schema": "lightwork.training-transparency-commitment.v1",
+        "schema": "maverick.training-transparency-commitment.v1",
         "dataset_sha256": _hex(f"training-dataset:{label}"),
         "environment_sha256": _hex(f"training-environment:{label}"),
         "base_model_artifact_sha256": _hex(f"base-model:{label}"),
@@ -37,7 +37,7 @@ def _training_assurance_commitment(
     label: str = "one",
 ) -> dict[str, str]:
     return {
-        "schema": "lightwork.training-assurance-commitment.v1",
+        "schema": "maverick.training-assurance-commitment.v1",
         "dataset_sha256": _hex(f"training-dataset:{label}"),
         "base_model_license_id": "Apache-2.0",
         "base_model_license_evidence_sha256": _hex(f"license:{label}"),

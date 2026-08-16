@@ -3,7 +3,7 @@
 Three runtime planes let an agent do more than call fixed tools: write and run
 its own code, propose changes to its own operating instructions, and branch a
 run to try the other way. Each one is a capability an ungoverned runtime hands
-out for free and an audited deployment cannot accept for free. Lightwork ships
+out for free and an audited deployment cannot accept for free. Maverick ships
 them with the evidence attached — every statement receipted, every refinement
 approved and reversible, every branch kept on the record beside the one that
 shipped.
@@ -63,7 +63,7 @@ refuses.
 !!! warning "The sandbox backend is the containment boundary"
 
     Statements run through `sandbox.exec()` like every other shell in
-    Lightwork, so whatever `[sandbox] backend` is configured is what contains
+    Maverick, so whatever `[sandbox] backend` is configured is what contains
     model-written Python. Run a container backend (`docker`, `gvisor`,
     `podman`); `local` runs that code on the host with your privileges.
 

@@ -18,7 +18,7 @@ python -m http.server -d web 8000
 Until `maverick.dev` is registered:
 
 1. In repo Settings → Pages, set source to `main` branch / `/web` folder
-2. The site appears at `https://daybreak-ai-labs.github.io/Lightwork/`
+2. The site appears at `https://daybreak-ai-labs.github.io/Law_Firm/`
 
 After `maverick.dev` is registered:
 

@@ -3,7 +3,7 @@
 The erase side of GDPR (``maverick.audit.erase`` + ``maverick erase``) already
 covers Art. 17 right-to-erasure. This module is its read-only mirror: the
 right of access / portability. :func:`export_subject_data` gathers everything
-Lightwork holds for one subject (a channel ``user_id``) into a single
+Maverick holds for one subject (a channel ``user_id``) into a single
 JSON-serializable bundle a controller can hand back to the data subject.
 
 It only ever *reads*. Every store is consulted defensively: a missing or empty
@@ -342,7 +342,7 @@ def _resolve_subject_channel(
 ) -> str | None:
     """Return the concrete channel for a DSAR, or ``None`` if ambiguous.
 
-    ``channel`` is part of Lightwork's subject identity.  For backward
+    ``channel`` is part of Maverick's subject identity.  For backward
     compatibility with callers that exported a user id from a single-channel
     install, an omitted channel is inferred only when the user's structured
     world/audit rows identify exactly one channel.  If multiple channels reuse
@@ -433,7 +433,7 @@ def export_subject_data(
     strict: bool = False,
     world: Any = None,
 ) -> dict[str, Any]:
-    """Gather everything Lightwork holds for ``user_id`` into one JSON bundle.
+    """Gather everything Maverick holds for ``user_id`` into one JSON bundle.
 
     GDPR Art. 15 (right of access) / Art. 20 (portability), and a SOC 2 Privacy
     expectation. Read-only and fail-soft by default: a missing world DB or

@@ -1,7 +1,7 @@
 """Hugging Face Inference API tool.
 
 Wraps the HF serverless inference endpoint so the agent can invoke
-non-text models without leaving Lightwork: image classification,
+non-text models without leaving Maverick: image classification,
 audio transcription (Whisper-on-HF), object detection, summarization
 via a specific HF model, etc.
 

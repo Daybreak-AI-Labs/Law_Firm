@@ -1,7 +1,7 @@
 """Agent compartments: a swarm-shared threat ledger that turns one agent's
 detection into immunity for the rest of the run.
 
-Lightwork runs many agents off ONE shared Shield instance
+Maverick runs many agents off ONE shared Shield instance
 (``SwarmContext.shield``). The base Shield is stateless -- every scan is a pure
 function -- so a payload one agent's scan blocked is re-derived from scratch by
 the next agent, and nothing carries "I already caught this" across the swarm.

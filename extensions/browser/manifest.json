@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Lightwork",
+  "name": "Maverick",
   "version": "0.1.0",
-  "description": "Chat with your local Lightwork agent and send the current page as goal context. Talks only to the local dashboard on 127.0.0.1.",
+  "description": "Chat with your local Maverick agent and send the current page as goal context. Talks only to the local dashboard on 127.0.0.1.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Lightwork"
+    "default_title": "Maverick"
   },
   "background": {
     "service_worker": "background.js"

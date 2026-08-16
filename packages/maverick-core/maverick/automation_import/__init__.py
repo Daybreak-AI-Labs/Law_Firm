@@ -1,8 +1,8 @@
-"""Import clients' existing automations from other platforms into Lightwork.
+"""Import clients' existing automations from other platforms into Maverick.
 
 External automation platforms model a **trigger + ordered actions**. This
 package normalizes any of them into one IR (:mod:`.ir`) via a per-platform
-translator (:mod:`.base` registry), then maps the IR onto Lightwork's existing
+translator (:mod:`.base` registry), then maps the IR onto Maverick's existing
 ``Template`` + trigger/schedule primitives (:mod:`.materialize`).
 
 Two import modes, by platform capability:
@@ -12,7 +12,7 @@ Two import modes, by platform capability:
   the real workflow graph. ``Importer.can_fetch_definitions`` is True.
 * **Connect-and-trigger** -- platforms that do NOT expose their automation
   definitions (Zapier, Notion automations): the source automation can't be
-  read, so the client's tool calls into Lightwork (inbound webhook) and/or we
+  read, so the client's tool calls into Maverick (inbound webhook) and/or we
   read its data; ``can_fetch_definitions`` is False and ``fetch`` explains.
 
 Gated by ``[automation_import] enable`` / ``MAVERICK_AUTOMATION_IMPORT``.

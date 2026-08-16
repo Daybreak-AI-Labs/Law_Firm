@@ -1,4 +1,4 @@
-"""End-to-end contracts for the gateway on Lightwork's real output seam."""
+"""End-to-end contracts for the gateway on Maverick's real output seam."""
 from __future__ import annotations
 
 import hashlib

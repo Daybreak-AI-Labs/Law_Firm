@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sanitize untrusted Lightwork output before it reaches GitHub channels.
+"""Sanitize untrusted Maverick output before it reaches GitHub channels.
 
 The composite action captures the model/agent process privately, then invokes
 this helper.  Nothing read from ``--input`` is written to stdout: the caller
@@ -295,7 +295,7 @@ def _read_bounded(
 
 def _bound_text(text: str, max_chars: int, source_truncated: bool) -> str:
     marker = (
-        "\n\n[Lightwork output truncated; additional captured output was "
+        "\n\n[Maverick output truncated; additional captured output was "
         "discarded.]\n"
     )
     needs_truncation = source_truncated or len(text) > max_chars

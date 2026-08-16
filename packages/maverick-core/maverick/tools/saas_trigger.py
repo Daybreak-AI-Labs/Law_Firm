@@ -1,6 +1,6 @@
 """Generic SaaS-trigger framework (roadmap: 2028 H1).
 
-Turn an inbound SaaS webhook into a Lightwork goal, safely. ``verify`` checks the
+Turn an inbound SaaS webhook into a Maverick goal, safely. ``verify`` checks the
 delivery's HMAC signature (constant-time) so a forged payload can't drive the
 swarm, and ``route`` maps an event type to the goal that should handle it via
 glob patterns (most-specific wins). Deterministic; offline; pure stdlib

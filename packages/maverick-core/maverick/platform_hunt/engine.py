@@ -1,4 +1,4 @@
-"""Deterministic, evidence-citing detections for Lightwork itself.
+"""Deterministic, evidence-citing detections for Maverick itself.
 
 The engine contains no model calls. An LLM may narrate its findings later, but
 cannot create, suppress, or relabel the rule verdicts produced here.

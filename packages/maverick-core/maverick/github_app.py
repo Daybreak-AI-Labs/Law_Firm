@@ -2,10 +2,10 @@
 
 OpenHands and Copilot Agent ship this pattern in 2026: maintainer labels
 or @-mentions a GitHub issue, the agent clones the repo, attempts a fix,
-pushes a branch, opens a PR. Lightwork now supports the same flow.
+pushes a branch, opens a PR. Maverick now supports the same flow.
 
 This module is the WEBHOOK RECEIVER + PR FACTORY. The actual coding
-work runs in a Lightwork swarm with the GitHub issue body as the brief.
+work runs in a Maverick swarm with the GitHub issue body as the brief.
 
 Modes:
   - `maverick gh-app webhook`  : run a FastAPI listener on a public port,
@@ -41,7 +41,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-# Default labels that trigger a Lightwork run.
+# Default labels that trigger a Maverick run.
 DEFAULT_LABELS = ("maverick", "automate", "ai-fix")
 
 # Slash-command that triggers a run from an issue comment.
@@ -161,7 +161,7 @@ def _trigger_labels() -> set[str]:
 
 
 def build_brief(payload: WebhookPayload) -> str:
-    """Render the issue into a Lightwork goal brief."""
+    """Render the issue into a Maverick goal brief."""
     return (
         f"GitHub issue: {payload.repo_full_name}#{payload.issue_number}\n"
         f"Title: {payload.issue_title}\n\n"
@@ -247,7 +247,7 @@ def create_pr_via_gh(
     The PR is opened as a draft per repo policy (see CLAUDE.md). The
     caller is expected to have a `gh auth login` set up in the
     environment (or GH_TOKEN set), since we can't reasonably ship a
-    token-mint flow inside Lightwork.
+    token-mint flow inside Maverick.
     """
     try:
         # The cloned origin no longer embeds the token (see clone_repo), so
@@ -399,7 +399,7 @@ async def process_issue(
 
         subprocess.run(
             ["git", "-C", str(workdir), "commit", "-m",
-             f"Lightwork: address #{payload.issue_number}"],
+             f"Maverick: address #{payload.issue_number}"],
             check=False, capture_output=True, timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired as e:
@@ -409,10 +409,10 @@ async def process_issue(
             summary=summary, error=scrub(f"git timed out staging changes: {e}"),
         )
 
-    pr_title = f"Lightwork: {payload.issue_title[:60]}"
+    pr_title = f"Maverick: {payload.issue_title[:60]}"
     pr_body = (
         f"Closes #{payload.issue_number}\n\n"
-        f"## Lightwork summary\n\n{summary}\n\n"
+        f"## Maverick summary\n\n{summary}\n\n"
         f"_Triggered by {payload.sender_login} via "
         f"{'label ' + payload.trigger_label if payload.trigger_label else SLASH_TRIGGER}._"
     )

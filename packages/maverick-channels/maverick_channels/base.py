@@ -218,7 +218,7 @@ class IncomingMessage:
     def __post_init__(self) -> None:
         cap = _max_inbound_chars()
         if cap and isinstance(self.text, str) and len(self.text) > cap:
-            self.text = self.text[:cap] + "\n\n[...truncated by Lightwork inbound cap]"
+            self.text = self.text[:cap] + "\n\n[...truncated by Maverick inbound cap]"
 
 
 Handler = Callable[[IncomingMessage], Awaitable[str]]

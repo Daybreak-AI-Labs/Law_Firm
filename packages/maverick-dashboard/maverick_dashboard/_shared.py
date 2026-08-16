@@ -145,7 +145,7 @@ def _world():
     cached = _world_cache.get(key)
     if cached is None:
         # Preserve DEFAULT_DB override ownership semantics: open_world() knows
-        # whether this is Lightwork's managed default or a caller-owned path.
+        # whether this is Maverick's managed default or a caller-owned path.
         cached = open_world()
         _world_cache[key] = cached
     return cached

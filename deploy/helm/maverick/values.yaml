@@ -2,7 +2,7 @@
 # Override with `helm install maverick ./deploy/helm/maverick -f my-values.yaml`.
 
 image:
-  repository: ghcr.io/daybreak-ai-labs/lightwork
+  repository: ghcr.io/daybreak-ai-labs/maverick
   tag: ""              # defaults to .Chart.AppVersion when empty
   pullPolicy: IfNotPresent
 
@@ -34,7 +34,7 @@ persistence:
 
 # World-model backend. Postgres provides managed HA, pooling, and DB-enforced
 # tenant isolation for world-model rows. It does not by itself make every
-# Lightwork control-plane store replica-safe; replicaCount remains 1.
+# Maverick control-plane store replica-safe; replicaCount remains 1.
 worldModel:
   backend: sqlite      # sqlite | postgres
   # When backend=postgres, the DSN is read from env MAVERICK_PG_DSN, sourced

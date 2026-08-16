@@ -96,7 +96,7 @@ def _run(args: dict[str, Any]) -> str:
         return "ERROR: finance anomaly scan failed safely"
 
     result = {
-        "schema": "lightwork.finance-anomaly-tool-result.v1",
+        "schema": "maverick.finance-anomaly-tool-result.v1",
         "transactions_scanned": report.transactions_scanned,
         "input_sha256": report.input_sha256,
         "config_sha256": report.config_sha256,

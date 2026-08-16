@@ -2,7 +2,7 @@
 
 Agents built on **other** platforms — Salesforce Agentforce, AWS Bedrock
 Agents, Microsoft Copilot Studio, OpenAI, LangChain/LangGraph, or a home-grown
-runtime — can enroll into Lightwork and come under governance: **they run on
+runtime — can enroll into Maverick and come under governance: **they run on
 their runtime, governed on ours**. One enrollment writes the Agent Trust entry
 (inbound direction, tool/risk/budget ceilings, expiry), the fleet-memory
 roster, and platform provenance; per-surface bearer credentials are minted
@@ -10,7 +10,7 @@ from the dashboard; and every completed run lands on the Operating Record as
 a first-class goal owned by principal `agent:<id>`.
 
 The governance seam is a pre-action **screening endpoint**: the foreign agent
-asks *before* acting, and Lightwork applies trust admission, the cumulative
+asks *before* acting, and Maverick applies trust admission, the cumulative
 budget cutoff, Shield input scanning (fail-closed on scanner error), and the
 `[actions] require_approval_at` approval floor — high-risk actions park a real
 approval row that a human decides in the dashboard queue while the agent
@@ -107,8 +107,8 @@ id = "sf-quotebot"
 direction = "inbound"
 # Connected-app JWT
 jwt_issuer = "https://login.salesforce.com"
-jwt_audience = "lightwork-prod"
-jwks_file = "/etc/lightwork/keys/sf-quotebot.jwks.json"  # local PEM or JWKS
+jwt_audience = "maverick-prod"
+jwks_file = "/etc/maverick/keys/sf-quotebot.jwks.json"  # local PEM or JWKS
 # HMAC (webhook signature format)
 hmac_secret_ref = "SF_QUOTEBOT_HMAC_SECRET"  # pragma: allowlist secret — a secret NAME, never the value
 # Ed25519 signed requests
@@ -134,7 +134,7 @@ Asymmetric algorithms only (`alg: none` and HMAC algorithms are rejected);
 the server needs the `pyjwt[crypto]` extra.
 
 **Salesforce:** a Connected App already doing the OAuth 2.0 **JWT bearer
-flow** can present the same style of assertion to Lightwork directly — set
+flow** can present the same style of assertion to Maverick directly — set
 `jwt_issuer` to the assertion's `iss` (the consumer key), `jwt_audience` to
 the audience it signs, and point `jwks_file` at the Connected App
 certificate's public key. Sign the assertion with `sub` set to the enrolled
@@ -153,11 +153,11 @@ Requests carry three headers over the raw body:
 
 | Header | Value |
 | --- | --- |
-| `X-Lightwork-Agent-Id` | The enrolled agent id |
+| `X-Maverick-Agent-Id` | The enrolled agent id |
 | `X-Maverick-Timestamp` | Unix seconds; the signature covers it |
 | `X-Maverick-Signature` | `sha256=` + hex `HMAC-SHA256(secret, "<ts>." + raw_body)` |
 
-This is exactly Lightwork's outbound webhook signature format: sign
+This is exactly Maverick's outbound webhook signature format: sign
 `b"<timestamp>." + body` with HMAC-SHA256 and prefix the hex digest with
 `sha256=`. Timestamps older than 300 seconds are rejected; signature
 comparison is constant-time.
@@ -176,15 +176,15 @@ request carries four headers:
 
 | Header | Value |
 | --- | --- |
-| `X-Lightwork-Agent-Id` | The enrolled agent id |
+| `X-Maverick-Agent-Id` | The enrolled agent id |
 | `X-Maverick-Timestamp` | Unix seconds |
-| `X-Lightwork-Nonce` | A fresh random string (≤128 bytes), single-use |
-| `X-Lightwork-Request-Signature` | Hex Ed25519 signature over the message below |
+| `X-Maverick-Nonce` | A fresh random string (≤128 bytes), single-use |
+| `X-Maverick-Request-Signature` | Hex Ed25519 signature over the message below |
 
 The signed message is domain-separated and versioned:
 
 ```
-lightwork-external-request-v1|<agent_id>|<timestamp>|<nonce>|<hex sha256(raw body)>
+maverick-external-request-v1|<agent_id>|<timestamp>|<nonce>|<hex sha256(raw body)>
 ```
 
 (`maverick.external_identity.envelope_message` builds these exact bytes —
@@ -268,8 +268,8 @@ TypeScript helpers for the screen-then-act, report-after loop.
 
 1. **Credential** — Setup → Named Credentials: create an External Credential
    with a custom `Authorization: Bearer lw-rest-EXAMPLEEXAMPLE` header and a
-   Named Credential pointing at your Lightwork base URL
-   (`https://lightwork.example.com`).
+   Named Credential pointing at your Maverick base URL
+   (`https://maverick.example.com`).
 2. **External Service** — Setup → External Services → New from API
    specification: paste the JSON from `GET /api/v1/external/openapi.json`,
    select the Named Credential. Salesforce generates invocable actions for
@@ -282,23 +282,23 @@ TypeScript helpers for the screen-then-act, report-after loop.
    action until a human decides; call **runs** once with title/outcome/cost
    when the job completes.
 
-Paste-in packaging (deployable Apex invocable classes + the exact Setup clicks): [`examples/external-agents/agentforce/`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/examples/external-agents/agentforce/).
+Paste-in packaging (deployable Apex invocable classes + the exact Setup clicks): [`examples/external-agents/agentforce/`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/examples/external-agents/agentforce/).
 
 ### AWS Bedrock Agents
 
 1. Save the schema: `curl -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE"
-   https://lightwork.example.com/api/v1/external/openapi.json >
-   lightwork-external.json` and upload it to S3 (or paste inline).
+   https://maverick.example.com/api/v1/external/openapi.json >
+   maverick-external.json` and upload it to S3 (or paste inline).
 2. Create an **action group** on the Bedrock agent from that OpenAPI schema.
    Executor: a small Lambda that forwards each operation to the matching
-   Lightwork endpoint, reading the bearer from **Secrets Manager** (never
+   Maverick endpoint, reading the bearer from **Secrets Manager** (never
    hard-code it) — or use *return of control* and let your orchestrating app
    do the forwarding.
 3. Agent instructions as above: screen before consequential actions, report
    the run at completion.
 4. Rotation = mint a new rest token and update the Secrets Manager value.
 
-Paste-in packaging (SAM template + forwarder Lambda + action-group schema): [`examples/external-agents/bedrock/`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/examples/external-agents/bedrock/).
+Paste-in packaging (SAM template + forwarder Lambda + action-group schema): [`examples/external-agents/bedrock/`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/examples/external-agents/bedrock/).
 
 ### OpenAI / LangChain
 
@@ -307,7 +307,7 @@ Call the two endpoints from your tool layer:
 ```python
 import requests
 
-BASE = "https://lightwork.example.com"
+BASE = "https://maverick.example.com"
 HEADERS = {"Authorization": "Bearer lw-rest-EXAMPLEEXAMPLE"}
 
 def screen(tool: str, detail: str = "", risk: str = "low") -> dict:
@@ -346,7 +346,7 @@ report_run("Renewal outreach", "success",
 Screen a proposed action:
 
 ```bash
-curl -sS -X POST https://lightwork.example.com/api/v1/external/screen \
+curl -sS -X POST https://maverick.example.com/api/v1/external/screen \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"tool": "send_email",
@@ -369,7 +369,7 @@ At or above the approval floor the action parks instead:
 Poll while a human decides in the dashboard queue:
 
 ```bash
-curl -sS https://lightwork.example.com/api/v1/external/approvals/42 \
+curl -sS https://maverick.example.com/api/v1/external/approvals/42 \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE"
 ```
 
@@ -380,7 +380,7 @@ curl -sS https://lightwork.example.com/api/v1/external/approvals/42 \
 `status` moves to `approved` or `denied`. Report a completed run:
 
 ```bash
-curl -sS -X POST https://lightwork.example.com/api/v1/external/runs \
+curl -sS -X POST https://maverick.example.com/api/v1/external/runs \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"title": "Renewal outreach for Q3 at-risk accounts",
@@ -404,11 +404,11 @@ are kept.
 ## Governed execution
 
 Screening answers *may I?* and trusts the agent to act on its own platform.
-**Governed execution** is the enforcement tier above it: Lightwork performs
+**Governed execution** is the enforcement tier above it: Maverick performs
 the action itself, on the agent's behalf, through the governed connector
 path — host IP-pinning, enterprise egress allowlists, no redirects — with a
 tamper-evident **PREPARE/COMMIT receipt** written around every effect. What
-touches your system of record is Lightwork's audited egress boundary, never
+touches your system of record is Maverick's audited egress boundary, never
 the foreign runtime's HTTP stack.
 
 Off unless you name connectors (screening alone needs nothing here):
@@ -439,7 +439,7 @@ Three agent-facing endpoints (same `rest` bearer):
 trip (after the same admission chain as screening):
 
 ```bash
-curl -sS -X POST https://lightwork.example.com/api/v1/external/execute \
+curl -sS -X POST https://maverick.example.com/api/v1/external/execute \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"connector": "servicenow", "op": "get",
@@ -455,7 +455,7 @@ v1 there is no auto-approval path for external writes). Phase one submits
 the request:
 
 ```bash
-curl -sS -X POST https://lightwork.example.com/api/v1/external/execute \
+curl -sS -X POST https://maverick.example.com/api/v1/external/execute \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"connector": "servicenow", "op": "post",
@@ -475,7 +475,7 @@ fingerprint in the dashboard queue. Poll `GET
 
 ```bash
 curl -sS -X POST \
-  https://lightwork.example.com/api/v1/external/executions/kF3x9q2mWv8Zt1Ao/commit \
+  https://maverick.example.com/api/v1/external/executions/kF3x9q2mWv8Zt1Ao/commit \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"connector": "servicenow", "op": "post",

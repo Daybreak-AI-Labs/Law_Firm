@@ -1,6 +1,6 @@
 """IRC channel adapter (RFC 1459 / 2812).
 
-Drives Lightwork from an IRC channel or direct message. The agent joins one or
+Drives Maverick from an IRC channel or direct message. The agent joins one or
 more channels on a server, answers messages from allow-listed authenticated IRC
 accounts, and replies with PRIVMSG. TLS is supported
 (``[channels.irc] tls = true``).
@@ -213,7 +213,7 @@ class IRCChannel(Channel):
         await self._send_line("CAP LS 302")
         await self._send_line("CAP REQ :account-tag")
         await self._send_line(f"NICK {self.nick}")
-        await self._send_line(f"USER {self.nick} 0 * :Lightwork agent")
+        await self._send_line(f"USER {self.nick} 0 * :Maverick agent")
         await self._send_line("CAP END")
         for chan in self.channels:
             await self._send_line(f"JOIN {chan}")
@@ -255,7 +255,7 @@ class IRCChannel(Channel):
         self._running = False
         if self._writer is not None:
             try:
-                self._writer.write(b"QUIT :Lightwork shutting down\r\n")
+                self._writer.write(b"QUIT :Maverick shutting down\r\n")
                 await self._writer.drain()
                 self._writer.close()
             except Exception:  # pragma: no cover

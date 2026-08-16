@@ -2,7 +2,7 @@
 Modal sandboxes").
 
 Runs agent shell commands in `Modal Sandboxes <https://modal.com/docs/guide/sandbox>`_
-— ephemeral cloud containers with hard resource limits — so a Lightwork on a
+— ephemeral cloud containers with hard resource limits — so a Maverick on a
 laptop can execute untrusted work on burstable remote compute without running
 its own cluster. Satisfies sandbox SDK v2 (``workdir`` + ``exec(cmd,
 timeout=None)``); select with ``[sandbox] backend = "modal"``.

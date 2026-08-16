@@ -135,7 +135,7 @@ def test_exact_text_receipt_is_hash_only_signed_and_revision_aligned(monkeypatch
     receipt = result["receipt"]
     expected = (
         f"{gateway.DEFAULT_DISCLOSURE_TEXT}\n\nGenerated answer.\n\n"
-        f"[lightwork-ai-generated; evidence-receipt={receipt['receipt_id']}]"
+        f"[maverick-ai-generated; evidence-receipt={receipt['receipt_id']}]"
     )
     assert result["delivered_text"] == expected
     signed = receipt["signed_receipt"]

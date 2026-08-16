@@ -1,6 +1,6 @@
 """OTel GenAI semantic-convention attributes for LLM spans.
 
-Lightwork already had opt-in OTel/Prometheus, but the LLM spans used ad-hoc
+Maverick already had opt-in OTel/Prometheus, but the LLM spans used ad-hoc
 attribute names and a generic span name that no OTel-aware backend
 understands without custom mapping. observability.gen_ai_attributes() /
 gen_ai_span_name() emit the standard gen_ai.* names so traces are legible to

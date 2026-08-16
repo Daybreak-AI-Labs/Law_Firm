@@ -1,4 +1,4 @@
-"""MCP server for Lightwork."""
+"""MCP server for Maverick."""
 from __future__ import annotations
 
 import contextlib
@@ -89,7 +89,7 @@ def _canonical_world():
         close_world_if_owned(world)
 
 def _configure_mcp_logging() -> None:
-    """Apply Lightwork's shared logging config (honors MAVERICK_LOG_FORMAT=json,
+    """Apply Maverick's shared logging config (honors MAVERICK_LOG_FORMAT=json,
     the correlation-id context filter, and secret scrubbing). Logs to STDERR —
     never stdout, which is the MCP stdio protocol channel. Called from main(),
     NOT at import, so importing the server (e.g. in tests) never reconfigures
@@ -177,7 +177,7 @@ TOOLS: list[ToolSpec] = [
     {
         "name": "maverick_start",
         "description": (
-            "Start a new goal in Lightwork's recursive multi-agent swarm. "
+            "Start a new goal in Maverick's recursive multi-agent swarm. "
             "Returns the final answer after the swarm completes. Long-running."
         ),
         # Long-running, so it supports task augmentation (run async, poll for
@@ -328,7 +328,7 @@ TOOLS: list[ToolSpec] = [
     {
         "name": "maverick_fleet_ingest",
         "description": (
-            "Deposit experience from an EXTERNAL agent into Lightwork's "
+            "Deposit experience from an EXTERNAL agent into Maverick's "
             "governed fleet memory (Learning System of Record). The agent "
             "must be on the fleet roster; records are Shield-scanned, "
             "provenance-tagged, and audited. Requires [fleet_memory] enable."
@@ -665,7 +665,7 @@ class MCPServer:
         caller_trust_principal: str | None = None,
         capability=None,
     ) -> dict:
-        """Expose Lightwork state as MCP Resources.
+        """Expose Maverick state as MCP Resources.
 
         - maverick://goals          — list of active/recent goals
         - maverick://skills         — installed skills
@@ -961,7 +961,7 @@ class MCPServer:
         except KeyError as e:
             raise _ProtocolError(-32602, f"missing argument: {e}") from e
         return {
-            "description": f"Lightwork prompt: {name}",
+            "description": f"Maverick prompt: {name}",
             "messages": [{
                 "role": "user",
                 "content": {"type": "text", "text": text},
@@ -2389,7 +2389,7 @@ class MCPServer:
                 self._send_error(request_id, -32603, f"internal error: {detail}")
 
     def run(self) -> None:
-        log.info("Lightwork MCP server starting (protocol %s)", PROTOCOL_VERSION)
+        log.info("Maverick MCP server starting (protocol %s)", PROTOCOL_VERSION)
         # Mark the stdio transport: server-initiated elicitation is only valid
         # here (it needs the bidirectional pipe; the HTTP path can't do a
         # mid-call server->client request). Read via readline() rather than
@@ -2411,7 +2411,7 @@ class MCPServer:
 def main() -> None:
     """Entry point. Defaults to stdio transport (Claude Desktop /
     Cursor compatible). Pass `--http` for the Streamable HTTP
-    transport (hosted Lightwork, MCP gateways)."""
+    transport (hosted Maverick, MCP gateways)."""
     import argparse
     ap = argparse.ArgumentParser(prog="maverick-mcp")
     ap.add_argument("--http", action="store_true",

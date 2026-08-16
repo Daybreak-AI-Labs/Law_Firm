@@ -1,6 +1,6 @@
 # Safety
 
-Lightwork wraps its agent loop in [Agent Shield](https://github.com/cdayAI/agent-shield) at three chokepoints:
+Maverick wraps its agent loop in [Agent Shield](https://github.com/cdayAI/agent-shield) at three chokepoints:
 
 1. **Input scan** — every user message goes through `shield.scan_input()` before the orchestrator sees it.
 2. **Tool-call scan** — every `tool_use` request goes through `shield.scan_tool_call(name, args)` before the sandbox executes it.
@@ -74,7 +74,7 @@ Two layers can be missing, and they degrade differently:
 - **Full `agent-shield` SDK absent** (but the `maverick-shield` wrapper present): detection uses the **built-in** layer — ~20 high-impact rules, the decode/defang pre-pass, and a cheap-probe (regex + Unicode heuristics, optionally ensembled with a trained linear model via `[shield] probe_model`). No SDK efficacy number is attributed to this built-in backend; scans — including obfuscation-decoding — still run.
 - **Shield wrapper absent entirely**: scans are **skipped (fail-open)** with a startup warning, per the kernel's "runs without the shield" rule.
 
-The complete Lightwork release cohort includes the `maverick-shield` wrapper.
+The complete Maverick release cohort includes the `maverick-shield` wrapper.
 Core-only source installs must add `packages/maverick-shield` explicitly. The
 separate full `agent-shield` SDK is not available from public PyPI; do not use a
 public namesake package.
@@ -138,7 +138,7 @@ control, but the model egress lock can never be satisfied by a cloud provider.
 For a hard no-egress boundary, also use sandbox network isolation and
 host/OS/VPC default-deny egress policy. Application interception cannot contain
 raw sockets, subprocess network clients, unwrapped libraries, or untrusted code
-running in the Lightwork process.
+running in the Maverick process.
 
 ## Compliance posture (`maverick compliance`)
 

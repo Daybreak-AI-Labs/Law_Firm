@@ -1,5 +1,5 @@
-/* Lightwork dashboard shell behaviors. Extracted from templates/base.html;
-   served by GET /static/lightwork-ui.js. Loaded at the end of <body>, so
+/* Maverick dashboard shell behaviors. Extracted from templates/base.html;
+   served by GET /static/maverick-ui.js. Loaded at the end of <body>, so
    the DOM is ready without defer. First section: reusable feedback
    primitives (mvToast/mvConfirm/mvForm/mvCopy). Second: halt pill, goal
    form, sidebar + preferences behaviors. */
@@ -263,12 +263,12 @@
           const details = (form.querySelector('[name="description"]') || {}).value || '';
           const brief = (title.trim() + (details.trim() ? '\n\n' + details.trim() : '')).slice(0, 8000);
           if (!brief) {
-            errBox.textContent = 'Describe what you want Lightwork to draft.';
+            errBox.textContent = 'Describe what you want Maverick to draft.';
             errBox.style.display = 'block';
             return;
           }
           try {
-            sessionStorage.setItem('lightwork.authoring-handoff', JSON.stringify({
+            sessionStorage.setItem('maverick.authoring-handoff', JSON.stringify({
               kind: kind, brief: brief, created_at: Date.now()
             }));
             window.location.href = kind === 'flow' ? '/flows/designer' : '/workflow-builder';

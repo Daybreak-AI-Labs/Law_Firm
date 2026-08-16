@@ -3,12 +3,12 @@
 # /etc/systemd/system/. Don't `cp` this file directly -- run install.sh (or
 # sed-substitute %i yourself), or systemd gets an empty User= and broken paths.
 [Unit]
-Description=Lightwork agent (long-horizon multi-agent swarm)
-Documentation=https://github.com/Daybreak-AI-Labs/Lightwork
+Description=Maverick agent (long-horizon multi-agent swarm)
+Documentation=https://github.com/Daybreak-AI-Labs/Law_Firm
 After=network-online.target
 Wants=network-online.target
 
-# Crash-loop protection: if Lightwork crashes 5x in 5 minutes, give up
+# Crash-loop protection: if Maverick crashes 5x in 5 minutes, give up
 # instead of respawning forever and burning API credits on a bad config.
 StartLimitIntervalSec=300
 StartLimitBurst=5

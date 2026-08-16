@@ -1,4 +1,4 @@
-"""Third-party verifier for a Lightwork attestation bundle.
+"""Third-party verifier for a Maverick attestation bundle.
 
 **This module imports nothing from maverick.** Standard library plus
 ``cryptography``, deliberately, because that is the whole point: an auditor,
@@ -279,7 +279,7 @@ def _check_envelope(bundle: dict, observed: list[str] | None) -> ClaimResult:
     floor = env.get("deny_min_risk")
     risks = env.get("tool_risk") if isinstance(env.get("tool_risk"), dict) else {}
     if not deny and _risk_rank(floor) < 0:
-        # Lightwork's community default is an open policy. "No action violated
+        # Maverick's community default is an open policy. "No action violated
         # the envelope" is then trivially true and means nothing, so it is
         # reported as inapplicable rather than as a pass. A green badge here
         # would be the single most misleading thing this tool could print.
@@ -734,7 +734,7 @@ def format_report(result: VerifyResult) -> str:
     """The human-readable verdict."""
     width = 74
     lines = ["=" * width,
-             "  LIGHTWORK ATTESTATION -- INDEPENDENT VERIFICATION",
+             "  MAVERICK ATTESTATION -- INDEPENDENT VERIFICATION",
              "=" * width]
     verdict = "VERIFIED" if result.ok else "REJECTED"
     lines.append(f"  result: {verdict}   (depth: {result.depth})")
@@ -760,7 +760,7 @@ def format_report(result: VerifyResult) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="attestation_verify",
-        description="Independently verify a Lightwork attestation bundle.")
+        description="Independently verify a Maverick attestation bundle.")
     ap.add_argument("bundle", help="path to the attestation bundle JSON")
     ap.add_argument("--key", required=True, metavar="HEX",
                     help="the publisher's Ed25519 public key, obtained OUT OF "

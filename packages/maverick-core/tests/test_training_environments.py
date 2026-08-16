@@ -9,9 +9,9 @@ import pytest
 from maverick.training import environments as env
 
 EXPECTED_PACK_DIGESTS = {
-    "article28_clause_v1": "fa2563569d4e826d62e7bf7afa35841a18f9c1ac316d05c090c137734bab5296",
-    "dsar_routing_v1": "c3b7bdf723fc6c9f9436f98fee75612b53fa77f8613bfbdaead7896059f401eb",
-    "privacy_assessment_v1": "0c3e8e149b41228e7b59f83adb5e6c854d96fb10212f50818157889891cf59f8",
+    "article28_clause_v1": "1f8ac110e1b974300fcb9e2826787770efbdc34eb036ba2f28bcdfdeb8dba613",  # pragma: allowlist secret
+    "dsar_routing_v1": "eb34df2f26185fa39441eab8a4007cb26c26228f954dd2856a613075d8ad2a9b",  # pragma: allowlist secret
+    "privacy_assessment_v1": "d8c2bd1b2d644b148082272c12a540c8003ae7c7bd26a5b889c0a8083f2cba75",  # pragma: allowlist secret
 }
 
 
@@ -193,7 +193,7 @@ def test_nested_extras_and_duplicate_reason_codes_cannot_pass():
         "required_citations": [],
         "provenance": "synthetic",
         "source_uri": "https://example.test/synthetic-source",
-        "license": "Lightwork synthetic benchmark",
+        "license": "Maverick synthetic benchmark",
         "data_classification": "public",
         "redaction_evidence": {"status": "not_applicable"},
         "answer_visibility": "published",

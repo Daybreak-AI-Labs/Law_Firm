@@ -1,4 +1,4 @@
-"""MCP server for Lightwork."""
+"""MCP server for Maverick."""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version

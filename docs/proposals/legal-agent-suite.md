@@ -3,7 +3,7 @@
 **Status:** design / roadmap. Companion to the finance, IT-GRC, sales-GTM, HR,
 product-engineering, and strategy/exec suites; indexed in
 the agent-suites overview. Extends the shipped
-[`legal.toml`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/packages/maverick-core/maverick/domains/legal.toml) starter pack into
+[`legal.toml`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/packages/maverick-core/maverick/domains/legal.toml) starter pack into
 a full suite. ~36 agents (31 base + 5 council-added) across eight towers.
 
 > **Legal is horizontal — it touches every other suite — and uniquely risky for AI.** A
@@ -29,7 +29,7 @@ The cardinal rule, generalized verbatim from `legal.toml` and applied to every a
 ## Contents
 
 1. [What's already shipped — the reuse map](#1-whats-already-shipped--the-reuse-map)
-2. [How a legal agent maps onto Lightwork](#2-how-a-legal-agent-maps-onto-maverick)
+2. [How a legal agent maps onto Maverick](#2-how-a-legal-agent-maps-onto-maverick)
 3. [The control model (cross-cutting)](#3-the-control-model-cross-cutting)
 4. [Per-client customization — the dials](#4-per-client-customization--the-dials)
 5. [The roster — eight towers](#5-the-roster--eight-towers)
@@ -78,9 +78,9 @@ is wired; "verify *every* cite or mark it unverified" is the enforcement to buil
 
 ---
 
-## 2. How a legal agent maps onto Lightwork
+## 2. How a legal agent maps onto Maverick
 
-Each agent is a [`DomainProfile`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/packages/maverick-core/maverick/domain.py) pack
+Each agent is a [`DomainProfile`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/packages/maverick-core/maverick/domain.py) pack
 that **inherits the `legal.toml` spine** (cite precisely, not legal advice, human-confirm)
 and adds a practice-area persona + tools. Two specifics:
 

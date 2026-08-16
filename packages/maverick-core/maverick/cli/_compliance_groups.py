@@ -285,7 +285,7 @@ def dpia_cmd(fmt: str, output) -> None:
 
     Pre-fills the processing description (consistent with 'maverick ropa') and a
     risk register of the agent-on-personal-data risks -- each mapped to the
-    Lightwork control that mitigates it and whether that control is active right
+    Maverick control that mitigates it and whether that control is active right
     now -- leaving necessity/proportionality and residual-risk sign-off to the
     controller. A scaffold for a DPO to finish, not a completed DPIA.
     """
@@ -372,7 +372,7 @@ def remediate_cmd(do_apply: bool, fmt: str) -> None:
     """Assess security posture and (bounded) auto-fix it.
 
     Reports control gaps + active breach signals and the remediation plan.
-    Low-risk, reversible fixes to Lightwork's OWN config are auto-applied with
+    Low-risk, reversible fixes to Maverick's OWN config are auto-applied with
     --apply -- but only under enterprise mode + a [security] auto_fix opt-in;
     everything behaviour-changing is proposed for a human. Every applied fix is
     audited and reports how to undo it.
@@ -541,7 +541,7 @@ def dsar_group() -> None:
 @click.option("--json", "compact", is_flag=True,
               help="Emit compact single-line JSON (default: pretty, indent=2).")
 def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None:
-    """Export everything Lightwork holds for a subject as a JSON bundle.
+    """Export everything Maverick holds for a subject as a JSON bundle.
 
     Serializes ``export_subject_data()`` -- the subject's conversations, the
     turns/goals/episodes those reference, and their audit rows -- for the

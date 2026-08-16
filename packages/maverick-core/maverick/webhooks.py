@@ -116,7 +116,7 @@ def _sign(body: bytes, secret: str, *, timestamp: str | None = None) -> str:
     """HMAC-SHA256 of the request body, optionally binding a timestamp.
 
     When ``timestamp`` is given it is prepended to the signed material
-    (``"<ts>.".encode() + body``). This is the Lightwork-CONTROLLED replay
+    (``"<ts>.".encode() + body``). This is the Maverick-CONTROLLED replay
     defence: the sender sends the same ``timestamp`` in an ``X-Maverick-
     Timestamp`` header, so a captured request can't be replayed past the
     freshness window without breaking the signature. Body-only signing
@@ -134,7 +134,7 @@ def _signed_material(body: bytes, timestamp: str | None) -> bytes:
 
 
 def _default_max_age() -> int:
-    """Replay window (seconds) for Lightwork-signed inbound webhooks.
+    """Replay window (seconds) for Maverick-signed inbound webhooks.
 
     Config knob: ``[webhooks] max_age_seconds`` in config.toml, overridable by
     ``MAVERICK_WEBHOOK_MAX_AGE_SECONDS``. Defaults to 300s (5 min)."""
@@ -261,7 +261,7 @@ def fire(
         return 0
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Lightwork-Webhook/1.0",
+        "User-Agent": "Maverick-Webhook/1.0",
         "X-Maverick-Event": event,
     }
     if secret:
@@ -334,10 +334,10 @@ def verify_signature(
 ) -> bool:
     """Verify an inbound webhook signature (mirror of _sign()).
 
-    Useful for receivers building on Lightwork's webhook format.
+    Useful for receivers building on Maverick's webhook format.
 
     When ``timestamp`` is supplied the signature must cover that timestamp
-    (replay defence for the Lightwork-CONTROLLED format) AND the timestamp must
+    (replay defence for the Maverick-CONTROLLED format) AND the timestamp must
     be within ``max_age`` seconds of now -- a captured-but-stale request is
     rejected even though its HMAC is otherwise valid. ``max_age`` defaults to
     ``_default_max_age()``. With ``timestamp=None`` this is the original

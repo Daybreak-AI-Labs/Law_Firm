@@ -1,7 +1,7 @@
 apiVersion: v2
 name: maverick
 description: >-
-  Lightwork — governed, self-improving AI workforce. Runs the dashboard
+  Maverick — governed, self-improving AI workforce. Runs the dashboard
   (web UI + API + webhooks) with persistent state. The control plane is
   single-replica; Postgres adds managed world-model HA and tenant isolation.
 type: application
@@ -9,9 +9,9 @@ type: application
 version: 0.1.0
 # Tracks the maverick package cohort.
 appVersion: "0.1.7"
-home: https://github.com/Daybreak-AI-Labs/Lightwork
+home: https://github.com/Daybreak-AI-Labs/Law_Firm
 sources:
-  - https://github.com/Daybreak-AI-Labs/Lightwork
+  - https://github.com/Daybreak-AI-Labs/Law_Firm
 maintainers:
   - name: Day AI Labs
 keywords:

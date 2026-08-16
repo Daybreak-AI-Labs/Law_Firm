@@ -1691,10 +1691,10 @@
   var editId = canvas.getAttribute('data-flow-id');
   var handoff = null;
   try {
-    handoff = JSON.parse(sessionStorage.getItem('lightwork.authoring-handoff') || 'null');
+    handoff = JSON.parse(sessionStorage.getItem('maverick.authoring-handoff') || 'null');
     if (!handoff || handoff.kind !== 'flow' || !handoff.brief
         || Date.now() - Number(handoff.created_at || 0) > 10 * 60 * 1000) handoff = null;
-    if (handoff) sessionStorage.removeItem('lightwork.authoring-handoff');
+    if (handoff) sessionStorage.removeItem('maverick.authoring-handoff');
   } catch (e) { handoff = null; }
   var seedEl = document.getElementById('fd-seed');
   var seed = null;

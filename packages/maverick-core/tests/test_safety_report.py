@@ -154,14 +154,14 @@ def test_cli_writes_markdown_file(tmp_path, capsys):
         "--since", SINCE, "--until", UNTIL, "-o", str(out),
     ])
     assert rc == 0
-    assert "# Lightwork safety report" in out.read_text(encoding="utf-8")
+    assert "# Maverick safety report" in out.read_text(encoding="utf-8")
     assert str(out) in capsys.readouterr().out
 
 
 def test_cli_prints_to_stdout_and_rejects_bad_period(capsys):
     rc = safety_report.main(["--since", SINCE, "--until", UNTIL])
     assert rc == 0
-    assert "# Lightwork safety report" in capsys.readouterr().out
+    assert "# Maverick safety report" in capsys.readouterr().out
 
     rc = safety_report.main(["--since", "2026-12-31", "--until", "2026-01-01"])
     assert rc == 2

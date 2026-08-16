@@ -1,4 +1,4 @@
-"""Audit log for Lightwork.
+"""Audit log for Maverick.
 
 Append-only NDJSON sink at ``~/.maverick/audit/YYYY-MM-DD.ndjson``.
 Daily rotation. Each line is a versioned JSON event.

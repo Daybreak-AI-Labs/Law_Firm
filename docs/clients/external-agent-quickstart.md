@@ -1,7 +1,7 @@
 # External agent quickstart (any runtime)
 
 Bring an agent that runs on **any** other stack — an OpenAI tool-loop,
-LangChain, a scheduled job, a home-grown runtime — under Lightwork
+LangChain, a scheduled job, a home-grown runtime — under Maverick
 governance through the [external-agent gateway](../external-agents.md).
 The pattern is **screen-then-act, report-after**:
 
@@ -27,11 +27,11 @@ never commit a real one.
 Copy-paste; the only dependency is `requests`.
 
 ```python
-# lightwork_client.py — screen-then-act, report-after
+# maverick_client.py — screen-then-act, report-after
 import requests
 
 
-class Lightwork:
+class Maverick:
     def __init__(self, base_url: str, token: str):
         self.base = base_url.rstrip("/") + "/api/v1/external"
         self.headers = {"Authorization": f"Bearer {token}"}
@@ -98,8 +98,8 @@ Semantics worth knowing:
 The same class over `fetch` (Node 18+, Bun, Deno, edge runtimes):
 
 ```ts
-// lightwork.ts — screen-then-act, report-after
-export class Lightwork {
+// maverick.ts — screen-then-act, report-after
+export class Maverick {
   private base: string;
   private headers: Record<string, string>;
 
@@ -171,9 +171,9 @@ re-plan instead of crashing:
 ```python
 import json
 from openai import OpenAI
-from lightwork_client import Lightwork
+from maverick_client import Maverick
 
-lw = Lightwork("https://lightwork.example.com", "lw-rest-EXAMPLE")
+lw = Maverick("https://maverick.example.com", "lw-rest-EXAMPLE")
 client = OpenAI()
 
 TOOLS = [{"type": "function", "function": {
@@ -222,21 +222,21 @@ start/heartbeat/finish trio and end with a single
 ## Governed execution (optional)
 
 With `[external_agents] connectors` set (e.g. `["servicenow"]`), your agent
-can go beyond asking permission: **Lightwork performs the action itself**
+can go beyond asking permission: **Maverick performs the action itself**
 through its SSRF-pinned, egress-allowlisted connector path, with
 PREPARE/COMMIT receipts around every effect. Reads (`op: "get"`) run
 immediately; a write parks a **digest-bound** approval — once a human
 approves, re-send the *identical* request to commit (any change voids it):
 
 ```bash
-curl -sS -X POST https://lightwork.example.com/api/v1/external/execute \
+curl -sS -X POST https://maverick.example.com/api/v1/external/execute \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"connector": "servicenow", "op": "post", "path": "/api/now/table/incident",
        "body": {"short_description": "Renewal follow-up"}}'
 # -> {"rule": "approval_required", "approval_id": 57, "execution_id": "kF3...", ...}
 
-curl -sS -X POST https://lightwork.example.com/api/v1/external/executions/kF3.../commit \
+curl -sS -X POST https://maverick.example.com/api/v1/external/executions/kF3.../commit \
   -H "Authorization: Bearer lw-rest-EXAMPLEEXAMPLE" \
   -H "Content-Type: application/json" \
   -d '{"connector": "servicenow", "op": "post", "path": "/api/now/table/incident",
@@ -264,7 +264,7 @@ import hashlib, hmac, json, time
 raw = json.dumps({"tool": "send_email", "risk": "medium"}).encode()
 ts = str(int(time.time()))
 mac = hmac.new(SECRET.encode(), f"{ts}.".encode() + raw, hashlib.sha256)
-headers = {"X-Lightwork-Agent-Id": "sf-quotebot",
+headers = {"X-Maverick-Agent-Id": "sf-quotebot",
            "X-Maverick-Timestamp": ts,
            "X-Maverick-Signature": "sha256=" + mac.hexdigest(),
            "Content-Type": "application/json"}
@@ -275,12 +275,12 @@ headers = {"X-Lightwork-Agent-Id": "sf-quotebot",
 import secrets
 nonce = secrets.token_urlsafe(16)                       # single-use
 digest = hashlib.sha256(raw).hexdigest()
-msg = (f"lightwork-external-request-v1|sf-quotebot|{ts}|{nonce}|"
+msg = (f"maverick-external-request-v1|sf-quotebot|{ts}|{nonce}|"
        f"{digest}".encode())
-headers = {"X-Lightwork-Agent-Id": "sf-quotebot",
+headers = {"X-Maverick-Agent-Id": "sf-quotebot",
            "X-Maverick-Timestamp": ts,
-           "X-Lightwork-Nonce": nonce,
-           "X-Lightwork-Request-Signature": private_key.sign(msg).hex(),
+           "X-Maverick-Nonce": nonce,
+           "X-Maverick-Request-Signature": private_key.sign(msg).hex(),
            "Content-Type": "application/json"}
 ```
 

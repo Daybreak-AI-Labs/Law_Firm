@@ -1,17 +1,17 @@
-name: Lightwork agent on PR (reusable)
+name: Maverick agent on PR (reusable)
 
-# Reusable workflow for downstream projects: invoke a Lightwork goal on
+# Reusable workflow for downstream projects: invoke a Maverick goal on
 # every pull request. Comment the agent's findings as a PR review.
 #
 # Usage in a consumer repo's `.github/workflows/code-review.yml`:
 #
 #     jobs:
 #       review:
-#         uses: Daybreak-AI-Labs/Lightwork/.github/workflows/agent-on-pr.yml@<full-40-character-commit-sha>
+#         uses: Daybreak-AI-Labs/Law_Firm/.github/workflows/agent-on-pr.yml@<full-40-character-commit-sha>
 #         with:
 #           goal: "Review this PR for logic bugs and missing edge cases."
 #           # Must match the immutable SHA in `uses:` above.
-#           lightwork_ref: "<full-40-character-commit-sha>"
+#           maverick_ref: "<full-40-character-commit-sha>"
 #           max_dollars: 0.50
 #           # Optional: run as your customized workforce by committing a bundle
 #           # (domains/*.toml + roles.toml, e.g. via `maverick overrides export`)
@@ -20,8 +20,8 @@ name: Lightwork agent on PR (reusable)
 #         secrets:
 #           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 #           # Needed when the caller's GITHUB_TOKEN cannot read the private
-#           # Lightwork repository. Use a read-only GitHub App/PAT token.
-#           LIGHTWORK_SOURCE_TOKEN: ${{ secrets.LIGHTWORK_SOURCE_TOKEN }}
+#           # Maverick repository. Use a read-only GitHub App/PAT token.
+#           MAVERICK_SOURCE_TOKEN: ${{ secrets.MAVERICK_SOURCE_TOKEN }}
 
 on:
   workflow_call:
@@ -30,9 +30,9 @@ on:
         description: 'Goal text for the agent.'
         required: true
         type: string
-      lightwork_ref:
+      maverick_ref:
         description: >-
-          Full 40-character commit SHA of the trusted Lightwork source to
+          Full 40-character commit SHA of the trusted Maverick source to
           install. Use the same SHA that pins this reusable workflow.
         required: true
         type: string
@@ -54,7 +54,7 @@ on:
       overrides_path:
         description: >-
           Optional path (relative to the calling repo's trusted base revision)
-          to a Lightwork override bundle: a directory with domains/*.toml
+          to a Maverick override bundle: a directory with domains/*.toml
           and/or roles.toml, applied before the run so the review uses the
           client's already-reviewed customized agents. PR-head policy is never
           loaded.
@@ -66,9 +66,9 @@ on:
         required: false
       OPENAI_API_KEY:
         required: false
-      LIGHTWORK_SOURCE_TOKEN:
+      MAVERICK_SOURCE_TOKEN:
         description: >-
-          Optional read-only token for checking out the private Lightwork
+          Optional read-only token for checking out the private Maverick
           repository. The caller GITHUB_TOKEN is used when this is omitted.
         required: false
 
@@ -77,7 +77,7 @@ permissions:
 
 concurrency:
   group: >-
-    lightwork-agent-review-${{ github.repository }}-${{ github.workflow }}-${{
+    maverick-agent-review-${{ github.repository }}-${{ github.workflow }}-${{
     github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -111,9 +111,9 @@ jobs:
             fi
             git cat-file -e "${revision}^{commit}"
           done
-          review_root="$RUNNER_TEMP/lightwork-review-workspace"
-          policy_root="$RUNNER_TEMP/lightwork-review-policy-base"
-          evidence_root="$RUNNER_TEMP/lightwork-review-evidence"
+          review_root="$RUNNER_TEMP/maverick-review-workspace"
+          policy_root="$RUNNER_TEMP/maverick-review-policy-base"
+          evidence_root="$RUNNER_TEMP/maverick-review-evidence"
           for isolated_root in "$review_root" "$policy_root" "$evidence_root"; do
             if [ -e "$isolated_root" ]; then
               echo "::error::unexpected pre-existing isolated review path"
@@ -128,7 +128,7 @@ jobs:
           # it only from the trusted base revision so a PR cannot rewrite its
           # own reviewer instructions.
           git archive "$PR_BASE_SHA" | tar -x -C "$policy_root"
-          context_root="$(mktemp -d "$review_root/.lightwork-context.XXXXXXXX")"
+          context_root="$(mktemp -d "$review_root/.maverick-context.XXXXXXXX")"
           merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
           if [[ ! "$merge_base" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::could not resolve an immutable PR merge base"
@@ -162,52 +162,52 @@ jobs:
           printf 'AGENT_EVIDENCE_ROOT=%s\n' "$evidence_root" >> "$GITHUB_ENV"
           printf 'AGENT_DIFF_SHA256=%s\n' "$diff_sha256" >> "$GITHUB_ENV"
 
-      - name: Validate immutable Lightwork source ref
+      - name: Validate immutable Maverick source ref
         shell: bash
         env:
-          LIGHTWORK_REF: ${{ inputs.lightwork_ref }}
+          MAVERICK_REF: ${{ inputs.maverick_ref }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          if [[ ! "$LIGHTWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::lightwork_ref must be a lowercase, full 40-character commit SHA."
+          if [[ ! "$MAVERICK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::maverick_ref must be a lowercase, full 40-character commit SHA."
             exit 1
           fi
           if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::GitHub did not provide an immutable reusable-workflow SHA."
             exit 1
           fi
-          if [ "$WORKFLOW_REPOSITORY" != "Daybreak-AI-Labs/Lightwork" ]; then
+          if [ "$WORKFLOW_REPOSITORY" != "Daybreak-AI-Labs/Law_Firm" ]; then
             echo "::error::unexpected reusable-workflow repository identity."
             exit 1
           fi
-          if [ "$LIGHTWORK_REF" != "$WORKFLOW_SHA" ]; then
-            echo "::error::lightwork_ref must equal the reusable workflow's immutable SHA."
+          if [ "$MAVERICK_REF" != "$WORKFLOW_SHA" ]; then
+            echo "::error::maverick_ref must equal the reusable workflow's immutable SHA."
             exit 1
           fi
 
-      - name: Checkout pinned Lightwork runtime source
+      - name: Checkout pinned runtime source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: Daybreak-AI-Labs/Lightwork
+          repository: Daybreak-AI-Labs/Law_Firm
           ref: ${{ job.workflow_sha }}
-          path: .lightwork-runtime-${{ github.run_id }}
+          path: .maverick-runtime-${{ github.run_id }}
           fetch-depth: 1
           persist-credentials: false
-          token: ${{ secrets.LIGHTWORK_SOURCE_TOKEN || github.token }}
+          token: ${{ secrets.MAVERICK_SOURCE_TOKEN || github.token }}
 
-      - name: Install Lightwork
+      - name: Install the runtime
         shell: bash
         env:
-          LIGHTWORK_REF: ${{ job.workflow_sha }}
+          MAVERICK_REF: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          source_root="$GITHUB_WORKSPACE/.lightwork-runtime-$GITHUB_RUN_ID"
+          source_root="$GITHUB_WORKSPACE/.maverick-runtime-$GITHUB_RUN_ID"
           trusted_python="$pythonLocation/bin/python"
           actual_ref="$(git -C "$source_root" rev-parse HEAD)"
-          if [ "$actual_ref" != "$LIGHTWORK_REF" ]; then
-            echo "::error::Checked-out Lightwork commit '$actual_ref' does not match the requested ref."
+          if [ "$actual_ref" != "$MAVERICK_REF" ]; then
+            echo "::error::Checked-out Maverick commit '$actual_ref' does not match the requested ref."
             exit 1
           fi
 
@@ -233,7 +233,7 @@ jobs:
 
           # Keep the reviewed calling-repository checkout as the agent's only
           # source tree. Installed wheels do not need this temporary checkout.
-          if [[ "$source_root" != "$GITHUB_WORKSPACE"/.lightwork-runtime-[0-9]* ]]; then
+          if [[ "$source_root" != "$GITHUB_WORKSPACE"/.maverick-runtime-[0-9]* ]]; then
             echo "::error::refusing to remove unexpected runtime path"
             exit 1
           fi
@@ -253,7 +253,7 @@ jobs:
           AGENT_MODEL: ${{ inputs.model }}
           AGENT_MAX_DOLLARS: ${{ inputs.max_dollars }}
           AGENT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
-          AGENT_WORKDIR: ${{ runner.temp }}/lightwork-review-workspace
+          AGENT_WORKDIR: ${{ runner.temp }}/maverick-review-workspace
           AGENT_OVERRIDES_PATH: ${{ inputs.overrides_path }}
         run: |
           set -e
@@ -273,7 +273,7 @@ jobs:
           max_dollars = float(os.environ["AGENT_MAX_DOLLARS"])
           max_wall_seconds = int(float(os.environ["AGENT_TIMEOUT_MINUTES"]) * 60)
 
-          # The provider API key is NOT written into this config: Lightwork reads
+          # The provider API key is NOT written into this config: Maverick reads
           # it straight from the environment (ANTHROPIC_API_KEY / OPENAI_API_KEY,
           # exported above from secrets) via maverick.llm. That avoids both a
           # GitHub Actions expression in the run block (a bare name fails to
@@ -332,7 +332,7 @@ jobs:
             "$trusted_python" -I -m maverick.cli overrides load \
               "$validated_overrides"
           fi
-          # The policy has been copied into Lightwork's private state. Remove
+          # The policy has been copied into Maverick's private state. Remove
           # the materialized base tree before any model-driven work begins.
           chmod -R u+w "$AGENT_POLICY_ROOT"
           rm -rf -- "$AGENT_POLICY_ROOT"
@@ -351,7 +351,7 @@ jobs:
       - name: Verify trusted review evidence was not mutated
         if: always()
         env:
-          AGENT_WORKDIR: ${{ runner.temp }}/lightwork-review-workspace
+          AGENT_WORKDIR: ${{ runner.temp }}/maverick-review-workspace
         shell: bash
         run: |
           set -euo pipefail
@@ -460,7 +460,7 @@ jobs:
           maximum = 50_000
           if len(output) > maximum:
               output = output[:maximum] + "\n\n[... truncated]"
-          Path("/tmp/lightwork-agent-review.txt").write_text(
+          Path("/tmp/maverick-agent-review.txt").write_text(
               output,
               encoding="utf-8",
           )
@@ -470,8 +470,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: lightwork-agent-review
-          path: /tmp/lightwork-agent-review.txt
+          name: maverick-agent-review
+          path: /tmp/maverick-agent-review.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -488,17 +488,17 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         continue-on-error: true
         with:
-          name: lightwork-agent-review
-          path: /tmp/lightwork-agent-review
+          name: maverick-agent-review
+          path: /tmp/maverick-agent-review
       - name: Post review comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const fs = require('fs');
-            let body = "🤖 **Lightwork agent review**\n\n(no sanitized output artifact was available)";
+            let body = "🤖 **Maverick agent review**\n\n(no sanitized output artifact was available)";
             try {
               const output = fs.readFileSync(
-                "/tmp/lightwork-agent-review/lightwork-agent-review.txt",
+                "/tmp/maverick-agent-review/maverick-agent-review.txt",
                 "utf8"
               );
               // The write-capable job never trusts markup created by the
@@ -512,7 +512,7 @@ jobs:
               const rendered = escaped.length > max
                 ? escaped.slice(0, max) + "\n\n[... truncated after escaping]"
                 : escaped;
-              body = "🤖 **Lightwork agent review**\n\n<pre>\n"
+              body = "🤖 **Maverick agent review**\n\n<pre>\n"
                 + rendered + "\n</pre>";
             } catch (_) {}
             await github.rest.issues.createComment({

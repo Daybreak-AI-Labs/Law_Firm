@@ -36,7 +36,7 @@ from .tools.spawn import (
 
 log = logging.getLogger(__name__)
 
-WORKER_SYSTEM_TEMPLATE = """You are a specialist agent in Lightwork, a long-horizon multi-agent swarm.
+WORKER_SYSTEM_TEMPLATE = """You are a specialist agent in Maverick, a long-horizon multi-agent swarm.
 
 Your role: {role}
 Your depth in the swarm: {depth} (root = 0, max = {max_depth})
@@ -59,7 +59,7 @@ Rules:
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research."""
 
 
-ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
+ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Maverick swarm.
 
 You own a top-level goal. You do not execute work yourself; you decompose, delegate, and verify.
 
@@ -254,7 +254,7 @@ _LOOP_GUARD_THRESHOLD = max(2, env_int("MAVERICK_LOOP_GUARD_THRESHOLD", 3))
 # 0 disables the nudge. Tune via MAVERICK_STEP_BUDGET_WARNING.
 _STEP_BUDGET_WARNING = max(0, env_int("MAVERICK_STEP_BUDGET_WARNING", 3))
 
-# P0 filesystem-resource layer. In-process tools run in the Lightwork process,
+# P0 filesystem-resource layer. In-process tools run in the Maverick process,
 # outside Docker's read-only bind mounts, so every workspace path they read or
 # write is described here and enforced at the common dispatch chokepoint.
 #

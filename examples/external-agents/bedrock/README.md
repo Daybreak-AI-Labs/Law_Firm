@@ -1,13 +1,13 @@
-# Bedrock agent → Lightwork gateway (paste-in SAM)
+# Bedrock agent → Maverick gateway (paste-in SAM)
 
-Bring an Amazon Bedrock agent under Lightwork governance with one action
+Bring an Amazon Bedrock agent under Maverick governance with one action
 group and one small forwarder Lambda:
 
 | File | Role |
 | --- | --- |
 | `template.yaml` | SAM template: the forwarder Lambda, its Secrets Manager read policy, and the Bedrock invoke permission |
-| `forwarder/app.py` | Python 3.12 Lambda: Bedrock action-group event → Lightwork gateway call → action-group response (stdlib + boto3 only) |
-| `lightwork-external.json` | The action-group OpenAPI schema — a verbatim copy of the gateway's own contract (`GET /api/v1/external/openapi.json`) |
+| `forwarder/app.py` | Python 3.12 Lambda: Bedrock action-group event → Maverick gateway call → action-group response (stdlib + boto3 only) |
+| `maverick-external.json` | The action-group OpenAPI schema — a verbatim copy of the gateway's own contract (`GET /api/v1/external/openapi.json`) |
 
 The Lambda maps each operation (`screenAction`, `reportRun`, `startRun`,
 `heartbeatRun`, `finishRun`, `memoryIngest`, `memoryRecall`,
@@ -19,7 +19,7 @@ action-group response shape — so a governance deny reaches the model as a
 readable verdict it can re-plan around, not a Lambda crash. On a `401` it
 re-reads the secret once and retries, making token rotation seamless.
 
-Before you start, on the Lightwork side ([docs](../../../docs/external-agents.md)):
+Before you start, on the Maverick side ([docs](../../../docs/external-agents.md)):
 enable `[external_agents]`, enroll the agent on **/external-agents**
 (platform `bedrock`), and mint its `rest` credential — the `lw-rest-…`
 token is shown exactly once. Every token below is a fake placeholder
@@ -31,7 +31,7 @@ token is shown exactly once. Every token below is a fake placeholder
 
 ```bash
 aws secretsmanager create-secret \
-  --name lightwork/gateway-token \
+  --name maverick/gateway-token \
   --secret-string 'lw-rest-EXAMPLE'   # paste the real minted token
 ```
 
@@ -45,11 +45,11 @@ From this directory (SAM CLI ≥ 1.100):
 sam build
 sam deploy --guided \
   --parameter-overrides \
-    LightworkBaseUrl=https://lightwork.example.com \
-    TokenSecretArn=arn:aws:secretsmanager:us-east-1:111122223333:secret:lightwork/gateway-token-AbCdEf
+    MaverickBaseUrl=https://maverick.example.com \
+    TokenSecretArn=arn:aws:secretsmanager:us-east-1:111122223333:secret:maverick/gateway-token-AbCdEf
 ```
 
-Accept the guided defaults (stack name e.g. `lightwork-gateway-forwarder`).
+Accept the guided defaults (stack name e.g. `maverick-gateway-forwarder`).
 The stack output `ForwarderFunctionArn` is the action-group executor.
 
 ### 3. Wire the action group
@@ -57,15 +57,15 @@ The stack output `ForwarderFunctionArn` is the action-group executor.
 In the Bedrock console (**Amazon Bedrock → Agents → your agent →
 Edit → Action groups → Add**):
 
-1. Name: `lightwork-gateway`.
+1. Name: `maverick-gateway`.
 2. Action group type: **Define with API schemas**.
 3. Action group invocation: **Select an existing Lambda function** → pick
    the deployed forwarder (`ForwarderFunctionArn`). The template already
    grants `bedrock.amazonaws.com` invoke permission for this account.
 4. Action group schema: **Define via in-line schema editor** → paste the
-   contents of `lightwork-external.json` — or upload it to S3 first and
+   contents of `maverick-external.json` — or upload it to S3 first and
    select it there. (You can also fetch it live:
-   `curl -H "Authorization: Bearer lw-rest-EXAMPLE" https://lightwork.example.com/api/v1/external/openapi.json`.)
+   `curl -H "Authorization: Bearer lw-rest-EXAMPLE" https://maverick.example.com/api/v1/external/openapi.json`.)
 5. Save, then **Prepare** the agent.
 
 ### 4. Instruct the agent
@@ -87,11 +87,11 @@ Add to the agent instructions:
 
 Test the agent with a benign prompt that triggers a screened tool; expect
 an `allowed: true` verdict in the trace and an `external_action_screened`
-audit event on the Lightwork side. Direct Lambda smoke test:
+audit event on the Maverick side. Direct Lambda smoke test:
 
 ```bash
 aws lambda invoke --function-name <ForwarderFunctionArn> --payload '{
-  "messageVersion": "1.0", "actionGroup": "lightwork-gateway",
+  "messageVersion": "1.0", "actionGroup": "maverick-gateway",
   "apiPath": "/api/v1/external/screen", "httpMethod": "POST",
   "requestBody": {"content": {"application/json": {"properties": [
     {"name": "tool", "type": "string", "value": "send_email"},
@@ -103,7 +103,7 @@ aws lambda invoke --function-name <ForwarderFunctionArn> --payload '{
 ## Rotation and troubleshooting
 
 - **Rotation**: mint a new `rest` credential on /external-agents, then
-  `aws secretsmanager put-secret-value --secret-id lightwork/gateway-token
+  `aws secretsmanager put-secret-value --secret-id maverick/gateway-token
   --secret-string 'lw-rest-EXAMPLE'`. The forwarder's cache refreshes
   within ~5 minutes and immediately on the first `401`.
 - A `404` from the gateway means the external-agents plane is off; `403`

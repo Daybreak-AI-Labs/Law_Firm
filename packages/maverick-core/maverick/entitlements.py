@@ -562,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
     import secrets
 
     p = argparse.ArgumentParser(prog="maverick.entitlements",
-                                description="Issue/verify Lightwork license files.")
+                                description="Issue/verify Maverick license files.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("keygen", help="mint a publisher keypair (keep the private key secret)")

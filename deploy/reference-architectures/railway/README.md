@@ -1,4 +1,4 @@
-# Lightwork on Railway
+# Maverick on Railway
 
 Dockerfile deploy with a persistent volume and env-driven secrets.
 

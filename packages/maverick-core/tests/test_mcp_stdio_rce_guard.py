@@ -1,7 +1,7 @@
-"""Pin the defenses that keep Lightwork clear of the MCP STDIO RCE class.
+"""Pin the defenses that keep Maverick clear of the MCP STDIO RCE class.
 
 Audit (May 2026, prompted by OX Security's disclosure of a by-design RCE
-class in MCP STDIO transports across official SDKs). Lightwork acts as an
+class in MCP STDIO transports across official SDKs). Maverick acts as an
 MCP *client* spawning servers from the operator's own ~/.maverick/config.toml.
 The spawn path is already hardened; these tests fail loudly if a refactor
 reintroduces a hole:

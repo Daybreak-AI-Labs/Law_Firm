@@ -20,7 +20,7 @@ DEFAULT_OCR_TIMEOUT_SECONDS = 15
 
 @contextmanager
 def _pixel_cap(Image, max_image_pixels: int):
-    """Enforce Lightwork's pixel cap and turn decompression-bomb warnings into
+    """Enforce Maverick's pixel cap and turn decompression-bomb warnings into
     errors for the duration of a decode. Pillow's global MAX_IMAGE_PIXELS is
     restored afterwards."""
     previous_max_pixels = Image.MAX_IMAGE_PIXELS
@@ -42,7 +42,7 @@ def _validate_image(path: str, Image, max_image_pixels: int, max_image_bytes: in
         )
 
     # Pillow only warns for many decompression-bomb cases; fail closed and also
-    # enforce Lightwork's own pixel cap before any full decode/OCR work occurs.
+    # enforce Maverick's own pixel cap before any full decode/OCR work occurs.
     with _pixel_cap(Image, max_image_pixels):
         with Image.open(image_path) as img:
             width, height = img.size

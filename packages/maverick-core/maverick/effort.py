@@ -2,7 +2,7 @@
 
 `output_config.effort` controls how much a model thinks *and acts*: lower effort
 means fewer, more-consolidated tool calls, less preamble, and terser output.
-On Opus 4.7/4.8 it matters more than almost any other knob. Lightwork already
+On Opus 4.7/4.8 it matters more than almost any other knob. Maverick already
 tiers *models* by role (orchestrator/revisor → Opus, the rest → Sonnet/Haiku);
 this tiers *effort* the same way — keep the critical reasoning roles
 (orchestrator, coder, revisor) at ``high`` and drop the high-volume bulk roles

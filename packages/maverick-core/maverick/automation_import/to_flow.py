@@ -109,7 +109,7 @@ def _node_for_step(step: ImportedStep, node_id: str, nxt: str | None) -> FlowNod
         # the (secret-redacted) step inputs, so they aren't dumped raw.
         params = safe_params(step.params)
         # External platforms identify Slack with the provider slug ``slack``;
-        # Lightwork's installed, risk-classified direct-action contract is
+        # Maverick's installed, risk-classified direct-action contract is
         # ``slack_bot``.  Bind only the operation whose semantics are exact.
         # Unknown Slack operations deliberately remain unclassified previews
         # instead of being guessed into an executable tool call.

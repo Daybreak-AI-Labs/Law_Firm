@@ -1,4 +1,4 @@
-"""A halted Lightwork must refuse new goals with a clear message + the right
+"""A halted Maverick must refuse new goals with a clear message + the right
 next step (`maverick unhalt`), not create a goal and trip the killswitch
 mid-run (which produced a confusing generic 'ran into an error' with bad
 'resume' advice -- resuming while halted just halts again).

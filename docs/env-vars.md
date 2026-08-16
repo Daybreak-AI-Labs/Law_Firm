@@ -1,6 +1,6 @@
 # Environment variables
 
-Lightwork's primary configuration is `~/.maverick/config.toml` (see
+Maverick's primary configuration is `~/.maverick/config.toml` (see
 [configuration.md](configuration.md)). The `MAVERICK_*` environment variables
 below are a complement: they override the equivalent config keys when set, and
 expose a handful of knobs that have no config equivalent. **Env vars win over
@@ -155,7 +155,7 @@ arq maverick.arq_worker.WorkerSettings
 | `MAVERICK_QUEUE_WORKER_MAX_WALL_SECONDS` | `[queue] worker_max_wall_seconds` | Worker-local wall-time ceiling. |
 | `MAVERICK_QUEUE_WORKER_MAX_DEPTH` | `[queue] worker_max_depth` | Worker-local recursion-depth ceiling (1-64). |
 
-Use a dedicated Redis database and ACL identity per Lightwork deployment. ARQ
+Use a dedicated Redis database and ACL identity per Maverick deployment. ARQ
 stores job bodies under global Redis key prefixes even when its ready queue is
 namespaced, so a dedicated database/ACL is defense in depth against accidental
 cross-fleet access. Network workers also require the same Postgres world-model

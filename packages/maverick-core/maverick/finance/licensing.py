@@ -287,7 +287,7 @@ def ingest_pack_into_regulatory_register(
     return engine.ingest(
         FeedSource(
             key=f"licensing-pack-{pack.vertical}",
-            name=f"Lightwork cited {pack.title}",
+            name=f"Maverick cited {pack.title}",
             jurisdiction="US",
             url=source_url,
             format="json",

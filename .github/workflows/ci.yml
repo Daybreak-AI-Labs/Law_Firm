@@ -351,7 +351,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          LOCK_AUDIT_FILE="$RUNNER_TEMP/lightwork-all-python-lock.txt"
+          LOCK_AUDIT_FILE="$RUNNER_TEMP/maverick-all-python-lock.txt"
           export LOCK_AUDIT_FILE
           python -I - <<'PY'
           import os
@@ -423,7 +423,7 @@ jobs:
           import sys
           from maverick.license_scan import scan_distributions, policy_check
           # OS/distro Python packages (Ubuntu base image) are not part of the
-          # shipped Lightwork tree; their licenses create no obligation for us.
+          # shipped Maverick tree; their licenses create no obligation for us.
           SYSTEM_PKGS = {
               "python-apt", "launchpadlib", "lazr.restfulclient", "lazr.uri",
               "wadllib", "pygobject", "dbus-python", "command-not-found",
@@ -447,7 +447,7 @@ jobs:
         run: |
           set -euo pipefail
           python -I -m pip install 'cyclonedx-bom==7.3.1'
-          SBOM_ENV="$RUNNER_TEMP/lightwork-ci-release-runtime"
+          SBOM_ENV="$RUNNER_TEMP/maverick-ci-release-runtime"
           python -m venv "$SBOM_ENV"
           "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
             'pip==26.1.2' 'setuptools==83.0.0' 'wheel==0.47.0' \

@@ -1,7 +1,7 @@
 """MCP server registry: discover + install external MCP servers by name.
 
 The remote-HTTP client transport (`mcp_client.StreamableHttpMCPClient`) and the
-stdio client let Lightwork *consume* MCP servers once they're in
+stdio client let Maverick *consume* MCP servers once they're in
 ``[mcp_servers.<name>]``; this module is the missing **discovery + install**
 layer (ROADMAP B2 "Registry"). It reuses the generic federated catalog
 (`catalog.load_catalog("mcp")`) so a registry is just a self-hostable

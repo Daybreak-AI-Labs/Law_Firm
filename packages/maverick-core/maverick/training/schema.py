@@ -1,7 +1,7 @@
 """Trajectory schema compatible with Klear-AgentForge (arxiv:2511.05951).
 
 Klear publishes a fully open SFT + RL pipeline for long-horizon
-agents; matching their schema means Lightwork trajectories can be
+agents; matching their schema means Maverick trajectories can be
 fed directly into their training scripts without a conversion layer.
 
 The donor pipeline (``maverick.donation.TrajectoryRecord``) writes

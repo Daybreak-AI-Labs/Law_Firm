@@ -1,4 +1,4 @@
-//! `maverick-verify-audit` — prove a Lightwork audit day-file's Ed25519 hash
+//! `maverick-verify-audit` — prove a Maverick audit day-file's Ed25519 hash
 //! chain is intact, with one self-contained binary and no Python.
 //!
 //!   maverick-verify-audit path/to/2026-06-18.ndjson
@@ -13,12 +13,12 @@ use maverick_verify_audit::{verify_file, ChainBreak, KeySource};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Independent Ed25519 hash-chain verifier for Lightwork audit logs.
+/// Independent Ed25519 hash-chain verifier for Maverick audit logs.
 #[derive(Parser, Debug)]
 #[command(
     name = "maverick-verify-audit",
     version,
-    about = "Independently verify a Lightwork Ed25519 hash-chained NDJSON audit log.",
+    about = "Independently verify a Maverick Ed25519 hash-chained NDJSON audit log.",
     long_about = "Verifies the same signed hash chain as `maverick audit verify`, with no \
 Python required, so an auditor or procurement reviewer can prove a log is intact from a \
 single binary. Exit 0 if intact; non-zero plus a report of the first break otherwise."

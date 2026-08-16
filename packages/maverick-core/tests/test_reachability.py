@@ -131,12 +131,17 @@ def test_list_rejects_an_unknown_class(capsys) -> None:
 
 # -- the claim this ledger protects ----------------------------------------
 
-FEATURES = Path(reachability.REPO_ROOT) / "docs" / "FEATURES.md"
+#: The docs a reader takes as a statement of what exists. Upstream's 240KB
+#: FEATURES.md catalogue is gone; these are what replaced it as the claim
+#: surface, so the honesty rule follows the claim rather than the filename.
+CLAIM_DOCS = (
+    Path(reachability.REPO_ROOT) / "README.md",
+    Path(reachability.REPO_ROOT) / "docs" / "index.md",
+)
 
-#: Modules named in FEATURES.md that the ledger says nothing reaches. Recorded
-#: rather than asserted-away: FEATURES.md opens with "what Lightwork does
-#: today", so each entry here is a live overclaim awaiting a wire-or-delete
-#: decision. Shrink it; do not grow it.
+#: Modules named in a claim doc that the ledger says nothing reaches. Recorded
+#: rather than asserted-away: each entry is a live overclaim awaiting a
+#: wire-or-delete decision. Shrink it; do not grow it.
 KNOWN_FEATURE_OVERCLAIMS: set[str] = set()
 
 
@@ -148,17 +153,21 @@ DISCLAIMERS = ("not yet wired", "unreached", "built but", "built, not yet",
 
 
 def _named_in_features_without_disclaimer(doc: Path | None = None) -> set[str]:
-    """Modules named in the doc with no nearby honesty marker.
+    """Modules named in the doc(s) with no nearby honesty marker.
 
     Scoped to the bullet around the mention rather than the whole document, so
     one disclaimer somewhere cannot launder every other claim. Takes a path so
     the rule itself is testable against a fixture.
     """
-    doc = doc or FEATURES
+    if doc is None:
+        out: set[str] = set()
+        for claim_doc in CLAIM_DOCS:
+            out |= _named_in_features_without_disclaimer(claim_doc)
+        return out
     if not doc.is_file():  # pragma: no cover
         return set()
     text = doc.read_text(encoding="utf-8")
-    out: set[str] = set()
+    out = set()
     for m in re.finditer(r"`?([a-z][a-z0-9_]{3,})\.py`?", text):
         start = text.rfind("\n- ", 0, m.start())
         if start == -1:
@@ -172,15 +181,15 @@ def _named_in_features_without_disclaimer(doc: Path | None = None) -> set[str]:
     return out
 
 
-def test_features_does_not_advertise_unreached_modules(table) -> None:
-    """FEATURES.md says "what Lightwork does today". Hold it to that."""
+def test_claim_docs_do_not_advertise_unreached_modules(table) -> None:
+    """A doc that states what the platform does must not name a dead module."""
     unreached = {n.rsplit(".", 1)[-1] for n, c in table.items() if c == "UNREACHED"}
     named = _named_in_features_without_disclaimer()
     overclaimed = sorted((named & unreached) - KNOWN_FEATURE_OVERCLAIMS)
     assert not overclaimed, (
-        f"FEATURES.md names {overclaimed}, which nothing in the import graph "
-        "reaches. Either wire the module up, delete it, or move the claim out "
-        "of a document whose first line is 'what Lightwork does today'.")
+        f"A claim doc names {overclaimed}, which nothing in the import graph "
+        "reaches. Either wire the module up, delete it, or add an explicit "
+        "disclaimer next to the claim.")
 
 
 def test_the_overclaim_register_has_no_stale_entries(table) -> None:
@@ -188,7 +197,7 @@ def test_the_overclaim_register_has_no_stale_entries(table) -> None:
     unreached = {n.rsplit(".", 1)[-1] for n, c in table.items() if c == "UNREACHED"}
     stale = sorted(KNOWN_FEATURE_OVERCLAIMS - unreached)
     assert not stale, (
-        f"{stale} are recorded as FEATURES.md overclaims but are now reachable; "
+        f"{stale} are recorded as doc overclaims but are now reachable; "
         "remove them from KNOWN_FEATURE_OVERCLAIMS.")
 
 
@@ -199,7 +208,7 @@ def test_the_disclaimer_rule_can_actually_fail(tmp_path) -> None:
     undisclaimed claim in another, which is the obvious way this check would
     quietly stop working.
     """
-    doc = tmp_path / "FEATURES.md"
+    doc = tmp_path / "claims.md"
     doc.write_text(
         "- **Honest** (`disclaimed_mod.py`) — built but unreached: nothing in "
         "production imports it.\n"

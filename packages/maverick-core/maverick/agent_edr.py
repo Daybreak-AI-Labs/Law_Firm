@@ -1,6 +1,6 @@
 """The Agent Security Plane: detect, respond, prove (moonshot Bet 4).
 
-Lightwork already carries most of an agent-runtime defense stack -- the shield's
+Maverick already carries most of an agent-runtime defense stack -- the shield's
 chokepoints, capability attenuation and revocation, honeytokens and canaries,
 compartment seals, the SSRF guards, `threat_hunt` over the signed audit trail.
 What it does not carry is a *plane*: one surface where a security operator sees

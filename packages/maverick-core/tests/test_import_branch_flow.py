@@ -47,7 +47,7 @@ def test_if_node_becomes_a_branch_with_wired_arms():
     assert unclassified == []
     branch = next(n for n in f.nodes.values() if n.kind == NODE_BRANCH)
     assert branch.condition == "{{amount}} gt 100".replace("gt", ">")   # operator mapped
-    # The supported Slack post contract binds to the classified Lightwork tool
+    # The supported Slack post contract binds to the classified Maverick tool
     # behind a human gate; the false arm remains the no-op agent approximation.
     true_gate = f.nodes[branch.if_true]
     assert true_gate.kind == NODE_APPROVAL

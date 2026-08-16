@@ -1,4 +1,4 @@
-"""Agent Shield integration for Lightwork."""
+"""Agent Shield integration for Maverick."""
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 

@@ -6,7 +6,7 @@ the screen, take a screenshot, install/uninstall apks, run logcat.
 
 Auth: none — uses the local ``adb`` binary. Authorization happens
 on the device (developer-mode + USB-debug prompt) once per host;
-nothing for Lightwork to manage.
+nothing for Maverick to manage.
 
 Intentionally host-local: ``adb`` talks to a USB/network-attached
 device via the host's adb daemon, which a sandboxed container can't

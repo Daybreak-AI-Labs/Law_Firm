@@ -167,7 +167,7 @@ def test_render_markdown_is_executive_readable():
         },
     }
     md = proof_pack.render_markdown(manifest)
-    assert "# Lightwork — Proof Pack" in md
+    assert "# Maverick — Proof Pack" in md
     assert "ALL HARD GUARANTEES HOLD" in md
     assert "`governance`" in md and "NOT RUN" in md
 

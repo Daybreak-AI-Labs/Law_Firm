@@ -126,7 +126,7 @@ class AuthenticatedTestEvidence:
     ``authority`` is a stable, non-secret issuer/key identity.  The sandbox
     backend must verify the sidecar signature, mTLS peer, TEE attestation, or
     equivalent controller-owned channel before constructing this object.
-    Lightwork then binds it to the exact one-shot request and configured
+    Maverick then binds it to the exact one-shot request and configured
     authority.
     """
 

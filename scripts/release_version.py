@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Lightwork's canonical public release versions.
+"""Validate Maverick's canonical public release versions.
 
 Public tags deliberately use one strict, three-component PEP 440 subset. This
 keeps the GitHub prerelease flag, PyPI artifact versions, GHCR aliases, and the

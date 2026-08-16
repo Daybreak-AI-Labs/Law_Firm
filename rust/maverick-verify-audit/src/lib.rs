@@ -1,4 +1,4 @@
-//! Independent verifier for Lightwork's Ed25519 hash-chained NDJSON audit log.
+//! Independent verifier for Maverick's Ed25519 hash-chained NDJSON audit log.
 //!
 //! This is a byte-exact port of `maverick.audit.signing.verify_chain` (the
 //! Python source of truth). For every non-blank line of a day-file it confirms:

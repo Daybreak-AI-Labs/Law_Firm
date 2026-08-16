@@ -233,7 +233,7 @@ def test_dsar_erasure_never_destructive_from_api():
         "maverick", "erase", "--user", "u1", "--channel", "slack",
     ]
     assert "erase_command" not in handoff
-    assert "authenticated Lightwork erasure workflow" in handoff[
+    assert "authenticated Maverick erasure workflow" in handoff[
         "operator_instruction"
     ]
 

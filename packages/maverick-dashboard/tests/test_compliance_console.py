@@ -120,7 +120,7 @@ def test_compliance_export_md_is_attachment(monkeypatch, tmp_path):
     assert r.status_code == 200
     cd = r.headers["content-disposition"]
     assert "attachment" in cd
-    assert "lightwork-compliance-all.md" in cd
+    assert "maverick-compliance-all.md" in cd
     assert r.headers["content-type"].startswith("text/markdown")
     # The report body carries the control text.
     assert "AI transparency disclosure" in r.text
@@ -134,7 +134,7 @@ def test_compliance_export_csv_is_attachment(monkeypatch, tmp_path):
     assert r.status_code == 200
     cd = r.headers["content-disposition"]
     assert "attachment" in cd
-    assert "lightwork-compliance-all.csv" in cd
+    assert "maverick-compliance-all.csv" in cd
     assert r.headers["content-type"].startswith("text/csv")
     body = r.text
     assert "framework,control,regulation,status,detail" in body
@@ -148,7 +148,7 @@ def test_compliance_export_filter_changes_output(monkeypatch, tmp_path):
 
     eu = c.get("/api/v1/compliance/report.md?framework=eu")
     assert eu.status_code == 200
-    assert "lightwork-compliance-eu.md" in eu.headers["content-disposition"]
+    assert "maverick-compliance-eu.md" in eu.headers["content-disposition"]
     assert "AI transparency disclosure" in eu.text
     assert "Consumer notice of AI" not in eu.text
 

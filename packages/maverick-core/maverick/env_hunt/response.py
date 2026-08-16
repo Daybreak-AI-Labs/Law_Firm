@@ -74,7 +74,7 @@ class ResponseExecutorRegistry:
 
 
 class Ed25519ApprovalVerifier:
-    """Adapter for Lightwork's exact-payload cryptographic approval boundary."""
+    """Adapter for Maverick's exact-payload cryptographic approval boundary."""
 
     def __init__(self, trusted_pubkeys: list[str] | tuple[str, ...]):
         if not trusted_pubkeys:

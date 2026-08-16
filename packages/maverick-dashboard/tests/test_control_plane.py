@@ -296,7 +296,7 @@ def test_compliance_packet_download(monkeypatch):
     r = client.get("/api/v1/compliance/packet")
     assert r.status_code == 200
     cd = r.headers.get("content-disposition", "")
-    assert "attachment" in cd and "lightwork-compliance-packet.json" in cd
+    assert "attachment" in cd and "maverick-compliance-packet.json" in cd
     assert r.json()["artifact"] == "maverick.compliance_packet"
 
     cached = client.get("/api/v1/compliance/packet")

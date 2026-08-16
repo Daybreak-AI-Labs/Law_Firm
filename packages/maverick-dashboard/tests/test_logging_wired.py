@@ -1,4 +1,4 @@
-"""The dashboard + MCP server apply Lightwork's shared logging config at their
+"""The dashboard + MCP server apply Maverick's shared logging config at their
 real process entrypoint (main()) — not in the lifespan/at import, so the
 in-process TestClient and bare imports never reconfigure global logging."""
 from __future__ import annotations

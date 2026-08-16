@@ -1,7 +1,7 @@
 # Shield benchmark & safety architecture
 
 This page is written to be **scrutinized**. It reports reproducible, measured
-numbers for Lightwork's safety detection — including where it is weak — and
+numbers for Maverick's safety detection — including where it is weak — and
 explains why agent safety here is an *architecture*, not a single classifier.
 Every number below is produced by `benchmarks/security/detector_score.py`
 (offline, no SDK, no API key) and can be regenerated in seconds.
@@ -10,7 +10,7 @@ Every number below is produced by `benchmarks/security/detector_score.py`
 
 A prompt-injection classifier alone is a brittle moat: novel phrasings evade
 any fixed ruleset, and a single miss can be catastrophic if the agent acts on
-it. Lightwork layers detection *and* containment so a miss at one layer is
+it. Maverick layers detection *and* containment so a miss at one layer is
 caught at the next:
 
 1. **Built-in fallback** (`maverick_shield.builtin_rules`) — always present,
@@ -59,7 +59,7 @@ Methodology (baked into the harness so it can't drift):
   normalizes to a trained-on phrase is dropped before scoring.
 
 The table below is the 2026-07-29 snapshot generated into the authoritative
-[`benchmarks/security/RESULTS.md`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/security/RESULTS.md)
+[`benchmarks/security/RESULTS.md`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/benchmarks/security/RESULTS.md)
 artifact from the current corpus (53 train / 31 held-out / 32 benign):
 
 | backend | TPR train¹ | TPR held-out (95% CI) | FPR benign (95% CI) | F1 held-out |
@@ -86,7 +86,7 @@ and egress controls. A credible headline efficacy number requires pinned
 external held-out sets plus end-to-end attack-success-rate measurement.
 
 Current held-out misses and false positives are listed in
-[`benchmarks/security/RESULTS.md`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/security/RESULTS.md)
+[`benchmarks/security/RESULTS.md`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/benchmarks/security/RESULTS.md)
 (regenerated with each run) so the gaps are tracked, not forgotten.
 
 ## Latency & ReDoS are a hard CI gate
@@ -109,7 +109,7 @@ carries no encoded blobs — obfuscated variants are built at runtime.
 ## Roadmap to a published recall number
 
 The credible public recall figure comes from scale + end-to-end measurement,
-documented in [`RUNBOOK_SECURITY.md`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/benchmarks/security/RUNBOOK_SECURITY.md):
+documented in [`RUNBOOK_SECURITY.md`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/benchmarks/security/RUNBOOK_SECURITY.md):
 external held-out sets (AgentDojo, JailbreakBench) run through the leakage
 guard, and an end-to-end AgentDojo run measuring attack-success-rate reduction
 with the shield **on vs. off** (the number that actually matters: not "did we

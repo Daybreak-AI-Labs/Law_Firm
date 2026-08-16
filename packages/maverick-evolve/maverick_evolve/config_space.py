@@ -1,6 +1,6 @@
 """The mutable configuration space for Stage 1 evolution.
 
-Defines which Lightwork knobs an evolution run is allowed to perturb -- and ONLY
+Defines which Maverick knobs an evolution run is allowed to perturb -- and ONLY
 configuration (workflow params, thresholds, counts), never code, so a candidate
 can't escape the sandbox. Each knob has explicit bounds; ``mutate`` perturbs one
 knob at a time within those bounds, which keeps the search local and the diffs

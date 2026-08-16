@@ -1,6 +1,6 @@
 # Model Risk & AI Assurance Officer
 
-Lightwork's integrated Model Risk & AI Assurance Officer governs declared AI
+Maverick's integrated Model Risk & AI Assurance Officer governs declared AI
 assets across their lifecycle. It inventories models, agents, tools, datasets,
 and providers; records human-owned declarations and evidence; produces
 deterministic findings; tracks incidents, risk acceptances, promotion
@@ -101,7 +101,7 @@ four kinds:
 Generic evidence writes cannot self-assert `training_run`. An authenticated
 operator registers a receipt through
 `POST /api/v1/security/assurance/model-risk/evidence/training-receipts`.
-Lightwork resolves the receipt only from the active tenant's private append-only
+Maverick resolves the receipt only from the active tenant's private append-only
 store, verifies every chain row through the selected receipt, resolves the
 separate platform and human signatures only through protected server-side
 audit and global approver registries, checks that it covers the observed

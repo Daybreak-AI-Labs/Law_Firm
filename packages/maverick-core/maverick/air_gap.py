@@ -3,7 +3,7 @@
 A regulated / classified deployment needs to *prove* there is no outbound path
 before it trusts the box. Full OS-level air-gapping (firewall, no NIC) is the
 operator's job; this is the **application-layer audit** that catches the ways
-Lightwork's own config would still reach the network: a remote model provider, a
+Maverick's own config would still reach the network: a remote model provider, a
 non-deny-all egress policy, or a sandbox allowed network access. ``maverick
 airgap check`` runs it and exits non-zero on any finding, so it can gate a
 deployment.

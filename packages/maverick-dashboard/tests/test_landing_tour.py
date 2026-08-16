@@ -1,6 +1,6 @@
 """Overview landing page: an enterprise dashboard, not a consumer tour.
 
-The old "Welcome to Lightwork - 60-second tour" block (with its curl/CLI
+The old "Welcome to Maverick - 60-second tour" block (with its curl/CLI
 crib sheet) was removed for enterprise clients; the page now leads with the
 shared hero + a goal stat row backed by real counts from the route context.
 """
@@ -24,7 +24,7 @@ def _client(monkeypatch, tmp_path):
 def test_overview_has_no_consumer_tour(monkeypatch, tmp_path):
     body = _client(monkeypatch, tmp_path).get("/overview").text
     assert "60-second tour" not in body
-    assert "Welcome to Lightwork" not in body
+    assert "Welcome to Maverick" not in body
     assert 'id="tour"' not in body
     assert "maverick_tour_dismissed" not in body
     # The developer crib sheet (curl / CLI) left with the tour.

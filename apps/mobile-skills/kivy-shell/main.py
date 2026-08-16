@@ -1,4 +1,4 @@
-"""Kivy shell scaffold: run a pure-Python Lightwork skill on a phone.
+"""Kivy shell scaffold: run a pure-Python Maverick skill on a phone.
 
 Lists the bundled pure skills (today: one — ``disagreement.answer_entropy``,
 the proposer-disagreement signal from ``packages/maverick-core/maverick/
@@ -70,7 +70,7 @@ def main() -> None:
         return
 
     class MaverickSkillsApp(App):
-        title = "Lightwork Skills"
+        title = "Maverick Skills"
 
         def build(self):
             root = BoxLayout(orientation="vertical", padding=24, spacing=12)

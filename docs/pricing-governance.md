@@ -1,6 +1,6 @@
 # Pricing governance
 
-Lightwork treats model prices as evidence-bearing accounting inputs, not as
+Maverick treats model prices as evidence-bearing accounting inputs, not as
 unlabelled constants. The built-in rate card is versioned, immutable at
 runtime, and backed by
 `maverick/data/pricing-rate-card-2026-07-29.json`. Each row records its source
@@ -55,7 +55,7 @@ The tracked primary sources are:
 - [Moonshot pricing](https://platform.moonshot.ai/pricing)
 - [OpenRouter model catalog](https://openrouter.ai/models)
 
-Zero-dollar Codex CLI and self-hosted rows mean only that Lightwork sees no
+Zero-dollar Codex CLI and self-hosted rows mean only that Maverick sees no
 metered external API-token charge. Subscription, compute, energy, storage, and
 operations costs are outside that accounting scope and are stated explicitly
 in each row's applicability field.

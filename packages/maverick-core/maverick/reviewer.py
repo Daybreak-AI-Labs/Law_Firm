@@ -1,7 +1,7 @@
 """Self-reviewer agent (BugBot-style).
 
 Cursor's BugBot ships PR review of agent-generated diffs and resolves
-~80% of issues per April 2026 numbers. Lightwork has a verifier role for
+~80% of issues per April 2026 numbers. Maverick has a verifier role for
 FINAL answers; this module repurposes it for DIFF review specifically.
 
 The reviewer is invoked AFTER the agent emits its FINAL answer when

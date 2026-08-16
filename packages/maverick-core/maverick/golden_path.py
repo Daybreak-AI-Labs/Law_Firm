@@ -126,7 +126,7 @@ def run_scenario(audit_path: Path, *, key_dir: Path) -> Scenario:
 
 def render(scenario: Scenario, audit_path: Path) -> str:
     lines = [
-        "# Lightwork — Golden Path (the receipts)",
+        "# Maverick — Golden Path (the receipts)",
         "",
         "One seeded run of a finance specialist under governance. No model is "
         "called; every verdict below is the **real** enforcement code, and every "
@@ -153,7 +153,7 @@ def render(scenario: Scenario, audit_path: Path) -> str:
         f"is caught (`{scenario.break_reason}`).",
         "",
         f"Verify it yourself — from `{audit_path.parent.name}/`, a third party needs "
-        f"only the public key (no access to Lightwork):\n\n    {verify_cmd}\n",
+        f"only the public key (no access to Maverick):\n\n    {verify_cmd}\n",
         "",
     ]
     return "\n".join(lines)

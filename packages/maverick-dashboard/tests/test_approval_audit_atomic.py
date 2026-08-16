@@ -77,7 +77,7 @@ def test_audit_refusal_keeps_final_decision_non_effective_and_retry_is_safe(
         "effective": False,
         "retry_safe": True,
     }
-    assert first.headers["x-lightwork-approval-audit"] == "pending"
+    assert first.headers["x-maverick-approval-audit"] == "pending"
     assert world.get_approval(approval_id).status == "pending"
     pending = world.pending_approval_audit_events(approval_id=approval_id)
     assert len(pending) == 1
@@ -97,8 +97,8 @@ def test_audit_refusal_keeps_final_decision_non_effective_and_retry_is_safe(
     )
 
     assert retry.status_code == 204
-    assert retry.headers["x-lightwork-decision-id"] == body["decision_id"]
-    assert retry.headers["x-lightwork-approval-audit"] == "delivered"
+    assert retry.headers["x-maverick-decision-id"] == body["decision_id"]
+    assert retry.headers["x-maverick-approval-audit"] == "delivered"
     assert world.get_approval(approval_id).status == "approved"
     assert world.pending_approval_audit_events(approval_id=approval_id) == []
     assert attempts == [body["decision_id"]]
@@ -186,7 +186,7 @@ def test_later_quorum_vote_repairs_older_audit_event_before_becoming_effective(
     # Alice's failed row is retried first, then Bob's quorum row. The failed
     # attempt and successful retry share one stable identity.
     assert delivered[0] == delivered[1] == first_id
-    assert delivered[2] == second.headers["x-lightwork-decision-id"]
+    assert delivered[2] == second.headers["x-maverick-decision-id"]
     assert world.pending_approval_audit_events(approval_id=approval_id) == []
 
 
@@ -222,7 +222,7 @@ def test_lost_commit_ack_is_reconciled_from_outbox_before_response(
     assert response.status_code == 204
     assert world.get_approval(approval_id).status == "approved"
     assert world.get_approval_audit_event(
-        response.headers["x-lightwork-decision-id"]
+        response.headers["x-maverick-decision-id"]
     ).delivered_at is not None
 
 
@@ -250,7 +250,7 @@ def test_postcommit_state_read_failure_does_not_turn_success_into_retry(
     )
 
     assert response.status_code == 204
-    assert response.headers["x-lightwork-approval-state"] == "approved"
+    assert response.headers["x-maverick-approval-state"] == "approved"
     assert world.get_approval(approval_id).status == "approved"
 
 
@@ -285,8 +285,8 @@ def test_unreconcilable_commit_outcome_is_explicit_and_retry_keyed():
         "decision_id": "approval-v1-stable",
         "retry_safe": True,
     }
-    assert exc.headers["X-Lightwork-Decision-Id"] == "approval-v1-stable"
-    assert exc.headers["X-Lightwork-Approval-State"] == "uncertain"
+    assert exc.headers["X-Maverick-Decision-Id"] == "approval-v1-stable"
+    assert exc.headers["X-Maverick-Approval-State"] == "uncertain"
 
 
 def test_duplicate_submits_converge_on_one_outbox_event(tmp_path):

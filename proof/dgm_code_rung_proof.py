@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightwork -- proof of the governed DGM code rung (self-modification).
+"""Maverick -- proof of the governed DGM code rung (self-modification).
 
 A single reproducible run that drives a REAL code change end-to-end through the
 REAL governance chain and prints a scoreboard. It is the checkable form of the

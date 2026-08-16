@@ -1,7 +1,7 @@
 """Postgres-backed world model.
 
 A drop-in alternative to the default SQLite WorldModel for users
-running Lightwork on a server / cluster who want a shared backend
+running Maverick on a server / cluster who want a shared backend
 across processes.
 
 Selected via config:

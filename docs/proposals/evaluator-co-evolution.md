@@ -6,7 +6,7 @@ Evaluators* (arXiv 2606.26294)
 
 ## Motivation
 
-Lightwork's learning loop already defends against a rotting evaluator — but only
+Maverick's learning loop already defends against a rotting evaluator — but only
 by *freezing*. `maverick.calibration` watches whether the verifier still
 discriminates correct from incorrect answers and, when it stops,
 `learning_frozen()` halts learning so the system never trains on its own drift.

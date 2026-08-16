@@ -656,7 +656,7 @@ async def download_evidence_gateway_assurance_packet(
                 "true" if issued["idempotent_replay"] else "false"
             ),
             "Content-Disposition": (
-                'attachment; filename="lightwork-ai-assurance-packet.json"'
+                'attachment; filename="maverick-ai-assurance-packet.json"'
             ),
         },
     )

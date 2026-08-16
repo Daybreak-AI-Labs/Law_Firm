@@ -2,7 +2,7 @@
 
 vLLM and TGI implement continuous batching, prefix/KV caching and quantized
 inference *server-side*; llama.cpp bakes precision into the GGUF file. What
-Lightwork adds — and all this module claims to add — is honest plumbing:
+Maverick adds — and all this module claims to add — is honest plumbing:
 
 * translate ``[local_runtime]`` config knobs into the *correct* server argv
   per engine (:func:`build_argv`, pure) plus the env vars an engine toggles
@@ -292,7 +292,7 @@ def build_argv(engine: str, cfg: dict) -> list[str]:
     cfg = _normalize({**(cfg or {}), "engine": engine})
     if not cfg["model"]:
         raise LocalRuntimeError(
-            "[local_runtime] model is not set; Lightwork never picks a model for you. "
+            "[local_runtime] model is not set; Maverick never picks a model for you. "
             "Set it in ~/.maverick/config.toml or via MAVERICK_LOCAL_RUNTIME_MODEL.")
     return _ARGV_BUILDERS[cfg["engine"]](cfg) + list(cfg["extra_args"])
 
@@ -362,7 +362,7 @@ class Launcher:
             raise LocalRuntimeDisabled(
                 "local runtime is off (the default). Set [local_runtime] enabled = true "
                 "in ~/.maverick/config.toml (or MAVERICK_LOCAL_RUNTIME_ENABLED=1) to let "
-                "Lightwork start a local model server.")
+                "Maverick start a local model server.")
         handle = self._replicas.get(replica)
         if handle is not None and self.runner.alive(handle):
             return endpoint_for(self.cfg, replica)

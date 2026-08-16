@@ -1,4 +1,4 @@
-"""Importing external automations (n8n/Make/...) into Lightwork primitives.
+"""Importing external automations (n8n/Make/...) into Maverick primitives.
 
 Covers the IR rendering, the n8n translator (pure, fixture-driven), the
 registry, the feature gate, and materialization onto a user Template + a

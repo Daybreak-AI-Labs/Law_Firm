@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lightwork Desktop",
+  "productName": "Maverick Desktop",
   "version": "0.1.7",
   "identifier": "com.maverick.desktop",
   "build": {
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Lightwork",
+        "title": "Maverick",
         "width": 1280,
         "height": 860,
         "minWidth": 940,
@@ -29,7 +29,7 @@
     "targets": ["dmg", "app", "msi", "nsis", "deb", "appimage"],
     "icon": ["icons/icon.png"],
     "category": "DeveloperTool",
-    "shortDescription": "Lightwork dashboard desktop shell",
-    "longDescription": "Native window for the local Lightwork dashboard: launches `maverick dashboard` if it is not already running and embeds http://127.0.0.1:8765."
+    "shortDescription": "Maverick dashboard desktop shell",
+    "longDescription": "Native window for the local Maverick dashboard: launches `maverick dashboard` if it is not already running and embeds http://127.0.0.1:8765."
   }
 }

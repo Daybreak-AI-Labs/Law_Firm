@@ -1,4 +1,4 @@
-"""Cookiecutter-style generator for new Lightwork plugins.
+"""Cookiecutter-style generator for new Maverick plugins.
 
 Driven by ``maverick plugin new <name> --kind tool|channel|persona``,
 this writes a working plugin skeleton the contributor can `pip install
@@ -52,7 +52,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "{slug}"
 version = "0.1.0"
-description = "A Lightwork {kind} plugin"
+description = "A Maverick {kind} plugin"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {{ text = "MIT" }}
@@ -67,7 +67,7 @@ where = ["src"]
 '''
 
 _MANIFEST_TMPL = '''\
-# Lightwork plugin manifest. Validated at load time against
+# Maverick plugin manifest. Validated at load time against
 # MAVERICK_API_VERSION; mismatches surface a warning, not a hard fail.
 
 [plugin]
@@ -78,7 +78,7 @@ kind             = "{kind}"
 author           = "your name"
 license          = "MIT"
 repo             = "https://github.com/your-org/{slug}"
-description      = "A {kind} plugin for Lightwork"
+description      = "A {kind} plugin for Maverick"
 
 [plugin.permissions]
 # Declare what your plugin actually needs. The kernel uses these to
@@ -89,7 +89,7 @@ subprocess  = false
 '''
 
 _TOOL_INIT_TMPL = '''\
-"""Lightwork tool plugin: {slug}.
+"""Maverick tool plugin: {slug}.
 
 Wire-up: ``pyproject.toml`` declares this module's ``{factory}``
 function as a ``maverick.tools`` entry point. At kernel boot,
@@ -100,7 +100,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Defer the import so `pip install -e .` doesn't fail when Lightwork
+# Defer the import so `pip install -e .` doesn't fail when Maverick
 # isn't on the path yet (e.g. running unit tests in CI).
 def _tool_class():
     from maverick.tools import Tool
@@ -135,11 +135,11 @@ def {factory}():
 '''
 
 _CHANNEL_INIT_TMPL = '''\
-"""Lightwork channel plugin: {slug}.
+"""Maverick channel plugin: {slug}.
 
 Subclass ``maverick_channels.Channel`` and implement ``start``,
 ``send``, ``stop``. ``pyproject.toml`` registers the *class* (not an
-instance) at the ``maverick.channels`` entry point; Lightwork passes the
+instance) at the ``maverick.channels`` entry point; Maverick passes the
 agent ``handler`` when it instantiates the channel per-deployment.
 """
 from __future__ import annotations
@@ -168,12 +168,12 @@ class {class_name}(Channel):
         pass
 
 
-# Entry-point exports the CLASS — Lightwork instantiates per-deployment.
+# Entry-point exports the CLASS — Maverick instantiates per-deployment.
 {factory} = {class_name}
 '''
 
 _PERSONA_INIT_TMPL = '''\
-"""Lightwork persona plugin: {slug}.
+"""Maverick persona plugin: {slug}.
 
 A persona returns a string that's appended to the orchestrator's
 system prompt. Use it to shape voice + style without forking the
@@ -206,7 +206,7 @@ def test_factory_returns_expected_kind():
 _README_TMPL = '''\
 # {slug}
 
-A Lightwork **{kind}** plugin.
+A Maverick **{kind}** plugin.
 
 ## Install (development)
 

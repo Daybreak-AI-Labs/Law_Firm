@@ -131,7 +131,7 @@ Recommended, in order of RPO:
 
 1. **Managed Postgres point-in-time recovery (PITR).** If you run RDS / Cloud
    SQL / Aurora / a managed PG, enable automated backups + PITR. This is the
-   lowest-RPO option (seconds–minutes) and needs no Lightwork-specific steps.
+   lowest-RPO option (seconds–minutes) and needs no Maverick-specific steps.
 
 2. **Continuous archiving (self-managed).** Enable WAL archiving
    (`archive_mode = on`) + base backups (`pg_basebackup`) for PITR on a
@@ -164,10 +164,10 @@ Notes:
   (`~/.maverick/keys/at_rest.key`). Back up that key separately and securely;
   losing it makes sealed columns unrecoverable.
 - **Schema migrations are forward-only and idempotent**, applied on first
-  connect. Restoring an older dump and starting a newer Lightwork re-applies any
+  connect. Restoring an older dump and starting a newer Maverick re-applies any
   pending migrations automatically (see `world_model_backends/postgres.py`).
 - **Database HA:** managed Postgres can fail over the shared world model. The
-  Lightwork dashboard/serve control plane must still run as one replica because
+  Maverick dashboard/serve control plane must still run as one replica because
   other durable stores remain file-backed; replace that replica against the
   same persistent data root instead of running active-active control-plane pods.
   The single-node `maverick backup` cold-standby model is for the SQLite default.
@@ -221,7 +221,7 @@ Scheduled (systemd timer, recommended on VPS):
 ```ini
 # /etc/systemd/system/maverick-gc.timer
 [Unit]
-Description=Lightwork weekly garbage collection
+Description=Maverick weekly garbage collection
 
 [Timer]
 OnCalendar=weekly
@@ -234,7 +234,7 @@ WantedBy=timers.target
 ```ini
 # /etc/systemd/system/maverick-gc.service
 [Unit]
-Description=Lightwork GC
+Description=Maverick GC
 After=maverick.service
 
 [Service]

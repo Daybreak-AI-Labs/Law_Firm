@@ -13,7 +13,7 @@ Distinct from its neighbours:
                             persists across goals and sessions.
 
 Host-side by nature: like the world model, consent ledger, and audit log, this is
-Lightwork's own store (under ``~/.maverick/memory`` by default, override
+Maverick's own store (under ``~/.maverick/memory`` by default, override
 ``MAVERICK_MEMORY_DIR``), not workspace files, so it isn't sandbox-mediated. All
 paths are confined to the memory root (no traversal / symlink escape) and per-file
 + total-size caps bound it. Memory content is model-curated and re-enters context

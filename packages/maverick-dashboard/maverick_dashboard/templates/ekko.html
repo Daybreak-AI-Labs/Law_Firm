@@ -4,7 +4,7 @@
 {% block content %}
 {% from "_hero.html" import hero %}
 <style>
-  /* The hero itself is the shared .hero component (lightwork.css); EKKO
+  /* The hero itself is the shared .hero component (maverick.css); EKKO
      keeps only its page-specific styles below. */
   .ekko-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .55fr);
     gap: var(--space-5); align-items: start; }
@@ -315,7 +315,7 @@
       return;
     }
     try {
-      localStorage.setItem('lightwork.ekko.device', id);
+      localStorage.setItem('maverick.ekko.device', id);
       var status = await request('/api/v1/ekko/status?device_id=' + encodeURIComponent(id));
       renderStatus(status);
       var found = await request('/api/v1/ekko/candidates?device_id=' + encodeURIComponent(id));
@@ -380,7 +380,7 @@
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({device_id: device(), kind: kind})
       });
-      sessionStorage.setItem('lightwork.authoring-handoff', JSON.stringify({
+      sessionStorage.setItem('maverick.authoring-handoff', JSON.stringify({
         kind: result.kind, brief: result.brief, created_at: Date.now()
       }));
       window.location.href = result.redirect;
@@ -420,7 +420,7 @@
   });
 
   try {
-    var remembered = localStorage.getItem('lightwork.ekko.device');
+    var remembered = localStorage.getItem('maverick.ekko.device');
     if (remembered) deviceInput.value = remembered;
   } catch (e) {}
   renderStatus(initial);

@@ -1,5 +1,5 @@
 {{- if .Values.autoscaling.enabled }}
-{{- fail "autoscaling.enabled is not supported for the Lightwork control plane: Postgres does not yet centralize flow/A2A/audit/learning state. Run one dashboard/serve replica and scale remote workers separately." }}
+{{- fail "autoscaling.enabled is not supported for the Maverick control plane: Postgres does not yet centralize flow/A2A/audit/learning state. Run one dashboard/serve replica and scale remote workers separately." }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

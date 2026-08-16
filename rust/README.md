@@ -1,4 +1,4 @@
-# Lightwork native core (`rust/`)
+# Maverick native core (`rust/`)
 
 The Rust "engine" carve. Per the architecture review (Karpathy / Cloudflare /
 Pydantic / ServiceNow / Palo Alto): **rewrite the hot engine in Rust, keep the

@@ -156,9 +156,10 @@ All verified locally green; each is a build-failer:
 
 ## What this repo is
 
-A hard fork of the Lightwork platform, adapted into the operating system for the
-Bjerken and Day law firm. Forked at Lightwork `f47c70c`; upstream history is
-not shared, so fixes do not flow in automatically — port them deliberately.
+Maverick: the operating system for the Bjerken and Day law firm. It began as a
+hard fork of an internal general-purpose agent platform at `f47c70c` and is now
+standalone — that history is not shared, nothing flows in from it, and the old
+product name has been removed from the tree entirely. Do not reintroduce it.
 
 Practice areas: **VA = Veterans Affairs disability** (federal, not Virginia — this was
 misread once already), family law, complex litigation, privacy/cyber, estate planning &
@@ -246,7 +247,7 @@ and never mark the PR work done until the body has been verified clean.
 | Fork + prune to a law firm | success-with-tail | Deleting 1,895 packs broke 16 tests immediately and ~50 files in total: **pack names are fixture data all over the suite** (`finance_sox` alone in 27 files, `finance_cash13w` in 12). Roster-shape assertions (`>1000 non-builders`, `>=55 itgrc packs`) encode the enterprise product and must be retargeted, not deleted — the invariants inside them (read-only envelope, self-edit floor, effort tiers) are the safety contract. |
 | Bulk-rename pack references | caught in review | A blanket `\bfinance_anomaly\b` rewrite also hit `maverick/tools/finance_anomaly.py` — several pack names are ALSO tool/module names. Check for a `packages/**/<name>.py` collision before any roster-wide rename. |
 | Prune a subsystem by name | caught twice | `marketplace/` is NOT all ecosystem: `storefront.py` backs the dashboard's pack/connector browser and `ratings.py` is the operator's OWN star ratings on goal templates. Deleting the package wholesale broke both. Read each module's docstring before deleting a package whose *name* sounds like product surface. |
-| Bulk-rebrand prose | caught in review | A regex swapping `Lightwork` -> `the platform` produced "The the platform Handbook" and `cd the platform` in shell blocks. Sentence position and code fences both matter; a name-swap in prose is a hand edit, not a regex. |
+| Bulk-rebrand prose | failed, then fixed | A regex swapping the old product name -> `the platform` produced "The the platform Handbook" and `cd the platform` in shell blocks. The fix was to swap **proper noun for proper noun** (-> `Maverick`, the name the CLI/packages/env vars already used): grammar and sentence position are preserved exactly, so no per-site judgement is needed. Reach for a noun-for-noun swap before a phrase substitution. |
 
 ## Pack-reference gotchas
 

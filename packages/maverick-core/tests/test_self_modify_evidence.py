@@ -21,7 +21,7 @@ def _request(command: str = "python -m pytest -- case"):
 class _Backend:
     authenticated_test_results = True
     test_evidence_protocol = evidence.TEST_EVIDENCE_PROTOCOL
-    test_evidence_authority = "spiffe://lightwork/evaluator/key-1"
+    test_evidence_authority = "spiffe://maverick/evaluator/key-1"
 
     def exec_authenticated_tests(self, request, timeout=None):
         return evidence.AuthenticatedTestEvidence.for_request(

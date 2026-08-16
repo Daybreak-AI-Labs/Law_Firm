@@ -3,7 +3,7 @@
 When a run acts on a real-world entity -- creates invoice ``INV-42``, opens
 ticket ``SUP-91`` -- it can record that key here so that weeks later, when the
 system of record reports the *actual* outcome (invoice paid, ticket reopened) to
-``/outcomes/by-key``, Lightwork can join it back to the episode that acted and
+``/outcomes/by-key``, Maverick can join it back to the episode that acted and
 learn from reality instead of a proxy. This is the run-side half of the
 Consequence Engine's grounded loop.
 

@@ -114,7 +114,7 @@ def suggest(world, *, min_goals: int = 3) -> list[Suggestion]:
 
     if len(u["channels"]) >= 2:
         out.append(Suggestion(
-            observation=f"you drive Lightwork from {len(u['channels'])} channels",
+            observation=f"you drive Maverick from {len(u['channels'])} channels",
             suggestion="turn on channel niceties (threaded replies, rich render)",
             action="[channels] rich_render = true; [channels.slack] "
                    "thread_replies = true",

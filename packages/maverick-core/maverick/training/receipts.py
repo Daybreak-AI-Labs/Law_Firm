@@ -29,12 +29,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-RECEIPT_SCHEMA = "lightwork.training-receipt.v2"
+RECEIPT_SCHEMA = "maverick.training-receipt.v2"
 # The public v1 shape remains an assurance API; its subject/payload digests bind v2.
-TRANSPARENCY_SCHEMA = "lightwork.training-transparency-commitment.v1"
-ASSURANCE_SCHEMA = "lightwork.training-assurance-commitment.v1"
+TRANSPARENCY_SCHEMA = "maverick.training-transparency-commitment.v1"
+ASSURANCE_SCHEMA = "maverick.training-assurance-commitment.v1"
 TRAINING_RECEIPT_EVENT = "model_change.training_receipt"
-APPROVAL_MESSAGE_VERSION = "lightwork-training-approval-v2"
+APPROVAL_MESSAGE_VERSION = "maverick-training-approval-v2"
 MAX_RECEIPT_STORE_BYTES = 64 * 1024 * 1024
 MAX_RECEIPT_ROW_BYTES = 1024 * 1024
 MAX_RECEIPT_ROWS = 100_000

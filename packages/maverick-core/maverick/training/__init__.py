@@ -1,4 +1,4 @@
-"""Governed training and specialist-model improvement for Lightwork.
+"""Governed training and specialist-model improvement for Maverick.
 
 Karpathy: "the only piece that earns ML complexity" is the
 trajectory donation flywheel + a learned what-to-keep gate +

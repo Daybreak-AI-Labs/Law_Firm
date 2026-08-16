@@ -382,7 +382,7 @@ def _host_drive_allowed() -> bool:
     Safe means an explicit operator override (``MAVERICK_COMPUTER_ALLOW_HOST=1``)
     or that the process ``DISPLAY`` has actually been pointed at the same
     non-host display named by ``MAVERICK_COMPUTER_DISPLAY``. Merely setting the
-    Lightwork-specific variable is not enough because screenshot and input
+    Maverick-specific variable is not enough because screenshot and input
     backends read the real ``DISPLAY`` environment variable.
     """
     if os.environ.get("MAVERICK_COMPUTER_ALLOW_HOST", "").strip().lower() in _TRUTHY:

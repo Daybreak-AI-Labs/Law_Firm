@@ -1,7 +1,7 @@
 """Voice channel (Vapi / Retell / Bland).
 
 Tenth channel adapter. A voice provider exposes a REST + webhook surface
-that matches Lightwork's existing IncomingMessage / handler contract —
+that matches Maverick's existing IncomingMessage / handler contract —
 when the user speaks, the provider transcribes (Deepgram / Whisper /
 ElevenLabs) and POSTs the transcript to our webhook; we run the swarm;
 the reply goes back via the provider's TTS.
@@ -16,7 +16,7 @@ Config in ~/.maverick/config.toml::
     port          = 8770
     assistant_id  = "<provider assistant/agent id>"
 
-The TTS / STT happens on the provider's side; Lightwork is just the
+The TTS / STT happens on the provider's side; Maverick is just the
 "reasoning brain" the provider calls when the user pauses. This keeps
 the adapter thin.
 
@@ -75,7 +75,7 @@ class VoiceChannel(Channel):
       - start(): bring up a FastAPI server on `port` exposing
         `/webhook/voice` for Vapi's events.
       - on each `function-call` / `transcript` event, dispatch to
-        Lightwork's handler and return a `result` Vapi will TTS.
+        Maverick's handler and return a `result` Vapi will TTS.
       - send(): for proactive notifications (e.g., goal completed
         while user was on another call) we POST to Vapi's outbound
         call endpoint with the assistant_id.

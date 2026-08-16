@@ -1,7 +1,7 @@
 """Definition-import translators for Make, Power Automate, Workato, UiPath.
 
 Each translate() is a pure function over the platform's native definition JSON;
-these fixtures mirror the real shapes. Materialization onto Lightwork templates
+these fixtures mirror the real shapes. Materialization onto Maverick templates
 is covered generically in test_automation_import.py.
 """
 from __future__ import annotations

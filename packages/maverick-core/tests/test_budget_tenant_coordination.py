@@ -206,7 +206,7 @@ async def test_run_goal_halt_settles_tenant_reservation_once(
         sandbox=LocalBackend(workdir=tmp_path),
     )
 
-    assert "Lightwork is halted" in result
+    assert "Maverick is halted" in result
     assert fake_llm.calls == []
     assert len(recorded) == 1
     assert recorded[0][1]["reservation_id"] == reservation_id

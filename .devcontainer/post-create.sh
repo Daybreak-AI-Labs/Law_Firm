@@ -28,6 +28,6 @@ pip install pytest pytest-asyncio 'ruff>=0.5' 'vulture>=2.11' \
 pip install 'openai>=1.30'
 
 echo
-echo "Lightwork devcontainer ready."
+echo "Maverick devcontainer ready."
 echo "  try:  maverick --help"
 echo "  test: python3 -m pytest packages/maverick-core/tests -q"

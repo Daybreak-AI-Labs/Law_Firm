@@ -1,11 +1,11 @@
 # Regulated deployment
 
-**Run Lightwork on private / sensitive data with fail-closed application
+**Run Maverick on private / sensitive data with fail-closed application
 controls and deployment-level network containment.**
 
 The kernel ships fail-open and cloud-capable — right for a personal agent, wrong the
 moment it touches PHI, PII, financial, or otherwise regulated data. This page is the
-single reference for standing Lightwork up in a *regulated* posture: one profile, the
+single reference for standing Maverick up in a *regulated* posture: one profile, the
 guarantees it gives you, and one command to **prove** they hold.
 
 ## The guarantee
@@ -144,7 +144,7 @@ maverick ai-act    # EU AI Act risk classification (self-assessment)
 `maverick dpia` pre-fills the processing description (consistent with the ROPA) and a
 **risk register** of the agent-on-personal-data risks — data egress to an LLM,
 unsupervised automated action, audit tampering, indefinite retention — each mapped to the
-Lightwork control that mitigates it and flagged `OPEN` if that control is currently off.
+Maverick control that mitigates it and flagged `OPEN` if that control is currently off.
 Necessity/proportionality and residual-risk sign-off are left to the controller.
 
 `maverick ai-act` reports the live Art. 50 transparency posture and hands you a checklist

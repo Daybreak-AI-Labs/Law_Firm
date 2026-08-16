@@ -1,4 +1,4 @@
-# Caddy reverse proxy for the optional Lightwork web dashboard.
+# Caddy reverse proxy for the optional Maverick web dashboard.
 #
 # Replace `maverick.example.com` with your domain. Caddy will obtain
 # and renew a Let's Encrypt cert automatically.

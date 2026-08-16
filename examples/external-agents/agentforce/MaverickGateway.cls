@@ -1,26 +1,26 @@
 /**
- * Lightwork BYOA gateway — the "screen" half of screen-then-act for
+ * Maverick BYOA gateway — the "screen" half of screen-then-act for
  * Salesforce Agentforce.
  *
  * Exposes one invocable screen action (Apex allows a single
  * @InvocableMethod per class; the run-report action lives in
- * LightworkReportRun.cls and reuses the shared plumbing here). The agent
- * calls "Lightwork: Screen Action" BEFORE any consequential action and
+ * MaverickReportRun.cls and reuses the shared plumbing here). The agent
+ * calls "Maverick: Screen Action" BEFORE any consequential action and
  * proceeds only on allowed = true; requiresApproval = true means a human
- * decision is parked in the Lightwork approval queue under approvalId.
+ * decision is parked in the Maverick approval queue under approvalId.
  *
- * All callouts go through the Named Credential "Lightwork_Gateway"
+ * All callouts go through the Named Credential "Maverick_Gateway"
  * (see README.md for the exact Setup clicks). The per-agent rest bearer
  * lives on the External Credential as a custom Authorization header —
  * it never appears in Apex, debug logs, or version control.
  *
- * Endpoint contract: GET /api/v1/external/openapi.json on your Lightwork
+ * Endpoint contract: GET /api/v1/external/openapi.json on your Maverick
  * deployment (the importable gateway description).
  */
-public with sharing class LightworkGateway {
+public with sharing class MaverickGateway {
 
     // Must match the Named Credential API name created in Setup.
-    private static final String NAMED_CREDENTIAL = 'Lightwork_Gateway';
+    private static final String NAMED_CREDENTIAL = 'Maverick_Gateway';
     private static final Integer TIMEOUT_MS = 30000;
 
     public class ScreenRequest {
@@ -69,8 +69,8 @@ public with sharing class LightworkGateway {
     }
 
     @InvocableMethod(
-        label='Lightwork: Screen Action'
-        description='Ask Lightwork before acting: applies the enrolled tool/risk/budget ceilings, Shield input scan, and the human-approval floor. Proceed only on allowed = true.'
+        label='Maverick: Screen Action'
+        description='Ask Maverick before acting: applies the enrolled tool/risk/budget ceilings, Shield input scan, and the human-approval floor. Proceed only on allowed = true.'
         callout=true)
     public static List<ScreenResult> screen(List<ScreenRequest> requests) {
         List<ScreenResult> results = new List<ScreenResult>();
@@ -110,12 +110,12 @@ public with sharing class LightworkGateway {
         } catch (Exception e) {
             // Stay fail-closed: a callout failure is never an implicit allow.
             result.rule = 'transport_error';
-            result.reason = 'Lightwork gateway callout failed: ' + e.getMessage();
+            result.reason = 'Maverick gateway callout failed: ' + e.getMessage();
         }
         return result;
     }
 
-    // ---- shared plumbing (also used by LightworkReportRun) -----------------
+    // ---- shared plumbing (also used by MaverickReportRun) -----------------
 
     public static HttpResponse post(String path, String jsonBody) {
         HttpRequest request = new HttpRequest();
@@ -147,11 +147,11 @@ public with sharing class LightworkGateway {
         } else if (code == 403) {
             hint = ' (license lacks the external_agents entitlement, or the agent hit a governance refusal)';
         } else if (code == 404) {
-            hint = ' (the external-agents plane is off — enable [external_agents] on the Lightwork deployment)';
+            hint = ' (the external-agents plane is off — enable [external_agents] on the Maverick deployment)';
         } else if (code == 429) {
             hint = ' (per-agent rate limit — honor Retry-After and retry)';
         }
-        return 'Lightwork gateway returned HTTP ' + code + ': ' + detail + hint;
+        return 'Maverick gateway returned HTTP ' + code + ': ' + detail + hint;
     }
 
     public static String asString(Object value) {

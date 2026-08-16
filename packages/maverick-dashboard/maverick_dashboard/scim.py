@@ -2,7 +2,7 @@
 
 Enterprise IdPs (Okta, Azure AD/Entra, OneLogin) provision and deprovision
 users via SCIM. This exposes the standard ``/scim/v2`` surface so an admin can
-wire Lightwork as a SCIM app and have user lifecycle flow automatically:
+wire Maverick as a SCIM app and have user lifecycle flow automatically:
 creating a SCIM user provisions a backing **tenant** (the product's isolation
 unit), and deprovisioning (``active=false`` or DELETE) suspends/removes it.
 
@@ -129,7 +129,7 @@ _MAX_RECORDS = 100_000
 _MAX_ID_CHARS = 1024
 _MAX_TEXT_CHARS = 16_384
 _MAX_TIMESTAMP = 253_402_300_799.0  # 9999-12-31T23:59:59Z
-_GROUP_AUDIT_OUTBOX_SCHEMA = "lightwork.scim-group-audit-outbox.v1"
+_GROUP_AUDIT_OUTBOX_SCHEMA = "maverick.scim-group-audit-outbox.v1"
 _GROUP_AUDIT_INLINE_MEMBER_LIMIT = 128
 _GROUP_AUDIT_OUTBOX_MAX_CHARS = (_MAX_STORE_CHARS * 3) + (256 * 1024)
 _GROUP_AUDIT_OPERATIONS = frozenset({"create", "replace", "patch", "delete"})
@@ -940,7 +940,7 @@ def _member_set_commitment(
 ) -> str:
     canonical = json.dumps(
         {
-            "schema": "lightwork.scim-group-member-set.v1",
+            "schema": "maverick.scim-group-member-set.v1",
             "event_id": event_id,
             "label": label,
             "members": members,

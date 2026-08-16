@@ -263,7 +263,7 @@ def _root_for_goal(goal_id: int, root: Path | None = None) -> Path:
         # An injected root may be a caller-owned/shared directory.  Create it
         # privately when missing, but never seize an existing directory by
         # rewriting its ACL; require the caller to dedicate a private root.
-        # The per-goal child is always Lightwork-owned once that boundary has
+        # The per-goal child is always platform-owned once that boundary has
         # been verified.
         file_lock.prepare_private_directory(base)
         return file_lock.ensure_private_directory(base / str(goal_id))

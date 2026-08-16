@@ -328,7 +328,7 @@ def _validate_document_evidence_record(record: dict) -> None:
         return
     if not isinstance(evidence, dict):
         raise PrivacyStateError("document evidence is invalid")
-    if evidence.get("schema") != "lightwork.document-extraction-evidence.v1":
+    if evidence.get("schema") != "maverick.document-extraction-evidence.v1":
         raise PrivacyStateError("document evidence schema is invalid")
     for key in (
         "source_binding_sha256",
@@ -1820,7 +1820,7 @@ def _build_document_evidence(
         "ref": ref or {},
     }
     evidence = {
-        "schema": "lightwork.document-extraction-evidence.v1",
+        "schema": "maverick.document-extraction-evidence.v1",
         # Connector names are operational metadata; the potentially sensitive
         # source locator and ref remain digest-only in the durable record.
         "source": source_name[:64],
@@ -2377,10 +2377,10 @@ def export_ropa_art30() -> list[dict]:
 DSAR_KINDS = ("access", "portability", "erasure")
 DSAR_DUE_DAYS = 30  # GDPR Art. 12(3): one month
 _DSAR_EXPORT_SCHEMA = 1
-_DSAR_EXPORT_META = "_lightwork_export"
+_DSAR_EXPORT_META = "_maverick_export"
 _ERASURE_OPERATOR_INSTRUCTION = (
     "Erasure is ready for an authorized operator. Use the authenticated "
-    "Lightwork erasure workflow; this API intentionally does not render a "
+    "Maverick erasure workflow; this API intentionally does not render a "
     "shell command."
 )
 

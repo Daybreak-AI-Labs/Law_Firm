@@ -1,6 +1,6 @@
 """Verified agent-to-agent handoffs: the signed envelope + its verifier.
 
-The **trust layer** for inter-agent delegation. Lightwork already has the two
+The **trust layer** for inter-agent delegation. Maverick already has the two
 pieces this sits between:
 
   * :mod:`maverick.agent_bus` -- the *transport* (in-memory inboxes, ``send``/

@@ -13,7 +13,7 @@ Ties the three foundations together into a runnable loop:
     candidate can never escape the sandbox.
 
 Dependency-injected: the caller supplies ``agent_factory(config) -> async agent``
-(how a config becomes a runnable Lightwork agent), so this is testable without a
+(how a config becomes a runnable Maverick agent), so this is testable without a
 live model and stays decoupled from how the kernel instantiates agents.
 """
 from __future__ import annotations

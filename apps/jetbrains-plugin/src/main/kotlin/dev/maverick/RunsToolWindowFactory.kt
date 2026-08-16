@@ -14,7 +14,7 @@ import javax.swing.JTextField
 import kotlin.concurrent.thread
 
 /**
- * Lightwork Runs tool window: enter a goal id, stream its events live from
+ * Maverick Runs tool window: enter a goal id, stream its events live from
  * the local dashboard's SSE endpoint into the text area. Reconnect/backoff
  * mirrors the VS Code extension; the watch stops when the window closes or
  * Stop is pressed.

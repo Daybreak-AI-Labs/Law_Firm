@@ -1,8 +1,8 @@
-"""Channel adapters for Lightwork.
+"""Channel adapters for Maverick.
 
 A channel normalizes incoming messages from any platform into a shared
 ``IncomingMessage`` shape, hands it to the orchestrator, and routes the
-response back. This is the surface Lightwork uses to power phone-companion
+response back. This is the surface Maverick uses to power phone-companion
 mode — the agent itself runs on Desktop or VPS, and channels give a
 phone (or any other client) a way to talk to it.
 

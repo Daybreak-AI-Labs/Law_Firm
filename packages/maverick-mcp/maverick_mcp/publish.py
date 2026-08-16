@@ -20,7 +20,7 @@ import json
 # newer registry schema revision.
 SCHEMA_URL = ("https://static.modelcontextprotocol.io/schemas/"
               "2025-09-29/server.schema.json")
-DEFAULT_REPO_URL = "https://github.com/Daybreak-AI-Labs/Lightwork"
+DEFAULT_REPO_URL = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 DEFAULT_MANIFEST_OWNER = "daybreak-ai-labs"
 PACKAGE_NAME = "maverick-mcp-server"
 
@@ -33,7 +33,7 @@ def _metadata_summary() -> str:
         return _FALLBACK_DESC
 
 
-_FALLBACK_DESC = ("Model Context Protocol server for Lightwork "
+_FALLBACK_DESC = ("Model Context Protocol server for Maverick "
                   "(exposes the swarm to MCP clients)")
 
 

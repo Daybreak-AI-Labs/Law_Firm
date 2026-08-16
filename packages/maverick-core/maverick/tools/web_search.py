@@ -211,7 +211,7 @@ def _try_duckduckgo(query: str, num: int) -> list[dict] | None:
         resp = httpx.get(
             "https://html.duckduckgo.com/html/",
             params={"q": query},
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Lightwork/1.0)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Maverick/1.0)"},
             timeout=15.0,
             follow_redirects=True,
         )

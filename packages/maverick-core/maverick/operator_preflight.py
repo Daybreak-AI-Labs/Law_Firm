@@ -1,4 +1,4 @@
-"""Deterministic, offline operator preflight for a fresh Lightwork install.
+"""Deterministic, offline operator preflight for a fresh Maverick install.
 
 ``maverick doctor`` deliberately performs live checks (provider API, Docker
 daemon, database).  That is useful diagnostics, but it is a poor automation
@@ -29,7 +29,7 @@ from typing import Any, Literal
 Status = Literal["ready", "blocked", "attention"]
 Profile = Literal["run", "cockpit"]
 
-SCHEMA = "lightwork.operator-preflight.v1"
+SCHEMA = "maverick.operator-preflight.v1"
 
 
 @dataclass(frozen=True)
@@ -1303,7 +1303,7 @@ def render(report: Report) -> str:
 
     verdict = "READY" if report.ready else "BLOCKED"
     lines = [
-        f"Lightwork offline preflight [{report.profile}]: {verdict}",
+        f"Maverick offline preflight [{report.profile}]: {verdict}",
         (
             f"{report.blocker_count} blocker(s), "
             f"{report.attention_count} attention item(s)"

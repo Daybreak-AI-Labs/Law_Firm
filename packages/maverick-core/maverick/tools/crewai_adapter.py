@@ -1,8 +1,8 @@
 """CrewAI adapter (roadmap: 2027 H2 — interop with CrewAI).
 
-Pure, offline translation between a CrewAI ``Task`` and a Lightwork goal. No SDK
+Pure, offline translation between a CrewAI ``Task`` and a Maverick goal. No SDK
 import, no network — just dict/string reshaping so a CrewAI task can drive a
-Lightwork run and vice-versa.
+Maverick run and vice-versa.
 
 CrewAI describes a unit of work as a Task::
 
@@ -11,7 +11,7 @@ CrewAI describes a unit of work as a Task::
 ops:
   - task_spec(description, expected_output, agent_role) -> a CrewAI Task spec
     dict (JSON string).
-  - to_maverick_goal(task_spec) -> a Lightwork goal string + metadata (JSON
+  - to_maverick_goal(task_spec) -> a Maverick goal string + metadata (JSON
     {goal, metadata}). The goal folds in the expected output as an acceptance
     criterion so the swarm knows when it's done.
 """

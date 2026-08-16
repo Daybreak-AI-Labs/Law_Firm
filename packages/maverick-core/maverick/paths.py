@@ -1,6 +1,6 @@
 """Tenant-aware data paths — the P1 multi-tenancy primitive.
 
-Lightwork keeps its state under ``~/.maverick``. For multi-tenant deployments,
+Maverick keeps its state under ``~/.maverick``. For multi-tenant deployments,
 a *tenant* namespaces that state so one tenant's data (cross-session memory,
 history, ...) is isolated from another's on disk.
 
@@ -215,7 +215,7 @@ def bind_tenant_namespace(tenant: str) -> str:
         )
 
         # The home, tenant roster root, and immutable-claim root are all
-        # Lightwork-owned confidentiality boundaries.
+        # platform-owned confidentiality boundaries.
         ensure_private_directory(home)
         tenants_root = ensure_private_directory(home / "tenants")
         ensure_private_directory(home / _TENANT_NAMESPACE_DIR)

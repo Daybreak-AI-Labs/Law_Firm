@@ -1,4 +1,4 @@
-// Lightwork popup chat. Thin UI: every network call is delegated to the
+// Maverick popup chat. Thin UI: every network call is delegated to the
 // background service worker (see background.js), which talks only to the
 // local dashboard. Plain JS, no build step.
 

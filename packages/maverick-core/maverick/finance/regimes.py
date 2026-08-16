@@ -72,7 +72,7 @@ REGIMES: dict[str, FinanceRegime] = {
     ),
     "pci": FinanceRegime(
         "pci", "PCI DSS v4.0.1 (June 2024)",
-        "Cardholder-data environment protection: Lightwork's stricter no-PAN-storage "
+        "Cardholder-data environment protection: Maverick's stricter no-PAN-storage "
         "posture, secret/PII redaction, and tokenization at AR/expense; access, "
         "logging, testing, and incident-response evidence. Local scope and "
         "validation method remain entity-specific.",

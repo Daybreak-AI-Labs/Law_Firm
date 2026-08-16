@@ -1,4 +1,4 @@
-Lightwork is deploying as {{ include "maverick.fullname" . }}.
+Maverick is deploying as {{ include "maverick.fullname" . }}.
 
 Image:    {{ include "maverick.image" . }}
 Backend:  {{ .Values.worldModel.backend }} (world model; control plane remains single replica)

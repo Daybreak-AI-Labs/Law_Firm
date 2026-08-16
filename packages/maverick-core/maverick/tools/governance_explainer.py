@@ -1,7 +1,7 @@
 """Right-to-explanation for governance decisions (roadmap: 2028 H1 safety).
 
 GDPR Art. 22 / EU AI Act Art. 14: a person subject to an automated decision is
-owed a *meaningful explanation*. Lightwork's governance engine
+owed a *meaningful explanation*. Maverick's governance engine
 (:func:`maverick.governance.evaluate`) already records which clause fired and
 why; this tool turns that into the human-facing explanation — the decision,
 the rule that produced it, the plain-language reason, and the **counterfactual**
@@ -9,7 +9,7 @@ the rule that produced it, the plain-language reason, and the **counterfactual**
 actually needs.
 
 Distinct from the ``decision_explainer`` tool (which breaks down an additive
-*scorecard*): this explains the deterministic policy decisions Lightwork itself
+*scorecard*): this explains the deterministic policy decisions Maverick itself
 makes about whether an action may run. Deterministic, offline — it re-runs the
 real evaluator over the supplied policy/action/context.
 

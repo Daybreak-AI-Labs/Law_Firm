@@ -49,7 +49,7 @@ _PLAYBOOK_GATES = frozenset({"approval", "review"})
 _RISKS = frozenset({"low", "medium", "high"})
 
 WORKFLOW_SYSTEM = (
-    "You design reusable, parameterized agent WORKFLOWS for Lightwork. From the "
+    "You design reusable, parameterized agent WORKFLOWS for Maverick. From the "
     "user's brief (and any provided document) produce ONE workflow as STRICT "
     "JSON with exactly this shape:\n"
     '{"name": "<slug: lowercase letters, digits, hyphens>", '
@@ -64,7 +64,7 @@ WORKFLOW_SYSTEM = (
 )
 
 PLAYBOOK_SYSTEM = (
-    "You design specialist AGENT PLAYBOOKS for Lightwork: a governed domain "
+    "You design specialist AGENT PLAYBOOKS for Maverick: a governed domain "
     "agent with a persona, a tool allowlist, a risk ceiling, and an ordered "
     "procedure whose steps can carry a human-gate instruction. These playbook "
     "gate fields guide the agent and reviewer; they are not executable workflow "

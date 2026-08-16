@@ -4,7 +4,7 @@ The security assessor's engine. It reads the live security posture (control gaps
 from :func:`maverick.compliance.compliance_report`, active breach signals from
 :func:`maverick.threat_hunt.hunt`) and maps each gap to the remediation that
 closes it. Some remediations are **auto-fixable** -- a reversible, in-boundary
-flip of *Lightwork's own* config (enable audit signing, set retention) -- and the
+flip of *Maverick's own* config (enable audit signing, set retention) -- and the
 rest are **gated**: behaviour-changing (enterprise mode, at-rest encryption) or
 outward-facing, so they are *proposed* for a human, never auto-applied.
 

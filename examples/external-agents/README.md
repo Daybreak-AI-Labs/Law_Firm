@@ -2,17 +2,17 @@
 
 Paste-in platform packaging for the
 [bring-your-own-agent gateway](../../docs/external-agents.md): agents built
-on other platforms screen every consequential action with Lightwork
+on other platforms screen every consequential action with Maverick
 *before* acting and report completed runs to the Operating Record. These
 samples make the platform side copy-paste instead of build-your-own.
 
 | Sample | What you get |
 | --- | --- |
-| [`agentforce/`](agentforce/) | Deployable Apex invocable classes (`LightworkGateway.cls` screen action + `LightworkReportRun.cls` run report) over a Named Credential, plus the exact Setup clicks |
-| [`bedrock/`](bedrock/) | SAM template + Python 3.12 forwarder Lambda (bearer from Secrets Manager) + the action-group OpenAPI schema `lightwork-external.json`, plus deploy steps |
+| [`agentforce/`](agentforce/) | Deployable Apex invocable classes (`MaverickGateway.cls` screen action + `MaverickReportRun.cls` run report) over a Named Credential, plus the exact Setup clicks |
+| [`bedrock/`](bedrock/) | SAM template + Python 3.12 forwarder Lambda (bearer from Secrets Manager) + the action-group OpenAPI schema `maverick-external.json`, plus deploy steps |
 
 Both speak the same wire contract — `GET /api/v1/external/openapi.json` on
-your Lightwork deployment (`lightwork-external.json` is a verbatim copy).
+your Maverick deployment (`maverick-external.json` is a verbatim copy).
 For hand-rolled runtimes (OpenAI, LangChain, cron jobs), use the
 copy-paste Python/TypeScript helpers in the
 [external agent quickstart](../../docs/clients/external-agent-quickstart.md)

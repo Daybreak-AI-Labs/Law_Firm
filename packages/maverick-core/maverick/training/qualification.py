@@ -16,8 +16,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-QUALIFICATION_SCHEMA = "lightwork.specialist-model-qualification.v1"
-RUNTIME_ATTESTATION_SCHEMA = "lightwork.specialist-runtime-attestation.v1"
+QUALIFICATION_SCHEMA = "maverick.specialist-model-qualification.v1"
+RUNTIME_ATTESTATION_SCHEMA = "maverick.specialist-runtime-attestation.v1"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+/@-]{0,127}\Z")
 _PROFILES = frozenset({"edge", "standard", "throughput"})

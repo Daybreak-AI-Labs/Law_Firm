@@ -1,4 +1,4 @@
-"""Safety utilities for Lightwork.
+"""Safety utilities for Maverick.
 
 Currently:
   - ``secret_detector``: regex-based credential scrubbing for tool outputs.

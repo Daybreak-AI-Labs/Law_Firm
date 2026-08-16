@@ -20,7 +20,7 @@ from . import Tool
 log = logging.getLogger(__name__)
 
 
-_USER_AGENT = "Lightwork/0.1 (https://github.com/Daybreak-AI-Labs/Lightwork)"
+_USER_AGENT = "Maverick/0.1 (https://github.com/Daybreak-AI-Labs/Law_Firm)"
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",

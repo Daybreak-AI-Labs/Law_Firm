@@ -1,9 +1,9 @@
-/* Lightwork dashboard stylesheet. Extracted from templates/base.html so the
-   shell template stays markup; served by GET /static/lightwork.css. Custom
+/* Maverick dashboard stylesheet. Extracted from templates/base.html so the
+   shell template stays markup; served by GET /static/maverick.css. Custom
    operator themes ([dashboard] themes) remain inlined by base.html because
    they are rendered per-request from config. */
     /* =====================================================================
-       Lightwork design system. All visual decisions live in CSS variables so
+       Maverick design system. All visual decisions live in CSS variables so
        the 4 built-in themes + operator custom themes ([dashboard] themes in
        config.toml, which set only --bg/--panel/--text/--accent) all work from
        one set of rules. Derived tokens live on <body> (not :root) and are

@@ -2,7 +2,7 @@
 
 ## Decision
 
-Lightwork will build the governance and evaluation substrate for specialist
+Maverick will build the governance and evaluation substrate for specialist
 models now, while keeping real GPU training demand-driven. The platform is
 vendor-neutral: Prime Intellect is a strong optional training backend, not an
 architectural dependency and not a trust boundary.
@@ -15,7 +15,7 @@ The near-term product is not "we train a foundation model." It is:
 > safety and deployment qualification, carries an externally verifiable
 > receipt, and receives explicit human authority.
 
-That gives Lightwork a credible route to lower inference cost, lower latency,
+That gives Maverick a credible route to lower inference cost, lower latency,
 air-gapped deployment, and a proprietary per-customer learning loop without
 claiming results that have not been measured.
 
@@ -55,7 +55,7 @@ flowchart LR
     L --> A
 ```
 
-The environment, receipt, qualification, and promotion contracts are Lightwork
+The environment, receipt, qualification, and promotion contracts are Maverick
 contracts. A Prime, local DPO/QLoRA, or future training implementation plugs in
 below them.
 
@@ -96,7 +96,7 @@ rollback. It is not an incremental configuration switch.
 
 ## Environment design
 
-The three initial environments map to existing deterministic Lightwork engines:
+The three initial environments map to existing deterministic Maverick engines:
 
 1. **Privacy Impact Assessment scoring** — structured answer map to inherent
    risk, residual risk, and findings.
@@ -120,7 +120,7 @@ default; production programs should raise those floors based on error cost.
 ## Specialist-model candidate matrix
 
 This is a bakeoff queue, not a winner declaration. Sizes are published artifact
-sizes captured in the versioned catalog; Lightwork still requires a signed file
+sizes captured in the versioned catalog; Maverick still requires a signed file
 manifest and live qualification on the exact serving stack.
 
 | Candidate | Exact catalog format | Published weights | Initial role | Position |
@@ -177,7 +177,7 @@ in measured deployment constraints; none relaxes the safety/quality floor.
 
 ## Prime Intellect integration
 
-Lightwork targets explicit compatibility profiles, pinned exactly:
+Maverick targets explicit compatibility profiles, pinned exactly:
 
 - [prime-rl v0.7.0](https://github.com/PrimeIntellect-ai/prime-rl/tree/d334ea52940b47f426293a7d146239e3fbf91caa)
   at commit `d334ea52940b47f426293a7d146239e3fbf91caa`, with its bundled editable
@@ -189,7 +189,7 @@ Lightwork targets explicit compatibility profiles, pinned exactly:
 
 Verifiers models an environment as tasksets plus harness/reward functions.
 prime-rl is an asynchronous multi-process training system; it is not compatible
-with the synchronous preference-pair `adapter_rung.Trainer` protocol. Lightwork
+with the synchronous preference-pair `adapter_rung.Trainer` protocol. Maverick
 therefore uses a separate training-backend lifecycle with prepare, status,
 cancel, and resume semantics.
 
@@ -203,7 +203,7 @@ The integration:
 - generates train-only trainer bundles and separate evaluation-only bundles;
 - ships the exact deterministic scorer source inside the bundle, commits its
   bytes in the runtime lock, and verifies those bytes before execution without
-  depending on an ambient Lightwork installation;
+  depending on an ambient Maverick installation;
 - emits exact argv and configuration for an operator-provisioned workspace;
 - selects the environment with Prime v0.7's Verifiers v1
   `taskset = { id = ... }` configuration shape;
@@ -368,7 +368,7 @@ as future promotion authority.
 
 ## Defensible YC statement
 
-> Lightwork turns customer-authorized, human-reviewed compliance decisions into
+> Maverick turns customer-authorized, human-reviewed compliance decisions into
 > deterministic evaluation and training environments. As volume grows, we can
 > distill per-customer specialist models that reduce cost and latency and run
 > inside regulated environments. Every adopted model change is bound to the

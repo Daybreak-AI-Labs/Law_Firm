@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-DEFAULT_REPO = "Daybreak-AI-Labs/Lightwork"
+DEFAULT_REPO = "Daybreak-AI-Labs/Law_Firm"
 # Keep the prefilled body well under GitHub's URL length limit so the link
 # always opens; long error dumps are truncated.
 _MAX_BODY_CHARS = 6000
@@ -42,7 +42,7 @@ def build_report(
     gtitle = scrub(str(getattr(goal, "title", "") or "")).strip()
     title = f"Agent run failed: {gtitle or 'goal'}"[:120]
     lines = [
-        "_Reported from a failed Lightwork run (`maverick report-issue`)._",
+        "_Reported from a failed Maverick run (`maverick report-issue`)._",
         "",
         f"- Goal #{getattr(goal, 'id', '?')}: {gtitle}",
         f"- Status: {getattr(goal, 'status', '?')}",

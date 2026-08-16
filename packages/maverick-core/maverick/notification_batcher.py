@@ -97,7 +97,7 @@ class NotificationBatcher:
         self._first_ts: float | None = None
         self._lock = threading.Lock()
 
-    def submit(self, body: str, *, title: str = "Lightwork",
+    def submit(self, body: str, *, title: str = "Maverick",
                priority: str = "default", category: str | None = None) -> int:
         """Queue or deliver a notification. Returns backends fired *now*
         (0 when the item was queued for a later batch)."""

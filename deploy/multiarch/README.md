@@ -1,6 +1,6 @@
 # Multi-architecture reduced runtime
 
-`Dockerfile.multiarch` and `build.sh` build a deliberately reduced Lightwork
+`Dockerfile.multiarch` and `build.sh` build a deliberately reduced Maverick
 runtime for exactly two supported targets:
 
 - `linux/amd64`

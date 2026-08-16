@@ -1,7 +1,7 @@
 {
   "name": "@maverick/plugin-sdk",
   "version": "0.1.0",
-  "description": "Author Lightwork agent tools in TypeScript (NDJSON stdio plugins).",
+  "description": "Author Maverick agent tools in TypeScript (NDJSON stdio plugins).",
   "license": "SEE LICENSE IN ../../LICENSE",
   "type": "module",
   "main": "dist/index.js",

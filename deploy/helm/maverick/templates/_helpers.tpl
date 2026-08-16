@@ -46,9 +46,9 @@ separately until every control-plane store has a shared transactional backend.
 */}}
 {{- define "maverick.validate" -}}
 {{- if gt (int .Values.replicaCount) 1 -}}
-{{- fail "replicaCount > 1 is not supported for the Lightwork control plane: Postgres centralizes the world model, but flows, A2A idempotency, audit, and learning state remain tenant-local. Run one dashboard/serve replica and scale remote workers separately." -}}
+{{- fail "replicaCount > 1 is not supported for the Maverick control plane: Postgres centralizes the world model, but flows, A2A idempotency, audit, and learning state remain tenant-local. Run one dashboard/serve replica and scale remote workers separately." -}}
 {{- end -}}
 {{- if .Values.autoscaling.enabled -}}
-{{- fail "autoscaling.enabled is not supported for the Lightwork control plane until all durable flow/A2A/audit/learning stores are shared transactionally. Run one dashboard/serve replica and scale remote workers separately." -}}
+{{- fail "autoscaling.enabled is not supported for the Maverick control plane until all durable flow/A2A/audit/learning stores are shared transactionally. Run one dashboard/serve replica and scale remote workers separately." -}}
 {{- end -}}
 {{- end -}}

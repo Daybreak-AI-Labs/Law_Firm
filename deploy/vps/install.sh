@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Lightwork VPS bootstrap script.
+# Maverick VPS bootstrap script.
 #
 # Usage (the script URL and checkout must use the same reviewed commit):
-#   LIGHTWORK_REF=<lowercase-full-40-character-commit-sha>
-#   curl -fsSLo /tmp/lightwork-install.sh \
-#     "https://raw.githubusercontent.com/Daybreak-AI-Labs/Lightwork/${LIGHTWORK_REF}/deploy/vps/install.sh"
-#   sudo MAVERICK_REF="$LIGHTWORK_REF" bash /tmp/lightwork-install.sh
+#   MAVERICK_REF=<lowercase-full-40-character-commit-sha>
+#   curl -fsSLo /tmp/maverick-install.sh \
+#     "https://raw.githubusercontent.com/Daybreak-AI-Labs/Law_Firm/${MAVERICK_REF}/deploy/vps/install.sh"
+#   sudo MAVERICK_REF="$MAVERICK_REF" bash /tmp/maverick-install.sh
 #
 # What it does:
 #   1. Installs Python 3.12, pipx, git
-#   2. Installs the complete eight-package Lightwork release cohort into one
+#   2. Installs the complete eight-package Maverick release cohort into one
 #      pipx venv
 #   3. Runs `maverick init` interactively
 #   4. Drops a systemd unit so maverick serve runs at boot
@@ -64,15 +64,15 @@ require_root() {
 
 ensure_target_user() {
   if [[ "$TARGET_USER" == "root" ]]; then
-    echo "Refusing to install Lightwork as root; choose a non-root sudo user or set MAVERICK_SERVICE_USER." >&2
+    echo "Refusing to install Maverick as root; choose a non-root sudo user or set MAVERICK_SERVICE_USER." >&2
     exit 1
   fi
 
   if ! id -u "$TARGET_USER" >/dev/null 2>&1; then
-    log "Creating dedicated Lightwork service user ${TARGET_USER} (${TARGET_HOME})..."
+    log "Creating dedicated Maverick service user ${TARGET_USER} (${TARGET_HOME})..."
     useradd --system --create-home --home-dir "$TARGET_HOME" --shell /usr/sbin/nologin "$TARGET_USER"
   else
-    log "Using existing Lightwork install user ${TARGET_USER} (${TARGET_HOME})..."
+    log "Using existing Maverick install user ${TARGET_USER} (${TARGET_HOME})..."
     if [[ ! -d "$TARGET_HOME" ]]; then
       primary_group="$(id -gn "$TARGET_USER")"
       install -d -o "$TARGET_USER" -g "$primary_group" "$TARGET_HOME"
@@ -98,7 +98,7 @@ install_maverick() {
   install -d -m 0755 /opt
   STAGED_SOURCE="$(mktemp -d /opt/maverick.stage.XXXXXX)"
   git clone --no-checkout --filter=blob:none \
-    https://github.com/Daybreak-AI-Labs/Lightwork "$STAGED_SOURCE"
+    https://github.com/Daybreak-AI-Labs/Law_Firm "$STAGED_SOURCE"
   git -C "$STAGED_SOURCE" fetch --depth 1 origin "$MAVERICK_REF"
   git -C "$STAGED_SOURCE" -c advice.detachedHead=false checkout --detach FETCH_HEAD
   actual_ref="$(git -C "$STAGED_SOURCE" rev-parse HEAD)"
@@ -107,11 +107,11 @@ install_maverick() {
     exit 1
   }
   [[ -z "$(git -C "$STAGED_SOURCE" status --porcelain --untracked-files=all)" ]] || {
-    echo "Fresh Lightwork checkout is unexpectedly dirty; refusing installation." >&2
+    echo "Fresh Maverick checkout is unexpectedly dirty; refusing installation." >&2
     exit 1
   }
   [[ -f "$STAGED_SOURCE/packages/maverick-core/pyproject.toml" ]] || {
-    echo "Pinned checkout is not a complete Lightwork source tree." >&2
+    echo "Pinned checkout is not a complete Maverick source tree." >&2
     exit 1
   }
   chmod 0755 "$STAGED_SOURCE"

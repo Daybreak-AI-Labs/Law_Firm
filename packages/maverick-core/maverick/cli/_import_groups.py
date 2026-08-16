@@ -1,4 +1,4 @@
-"""``maverick import`` -- pull clients' existing automations into Lightwork.
+"""``maverick import`` -- pull clients' existing automations into Maverick.
 
 Registered by importing this module at the end of the package __init__ so the
 ``@main.group`` decorator fires on package import (same pattern as the other
@@ -25,7 +25,7 @@ def import_group() -> None:
 
 @import_group.command("sources")
 def import_sources_cmd() -> None:
-    """List the automation platforms Lightwork can import from."""
+    """List the automation platforms Maverick can import from."""
     from ..automation_import import available_sources, get_importer
     rows = []
     for s in available_sources():
@@ -64,11 +64,11 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
               help="Import from an exported definitions JSON file instead of a live fetch.")
 @click.option("--dry-run", is_flag=True, help="Translate + preview only; write nothing.")
 @click.option("--activate-schedules", is_flag=True,
-              help="Auto-create Lightwork schedules for recovered cron triggers.")
+              help="Auto-create Maverick schedules for recovered cron triggers.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.pass_context
 def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json) -> None:
-    """Import automations from SOURCE (e.g. ``n8n``) into Lightwork templates."""
+    """Import automations from SOURCE (e.g. ``n8n``) into Maverick templates."""
     from ..automation_import import ImporterError, enabled, get_importer, materialize, translate_all
     if not enabled():
         raise click.ClickException(

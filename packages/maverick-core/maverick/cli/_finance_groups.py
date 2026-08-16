@@ -759,7 +759,7 @@ def fleet_memory_cmd(register: str | None, description: str) -> None:
     """The agent-agnostic learning plane (Learning System of Record).
 
     External agents (Agentforce, Copilot, custom, OSS runtimes) deposit
-    experience into and recall from Lightwork's governed memory via the MCP /
+    experience into and recall from Maverick's governed memory via the MCP /
     REST surface; this command manages the roster and shows the console
     view. Requires [fleet_memory] enable = true.
     """

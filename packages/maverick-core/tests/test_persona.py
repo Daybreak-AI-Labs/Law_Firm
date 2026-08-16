@@ -36,12 +36,12 @@ def test_full_persona(monkeypatch):
 
 def test_partial_persona_name_only(monkeypatch):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-        f.write('[persona]\nname = "Lightwork"\n')
+        f.write('[persona]\nname = "Maverick"\n')
         path = Path(f.name)
     try:
         monkeypatch.setenv("MAVERICK_CONFIG", str(path))
         prompt = render_persona_prompt()
-        assert "Lightwork" in prompt
+        assert "Maverick" in prompt
         # No style or addendum content.
         for s in STYLES.values():
             assert s not in prompt

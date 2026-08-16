@@ -1,6 +1,6 @@
 # Security & GRC
 
-Lightwork packages one defensive Security & GRC suite in five deployment
+Maverick packages one defensive Security & GRC suite in five deployment
 shapes: the integrated platform and four reduced standalone products. The
 platform combines control-program records, evidence-backed deterministic
 engines, human approval, connected telemetry, and the signed audit chain. The
@@ -9,7 +9,7 @@ guarantees explicit on each product's `/about` page.
 
 !!! important "Readiness tooling, not certification or legal advice"
 
-    Lightwork does not certify an organization, issue an audit opinion, replace
+    Maverick does not certify an organization, issue an audit opinion, replace
     a qualified assessor, or determine a legal notification obligation. A
     framework score is a readiness signal over supplied answers and evidence.
     Framework names and identifiers provide mapping context; the product does
@@ -101,7 +101,7 @@ startup-injected read-only transport are all present. The dashboard surfaces are
 - `/security` — Security & GRC control-program workspace
 - `/security/assurance` — AI evidence gateway and Model Risk assurance cockpit
 - `/security/report` — print-friendly readiness and board report
-- `/security/threats` — threats inside Lightwork and its agent activity
+- `/security/threats` — threats inside Maverick and its agent activity
 - `/security/soc` — customer-environment findings, investigations, and response
   proposals
 
@@ -157,7 +157,7 @@ record labels are `control`, `evidence`, `risk`, `poam`, `vendor`, `policy`,
 print-oriented output without changing source records.
 
 Questionnaire answers use the existing `yes` / `no` / `na` / `unknown`
-vocabulary and the same inherent-versus-residual risk rollup as other Lightwork
+vocabulary and the same inherent-versus-residual risk rollup as other Maverick
 assessments. An `unknown` remains visible; it is not converted into evidence of
 control effectiveness.
 
@@ -180,7 +180,7 @@ expanded catalog are pinned in `maverick.security_framework_catalog`.
 
 ## Platform threat hunter
 
-`maverick.platform_hunt` defensively scans Lightwork's own normalized telemetry.
+`maverick.platform_hunt` defensively scans Maverick's own normalized telemetry.
 The verified Ed25519 audit chain is the production verdict source. Mutable
 WorldModel approval, goal, episode, and event rows cannot become finding evidence
 merely because they were supplied beside an intact chain; they are ignored by
@@ -236,7 +236,7 @@ receipts rather than a second raw-log archive.
 `ElasticConnector`, `SentinelConnector`, `KubernetesAuditConnector`,
 `OktaConnector`, and `EntraConnector`. A `QueryRequest` is time- and result-
 bounded and rejects non-read-only operations. Connector credentials remain in
-the normal Lightwork secret/configuration boundary and must be scoped read-only
+the normal Maverick secret/configuration boundary and must be scoped read-only
 for ingestion. Connector implementations must never include the credential in
 evidence, logs, findings, or error text; `credential_fingerprint()` provides an
 opaque diagnostic identifier instead.
@@ -269,7 +269,7 @@ bodies can select only already-registered, configured adapters. A finding may
 perform one related-event pivot through the same transport only when
 `pivot_enable` is true. That pivot is capped at 1,000 events, carries only
 bounded cited principals/targets, and uses the reserved
-`lightwork:related-events-v1` query contract. Enrichment providers are likewise
+`maverick:related-events-v1` query contract. Enrichment providers are likewise
 registered at trusted startup and invoked only when their name is explicitly
 enabled under `[env_hunt.enrichment_sources.<name>]`. Only allowlisted scalar
 fields are persisted, and each lookup must first land an accepted audit event.
@@ -284,7 +284,7 @@ The integrated REST JSON batch path additionally requires that connector's
 ingestion is the
 compatibility floor when a requested system does not yet have a named platform
 adapter. It permits a customer-side collector or broker to push normalized
-events without granting Lightwork broad access to the source.
+events without granting Maverick broad access to the source.
 
 When Shield is installed, normalized telemetry and imported Sigma content are
 screened before detection. The kernel still supports deployments without Shield;
@@ -301,7 +301,7 @@ approval ID, and queue decider. `response_approval_request()` must be created
 *after* the queue decision with those exact values; its Ed25519 signature cannot
 be replayed across a replacement approval row or changed decision identity. A
 narrowly scoped `ResponseExecutor` must return a receipt bound to both the
-proposal and approval. The `ResponseExecutorRegistry` is empty by default: Lightwork
+proposal and approval. The `ResponseExecutorRegistry` is empty by default: Maverick
 ships no generic mutating executor, and a deployment must explicitly register a
 client-specific implementation. Before calling that executor, the store commits
 a durable one-shot claim keyed by proposal and exact authorization. Completion
@@ -398,5 +398,5 @@ Across all three products, deterministic code creates control and detection
 verdicts from cited inputs. A model may summarize, triage, or draft a report; it
 does not become the deciding control test, threat label, materiality decision, or
 authorization. Human decisions are explicit records. Only the integrated
-platform can place those records on Lightwork's signed audit chain and approval
+platform can place those records on Maverick's signed audit chain and approval
 queue.

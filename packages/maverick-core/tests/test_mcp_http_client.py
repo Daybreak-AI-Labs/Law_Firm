@@ -1,6 +1,6 @@
 """Remote MCP servers over Streamable HTTP (ROADMAP B2, transport half).
 
-StreamableHttpMCPClient lets Lightwork consume a REMOTE MCP server (a `url` in
+StreamableHttpMCPClient lets Maverick consume a REMOTE MCP server (a `url` in
 config) instead of only stdio subprocesses. These tests drive it against an
 httpx MockTransport, so no network/server is needed; they cover the JSON and
 SSE response paths, session-id continuity, auth, error surfacing, the spec

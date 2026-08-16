@@ -235,7 +235,7 @@ def _session_principal(request: Request) -> VerifiedPrincipal | None:
 
 
 def execution_user_id_from_request(request: Request) -> str | None:
-    """Return the Lightwork ``user_id`` for the authenticated HTTP principal.
+    """Return the Maverick ``user_id`` for the authenticated HTTP principal.
 
     ``run_goal`` derives authorization principals as ``user:<user_id>``. The
     verified dashboard principal stores the raw subject on ``sub`` and exposes

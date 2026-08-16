@@ -39,7 +39,7 @@ def _build_card(text: str, title: str = "") -> dict:
         card["title"] = title
         card["summary"] = title
     else:
-        card["summary"] = text[:60] or "Lightwork"
+        card["summary"] = text[:60] or "Maverick"
     return card
 
 

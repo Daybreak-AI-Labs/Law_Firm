@@ -1,4 +1,4 @@
-# Lightwork on Kubernetes — minimal reference architecture.
+# Maverick on Kubernetes — minimal reference architecture.
 #
 # One Deployment running the dashboard (web UI + API + webhooks), state on a
 # PVC, secrets from a Secret. Apply with:

@@ -41,7 +41,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 # Domain-separated, versioned message prefix so an approval signature can never
-# be a valid signature for some other Lightwork artifact (or a future format).
+# be a valid signature for some other Maverick artifact (or a future format).
 APPROVAL_MESSAGE_VERSION = "maverick-approval-v1"
 
 

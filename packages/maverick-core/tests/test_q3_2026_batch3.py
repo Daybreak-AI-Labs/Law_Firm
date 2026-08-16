@@ -270,7 +270,7 @@ def test_notify_sanitizes_priority(monkeypatch):
     # notify() returns an int (backends fired) and takes a title kwarg.
     captured = {"prio": None, "title": None}
 
-    def fake_notify(body, *, title="Lightwork", priority="default",
+    def fake_notify(body, *, title="Maverick", priority="default",
                     category="agent", **_):
         captured["prio"] = priority
         captured["title"] = title
@@ -314,7 +314,7 @@ def test_notify_urgent_maps_to_max(monkeypatch):
     captured = {}
     monkeypatch.setattr(
         "maverick.notifications.notify",
-        lambda body, *, title="Lightwork", priority="default", **k:
+        lambda body, *, title="Maverick", priority="default", **k:
         captured.__setitem__("prio", priority) or 1,
     )
     from maverick.tools.notify import notify_tool
@@ -332,7 +332,7 @@ def test_diagnose_runs(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     from maverick.tools.diagnose import diagnose
     out = diagnose().fn({})
-    assert "Lightwork self-diagnose" in out
+    assert "Maverick self-diagnose" in out
     assert "python" in out
     assert "anthropic" in out
     assert "openai" in out

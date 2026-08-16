@@ -160,7 +160,7 @@ def record(
     with _lock:
         try:
             if default_store:
-                # The tenant/default data directory is Lightwork-owned.  An
+                # The tenant/default data directory is platform-owned.  An
                 # explicit caller path keeps its existing parent ACL.
                 ensure_private_directory(path.parent)
             with cross_process_lock(path, strict=True):

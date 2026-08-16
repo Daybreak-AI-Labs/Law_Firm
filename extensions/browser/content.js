@@ -1,4 +1,4 @@
-// Lightwork page-context capture (content script).
+// Maverick page-context capture (content script).
 //
 // Inert by design: it collects NOTHING on its own, makes no network calls,
 // and only answers an explicit getPageContext request sent by the popup

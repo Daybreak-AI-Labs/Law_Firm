@@ -4,7 +4,7 @@ Without args, prints how to use the package programmatically. With ``--demo`` it
 runs a real continuous-evolution loop against a SYNTHETIC, no-LLM fitness
 landscape -- so you can watch the archive accumulate and the best score climb
 across rounds without spending tokens. The real path is identical but with an
-``agent_factory`` that builds a live Lightwork agent from a config.
+``agent_factory`` that builds a live Maverick agent from a config.
 """
 from __future__ import annotations
 

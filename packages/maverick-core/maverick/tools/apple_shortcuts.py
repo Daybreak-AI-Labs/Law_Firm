@@ -1,6 +1,6 @@
 """Apple Shortcuts integration (roadmap: 2028 H1).
 
-Build the ``shortcuts://`` URLs that launch an Apple Shortcut from Lightwork on
+Build the ``shortcuts://`` URLs that launch an Apple Shortcut from Maverick on
 macOS/iOS — both the plain ``run-shortcut`` form and the ``x-callback-url`` form
 that names a success URL to return to. This only constructs the URL (correctly
 percent-encoded); opening it is a separate, deliberate step. Deterministic;

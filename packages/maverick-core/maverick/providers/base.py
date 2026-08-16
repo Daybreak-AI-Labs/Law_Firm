@@ -1,6 +1,6 @@
 """Provider interface marker.
 
-The Lightwork provider contract is structural (duck-typed): any object
+The Maverick provider contract is structural (duck-typed): any object
 with ``complete()`` and ``complete_async()`` methods that take the
 Anthropic-format system/messages/tools and return ``LLMResponse``
 works. This module exists as a documentation anchor; new providers

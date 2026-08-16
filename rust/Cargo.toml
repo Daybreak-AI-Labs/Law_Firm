@@ -1,4 +1,4 @@
-# Lightwork native core — the Rust "engine" carve.
+# Maverick native core — the Rust "engine" carve.
 #
 # Council verdict (Karpathy / Cloudflare / Pydantic / ServiceNow / Palo Alto):
 # rewrite the hot ENGINE in Rust, keep the ecosystem in Python + TypeScript.

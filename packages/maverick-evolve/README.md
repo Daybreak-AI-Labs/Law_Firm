@@ -1,6 +1,6 @@
 # maverick-evolve
 
-Governed, config-only evolution for Lightwork.
+Governed, config-only evolution for Maverick.
 
 The package separates adaptive development search from adoption evidence:
 

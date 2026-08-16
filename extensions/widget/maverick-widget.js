@@ -1,5 +1,5 @@
 /*
- * maverick-widget.js — embeddable Lightwork status widget.
+ * maverick-widget.js — embeddable Maverick status widget.
  *
  * Single self-contained file: no framework, no CDN, no external CSS.
  * Embed:
@@ -89,7 +89,7 @@
     '  <div class="last" id="last">No finished runs yet.</div>' +
     '  <div class="meta" id="meta">connecting…</div>' +
     "</div>" +
-    '<div class="pill" part="pill"><span class="dot" id="dot"></span><span id="label">Lightwork</span></div>';
+    '<div class="pill" part="pill"><span class="dot" id="dot"></span><span id="label">Maverick</span></div>';
 
   root.appendChild(style);
   root.appendChild(wrap);
@@ -125,7 +125,7 @@
     el("n-active").textContent = String(c.active);
     el("n-done").textContent = String(c.done);
     el("n-failed").textContent = String(c.failed);
-    el("label").textContent = "Lightwork · " + c.active + " active";
+    el("label").textContent = "Maverick · " + c.active + " active";
     var dot = el("dot");
     dot.className = "dot " + (c.active > 0 ? "busy" : "ok");
     if (data.last) {
@@ -143,7 +143,7 @@
 
   function renderError(msg) {
     el("dot").className = "dot err";
-    el("label").textContent = "Lightwork · offline";
+    el("label").textContent = "Maverick · offline";
     el("meta").textContent = msg;
   }
 

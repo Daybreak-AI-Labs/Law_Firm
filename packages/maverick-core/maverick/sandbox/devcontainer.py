@@ -142,7 +142,7 @@ def _parse_devcontainer(path: Path) -> DevcontainerSpec:
     if run_args:
         raise RuntimeError(
             f"{path}: `runArgs` is not supported for security reasons in v1. "
-            "Configure sandbox options in Lightwork config instead."
+            "Configure sandbox options in Maverick config instead."
         )
 
     repo_name = path.parent.name

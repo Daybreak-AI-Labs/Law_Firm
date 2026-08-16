@@ -88,7 +88,7 @@ def _gcm_open(
     from cryptography.exceptions import InvalidTag
 
     if blob[: len(magic)] != magic:
-        raise EncryptionUnavailable("blob is not a Lightwork KMS envelope (bad magic)")
+        raise EncryptionUnavailable("blob is not a Maverick KMS envelope (bad magic)")
     body = blob[len(magic):]
     if len(body) < _NONCE_BYTES + _GCM_TAG_BYTES:
         raise EncryptionUnavailable("KMS envelope is truncated")

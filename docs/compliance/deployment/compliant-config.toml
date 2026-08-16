@@ -1,4 +1,4 @@
-# Lightwork — compliant deployment configuration (REFERENCE TEMPLATE)
+# Maverick — compliant deployment configuration (REFERENCE TEMPLATE)
 #
 # A hardened ~/.maverick/config.toml that turns ON every opt-in control a SOC 2 /
 # ISO 27001 / ISO 42001 deployment must show enabled. Copy, fill the <…>
@@ -49,7 +49,7 @@ per_tenant = true         # per-tenant envelope encryption (DEK+KEK; wire a clou
 [audit]
 sign = true               # Ed25519 Merkle hash-chain + cross-file anchors
 # IMPORTANT: with [enterprise] mode = true the signing key MUST be off-host —
-# Lightwork refuses to generate-and-leave it on local disk. Provide a KMS /
+# Maverick refuses to generate-and-leave it on local disk. Provide a KMS /
 # secrets-manager-sourced 32-byte Ed25519 key in the service unit:
 #   MAVERICK_AUDIT_SIGNING_KEY=<hex/base64 raw key>   (or)
 #   MAVERICK_AUDIT_SIGNING_KEY_WRAPPED=<KMS-wrapped key>

@@ -829,7 +829,7 @@ def test_workflow_builder_page_renders(monkeypatch, tmp_path):
     # builder is the sidebar entry; the workflow builder is linked in-page from it.
     assert '<span class="nav-label">Flows</span>' in r.text
     # A Copilot handoff is short-lived, consumed once, and drafts without saving.
-    assert "lightwork.authoring-handoff" in r.text
+    assert "maverick.authoring-handoff" in r.text
     assert "AUTHOR_HANDOFF.kind !== 'agent'" in r.text
     assert "10 * 60 * 1000" in r.text
     assert "sessionStorage.removeItem" in r.text

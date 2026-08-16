@@ -1,4 +1,4 @@
-"""Client binding — one Lightwork deployment, exactly one enterprise client.
+"""Client binding — one Maverick deployment, exactly one enterprise client.
 The configured client id is the tenant FLOOR, so every data path re-homes under
 tenants/<client>/ and a client-bound surface refuses to serve unbound."""
 from __future__ import annotations

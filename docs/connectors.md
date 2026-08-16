@@ -1,6 +1,6 @@
 # Connectors
 
-Lightwork ships connectors to the systems enterprises actually run on. Every
+Maverick ships connectors to the systems enterprises actually run on. Every
 connector follows the same house rules:
 
 - **Explicit-env auth.** Each connector reads its credentials from named
@@ -30,7 +30,7 @@ Power Automate**, **Make (Integromat)**, and **Workato** all have their own
 connector for driving the platform's REST API directly (list/run/activate
 workflows), on top of the automation-import pipeline (`maverick.automation_import`)
 that turns an *existing* Zap/n8n workflow/Flow/Make scenario/Workato recipe
-definition into a runnable Lightwork template — see the Workflow Builder's
+definition into a runnable Maverick template — see the Workflow Builder's
 "Import" flow in the dashboard.
 
 Alongside these write-capable systems, the kernel ships **37 read-only

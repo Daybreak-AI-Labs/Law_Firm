@@ -50,7 +50,7 @@ def test_no_bare_table_headers(monkeypatch, tmp_path, path):
 def test_color_scheme_declared_for_native_controls(monkeypatch, tmp_path):
     """Native controls (scrollbars, selects, number spinners) match the theme."""
     _prep(monkeypatch, tmp_path)
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert "color-scheme: dark;" in css
     assert "color-scheme: light;" in css
 

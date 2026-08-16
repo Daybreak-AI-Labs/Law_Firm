@@ -342,7 +342,7 @@ def _postgres_store(namespace="test_postgres", prefix="TGP"):
     backend = PostgresGovernedRecordBackend(
         namespace,
         prefix,
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     backend._schema_ready = True
@@ -363,7 +363,7 @@ def test_postgres_authoritative_time_uses_database_clock():
     backend = PostgresGovernedRecordBackend(
         "clock_test",
         "CLK",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
 
@@ -846,7 +846,7 @@ def test_deployment_global_records_use_deployment_key_across_ambient_tenants(
     backend = PostgresGovernedRecordBackend(
         "test_global_crypto",
         "TGC",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
         authority_scope="deployment_global",
     )
@@ -887,7 +887,7 @@ def test_shared_encryption_floor_fails_before_db_and_withholds_plaintext(
     backend = PostgresGovernedRecordBackend(
         "test_encryption_floor",
         "TEF",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
         require_bound_tenant=True,
         require_encryption=True,
@@ -937,7 +937,7 @@ def test_shared_key_identity_drift_fails_before_database_access(monkeypatch):
     backend = PostgresGovernedRecordBackend(
         "test_shared_key_pin",
         "TSK",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=connect,
         require_shared_key_identity=True,
     )
@@ -995,7 +995,7 @@ def test_postgres_schema_setup_is_advisory_locked(monkeypatch):
     backend = PostgresGovernedRecordBackend(
         "test_schema",
         "TGS",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1027,7 +1027,7 @@ def test_postgres_schema_rejects_extra_permissive_rls_policy(monkeypatch):
     backend = PostgresGovernedRecordBackend(
         "test_rls_extra",
         "TRE",
-        dsn="postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1049,7 +1049,7 @@ def test_migration_provisioned_schema_uses_verify_only_runtime_path(monkeypatch)
     backend = PostgresGovernedRecordBackend(
         "test_preprovisioned",
         "TPP",
-        dsn="postgresql://runtime:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://runtime:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1072,7 +1072,7 @@ def test_existing_incompatible_primary_key_fails_without_ddl(monkeypatch):
     backend = PostgresGovernedRecordBackend(
         "test_bad_primary",
         "TBP",
-        dsn="postgresql://runtime:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://runtime:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1092,7 +1092,7 @@ def test_existing_schema_missing_identity_bound_fails_without_ddl(monkeypatch):
     backend = PostgresGovernedRecordBackend(
         "test_missing_bound",
         "TMB",
-        dsn="postgresql://runtime:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://runtime:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1111,7 +1111,7 @@ def test_postgres_runtime_role_must_not_bypass_rls(monkeypatch, attribute):
     backend = PostgresGovernedRecordBackend(
         "test_role_boundary",
         "TRB",
-        dsn="postgresql://runtime:secret@db.internal/lightwork",  # pragma: allowlist secret
+        dsn="postgresql://runtime:secret@db.internal/maverick",  # pragma: allowlist secret
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
@@ -1221,7 +1221,7 @@ def test_postgres_ids_use_full_uuid_entropy_and_legacy_ids_still_validate():
 
 def test_postgres_errors_do_not_expose_dsn_secret(monkeypatch):
     monkeypatch.setenv("MAVERICK_PG_RLS", "0")
-    dsn = "postgresql://alice:top-secret-password@db.internal/lightwork"  # pragma: allowlist secret
+    dsn = "postgresql://alice:top-secret-password@db.internal/maverick"  # pragma: allowlist secret
 
     def fail_connect(value, **_kwargs):
         raise RuntimeError(f"provider rejected {value}")
@@ -1241,7 +1241,7 @@ def test_postgres_errors_do_not_expose_dsn_secret(monkeypatch):
 
 def test_postgres_value_errors_do_not_expose_dsn_secret(monkeypatch):
     monkeypatch.setenv("MAVERICK_PG_RLS", "0")
-    dsn = "postgresql://alice:value-secret@db.internal/lightwork"  # pragma: allowlist secret
+    dsn = "postgresql://alice:value-secret@db.internal/maverick"  # pragma: allowlist secret
 
     def fail_connect(value, **_kwargs):
         raise ValueError(f"invalid provider setting {value}")
@@ -1304,7 +1304,7 @@ def test_strict_shared_selection_refuses_unbound_or_corrupt_tenant(
     monkeypatch.setenv("MAVERICK_GOVERNED_RECORDS_BACKEND", "postgres")
     monkeypatch.setenv(
         "MAVERICK_PG_DSN",
-        "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
     )
     with pytest.raises(GovernedRecordBackendError, match="active tenant"):
         store.new_id()
@@ -1326,7 +1326,7 @@ def test_strict_shared_selection_requires_application_encryption(monkeypatch):
     monkeypatch.setenv("MAVERICK_GOVERNED_RECORDS_BACKEND", "postgres")
     monkeypatch.setenv(
         "MAVERICK_PG_DSN",
-        "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
     )
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
     with tenant_scope(tenant="alpha"):
@@ -1345,7 +1345,7 @@ def test_strict_shared_selection_requires_pinned_fleet_encryption_key(
     monkeypatch.setenv("MAVERICK_GOVERNED_RECORDS_BACKEND", "postgres")
     monkeypatch.setenv(
         "MAVERICK_PG_DSN",
-        "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
     )
     monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY_DIGEST", raising=False)
@@ -1378,7 +1378,7 @@ def test_standard_postgres_selection_also_requires_application_encryption(
     monkeypatch.setenv("MAVERICK_GOVERNED_RECORDS_BACKEND", "postgres")
     monkeypatch.setenv(
         "MAVERICK_PG_DSN",
-        "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
     )
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
     with pytest.raises(GovernedRecordBackendError, match="encryption"):
@@ -1393,7 +1393,7 @@ def test_standard_postgres_selection_requires_pinned_fleet_key(monkeypatch):
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     monkeypatch.setenv(
         "MAVERICK_PG_DSN",
-        "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+        "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
     )
     monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY_DIGEST", raising=False)
@@ -1415,7 +1415,7 @@ def test_postgres_cutover_refuses_to_hide_local_records(monkeypatch):
         monkeypatch.setenv("MAVERICK_GOVERNED_RECORDS_BACKEND", "postgres")
         monkeypatch.setenv(
             "MAVERICK_PG_DSN",
-            "postgresql://user:secret@db.internal/lightwork",  # pragma: allowlist secret
+            "postgresql://user:secret@db.internal/maverick",  # pragma: allowlist secret
         )
         # A coordinated cutover restarts every process after changing the
         # authority selector. Simulate that restart while retaining the local

@@ -49,7 +49,7 @@ def alert(event: str, detail: str = "", *, severity: str = "high") -> bool:
         from .notifications import notify
         notify(
             detail or event,
-            title=f"Lightwork ALERT: {event}",
+            title=f"Maverick ALERT: {event}",
             priority=_PRIORITY.get(severity, "high"),
             category="ops_alert",
         )

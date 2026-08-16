@@ -6,7 +6,7 @@ cleanliness of the roster, the maker-checker gate on money movement, amount-awar
 delegation-of-authority tiers, the tamper-evident book of record, sanctions
 screening, read-only-by-default, encryption at rest, and the egress lock — plus
 which compliance regimes are enabled. Honest framing: this is *control coverage*,
-not an audit opinion (Lightwork supplies the controls + evidence; humans post, pay,
+not an audit opinion (Maverick supplies the controls + evidence; humans post, pay,
 file, and certify).
 """
 from __future__ import annotations

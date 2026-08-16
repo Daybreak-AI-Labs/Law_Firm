@@ -188,7 +188,7 @@ class ScheduleOut(BaseModel):
 
 
 class ImportRunIn(BaseModel):
-    """Import automations from an external platform into Lightwork templates.
+    """Import automations from an external platform into Maverick templates.
 
     ``source`` is one of the registered importers (n8n/make/.../zapier). Provide
     ``definitions`` (exported definition JSON objects) for an offline/connect

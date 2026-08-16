@@ -111,7 +111,7 @@ def parse_isolated(name: str, data: bytes, *, timeout: float = DEFAULT_TIMEOUT,
         raise ValueError(
             f"input of {len(data)} bytes exceeds the {MAX_INPUT_BYTES}-byte cap")
     # kwargs are baked as a JSON literal — nothing user-controlled becomes code.
-    # The child runs in isolated mode with a neutral cwd, then imports Lightwork
+    # The child runs in isolated mode with a neutral cwd, then imports Maverick
     # from the same trusted package root as this parent module.  That keeps
     # python -c from resolving whitelisted dotted names through an attacker
     # controlled workspace package.

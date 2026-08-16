@@ -51,7 +51,7 @@ _WORD_CLEAN = re.compile(r"[^a-z0-9]+")
 _KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _SOURCE_RECORD_SHA256 = "_source_record_sha256"
 _SOURCE_RECORD_SNAPSHOT = "_source_record_snapshot"
-_ALERT_PAGE_SCHEMA = "lightwork.regulatory-alert-page.v1"
+_ALERT_PAGE_SCHEMA = "maverick.regulatory-alert-page.v1"
 _MAX_ALERT_LIST = 5_000
 _MAX_ALERT_CURSOR = 512
 PARSER_VERSION = "regulatory-feed-parser-v1"
@@ -332,7 +332,7 @@ class ScopeReconcileResult:
 
 
 def fetch_feed(source: FeedSource, *, timeout: float = 20.0) -> bytes:
-    """Fetch one official HTTPS feed through Lightwork's shared SSRF guard.
+    """Fetch one official HTTPS feed through Maverick's shared SSRF guard.
 
     Redirect targets are revalidated and DNS is pinned by ``guarded_urlopen``.
     The response is read with a hard byte ceiling before it reaches a parser.
@@ -353,7 +353,7 @@ def fetch_feed(source: FeedSource, *, timeout: float = 20.0) -> bytes:
             source.url,
             headers={
                 "Accept": "application/json, application/atom+xml, application/rss+xml, text/xml",
-                "User-Agent": "Lightwork-Regulatory-Monitor/1.0",
+                "User-Agent": "Maverick-Regulatory-Monitor/1.0",
             },
             method="GET",
         )
@@ -892,9 +892,9 @@ def parse_feed(
         ):
             raise FeedParseError("retrieval_url must be same-host HTTPS provenance")
     elif acquisition_kind == "pack_generated":
-        retrieved_from = "urn:lightwork:regulatory-acquisition:pack-generated"
+        retrieved_from = "urn:maverick:regulatory-acquisition:pack-generated"
     else:
-        retrieved_from = "urn:lightwork:regulatory-acquisition:operator-supplied"
+        retrieved_from = "urn:maverick:regulatory-acquisition:operator-supplied"
     if source.format == "federal_register_json":
         records = _parse_federal_register(raw)
     elif source.format == "json":

@@ -21,7 +21,7 @@ each conversation *shape*, from this instance's own outcomes:
     JSON the picker consults when present.
 
 Honesty note: this is an **online-learning heuristic, not a pretrained
-model**. Lightwork ships NO trained weights; the picker starts as the rule
+model**. Maverick ships NO trained weights; the picker starts as the rule
 ladder and only ever reflects outcomes recorded on this instance (or weights
 the operator trained themselves with :func:`fit`).
 
