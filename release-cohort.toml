@@ -22,11 +22,6 @@ path = "packages/maverick-channels"
 runtime_module = "maverick_channels"
 
 [[packages]]
-distribution = "maverick-evolve"
-path = "packages/maverick-evolve"
-runtime_module = "maverick_evolve"
-
-[[packages]]
 distribution = "maverick-dashboard"
 path = "packages/maverick-dashboard"
 runtime_module = "maverick_dashboard"

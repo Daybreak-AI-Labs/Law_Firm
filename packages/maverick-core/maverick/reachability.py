@@ -65,7 +65,7 @@ ENTRY_POINTS = {
 }
 
 PACKAGES = ("maverick-core", "maverick-dashboard", "maverick-shield",
-            "maverick-channels", "maverick-evolve", "maverick-knowledge",
+            "maverick-channels", "maverick-knowledge",
             "maverick-mcp")
 
 

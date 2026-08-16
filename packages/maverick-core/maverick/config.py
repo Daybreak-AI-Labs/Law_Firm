@@ -1914,7 +1914,7 @@ def get_dreaming() -> dict:
         # cycle mutates it, keeping the last N snapshots.
         "snapshots": bool(cfg.get("snapshots", True)),
         "snapshot_keep_last": _int("snapshot_keep_last", 5),
-        # Dream-time rehearsal (maverick-evolve harness) is a separate trust
+        # Dream-time rehearsal is a separate trust
         # decision from consolidation: it spends real agent runs. Default off.
         "rehearse": bool(cfg.get("rehearse", False)),
         "max_rehearsals": _int("max_rehearsals", 3),

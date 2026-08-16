@@ -996,15 +996,14 @@ def load_rehearsals(path: Path | str | None = None) -> list[dict]:
 class RehearsalFrozen(RuntimeError):
     """Raised when rehearsal is refused because verifier calibration froze.
 
-    Mirrors maverick-evolve's interlock: a drifted judge must not grade
-    practice runs, or the system rehearses toward the drift.
+    A drifted judge must not grade practice runs, or the system rehearses
+    toward the drift.
     """
 
 
 def rehearsal_completed(output: str) -> bool:
     """The v1 rehearsal success signal: the previously-failing class of goal
-    now completes (non-empty answer, no failure prefix). Shared with the
-    maverick-evolve rehearsal bridge so both grade identically."""
+    now completes (non-empty answer, no failure prefix)."""
     out = (output or "").strip()
     return bool(out) and not out.startswith(
         ("Stopped", "ERROR", "BLOCKED", "⚠"),
@@ -1022,8 +1021,7 @@ async def rehearse(
     a distrusted grader. With a ``scorer`` (async ``(prompt, output) ->
     confidence``), a case passes only when it completes AND the verifier
     scores it at/above ``min_confidence``; without one, the completion check
-    alone grades (and the maverick-evolve eval harness is used when
-    installed — the kernel never *requires* the evolve package).
+    alone grades.
     """
     check_learning_halt("dreaming", "rehearsal_start")
     try:
@@ -1040,17 +1038,6 @@ async def rehearse(
     if not cases:
         return (0, 0)
 
-    if scorer is None:
-        try:
-            from maverick_evolve.eval_harness import EvalCase, evaluate
-            report = await evaluate(
-                agent,
-                [EvalCase(prompt=c["prompt"], check=rehearsal_completed)
-                 for c in cases],
-            )
-            return (int(report.passed), len(cases))
-        except ImportError:
-            pass
     passed = 0
     for c in cases:
         try:
