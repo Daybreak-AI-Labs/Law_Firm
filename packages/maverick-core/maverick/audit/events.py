@@ -220,17 +220,6 @@ class EventKind:
     # file names, URLs, application content, or other observed work data.
     # Background work observation is a separate authority from ordinary
     # self-learning/DGM and therefore has its own auditable lifecycle.
-    EKKO_CONTROL_CHANGED = "ekko_control_changed"
-    EKKO_CONSENT_CHANGED = "ekko_consent_changed"
-    EKKO_SESSION = "ekko_session"
-    EKKO_BATCH = "ekko_batch"
-    EKKO_MINING_RUN = "ekko_mining_run"
-    EKKO_CANDIDATE_REVIEW = "ekko_candidate_review"
-    EKKO_EXPORT = "ekko_export"
-    EKKO_ERASE = "ekko_erase"
-    EKKO_RETENTION_PURGE = "ekko_retention_purge"
-    EKKO_POLICY_BLOCK = "ekko_policy_block"
-    EKKO_HEALTH_DEGRADED = "ekko_health_degraded"
     # Provable learning: one signed row per structured verification reward
     # (maverick.reasoning_reward), so the EVIDENCE the system learns from -- the
     # per-dimension rubric, the holistic score, and whether a facet vetoed -- is

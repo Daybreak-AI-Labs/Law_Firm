@@ -6,11 +6,11 @@ from __future__ import annotations
 
 def test_steps_list_is_ordered_and_unique():
     from maverick_installer import wizard
-    assert len(wizard.STEPS) == 32
+    assert len(wizard.STEPS) == 31
     keys = [k for k, _ in wizard.STEPS]
     assert keys[0] == "deployment"
     assert keys[-1] == "webhooks"
-    assert keys[19:22] == ["assessments", "security_suite", "advanced"]
+    assert keys[18:21] == ["assessments", "security_suite", "advanced"]
     assert len(set(keys)) == len(keys)  # no dupes
 
 
@@ -19,14 +19,14 @@ def test_steps_list_is_ordered_and_unique():
 def test_step_indicator_formats_step_n_of_m():
     from maverick_installer import wizard
     out = wizard._step_indicator(3)
-    assert "Step 3/32" in out
+    assert "Step 3/31" in out
     assert wizard.STEPS[2][1] in out  # the label
 
 
 def test_step_indicator_includes_breadcrumb_of_done_labels():
     from maverick_installer import wizard
     out = wizard._step_indicator(3, done=["Deployment", "Providers"])
-    assert "Step 3/32" in out
+    assert "Step 3/31" in out
     assert "Deployment" in out
     assert "Providers" in out
 
@@ -34,7 +34,7 @@ def test_step_indicator_includes_breadcrumb_of_done_labels():
 def test_step_indicator_no_breadcrumb_when_done_empty():
     from maverick_installer import wizard
     out = wizard._step_indicator(1, done=[])
-    assert "Step 1/32" in out
+    assert "Step 1/31" in out
     assert "›" not in out
 
 
@@ -70,7 +70,6 @@ def test_run_prints_step_indicators(monkeypatch):
     monkeypatch.setattr(wizard, "pick_budget", dict)
     monkeypatch.setattr(wizard, "pick_sandbox", dict)
     monkeypatch.setattr(wizard, "pick_capabilities", dict)
-    monkeypatch.setattr(wizard, "pick_ekko", lambda: {"enable": False})
     monkeypatch.setattr(wizard, "pick_security_suite", dict)
     monkeypatch.setattr(wizard, "pick_advanced", dict)
     monkeypatch.setattr(wizard, "pick_web_search", lambda: (False, []))
@@ -99,9 +98,9 @@ def test_run_prints_step_indicators(monkeypatch):
     assert rc == 0
 
     out = wizard.console.file.getvalue()
-    assert "Step 1/32" in out
-    assert "Step 3/32" in out
-    assert "Step 21/32 Security & GRC" in out
-    assert "Step 32/32" in out
+    assert "Step 1/31" in out
+    assert "Step 3/31" in out
+    assert "Step 20/31 Security & GRC" in out
+    assert "Step 31/31" in out
     # Breadcrumb of earlier answers trails later steps.
     assert "Deployment" in out

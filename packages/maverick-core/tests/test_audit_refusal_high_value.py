@@ -85,11 +85,11 @@ def test_trust_and_egress_denials_propagate_refusal(monkeypatch):
 
 
 def test_killswitch_stays_armed_and_pages_before_refusal_propagates(monkeypatch):
-    from maverick import ekko_control, killswitch, ops_alert
+    from maverick import killswitch, ops_alert
 
     pages = []
     monkeypatch.setattr(killswitch, "_in_process_halt", None)
-    monkeypatch.setattr(ekko_control, "control_barrier", nullcontext)
+    monkeypatch.setattr(killswitch, "_authority_barrier", nullcontext)
     monkeypatch.setattr(
         ops_alert,
         "alert",

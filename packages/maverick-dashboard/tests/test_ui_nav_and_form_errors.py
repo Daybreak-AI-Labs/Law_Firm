@@ -24,7 +24,6 @@ def _prep(monkeypatch, tmp_path):
     ("/overview", "Overview"),
     ("/goals", "Goals"),
     ("/agents", "Agent Factory"),
-    ("/ekko", "Ekko"),
     ("/skills", "Skills"),
     ("/spend", "Spend"),
 ])

@@ -44,7 +44,7 @@ KNOWN_SECTIONS = frozenset({
     "capabilities", "catalogs", "channels", "client", "coding", "compaction",
     "compliance", "computer_use", "connections", "consequence", "containment",
     "context", "credit", "data_engine",
-    "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress", "ekko",
+    "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress",
     "emergent_codec", "emergent_protocol",
     "email", "embedded", "encryption", "energy", "enterprise", "entity_graph",
     "erp",

@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-from pathlib import Path
 
 from maverick import config
 
@@ -342,7 +341,7 @@ def _dump(data: dict) -> str:
     ]
     # "flows" carries the autonomous self-improvement knobs (auto_evolve/auto_apply,
     # both booleans) -- persisted here so set_flow_autonomy survives a restart.
-    for section in ("capabilities", "features", "flows", "ekko",
+    for section in ("capabilities", "features", "flows",
                     "security_ops", "threat_hunt", "env_hunt",
                     "security_suite_control",
                     *_LEARNING_SECTIONS):
@@ -615,97 +614,6 @@ def set_learning(enabled: bool, *, actor: str = "local") -> None:
             raise RuntimeError("global learning control audit could not be persisted")
         _write(data)
         reset_config_cache()
-
-
-def _higher_precedence_ekko_enable_owner() -> str | None:
-    """Return the active operator/tenant source that owns ``ekko.enable``.
-
-    The dashboard overlay intentionally overrides the base config, but the
-    optional operator and tenant sources are merged after it.  A non-table
-    ``ekko`` value is also ownership for this purpose: it replaces the whole
-    dashboard table and is invalid as an Ekko policy, so an expansive request
-    must fail closed.
-    """
-    operator = os.environ.get(config.CONFIG_OVERLAY_ENV)
-    sources = []
-    if operator:
-        sources.append((config.CONFIG_OVERLAY_ENV, Path(operator).expanduser()))
-    tenant = config.tenant_config_path()
-    if tenant is not None:
-        sources.append(("tenant config", tenant))
-    for owner, path in sources:
-        source = config.load_config(path)
-        if "ekko" not in source:
-            continue
-        section = source.get("ekko")
-        if not isinstance(section, dict) or "enable" in section:
-            return owner
-    return None
-
-
-def set_ekko(enabled: bool, *, actor: str = "local") -> dict:
-    """Set the deployment-global, default-off Ekko request bit.
-
-    The dashboard owns only ``[ekko] enable``.  Capture scope, retention,
-    provider egress, device enrollment, and endpoint permissions remain in the
-    client's higher-authority configuration and enrollment record.
-
-    As with DGM, the durable global audit authorization is written before the
-    atomic overlay commit.  Environment ownership is always rejected.  Before
-    an expansive ON commit, active operator/tenant sources are inspected and
-    an existing ``ekko.enable`` owner is rejected without publishing a latent
-    dashboard ON bit.  A post-commit effective-state check remains as a race
-    defense and rolls back a change superseded while this call was in flight.
-    """
-    from maverick.ekko_control import control_barrier
-
-    # Serialize the complete authorization change with collector commits. A
-    # disable call therefore cannot return while an append authorized under
-    # the previous deployment policy is still in flight.
-    with control_barrier(), _locked():
-        from maverick.config import config_source_errors, get_ekko, reset_config_cache
-
-        before_status = get_ekko()
-        if "MAVERICK_EKKO" in os.environ:
-            raise PermissionError("MAVERICK_EKKO owns the Ekko control")
-        if config_source_errors():
-            raise PermissionError("an active config source is invalid")
-        if enabled:
-            owner = _higher_precedence_ekko_enable_owner()
-            if owner is not None:
-                raise PermissionError(
-                    f"higher-precedence {owner} owns the Ekko control"
-                )
-        before = _load_overlay_for_update()
-        data = json.loads(json.dumps(before))
-        data.setdefault("ekko", {})["enable"] = bool(enabled)
-        from maverick.audit import EventKind, audit_event
-
-        audited = audit_event(
-            EventKind.EKKO_CONTROL_CHANGED,
-            _global=True,
-            control="ekko",
-            enabled=bool(enabled),
-            actor=actor,
-            previous_enabled=bool(before_status.get("enable", False)),
-            phase="authorized",
-        )
-        if not audited:
-            raise RuntimeError("global Ekko control audit could not be persisted")
-
-        _write(data)
-        reset_config_cache()
-        try:
-            after = get_ekko()
-        except Exception:
-            _write(before)
-            reset_config_cache()
-            raise
-        if bool(after.get("enable", False)) != bool(enabled):
-            _write(before)
-            reset_config_cache()
-            raise PermissionError("a higher-precedence deployment policy owns Ekko")
-        return after
 
 
 def set_flow_autonomy(*, auto_evolve: bool | None = None,

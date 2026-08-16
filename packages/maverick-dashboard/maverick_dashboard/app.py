@@ -491,9 +491,7 @@ app.include_router(admin_pages_router)
 # Ekko Work Discovery: a human review/control surface only.  Endpoint
 # collectors do not enter through HTTP; they write through the local core
 # daemon's owner/device/tenant-scoped store.
-from .ekko_routes import router as ekko_router  # noqa: E402
 
-app.include_router(ekko_router)
 # Built-in OIDC browser-login routes (/auth/login, /auth/callback, /auth/logout).
 # Each route self-gates on maverick.oidc.login_enabled() and 404s when the login
 # flow isn't fully configured, so including the router unconditionally is inert

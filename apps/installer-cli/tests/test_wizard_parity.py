@@ -88,7 +88,6 @@ def test_model_risk_literal_sections_are_known_to_config_lint():
     "pick_notifications",
     "pick_webhooks",
     "pick_self_learning",
-    "pick_ekko",
     "pick_automation_import",
     "pick_event_triggers",
 ])
@@ -366,33 +365,6 @@ def test_write_config_emits_self_learning(tmp_path: Path, monkeypatch):
     assert parsed["self_learning"]["max_acquisitions"] == 3
     # The retired add_mcp_servers knob is no longer written.
     assert "add_mcp_servers" not in parsed["self_learning"]
-
-
-def test_write_config_emits_explicit_ekko_policy(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        ekko={
-            "enable": True,
-            "retention_days": 14,
-            "capture_level": "application_metadata",
-            "allowed_apps": ["excel", "powerpoint"],
-            "provider_egress": False,
-        },
-    )
-    assert parsed["ekko"] == {
-        "enable": True,
-        "retention_days": 14,
-        "capture_level": "application_metadata",
-        "allowed_apps": ["excel", "powerpoint"],
-        "provider_egress": False,
-    }
-
-
-def test_write_config_can_record_explicit_ekko_opt_out(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, ekko={"enable": False},
-    )
-    assert parsed["ekko"] == {"enable": False}
 
 
 def test_write_config_emits_durable_when_enabled(tmp_path: Path, monkeypatch):
@@ -735,50 +707,6 @@ def test_pick_self_learning_defaults_to_safe_governed_learning(monkeypatch):
         "max_acquisitions": 5,
     }
 
-
-def test_pick_ekko_defaults_off_without_follow_up_prompts(monkeypatch):
-    from maverick_installer import wizard
-
-    prompts: list[str] = []
-
-    def _confirm(prompt, *args, default=False, **kwargs):
-        prompts.append(prompt)
-        return default
-
-    monkeypatch.setattr(wizard, "_q_confirm", _confirm)
-    monkeypatch.setattr(
-        wizard, "_q_text",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected follow-up")),
-    )
-
-    assert wizard.pick_ekko() == {"enable": False}
-    assert len(prompts) == 1
-
-
-def test_pick_ekko_enabled_branch_is_bounded_and_local_first(monkeypatch):
-    from maverick_installer import wizard
-
-    confirms = iter([True])  # enable
-    answers = iter(["Excel, PowerPoint, mystery.exe", "999", "1", "999"])
-    monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **k: next(confirms))
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(answers))
-    monkeypatch.setattr(
-        wizard, "_q_select",
-        lambda *a, **k: "application_metadata - application identity + timing only",
-    )
-
-    result = wizard.pick_ekko()
-
-    assert result["enable"] is True
-    assert result["allowed_apps"] == ["excel", "powerpoint"]
-    assert result["retention_days"] == 30
-    assert result["enrollment_days"] == 30
-    assert result["min_occurrences"] == 2
-    assert result["min_distinct_days"] == 30
-    assert result["provider_egress"] is False
-
-
-# ---------- finance suite wizard step (finance-agent-suite §8) ----------
 
 def test_pick_finance_skipped(monkeypatch):
     _StubQ(monkeypatch)

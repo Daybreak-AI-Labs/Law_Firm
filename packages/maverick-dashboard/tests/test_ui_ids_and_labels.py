@@ -28,7 +28,7 @@ def _setup_all(monkeypatch, tmp_path):
     paths = [
         "/", "/chat", "/goals", "/skills", "/store", "/facts", "/spend",
         "/providers", "/tools", "/permissions", "/plugins",
-        "/mcp", "/audit", "/cache", "/ekko",
+        "/mcp", "/audit", "/cache",
         f"/chat/goal/{gid}", f"/goals/{gid}/plan", f"/goals/{gid}/trajectory",
     ]
     return _client(), paths

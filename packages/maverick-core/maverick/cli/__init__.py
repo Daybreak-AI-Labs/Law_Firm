@@ -6584,7 +6584,6 @@ from . import (  # noqa: E402,F401
     _codec_groups,
     _compliance_groups,
     _connector_groups,
-    _ekko_groups,
     _external_agent_groups,
     _governed_execution_groups,
     _knowledge_groups,

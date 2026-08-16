@@ -27,6 +27,21 @@ from .paths import data_dir
 log = logging.getLogger(__name__)
 
 
+def _authority_barrier():
+    """Cross-process serialization for halt/clear.
+
+    Inlined from the deleted Ekko control plane: the halt path borrowed Ekko's
+    deployment-wide lock so a clear could not return while a write that
+    observed the old state was still committing. The semantics stay; only the
+    owner changed. Strict: an unavailable lock fails closed on clear.
+    """
+    from .file_lock import cross_process_lock
+    from .paths import data_dir
+
+    return cross_process_lock(data_dir("killswitch", "authority", tenant=None),
+                              strict=True)
+
+
 def _default_halt_file() -> Path:
     """Default HALT path, resolved fresh each call.
 
@@ -76,12 +91,10 @@ def halt(reason: str, source: str = "manual") -> None:
     # prior state. A lock outage can never undo the halt; it only weakens the
     # return-time barrier and is logged for operators.
     try:
-        from .ekko_control import control_barrier
-
-        with control_barrier():
+        with _authority_barrier():
             pass
     except Exception:
-        log.exception("killswitch: Ekko commit barrier unavailable during halt")
+        log.exception("killswitch: commit barrier unavailable during halt")
     log.warning("killswitch: halt set (%s, source=%s)", reason, source)
     from .audit import EventKind, audit_event
 
@@ -107,11 +120,9 @@ def halt(reason: str, source: str = "manual") -> None:
 def clear() -> None:
     """Reset the in-process halt. Doesn't delete the HALT file."""
     global _in_process_halt
-    from .ekko_control import control_barrier
-
     # Clearing is expansive, so unlike halt it fails closed if the strict
     # cross-process authority barrier is unavailable.
-    with control_barrier(), _state_lock:
+    with _authority_barrier(), _state_lock:
         _in_process_halt = None
 
 
