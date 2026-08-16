@@ -77,25 +77,6 @@ def test_model_risk_literal_sections_are_known_to_config_lint():
     assert not missing, f"model-risk sections config-lint will false-flag: {missing}"
 
 
-# ---------- new CHANNELS entries ----------
-
-def test_new_channels_added():
-    from maverick_installer.wizard import CHANNELS
-    ids = {c[0] for c in CHANNELS}
-    assert "bluesky" in ids
-    assert "mastodon" in ids
-    assert "voice" in ids
-
-
-def test_bluesky_channel_env_vars():
-    from maverick_installer.wizard import CHANNELS
-    spec = next(c for c in CHANNELS if c[0] == "bluesky")
-    assert "BLUESKY_HANDLE" in spec[2]
-    assert "BLUESKY_PASSWORD" in spec[2]
-
-
-# ---------- new pick_*() functions exist ----------
-
 @pytest.mark.parametrize("name", [
     "pick_web_search",
     "pick_mcp_servers",

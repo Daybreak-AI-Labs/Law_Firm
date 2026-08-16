@@ -38,7 +38,7 @@ def test_warn_once_unregistered_never_raises():
 def test_past_due_by_version():
     assert dep.past_due("0.1.6") == []          # nothing due yet
     due = dep.past_due("0.3.0")                  # the v1 window closes at 0.3.0
-    assert {d.name for d in due} >= {"plugins.api_v1", "channels.str_handler"}
+    assert {d.name for d in due} >= {"plugins.api_v1"}
     assert dep.past_due("9.9.9") == list(dep.REGISTRY)
 
 

@@ -1,7 +1,6 @@
 """Maverick CLI."""
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 import os
@@ -525,7 +524,6 @@ def version() -> None:
     pkg_names = [
         ("maverick-agent",     ("maverick-agent", "maverick")),
         ("maverick-shield",    ("maverick-shield",)),
-        ("maverick-channels",  ("maverick-channels",)),
         ("maverick-dashboard", ("maverick-dashboard",)),
         ("maverick-mcp-server", ("maverick-mcp-server",)),
         ("maverick-knowledge", ("maverick-knowledge",)),
@@ -4066,68 +4064,6 @@ def schedule_goal(cron_expr: str, text: str, title: str | None) -> None:
     from datetime import datetime
     when = datetime.fromtimestamp(run_at).strftime("%Y-%m-%d %H:%M:%S")
     click.echo(f"scheduled goal job {job_id}; next run {when}")
-
-
-@main.command()
-@click.option("--max-depth", default=3, type=int)
-@click.option("--verbose", "-v", is_flag=True)
-def serve(max_depth: int, verbose: bool) -> None:
-    """Start the channel server."""
-    # Use Maverick's shared logging config (JSON via MAVERICK_LOG_FORMAT=json,
-    # correlation-id context filter, secret scrubbing) for parity with the
-    # dashboard server entrypoint -- `serve` is the other network-exposed
-    # process and otherwise inherited a raw basicConfig with none of that
-    # hygiene. Falls back to basicConfig if the config module is unavailable.
-    try:
-        from ..logging_config import configure_logging
-        configure_logging(level="DEBUG" if verbose else "INFO")
-    except Exception:
-        logging.basicConfig(
-            level=logging.DEBUG if verbose else logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        )
-    # _configure_cli_logging (run by the group) defaults the root level to
-    # ERROR so library noise stays off a consumer's terminal -- but `serve`
-    # is a long-running server that wants its INFO/DEBUG logs. basicConfig is
-    # a no-op once a handler exists, so set the level explicitly here.
-    logging.getLogger().setLevel(logging.DEBUG if verbose else logging.INFO)
-    # Validate config at startup: a typo'd section/key silently uses a default
-    # (e.g. an uncapped budget), so surface it now. Warn-only unless
-    # MAVERICK_CONFIG_STRICT=1.
-    try:
-        from ..config_lint import warn_config_at_startup
-        warn_config_at_startup()
-    except SystemExit:
-        raise
-    except Exception:  # pragma: no cover - linting never blocks a non-strict start
-        pass
-    # Enterprise hard-gate: when the operator demands the data-boundary
-    # guarantees (MAVERICK_REQUIRE_ENTERPRISE=1 / [enterprise] require=true),
-    # refuse to start the channel server unless they hold -- the same preflight
-    # the dashboard entrypoint runs. No-op otherwise (kernel stays fail-open).
-    try:
-        from ..deployment import EnterpriseRequiredError, require_enterprise_or_die
-        require_enterprise_or_die()
-    except EnterpriseRequiredError as e:
-        click.echo(e.summary, err=True)
-        sys.exit(3)
-    try:
-        from ..server import build_from_config
-    except ImportError as e:
-        click.echo(f"ERROR: {e}", err=True)
-        sys.exit(2)
-    try:
-        server = build_from_config()
-    except RuntimeError as e:
-        click.echo(f"ERROR: {e}", err=True)
-        sys.exit(2)
-    server.max_depth = max_depth
-    click.echo("Maverick serve running. Ctrl-C to stop.")
-    try:
-        asyncio.run(server.run())
-    except KeyboardInterrupt:
-        click.echo("\nshutting down...")
-        asyncio.run(server.stop())
 
 
 @main.command("history")

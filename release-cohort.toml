@@ -17,11 +17,6 @@ path = "packages/maverick-shield"
 runtime_module = "maverick_shield"
 
 [[packages]]
-distribution = "maverick-channels"
-path = "packages/maverick-channels"
-runtime_module = "maverick_channels"
-
-[[packages]]
 distribution = "maverick-dashboard"
 path = "packages/maverick-dashboard"
 runtime_module = "maverick_dashboard"

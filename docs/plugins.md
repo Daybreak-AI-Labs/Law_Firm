@@ -10,7 +10,6 @@ forgiving handler that logs and continues.
 | Slot | Entry-point group | What it does |
 |---|---|---|
 | Tools | `maverick.tools` | A callable that returns a `maverick.tools.Tool`. Registered in every agent's base registry. |
-| Channels | `maverick.channels` | A `maverick_channels.Channel` subclass. Wired by `maverick serve` when enabled in config. |
 | Skills | `maverick.skills` | A `maverick.skills.Skill` instance. Auto-included in skill retrieval. |
 | Personas | `maverick.personas` | A renderer callable returning a system-prompt suffix. Referenced from `[persona] name = "..."`. |
 
@@ -57,32 +56,6 @@ through `Shield.scan_tool_call` just like a built-in.
 ## Channel plugin example
 
 ```toml
-[project.entry-points."maverick.channels"]
-mattermost = "mattermost_channel:MattermostChannel"
-```
-
-```python
-from maverick_channels import Channel
-
-class MattermostChannel(Channel):
-    name = "mattermost"
-    async def start(self): ...
-    async def send(self, user_id, text): ...
-    async def stop(self): ...
-```
-
-Enable it in `~/.maverick/config.toml`:
-
-```toml
-[channels.mattermost]
-enabled = true
-url     = "https://chat.example.com"
-```
-
-(Plugin channels are not yet auto-wired into `maverick serve` — they are
-discoverable via `maverick.plugins.discover_channels()`. Roadmap: a
-channel plugin can register its own `_wire` callback so config-driven
-startup works without core changes.)
 
 ## Skill plugin example
 

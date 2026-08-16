@@ -1085,26 +1085,3 @@ def test_unknown_nonempty_queue_backend_pins_fail_closed_dispatcher(monkeypatch)
         runner.set_dispatcher(original)
 
 
-def test_channel_server_does_not_overwrite_failed_queue_with_grpc(monkeypatch):
-    import maverick.server as server_mod
-
-    calls = []
-    original = runner.get_dispatcher()
-
-    def broken_queue():
-        runner.set_dispatcher(qd._FailClosedQueueDispatcher("bad queue"))
-        calls.append("queue")
-        raise qd.QueueSecurityError("bad queue")
-
-    monkeypatch.setattr(qd, "install_from_config", broken_queue)
-    monkeypatch.setattr(
-        "maverick.grpc_dispatcher.install_from_config",
-        lambda: calls.append("grpc") or True,
-    )
-    try:
-        server_mod._install_goal_dispatcher()
-        assert calls == ["queue"]
-        with pytest.raises(qd.QueueSecurityError, match="bad queue"):
-            runner.get_dispatcher().submit(1)
-    finally:
-        runner.set_dispatcher(original)

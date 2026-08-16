@@ -7928,22 +7928,6 @@ async def delete_role_override(role: str, request: Request) -> dict:
     return {"removed": removed, "role": view}
 
 
-@router.get("/channels")
-async def list_channels() -> dict:
-    """Enabled channels from ~/.maverick/config.toml."""
-    try:
-        from maverick.config import load_config
-        cfg = (load_config() or {}).get("channels") or {}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"config read failed: {e}") from e
-    return {
-        "channels": [
-            {"name": name, "enabled": bool(c.get("enabled", True))}
-            for name, c in cfg.items()
-        ],
-    }
-
-
 @router.get("/audit/tail")
 async def audit_tail(request: Request, n: int = 100, day: str | None = None) -> dict:
     """Tail the audit log (NDJSON at ~/.maverick/audit/YYYY-MM-DD.ndjson).

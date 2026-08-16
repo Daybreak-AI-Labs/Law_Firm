@@ -74,22 +74,6 @@ def test_discover_skips_non_callable_tool(monkeypatch):
     assert plugins.discover_tools() == []
 
 
-def test_discover_channels_returns_classes(monkeypatch):
-    class FakeChannel: ...
-    _set_eps(monkeypatch, {
-        "maverick.channels": [_FakeEP("custom", FakeChannel)],
-    })
-    out = plugins.discover_channels()
-    assert out == [("custom", FakeChannel)]
-
-
-def test_discover_channels_rejects_string(monkeypatch):
-    _set_eps(monkeypatch, {
-        "maverick.channels": [_FakeEP("oops", "telegram.foo")],
-    })
-    assert plugins.discover_channels() == []
-
-
 def test_discover_skills_passes_through(monkeypatch):
     class Skill:
         name = "weather"
@@ -121,14 +105,12 @@ def test_installed_plugins_snapshot(monkeypatch):
 
     _set_eps(monkeypatch, {
         "maverick.tools":    [_FakeEP("t1", make_tool)],
-        "maverick.channels": [_FakeEP("c1", ChanX)],
         "maverick.skills":   [_FakeEP("s1", SkillObj())],
         "maverick.personas": [_FakeEP("p1", persona)],
     })
     snap = plugins.installed_plugins()
     assert snap == {
         "tools": ["t1"],
-        "channels": ["c1"],
         "skills": ["weather"],
         "personas": ["p1"],
     }

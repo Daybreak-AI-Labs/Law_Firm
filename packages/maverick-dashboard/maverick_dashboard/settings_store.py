@@ -189,8 +189,7 @@ LEARNING_TOGGLES = [(s["section"], s["config_key"]) for s in LEARNING_SUBSYSTEMS
 _LEARNING_SECTIONS = list(dict.fromkeys(s["section"] for s in LEARNING_SUBSYSTEMS))
 
 # Channels offered in the UI: name + per-field spec. Keys MUST match what
-# server.py's _wire_<name> reads from [channels.<name>] (verified against the
-# wiring), so a value saved here actually configures the channel via the
+# (channel adapters removed; the [channels.*] overlay plumbing is gone with
 # load_config() deep-merge. ``secret`` fields are masked + never echoed back;
 # ``type: int`` fields are stored as numbers.
 CHANNELS: list[dict] = [
@@ -377,23 +376,6 @@ def _dump(data: dict) -> str:
         lines.append(f"[providers.{name}]")
         for field, val in fields:
             lines.append(f"{field} = {_toml_str(val)}")
-        lines.append("")
-    for name in sorted(data.get("channels") or {}):
-        ccfg = data["channels"][name] or {}
-        if not ccfg:
-            continue
-        lines.append(f"[channels.{name}]")
-        lines.append(f"enabled = {'true' if ccfg.get('enabled') else 'false'}")
-        for k in sorted(ccfg):
-            if k == "enabled":
-                continue
-            v = ccfg[k]
-            if isinstance(v, bool):
-                lines.append(f"{k} = {'true' if v else 'false'}")
-            elif isinstance(v, int):
-                lines.append(f"{k} = {v}")
-            else:
-                lines.append(f"{k} = {_toml_str(v)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -801,58 +783,10 @@ def set_value_assumptions(*, hourly_rate: float | None = None,
         _write(data)
 
 
-def set_channel(name: str, enabled: bool, values: dict | None = None) -> None:
-    """Enable/disable a channel and set its credentials in the overlay. A blank
-    field value is left unchanged (so toggling enabled never wipes a secret you
-    can't see). Writes [channels.<name>] to dashboard-config.toml, which
-    load_config() deep-merges -- so `maverick serve` picks it up with no
-    config.toml edit. Use ``clear_channel`` to remove."""
-    spec = _CHANNELS_BY_NAME.get(name)
-    if spec is None:
-        raise ValueError("unknown channel")
-    values = values or {}
-    with _locked():
-        data = _load_overlay_for_update()
-        ccfg = data.setdefault("channels", {}).setdefault(name, {})
-        ccfg["enabled"] = bool(enabled)
-        for field in spec["fields"]:
-            key = field["key"]
-            raw = values.get(key)
-            val = raw.strip() if isinstance(raw, str) else raw
-            if val in (None, ""):
-                continue  # blank -> keep the stored value (don't wipe a hidden secret)
-            if field.get("type") == "int":
-                try:
-                    ccfg[key] = int(val)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"{field['label']} must be a number") from exc
-            else:
-                ccfg[key] = str(val)
-        _write(data)
-
-
-def clear_channel(name: str) -> None:
-    """Remove a channel's overlay table entirely (reverts to config.toml/env)."""
-    if name not in _CHANNELS_BY_NAME:
-        raise ValueError("unknown channel")
-    with _locked():
-        data = _load_overlay_for_update()
-        (data.get("channels") or {}).pop(name, None)
-        _write(data)
-
-
 def _raw_config_providers() -> dict:
     """Providers from config.toml ONLY (no overlay), to attribute the source."""
     try:
         return config._load_config_file(config.config_path()).get("providers", {}) or {}
-    except Exception:
-        return {}
-
-
-def _raw_config_channels() -> dict:
-    """Channels from config.toml ONLY (no overlay), to attribute the source."""
-    try:
-        return config._load_config_file(config.config_path()).get("channels", {}) or {}
     except Exception:
         return {}
 
@@ -908,47 +842,3 @@ def state() -> dict:
     return {"providers": providers, "capabilities": capabilities, "features": features}
 
 
-def channels_state() -> list[dict]:
-    """Redacted snapshot for the channels page. NEVER returns a raw secret:
-    secret fields are blanked (with a masked hint), non-secret fields prefill so
-    the form shows the current host/port/etc."""
-    overlay = load_overlay()
-    ov_ch = overlay.get("channels") or {}
-    raw_ch = _raw_config_channels()
-    out = []
-    for spec in CHANNELS:
-        name = spec["name"]
-        ov = ov_ch.get(name) or {}
-        raw = raw_ch.get(name) or {}
-        fields = []
-        for f in spec["fields"]:
-            ov_v = ov.get(f["key"])
-            raw_v = raw.get(f["key"])
-            v = ov_v if ov_v not in (None, "") else raw_v
-            configured = v not in (None, "")
-            fields.append({
-                "key": f["key"], "label": f["label"],
-                "secret": bool(f.get("secret")), "type": f.get("type", "text"),
-                "value": "" if f.get("secret") else (str(v) if configured else ""),
-                "hint": _mask(v) if (configured and f.get("secret")) else "",
-                "configured": configured,
-            })
-        out.append({
-            "name": name, "label": spec["label"],
-            "enabled": bool(ov.get("enabled", raw.get("enabled", False))),
-            "fields": fields, "dashboard_set": bool(ov),
-            "via": "dashboard" if ov else ("config.toml" if raw else None),
-        })
-    return out
-
-
-__all__ = [
-    "PROVIDERS", "CAPABILITY_DEFAULTS", "CAPABILITY_INFO",
-    "FEATURE_DEFAULTS", "FEATURE_INFO", "CHANNELS",
-    "LEARNING_SUBSYSTEMS", "load_overlay", "set_provider", "clear_provider",
-    "SecuritySuiteConfigUnavailable", "SecuritySuiteRevisionConflict",
-    "security_suite_revision",
-    "set_ekko", "set_security_suite",
-    "set_toggle", "set_learning", "set_flow_autonomy", "state", "set_channel", "clear_channel",
-    "channels_state",
-]

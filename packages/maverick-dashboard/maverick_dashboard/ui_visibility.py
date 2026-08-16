@@ -179,8 +179,6 @@ PAGES: tuple[dict, ...] = (
      "floor": "view", "default": "operate"},
     {"path": "/mcp", "label": "Tool Servers", "group": "Extend", "icon": "mcp",
      "floor": "admin", "default": "admin"},
-    {"path": "/channels", "label": "Channels", "group": "Extend", "icon": "channels",
-     "floor": "admin", "default": "admin"},
     # -- Admin ----------------------------------------------------------------
     {"path": "/settings", "label": "Settings", "group": "Admin", "icon": "settings",
      "floor": "admin", "default": "admin"},

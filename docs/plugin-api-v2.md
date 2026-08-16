@@ -12,7 +12,7 @@ api_version = "2"
 ## What's new in v2
 
 - **Structured channel replies.** Channel handlers may return
-  `maverick_channels.Reply` (text + attachments + thread_ref) instead of bare
+  a structured Reply (text + attachments + thread_ref) instead of bare
   `str`. Adapters route through `Channel.dispatch` / `dispatch_text`, so a v2
   handler works on every adapter; platforms without a file API drop
   attachments with a debug note and always deliver the text.

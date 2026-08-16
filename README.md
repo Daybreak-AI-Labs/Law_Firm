@@ -93,7 +93,7 @@ git clone https://github.com/Daybreak-AI-Labs/Law_Firm && cd Law_Firm
 python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -e ./packages/maverick-core                 # kernel, with deps
-for p in maverick-shield maverick-channels maverick-evolve \
+for p in maverick-shield \
          maverick-dashboard maverick-mcp maverick-knowledge; do
   pip install --no-deps -e "./packages/$p"
 done
@@ -134,10 +134,8 @@ packages/
   maverick-core/       Kernel: orchestration, world model (SQLite/Postgres),
                        providers, sandboxes, the 125 domain packs, budget caps
   maverick-shield/     Prompt/tool/output screening
-  maverick-channels/   Channel adapters (email, Slack, Signal, …)
   maverick-dashboard/  FastAPI web UI + REST API at /api/v1
   maverick-mcp/        MCP server
-  maverick-evolve/     Self-improvement loop
   maverick-knowledge/  Document parsing, chunking, embedding, retrieval
 apps/
   desktop/             Tauri shell

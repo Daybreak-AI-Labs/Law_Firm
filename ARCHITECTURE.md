@@ -77,17 +77,6 @@ FastAPI local web UI + REST API.
 
 The platform exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over both **stdio** and a **streamable HTTP** transport (`http_transport.py`), negotiating the current protocol version `2025-11-25` with a `2024-11-05` fallback. Core tools (`start_goal`, `goal_status`, `goal_events`, `list_goals`, `answer_question`, `set_fact`, `get_facts`, `list_skills`) plus spec features: async pollable **Tasks** and **elicitation**. The HTTP transport is bearer-gated with a DNS-rebinding (Host/Origin) defense for the loopback case; server-initiated `sampling` is the remaining unimplemented capability. Protocol errors return JSON-RPC `error` payloads (e.g. `-32602`). Run via `maverick mcp`.
 
-### `packages/maverick-channels/`
-
-One adapter per messaging surface, all normalizing to the same `IncomingMessage` shape:
-
-- `cli` (stdin/stdout — default)
-- `telegram`, `discord`, `slack`, `matrix`, `signal`, `email`
-- `whatsapp`, `sms` (both via Twilio with **X-Twilio-Signature** verification)
-- `imessage` (macOS; sends via parameterized AppleScript to defeat injection)
-
-This is how phone-companion mode works: the swarm lives on Desktop or VPS, the user talks to it from their phone via Telegram/iMessage/etc.
-
 ### `packages/maverick-installer/` (`apps/installer-cli/` from spec)
 
 `maverick init` — the interactive wizard. The single source of truth for user-facing UX. Walks through:
@@ -158,7 +147,7 @@ What makes this a real multi-agent system, not just N parallel instances:
 
 `.github/workflows/release.yml` triggers on `git tag v*`:
 
-- **PyPI**: `maverick-agent` (squatted, so we ship under this name; the Python import name + CLI name remain `maverick`), `maverick-shield`, `maverick-dashboard`, `maverick-mcp-server`, `maverick-channels`, `maverick-installer`. Gated on `PYPI_API_TOKEN`.
+- **PyPI**: `maverick-agent` (squatted, so we ship under this name; the Python import name + CLI name remain `maverick`), `maverick-shield`, `maverick-dashboard`, `maverick-mcp-server`, `maverick-installer`. Gated on `PYPI_API_TOKEN`.
 - **GHCR**: multi-tag Docker image — `:latest`, `:vX.Y.Z`, `:vX.Y`.
 - **GitHub Releases**: PyInstaller single-file binaries for Linux x86_64, macOS arm64, Windows x86_64, each **Sigstore-signed keyless** (cosign via GitHub OIDC — `.sig` + `.pem` per artifact, logged to Rekor; verify with `deploy/verify-release.sh`), plus a per-release CycloneDX SBOM.
 

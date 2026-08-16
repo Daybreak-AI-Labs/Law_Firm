@@ -49,18 +49,6 @@ def test_clean_config(tmp_path):
     assert "config is current" in render(report)
 
 
-def test_whatsapp_twilio_advisory(tmp_path):
-    p = _cfg(tmp_path, "[channels.whatsapp]\nenabled = true\n")
-    report = migrate(p)
-    ids = [f.id for f in report.findings]
-    assert "whatsapp-twilio-to-cloud" in ids
-    assert "ADVISE" in render(report)
-    # Already on cloud -> no advisory.
-    p2 = _cfg(tmp_path / "sub" if (tmp_path / "sub").mkdir() or True else tmp_path,
-              "[channels.whatsapp]\nenabled = true\n[channels.whatsapp_cloud]\nenabled = true\n")
-    assert migrate(p2).clean
-
-
 def test_unknown_section_lint_with_suggestion(tmp_path):
     p = _cfg(tmp_path, "[budgets]\nmax_dollars = 5.0\n")
     report = migrate(p)
@@ -103,13 +91,15 @@ def test_default_config_uses_active_runtime_path(tmp_path, monkeypatch):
 
     active = tmp_path / "etc" / "maverick" / "config.toml"
     active.parent.mkdir(parents=True)
-    active.write_text("[channels.whatsapp]\nenabled = true\n", encoding="utf-8")
+    active.write_text("[mystery]\nx = 1\n", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("MAVERICK_CONFIG", str(active))
 
+    # The finding proves migrate() read the ACTIVE config, not ~/.maverick:
+    # the default config above is clean, only the active one has [mystery].
     report = migrate()
-    assert [f.id for f in report.findings] == ["whatsapp-twilio-to-cloud"]
+    assert [f.id for f in report.findings] == ["unknown-section-mystery"]
 
 
 def test_dry_run_never_writes(tmp_path):
@@ -130,7 +120,7 @@ def test_missing_and_unparseable_config(tmp_path):
 
 def test_cli(tmp_path):
     from maverick import cli as cli_mod
-    p = _cfg(tmp_path, "[channels.whatsapp]\nenabled = true\n")
+    p = _cfg(tmp_path, "[mystery]\nx = 1\n")
     r = CliRunner().invoke(cli_mod.main, ["migrate", "--config", str(p)])
     assert r.exit_code == 0, r.output
-    assert "ADVISE" in r.output and "dry run" in r.output
+    assert "mystery" in r.output and "dry run" in r.output

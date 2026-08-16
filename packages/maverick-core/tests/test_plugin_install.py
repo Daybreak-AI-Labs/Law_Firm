@@ -59,7 +59,7 @@ class TestInstallPlugin:
         assert seen["cmd"][1:4] == ["-m", "pip", "install"]   # argv, python -m pip
         assert "approved-pkg" in seen["cmd"]
         assert seen["shell"] is False                          # never a shell
-        assert set(out) == {"tools", "channels", "skills", "personas"}
+        assert set(out) == {"tools", "skills", "personas"}
 
     def test_pip_failure_raises_with_tail(self, monkeypatch):
         _cfg(monkeypatch, {"installable": ["approved-pkg"]})

@@ -5,7 +5,6 @@
 # Per-package overrides (currently same person).
 /packages/maverick-core/                @cdayAI
 /packages/maverick-shield/              @cdayAI
-/packages/maverick-channels/            @cdayAI
 /packages/maverick-dashboard/           @cdayAI
 /packages/maverick-mcp/                 @cdayAI
 /apps/installer-cli/                    @cdayAI

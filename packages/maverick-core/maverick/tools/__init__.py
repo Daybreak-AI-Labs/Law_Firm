@@ -762,7 +762,6 @@ def base_registry(
     from .capability_leak_fuzzer import capability_leak_fuzzer
     from .capability_negotiation import capability_negotiation
     from .capability_revocation import capability_revocation
-    from .channel_autoroute import channel_autoroute
     from .chaos_gameday import chaos_gameday
     from .cidr_check import cidr_check
     from .citation_verifier import citation_verifier
@@ -1044,7 +1043,6 @@ def base_registry(
     reg.register(consent_ergonomics())
     reg.register(skill_distill_v2())
     reg.register(observation_channel())
-    reg.register(channel_autoroute())
     reg.register(capability_delegation_graph())
     reg.register(honeytoken())
     reg.register(dp_stats())

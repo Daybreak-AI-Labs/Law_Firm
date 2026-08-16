@@ -3192,7 +3192,6 @@ async def plugins_page(request: Request) -> HTMLResponse:
     groups: dict[str, list[dict]] = {}
     for label, group in (
         ("tools",    "maverick.tools"),
-        ("channels", "maverick.channels"),
         ("skills",   "maverick.skills"),
         ("personas", "maverick.personas"),
     ):
@@ -3436,10 +3435,6 @@ def _permissions_snapshot() -> dict:
             "backend for untrusted goals."
         )
     snap["providers"] = sorted((cfg.get("providers") or {}).keys())
-    snap["channels"] = [
-        {"name": n, "enabled": bool(c.get("enabled", True))}
-        for n, c in (cfg.get("channels") or {}).items()
-    ]
     sec = cfg.get("security") or {}
     snap["network"] = (sec.get("network_policy") or "open")
 
@@ -3707,80 +3702,6 @@ async def templates_market_page(request: Request) -> HTMLResponse:
             "triggers_enabled": feats.get("triggers", True),
         },
     )
-
-
-@app.get("/channels", response_class=HTMLResponse)
-async def channels_page(request: Request, saved: str = "") -> HTMLResponse:
-    """Channels: manage the common ones (enable + credentials) from the form
-    sections, plus a read-only, secret-redacted view of everything configured.
-    Saved to the dashboard overlay, never config.toml; effective on the next
-    `maverick serve`."""
-    require_permission(request, "admin")
-    sensitive_markers = (
-        "token", "secret", "password", "passwd", "api_key", "apikey", "auth",
-        "credential", "cookie", "session",
-    )
-
-    def _display_channels(channels: dict) -> dict:
-        out: dict = {}
-        for name, cfg in (channels or {}).items():
-            if not isinstance(cfg, dict):
-                out[name] = {"enabled": bool(cfg)}
-                continue
-            safe_cfg: dict = {}
-            for key, value in cfg.items():
-                key_l = str(key).lower()
-                if any(marker in key_l for marker in sensitive_markers):
-                    safe_cfg[key] = "[redacted]"
-                else:
-                    safe_cfg[key] = value
-            out[name] = safe_cfg
-        return out
-
-    try:
-        from maverick.config import load_config
-        channels = _display_channels((load_config() or {}).get("channels") or {})
-    except Exception:
-        channels = {}
-    from maverick_dashboard import settings_store
-    managed = settings_store.channels_state()
-    saved_msg = {"save": "Channel updated.", "clear": "Channel reset."}.get(saved, "")
-    return templates.TemplateResponse(
-        request, "channels.html",
-        {"channels": channels, "managed": managed, "saved": saved_msg},
-    )
-
-
-@app.post("/channels/save")
-async def channels_save(request: Request) -> RedirectResponse:
-    """Enable/disable a channel and set its credentials from the form. Stored in
-    the dashboard overlay (dashboard-config.toml), never config.toml; blank
-    fields keep the current value so a toggle never wipes a hidden secret."""
-    _require_same_origin(request)
-    require_permission(request, "admin")
-    from maverick_dashboard import settings_store
-    form = await request.form()
-    name = (form.get("channel") or "").strip()
-    enabled = form.get("enabled") is not None  # checkbox present == on
-    values = {k: v for k, v in form.items() if k not in ("channel", "enabled")}
-    try:
-        settings_store.set_channel(name, enabled, values)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse("/channels?saved=save", status_code=303)
-
-
-@app.post("/channels/clear")
-async def channels_clear(request: Request, channel: str = Form(...)) -> RedirectResponse:
-    """Remove a channel's dashboard overlay (reverts to config.toml / env)."""
-    _require_same_origin(request)
-    require_permission(request, "admin")
-    from maverick_dashboard import settings_store
-    try:
-        settings_store.clear_channel((channel or "").strip())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse("/channels?saved=clear", status_code=303)
 
 
 @app.get("/api/v1/providers")

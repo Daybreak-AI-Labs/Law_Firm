@@ -71,7 +71,7 @@ def test_reload_drops_submodules_too(tmp_path, monkeypatch):
     try:
         eps = [_EP("p", "hotpkg:factory", "hotpkg-dist")]
         monkeypatch.setattr(plugins_mod, "_entry_points",
-                            lambda group: eps if group == "maverick.channels" else [])
+                            lambda group: eps if group == "maverick.tools" else [])
         import hotpkg  # noqa: F401
         assert "hotpkg.sub" in sys.modules
         dropped = reload_plugin("hotpkg-dist")

@@ -48,7 +48,6 @@ def _versions() -> dict:
     pkgs = {
         "maverick-agent": ("maverick-agent", "maverick"),
         "maverick-shield": ("maverick-shield",),
-        "maverick-channels": ("maverick-channels",),
         "maverick-dashboard": ("maverick-dashboard",),
         "maverick-mcp-server": ("maverick-mcp-server",),
         "maverick-installer": ("maverick-installer",),

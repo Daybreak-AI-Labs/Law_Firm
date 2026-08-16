@@ -112,7 +112,6 @@ observability   = [
 sentry          = ["sentry-sdk>=2.0"]
 shield          = ["maverick-shield>=0.1.7"]
 installer  = ["maverick-installer>=0.1.7"]
-channels   = ["maverick-channels>=0.1.7"]
 dashboard  = ["maverick-dashboard>=0.1.7"]
 mcp        = ["maverick-mcp-server>=0.1.7"]
 knowledge  = ["maverick-knowledge>=0.1.7"]
@@ -146,7 +145,6 @@ all        = [
     "fastembed>=0.3",
     "maverick-shield>=0.1.7",
     "maverick-installer>=0.1.7",
-    "maverick-channels>=0.1.7",
     "maverick-dashboard>=0.1.7",
     "maverick-mcp-server>=0.1.7",
     "maverick-knowledge>=0.1.7",

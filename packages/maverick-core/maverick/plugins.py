@@ -6,7 +6,6 @@ declaring entry_points in their ``pyproject.toml``::
     [project.entry-points."maverick.tools"]
     weather = "myplugin:weather_tool"
 
-    [project.entry-points."maverick.channels"]
     discordv2 = "myplugin:DiscordV2Channel"
 
     [project.entry-points."maverick.skills"]
@@ -48,7 +47,6 @@ Each plugin entry must conform to a contract:
   - ``maverick.tools``: callable that returns a ``maverick.tools.Tool``
     when invoked with no args. The tool is registered in every agent's
     base registry under its declared name.
-  - ``maverick.channels``: a ``Channel`` subclass (NOT an instance --
     `maverick serve` constructs one with the handler bound).
   - ``maverick.skills``: a ``maverick.skills.Skill`` instance.
   - ``maverick.personas``: callable returning a system-prompt suffix
@@ -129,7 +127,7 @@ def _all_installed_names() -> set[str]:
     Used to concretise the allowlist when config enables all (``*``) but the
     dashboard has force-disabled one or more."""
     names: set[str] = set()
-    for group in ("maverick.tools", "maverick.channels",
+    for group in ("maverick.tools",
                   "maverick.skills", "maverick.personas"):
         try:
             for ep in _entry_points(group):
@@ -774,19 +772,6 @@ def _iter_loaded_with_value(group: str, what: str):
                _ep_dist_name(ep))
 
 
-def discover_channels() -> list[tuple[str, Any]]:
-    """Return (name, Channel subclass) tuples for installed channel plugins."""
-    out: list[tuple[str, Any]] = []
-    for name, target in _iter_loaded("maverick.channels", "channels"):
-        # Heuristic: anything truthy + not a string passes; we don't import
-        # the Channel base here to avoid a hard dep on maverick-channels.
-        if isinstance(target, str):
-            log.warning("plugin channel %s loaded a string; skipping", name)
-            continue
-        out.append((name, target))
-    return out
-
-
 def discover_skills() -> list[Any]:
     """Return a list of plugin-provided Skill objects."""
     return [target for _, target in _iter_loaded("maverick.skills", "skills")]
@@ -807,7 +792,6 @@ def installed_plugins() -> dict[str, list[str]]:
     """Snapshot of all plugin slots. Used by `maverick version --plugins`."""
     return {
         "tools":     [name for name, _ in discover_tools()],
-        "channels":  [name for name, _ in discover_channels()],
         "skills":    [getattr(s, "name", "<unnamed>") for s in discover_skills()],
         "personas":  list(discover_personas()),
     }
@@ -871,7 +855,7 @@ def install_plugin(name: str, *, timeout: float = 300.0) -> dict[str, list[str]]
 
 # ---- hot plugin reload (roadmap 2027-H1 ecosystem) --------------------------
 
-_PLUGIN_GROUPS = ("maverick.tools", "maverick.channels", "maverick.skills",
+_PLUGIN_GROUPS = ("maverick.tools", "maverick.skills",
                   "maverick.personas")
 
 

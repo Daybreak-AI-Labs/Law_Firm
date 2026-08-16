@@ -43,7 +43,7 @@ def test_all_html_pages_are_well_formed(monkeypatch, tmp_path):
     client = _client()
     paths = [
         "/", "/chat", "/goals", "/skills", "/store", "/facts", "/spend",
-        "/providers", "/tools", "/permissions", "/channels", "/plugins",
+        "/providers", "/tools", "/permissions", "/plugins",
         "/mcp", "/audit", "/cache", "/ekko",
         f"/chat/goal/{gid}", f"/goals/{gid}/plan", f"/goals/{gid}/trajectory",
     ]

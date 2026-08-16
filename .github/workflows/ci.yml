@@ -308,7 +308,6 @@ jobs:
           python -m pip install \
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
-            -e ./packages/maverick-channels \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
@@ -501,7 +500,6 @@ jobs:
           python -m pip install \
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
-            -e ./packages/maverick-channels \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
@@ -595,7 +593,6 @@ jobs:
           python -m pip install \
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
-            -e ./packages/maverick-channels \
             -e ./packages/maverick-dashboard \
             -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \

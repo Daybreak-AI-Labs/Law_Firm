@@ -175,22 +175,3 @@ class TestGenerateCompanions:
         assert "not as instructions" in blocks[0]["text"]
 
 
-class TestServerInboundAttachments:
-    def test_stores_valid_and_skips_invalid(self, tmp_path, monkeypatch):
-        # Redirect the default attachment root so nothing touches the real HOME.
-        monkeypatch.setattr(att, "DEFAULT_ROOT", tmp_path / "attach")
-        from maverick.server import Server
-        wm = WorldModel(path=tmp_path / "w.db")
-        gid = wm.create_goal("channel goal", "")
-        items = [
-            {"filename": "report.txt", "mime": "text/plain", "data": b"totals"},
-            {"filename": "evil.exe", "mime": "text/plain", "data": b"MZ\x00\x00"},
-            {"filename": "empty.txt", "mime": "text/plain", "data": b""},
-            "not-a-dict",
-            {"filename": "meta-only.pdf", "mime": "application/pdf"},
-        ]
-        stored = Server._store_inbound_attachments(wm, gid, items)
-        assert stored == 1
-        names = [a.filename for a in wm.list_attachments(gid)]
-        assert names == ["report.txt"]
-

@@ -109,21 +109,6 @@ class MigrationReport:
         return not self.findings
 
 
-def _advisory_whatsapp_cloud(cfg: dict) -> Finding | None:
-    channels = cfg.get("channels") or {}
-    wa = channels.get("whatsapp") or {}
-    if wa.get("enabled") and not (channels.get("whatsapp_cloud") or {}).get("enabled"):
-        return Finding(
-            "advisory", "whatsapp-twilio-to-cloud",
-            "[channels.whatsapp] rides Twilio's Business API (per-message cost, "
-            "third-party webhooks). The first-party Meta Cloud API adapter "
-            "([channels.whatsapp_cloud]) has no middleman; see "
-            "maverick_channels/whatsapp_cloud.py for the four credentials it "
-            "needs. The Twilio adapter keeps working — migrate when ready.",
-        )
-    return None
-
-
 def _lint_unknown_sections(cfg: dict) -> list[Finding]:
     out = []
     for section in sorted(cfg):
@@ -196,9 +181,6 @@ def migrate(config_path: Path | None = None, *, apply: bool = False) -> Migratio
         report.findings.append(Finding("lint", "unparseable", f"cannot parse config: {e}"))
         return report
 
-    adv = _advisory_whatsapp_cloud(cfg)
-    if adv:
-        report.findings.append(adv)
     report.findings.extend(_lint_unknown_sections(cfg))
 
     rewrites = _apply_rewrites(cfg) if apply else []

@@ -104,17 +104,11 @@ def test_scaffold_manifest_permissions_parse_correctly(tmp_path: Path):
 
 # ---------- scaffold (channel + persona) ----------
 
-def test_scaffold_channel(tmp_path: Path):
-    scaffold("chat-thing", "channel", dest=tmp_path)
-    body = (tmp_path / "chat-thing" / "src" / "chat_thing" / "__init__.py").read_text()
-    # Must subclass the documented Channel base, not an ad-hoc class.
-    assert "class ChatThingChannel(Channel)" in body
-    assert "from maverick_channels import Channel" in body
-    assert "async def start" in body
-    assert "async def send" in body
-    assert "async def stop" in body
-    pyproject = (tmp_path / "chat-thing" / "pyproject.toml").read_text()
-    assert 'maverick.channels' in pyproject
+def test_scaffold_channel_kind_is_refused(tmp_path: Path):
+    # Channel adapters were removed with maverick-channels; the scaffolder
+    # must refuse the kind rather than emit a plugin that cannot import.
+    with pytest.raises(ValueError):
+        scaffold("chat-thing", "channel", dest=tmp_path)
 
 
 def test_scaffold_persona(tmp_path: Path):

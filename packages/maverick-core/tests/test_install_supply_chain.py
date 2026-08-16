@@ -206,7 +206,7 @@ def test_active_runtime_guidance_never_resolves_first_party_from_public_index():
     )
     unsafe = re.compile(
         r"pip(?:3|x)?\s+(?:install|inject)[^\n]*(?:maverick-agent|"
-        r"maverick-dashboard|maverick-mcp-server|maverick-channels|"
+        r"maverick-dashboard|maverick-mcp-server|"
         r"maverick-shield|maverick-installer)",
         re.IGNORECASE,
     )
@@ -267,14 +267,6 @@ def test_security_dependency_floors_cover_current_fixed_releases():
     dashboard = _metadata("packages/maverick-dashboard/pyproject.toml")
     _assert_floor(dashboard["project"]["dependencies"], "python-multipart", "0.0.31")
     _assert_floor(dashboard["project"]["dependencies"], "starlette", "1.3.1")
-
-    channels = _metadata("packages/maverick-channels/pyproject.toml")
-    channel_extras = channels["project"]["optional-dependencies"]
-    for extra in ("discord", "matrix", "all"):
-        _assert_floor(channel_extras[extra], "aiohttp", "3.14.1")
-    for extra in ("whatsapp", "sms", "all"):
-        _assert_floor(channel_extras[extra], "python-multipart", "0.0.31")
-        _assert_floor(channel_extras[extra], "starlette", "1.3.1")
 
     knowledge = _metadata("packages/maverick-knowledge/pyproject.toml")
     knowledge_extras = knowledge["project"]["optional-dependencies"]

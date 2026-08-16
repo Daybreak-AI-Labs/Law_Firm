@@ -2,7 +2,6 @@
 
 Configures Maverick for a fresh install. Sets up:
   - AI providers and per-role models
-  - channels (Telegram, Discord, Slack, Signal, WhatsApp, SMS, Email,
     Matrix, iMessage)
   - safety profile
   - sandbox backend
@@ -47,39 +46,6 @@ console = Console()
 
 
 # Channel catalog: (id, label, env_vars_needed)
-CHANNELS: list[tuple[str, str, list[str]]] = [
-    ("telegram", "Telegram bot (free, easiest)",        ["TELEGRAM_BOT_TOKEN"]),
-    ("discord",  "Discord bot (Gateway WS)",            ["DISCORD_BOT_TOKEN"]),
-    ("slack",    "Slack (Socket Mode)",                 ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"]),
-    ("signal",   "Signal (via signal-cli)",             []),
-    ("email",    "Email (IMAP/SMTP, stdlib only)",      ["EMAIL_USER", "EMAIL_APP_PASSWORD"]),
-    ("matrix",   "Matrix (federated)",                  ["MATRIX_ACCESS_TOKEN"]),
-    ("bluesky",  "Bluesky (AT Protocol)",               ["BLUESKY_HANDLE", "BLUESKY_PASSWORD"]),
-    ("mastodon", "Mastodon (any instance)",             ["MASTODON_ACCESS_TOKEN"]),
-    ("irc",      "IRC (channels + DMs)",                 []),
-    # Voice API key is provider-specific (VAPI/RETELL/BLAND), resolved in the
-    # voice block below; only the webhook token is static here.
-    ("voice",    "Voice (Vapi/Retell/Bland)",            ["VAPI_WEBHOOK_TOKEN"]),
-    ("whatsapp", "WhatsApp (Twilio, needs webhook)",    ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]),
-    ("whatsapp_cloud", "WhatsApp (Meta Cloud API, needs webhook)",
-     ["WHATSAPP_CLOUD_ACCESS_TOKEN", "WHATSAPP_CLOUD_PHONE_NUMBER_ID",
-      "WHATSAPP_CLOUD_VERIFY_TOKEN", "WHATSAPP_CLOUD_APP_SECRET"]),
-    ("sms",      "SMS (Twilio, needs webhook)",         ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]),
-    ("imessage", "iMessage (macOS only)",               []),
-    ("threads",  "Threads (Meta, polling)",              ["THREADS_ACCESS_TOKEN", "THREADS_USER_ID"]),
-    ("rcs",      "RCS (Google RBM, approved agents only)",
-     ["RCS_AGENT_ID", "RCS_SERVICE_ACCOUNT_JSON", "RCS_WEBHOOK_TOKEN"]),
-]
-
-
-# Channels that are scaffolds: they ship runtime code but can't work
-# end-to-end from a default install — whatsapp/sms need a Twilio account
-# plus a public webhook (maverick_channels documents both as "scaffold"),
-# and imessage is macOS-only and needs Full Disk Access. Offering them in
-# the default checkbox is dishonest: users pick them, then hit a dead end.
-# Gate them behind an explicit opt-in (see pick_channels).
-EXPERIMENTAL_CHANNELS: set[str] = {"whatsapp", "whatsapp_cloud", "sms", "imessage",
-                                   "threads", "rcs"}
 
 
 # Ordered advanced-flow steps, mirroring the pick_* sequence in run().
@@ -88,7 +54,6 @@ STEPS: list[tuple[str, str]] = [
     ("deployment", "Deployment"),
     ("providers", "Providers"),
     ("role_models", "Models"),
-    ("channels", "Channels"),
     ("safety", "Safety"),
     ("signed_skills", "Signed skills"),
     ("budget", "Budget"),
@@ -608,199 +573,7 @@ def pick_models_per_role(providers: list[str]) -> dict[str, str]:
 
 # Inbound channels enforce a sender allowlist (fail-closed): only these
 # IDs can drive the agent and spend budget. The wizard must collect it or
-# the channel refuses to start. See maverick_channels.base.is_allowed.
-_ALLOWLIST_CHANNELS = {
-    "telegram", "discord", "slack", "signal", "email",
-    "matrix", "bluesky", "mastodon", "irc", "imessage", "sms", "whatsapp",
-    "whatsapp_cloud", "threads", "rcs",
-}
-_ALLOWLIST_HINT = {
-    "telegram": "numeric Telegram user IDs",
-    "discord": "numeric Discord user IDs",
-    "slack": "Slack user IDs, e.g. U01ABC",
-    "signal": "phone numbers, e.g. +12345550199",
-    "email": "email addresses",
-    "matrix": "MXIDs, e.g. @you:matrix.org",
-    "bluesky": "handles or DIDs",
-    "mastodon": "acct names, e.g. you@instance",
-    "irc": "authenticated IRC account names (requires IRCv3 account-tag)",
-    "imessage": "phone numbers or emails",
-    "sms": "phone numbers, e.g. +14155551234",
-    "whatsapp": "senders as Twilio sends them, e.g. whatsapp:+14155551234",
-    "whatsapp_cloud": "bare wa_id digits, e.g. 14155551234",
-    "threads": "Threads usernames of allowed authors",
-    "rcs": "E.164 MSISDNs, e.g. +14155551234",
-}
-
-
-def _channel_base_cfg(ch_id: str, envs: set[str]) -> dict[str, Any]:
-    """Build the channel-specific config for ``ch_id`` (excluding allowlists).
-
-    May add provider-specific env vars to ``envs`` (e.g. voice keys).
-    """
-    cfg: dict[str, Any] = {"enabled": True}
-
-    if ch_id == "telegram":
-        cfg["bot_token"] = "${TELEGRAM_BOT_TOKEN}"
-    elif ch_id == "discord":
-        cfg["bot_token"] = "${DISCORD_BOT_TOKEN}"
-    elif ch_id == "slack":
-        cfg["app_token"] = "${SLACK_APP_TOKEN}"
-        cfg["bot_token"] = "${SLACK_BOT_TOKEN}"
-    elif ch_id == "signal":
-        cfg["phone_number"] = _q_text(
-            "  Signal phone number (e.g., +12345550199)", default=""
-        )
-    elif ch_id == "email":
-        cfg["imap_host"] = _q_text("  IMAP server", default="imap.gmail.com")
-        cfg["smtp_host"] = _q_text("  SMTP server", default="smtp.gmail.com")
-        cfg["smtp_port"] = _safe_int(_q_text("  SMTP port", default="465"), default=465)
-        cfg["imap_user"] = "${EMAIL_USER}"
-        cfg["imap_password"] = "${EMAIL_APP_PASSWORD}"
-        cfg["smtp_user"] = "${EMAIL_USER}"
-        cfg["smtp_password"] = "${EMAIL_APP_PASSWORD}"
-        cfg["poll_interval"] = 30
-    elif ch_id == "matrix":
-        cfg["homeserver"] = _q_text("  Matrix homeserver URL", default="https://matrix.org")
-        cfg["user_id"] = _q_text("  Matrix user ID (e.g., @you:matrix.org)", default="")
-        cfg["access_token"] = "${MATRIX_ACCESS_TOKEN}"
-    elif ch_id == "bluesky":
-        cfg["handle"] = "${BLUESKY_HANDLE}"
-        cfg["password"] = "${BLUESKY_PASSWORD}"
-        cfg["poll_interval"] = 60
-    elif ch_id == "mastodon":
-        cfg["instance"] = _q_text(
-            "  Mastodon instance URL", default="https://mastodon.social",
-        )
-        cfg["access_token"] = "${MASTODON_ACCESS_TOKEN}"
-        cfg["poll_interval"] = 30
-    elif ch_id == "voice":
-        provider = (_q_text(
-            "  Voice provider (vapi, retell, bland)", default="vapi",
-        ).strip().lower() or "vapi")
-        cfg["provider"] = provider
-        key_env = {
-            "vapi": "VAPI_API_KEY",
-            "retell": "RETELL_API_KEY",
-            "bland": "BLAND_API_KEY",
-        }.get(provider, "VAPI_API_KEY")
-        # Collect the provider-specific key so the wizard actually prompts
-        # for it; otherwise a retell/bland config references ${RETELL_API_KEY}
-        # / ${BLAND_API_KEY} that the user was never asked to enter.
-        envs.add(key_env)
-        cfg["api_key"] = "${" + key_env + "}"
-        # Inbound webhook auth is Vapi-shaped today; keep the token ref.
-        cfg["webhook_token"] = "${VAPI_WEBHOOK_TOKEN}"
-        cfg["phone_number"] = _q_text(
-            "  Phone number (E.164, optional)", default="",
-        )
-        cfg["assistant_id"] = _q_text(
-            "  Assistant/agent ID (optional)", default="",
-        )
-        cfg["port"] = _safe_int(
-            _q_text("  Webhook port", default="8770"), default=8770,
-        )
-    elif ch_id == "whatsapp":
-        cfg["account_sid"] = "${TWILIO_ACCOUNT_SID}"
-        cfg["auth_token"] = "${TWILIO_AUTH_TOKEN}"
-        cfg["from_number"] = _q_text(
-            "  WhatsApp 'from' (e.g., whatsapp:+14155238886)", default=""
-        )
-        cfg["port"] = _safe_int(_q_text("  Webhook port", default="8765"), default=8765)
-    elif ch_id == "sms":
-        cfg["account_sid"] = "${TWILIO_ACCOUNT_SID}"
-        cfg["auth_token"] = "${TWILIO_AUTH_TOKEN}"
-        cfg["from_number"] = _q_text(
-            "  SMS 'from' number (e.g., +14155551234)", default=""
-        )
-        cfg["port"] = _safe_int(_q_text("  Webhook port", default="8766"), default=8766)
-    elif ch_id == "imessage":
-        cfg["poll_interval"] = 5
-
-    return cfg
-
-
-def _channel_allowlist(ch_id: str, cfg: dict[str, Any]) -> None:
-    """Prompt for and apply per-channel sender allowlists in-place on ``cfg``."""
-    if ch_id in _ALLOWLIST_CHANNELS:
-        hint = _ALLOWLIST_HINT.get(ch_id, "sender IDs")
-        raw_ids = _q_text(
-            f"  Allowed senders, comma-separated ({hint}) — "
-            "only these can drive the agent",
-            default="",
-        )
-        ids = _csv_list(raw_ids)
-        if ids:
-            cfg["allowed_user_ids"] = ids
-        else:
-            env_name = (
-                "IRC_ALLOWED_ACCOUNTS"
-                if ch_id == "irc"
-                else ch_id.upper() + "_ALLOWED_USER_IDS"
-            )
-            console.print(
-                "  [yellow]No allowlist set — this channel will refuse "
-                f"all senders until you set {env_name} "
-                "or add allowed_user_ids to config.[/yellow]"
-            )
-    elif ch_id == "voice":
-        raw = _q_text(
-            "  Allowed caller numbers (E.164, comma-separated; "
-            "blank = any authenticated caller)",
-            default="",
-        )
-        callers = _csv_list(raw)
-        if callers:
-            cfg["allowed_callers"] = callers
-
-
-def pick_channels(deployment: str) -> tuple[dict[str, dict[str, Any]], set[str]]:
-    """Returns (channels_config, env_vars_needed)."""
-    console.print()
-    if deployment == "desktop":
-        if not _q_confirm(
-            "Enable any messaging channels (Telegram, Discord, Signal, etc.) for remote access?",
-            default=False,
-        ):
-            return {}, set()
-    elif deployment == "phone":
-        console.print(
-            "[bold]Phone-companion mode:[/bold] pick the channels your phone will use.\n"
-        )
-
-    selectable = [c for c in CHANNELS if c[0] not in EXPERIMENTAL_CHANNELS]
-    if _q_confirm(
-        "Show experimental/unfinished channels (WhatsApp, SMS, iMessage)? "
-        "These are scaffolds and may not work end-to-end.",
-        default=False,
-    ):
-        selectable += [
-            (ch_id, f"{label} [experimental]", envs)
-            for ch_id, label, envs in CHANNELS
-            if ch_id in EXPERIMENTAL_CHANNELS
-        ]
-
-    choices = [f"{ch_id:9} - {label}" for ch_id, label, _ in selectable]
-    picked = _q_checkbox("Which channels do you want to enable?", choices)
-    picked_ids = [p.split()[0] for p in picked]
-
-    channels: dict[str, dict[str, Any]] = {}
-    envs: set[str] = set()
-
-    for ch_id in picked_ids:
-        info = next((c for c in CHANNELS if c[0] == ch_id), None)
-        if info is None:
-            continue
-        envs.update(info[2])
-
-        cfg = _channel_base_cfg(ch_id, envs)
-        _channel_allowlist(ch_id, cfg)
-
-        channels[ch_id] = cfg
-
-    return channels, envs
-
-
+# the channel refuses to start.
 def pick_safety() -> dict[str, Any]:
     pick = _q_select(
         "Safety profile:",
@@ -2820,7 +2593,6 @@ def pick_plugins() -> list[str]:
         from maverick.plugins import _entry_points  # type: ignore[attr-defined]
         for group in (
             "maverick.tools",
-            "maverick.channels",
             "maverick.skills",
             "maverick.personas",
         ):
@@ -5696,17 +5468,10 @@ def run(fast: bool = False, resume: bool = False) -> int:
         state["role_models"] = role_models
         _save_partial(state)
 
-    _announce()
-    channels_state = state.get("channels")
-    if channels_state is None:
-        channels, channel_envs = pick_channels(deployment)
-        # JSON-safe: store envs as a sorted list.
-        state["channels"] = channels
-        state["channel_envs"] = sorted(channel_envs)
-        _save_partial(state)
-    else:
-        channels = channels_state
-        channel_envs = set(state.get("channel_envs") or [])
+    # Channel adapters were removed (app-only ingress): no step, no prompt —
+    # write_config still takes the dict, permanently empty.
+    channels: dict[str, dict] = {}
+    channel_envs: set[str] = set()
 
     _simple = _run_simple_picks(state, _announce)
     safety = _simple["safety"]
