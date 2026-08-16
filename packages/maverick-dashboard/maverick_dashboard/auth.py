@@ -48,8 +48,6 @@ _OIDC_EXEMPT_PATHS = frozenset(
         "/docs",
         "/redoc",
         "/docs/oauth2-redirect",
-        "/.well-known/agent-card.json",
-        "/.well-known/agent.json",
         # Built-in browser-login endpoints must answer without an existing
         # session/bearer -- they ARE the way a browser gets one. They self-gate
         # on login_enabled() (404 when the login flow is off).
@@ -72,7 +70,7 @@ SELF_AUTH_WEBHOOK_PATHS = frozenset(
 )
 
 _SELF_AUTH_EXEMPT_PATHS = _OIDC_EXEMPT_PATHS | frozenset(
-    {"/a2a/v1", "/static/daybreak-logo.jpg"}
+    {"/static/daybreak-logo.jpg"}
 ) | SELF_AUTH_WEBHOOK_PATHS
 
 

@@ -344,7 +344,7 @@ class TaskStore:
         self._purge_expired()
         # A hostile client can send a non-string taskId (list/dict); coerce it to
         # "" so the lookup yields a clean -32602 instead of an unhashable-key
-        # TypeError (mirrors a2a_tasks._owned).
+        # TypeError.
         key = task_id if isinstance(task_id, str) else ""
         with self._lock:
             task = self._tasks.get(key)

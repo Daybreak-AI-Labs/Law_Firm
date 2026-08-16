@@ -145,11 +145,10 @@ def trust_pubkey_cmd() -> None:
 @click.option("--max-risk", type=click.Choice(["low", "medium", "high"]), default=None)
 @click.option("--max-dollars", type=float, default=None)
 @click.option("--data-scopes", default="", help="Comma-separated memory scopes.")
-@click.option("--a2a-token", default="", help="Per-caller A2A bearer.")
 @click.option("--grpc-token", default="", help="Per-caller gRPC bearer.")
 @click.option("--mcp-token", default="", help="Per-caller MCP bearer.")
 def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollars,
-                  data_scopes, a2a_token, grpc_token, mcp_token) -> None:
+                  data_scopes, grpc_token, mcp_token) -> None:
     """Add or replace a trusted external agent (managed overlay)."""
     from .. import agent_trust
 
@@ -160,7 +159,7 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
         "id": agent_id, "pubkey": pubkey, "direction": direction,
         "allow_tools": _split(allow_tools), "max_risk": max_risk,
         "max_dollars": max_dollars, "data_scopes": _split(data_scopes),
-        "a2a_token": a2a_token, "grpc_token": grpc_token, "mcp_token": mcp_token,
+        "grpc_token": grpc_token, "mcp_token": mcp_token,
     }
     try:
         a = agent_trust.put_agent(entry)

@@ -1,10 +1,30 @@
 # Changelog
 
-All notable changes to Lightwork. The format follows
+All notable changes to the firm's platform. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Removed
+- **Cross-organization agent interop** — `a2a`, `federation`,
+  `channel_federation`, the federated audit-log verifier, and
+  `grpc_api/federation.proto`. These let *other organizations'* agents discover
+  this instance and delegate goals to it; a single firm has no counterparty.
+  The `a2a` per-caller bearer surface is gone with them, so
+  `[agent_trust] a2a_token`, `maverick trust add --a2a-token` and
+  `--surface a2a` no longer exist — an existing `a2a_token` in config is
+  ignored rather than rejected. `federation_envelope.py` (the shared Ed25519
+  primitive) is retained.
+- **Marketplace ecosystem backend** — listing federation, moderation tooling
+  and donation links. The pack/connector browser (`storefront.py`) and your own
+  goal-template star ratings (`ratings.py`, `stats.py`) are retained.
+- **Third-party language SDKs** — the TypeScript, Go, Rust, C# and Java client
+  examples, quickstarts and their five CI jobs. MCP remains the surface for
+  outside callers.
+- **Enterprise product surface** — sales and certification-programme docs, the
+  product roadmap and RFCs, translated getting-started guides, and the
+  public-docs staging overlay.
 
 ### Added
 - **AI Evidence-Ready Gateway and operator cockpit** — governed evidence intake,

@@ -119,9 +119,9 @@ multi-tenant instance is fine.
 
 SQLite is single-writer (one control-plane replica per state volume). Postgres
 shares world-model rows and enables database-enforced tenant isolation, but it
-does not yet share every flow, A2A, audit, learning, and policy store. Keep one
+does not yet share every flow, audit, learning, and policy store. Keep one
 dashboard/serve replica and scale remote workers separately — see
-[`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/deploy/postgres/README.md). Row-level security
+[`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/postgres/README.md). Row-level security
 (`MAVERICK_PG_RLS=1`) enforces the tenant boundary in the database itself.
 
 ### Enabling RLS safely (auto-on under enterprise; guided opt-in otherwise)
