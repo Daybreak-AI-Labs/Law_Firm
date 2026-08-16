@@ -41,7 +41,7 @@ def test_audit_results_region_is_focusable_and_named(monkeypatch, tmp_path):
 
 def test_focus_ring_covers_focusable_regions(monkeypatch, tmp_path):
     _prep(monkeypatch, tmp_path)
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert '[tabindex="0"]:focus-visible' in css
 
 

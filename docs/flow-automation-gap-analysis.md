@@ -332,7 +332,7 @@ drafters. Design constraints learned from the current code:
 
 ## 7. Positioning summary
 
-| | Power Automate | UiPath | Lightwork (after phases 1–5) |
+| | Power Automate | UiPath | Maverick (after phases 1–5) |
 |---|---|---|---|
 | First flow | Template gallery + Copilot draft | Studio(X) learning curve | Chat builds it on the canvas, editable turn by turn |
 | When the happy path ends | Expression cliff (WDL) | Code/Studio | Data pills → NL→expression → `agent` node escape hatch |

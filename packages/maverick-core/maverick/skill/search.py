@@ -1,6 +1,6 @@
 """Skill search engine + Hugging Face dataset publish/pull (ROADMAP 2027 H2).
 
-Lightwork already ranks skills *for the agent loop* by goal relevance
+Maverick already ranks skills *for the agent loop* by goal relevance
 (``skills._relevant_skills_lexical``, ``skill_embeddings``). This is the
 other half: a **user-facing search** over the local skill library -- "what
 skills do I have for X?" -- with a transparent, zero-dependency ranking, plus

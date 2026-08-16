@@ -19,8 +19,8 @@ from typing import Any
 from .governed_records import GovernedRecordStore
 
 _STORE = GovernedRecordStore("evidence_graph", "EGN", "evidence_graph_node")
-_SCHEMA = "lightwork.evidence-graph-node.v1"
-_PACK_SCHEMA = "lightwork.evidence-graph-pack.v1"
+_SCHEMA = "maverick.evidence-graph-node.v1"
+_PACK_SCHEMA = "maverick.evidence-graph-pack.v1"
 _DECISIONS = frozenset({"approved", "rejected", "revoked"})
 _MAX_MODEL_RISK_PROJECTIONS = 2048
 _MAX_GRAPH_NODES = 10_000

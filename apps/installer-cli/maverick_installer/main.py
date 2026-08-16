@@ -14,7 +14,7 @@ from .wizard import run
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="maverick-init",
-        description="Interactive setup wizard for Lightwork.",
+        description="Interactive setup wizard for Maverick.",
     )
     parser.add_argument(
         "--fast", action="store_true",

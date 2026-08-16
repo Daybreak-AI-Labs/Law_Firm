@@ -12,8 +12,7 @@ Private software for one firm. Not a product, not for distribution.
 
 ## What this is
 
-A hard fork of the Lightwork agent platform (forked at `f47c70c`), cut down to a single
-law practice. You hand it a goal in plain English; an orchestrator decomposes it, routes
+Maverick, the firm's agent runtime, cut down to a single law practice. You hand it a goal in plain English; an orchestrator decomposes it, routes
 to the right specialist seat, and returns a draft with its sources. Every run is capped
 in dollars and wall-clock, every action is recorded, and nothing a seat produces is
 self-approving.
@@ -124,9 +123,9 @@ debian-packaged `cryptography` and the script will stop there.
 | `maverick audit verify` | Verify the hash-chained audit log |
 | `maverick template list` | Starter goals |
 
-The CLI also answers to `lightwork`, and every `MAVERICK_*` environment variable can be
-spelled `LIGHTWORK_*`. Internals keep the upstream `maverick` package names so fixes
-from upstream stay portable; only the product surface carries the firm's name.
+The CLI is `maverick` and settings are `MAVERICK_*`. That is the internal package
+name, kept because renaming 394k lines of source buys nothing; the upstream product
+name and its compatibility aliases are gone.
 
 ## Layout
 

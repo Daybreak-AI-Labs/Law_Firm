@@ -1,8 +1,8 @@
-"""Streamable HTTP transport for Lightwork's MCP server (spec 2025-11-25).
+"""Streamable HTTP transport for Maverick's MCP server (spec 2025-11-25).
 
 The stdio JSON-RPC transport in `server.py` works great for desktop
-clients (Claude Desktop, Cursor) that spawn Lightwork as a subprocess.
-For hosted Lightwork — VPS deployments, multi-tenant setups, MCP
+clients (Claude Desktop, Cursor) that spawn Maverick as a subprocess.
+For hosted Maverick — VPS deployments, multi-tenant setups, MCP
 gateways like Composio / MintMCP / Cloudflare — clients need an HTTP
 endpoint.
 

@@ -2,13 +2,13 @@
 
 ## Install
 
-The Lightwork distribution names are not yet reserved on public PyPI, so do
+The Maverick distribution names are not yet reserved on public PyPI, so do
 not install those names from the public index. Install a reviewed source
 commit instead:
 
 ```bash
-git clone https://github.com/Daybreak-AI-Labs/Lightwork
-cd Lightwork
+git clone https://github.com/Daybreak-AI-Labs/Law_Firm
+cd Maverick
 git checkout --detach <reviewed-full-40-character-commit-sha>
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
@@ -19,13 +19,13 @@ If you need the no-prerequisite desktop bootstrap, download
 `deploy/desktop/install.sh` or `deploy/desktop/install.ps1` from the same
 commit, verify it, and set `MAVERICK_REF` to the lowercase, full SHA. The
 scripts fail on missing or mutable refs and have no public-index fallback.
-Every `MAVERICK_*` variable can also be spelled `LIGHTWORK_*`.
+Every `MAVERICK_*` variable can also be spelled `MAVERICK_*`.
 
 From source while iterating:
 
 ```bash
-git clone https://github.com/Daybreak-AI-Labs/Lightwork
-cd Lightwork
+git clone https://github.com/Daybreak-AI-Labs/Law_Firm
+cd Maverick
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
 maverick init
@@ -97,7 +97,7 @@ Goals survive restarts. You can shut your laptop and come back tomorrow.
 
 You don't have to describe a job in words — you can show it. Capture an ordered
 record of someone doing the work (the actions they took and any narration of why)
-as JSONL or simple prefixed text, then hand the file to Lightwork:
+as JSONL or simple prefixed text, then hand the file to Maverick:
 
 ```
 ACTION[gmail]: send the morning digest -> ops@acme.com

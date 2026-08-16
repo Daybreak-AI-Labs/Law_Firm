@@ -171,7 +171,7 @@ def shared() -> MemoryStore:
     with _shared_lock:
         store = _shared.get(path)
         if store is None:
-            # This is a Lightwork-owned default directory.  Caller-injected
+            # This is a platform-owned default directory.  Caller-injected
             # MemoryStore parents are deliberately left untouched.
             ensure_private_directory(path.parent)
             store = MemoryStore(path=path)

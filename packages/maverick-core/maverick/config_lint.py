@@ -1,4 +1,4 @@
-"""Config validator for ``~/.maverick/config.toml`` (Lightwork 2.0 RFC item).
+"""Config validator for ``~/.maverick/config.toml`` (Maverick 2.0 RFC item).
 
 Walks an already-loaded config dict (see :func:`maverick.config.load_config`)
 and reports likely mistakes: a mistyped section name, an unknown key inside a

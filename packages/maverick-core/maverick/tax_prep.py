@@ -41,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 
 DISCLAIMER = (
-    "FIRST-PASS DRAFT prepared by Lightwork tax agents for preparer review. "
+    "FIRST-PASS DRAFT prepared by Maverick tax agents for preparer review. "
     "Not a filed return and not tax advice. A credentialed preparer must "
     "review, complete, and sign before filing."
 )

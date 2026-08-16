@@ -1,4 +1,4 @@
-"""Lightwork web dashboard."""
+"""Maverick web dashboard."""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version

@@ -88,7 +88,7 @@ def repl_exec(*, goal_id: int | None = None, principal: str = "") -> Tool:
             "  • only JSON-serializable globals survive to the next call "
             "(no open files, connections, classes, or arrays) — anything "
             "dropped is named back to you\n"
-            "  • no access to Lightwork tools or the world model from "
+            "  • no access to Maverick tools or the world model from "
             "inside the kernel; call those as tools instead\n"
             "  • every statement is bounded, screened, and recorded"
         ),

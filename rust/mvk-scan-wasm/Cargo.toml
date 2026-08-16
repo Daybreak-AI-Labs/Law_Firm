@@ -8,8 +8,8 @@ edition.workspace = true
 # (the other Rust jobs) resolves the inherited value fine; only wasm-pack needs
 # the literal. Must stay in sync with [workspace.package] license in rust/Cargo.toml.
 license = "LicenseRef-Proprietary"
-description = "wasm-bindgen binding for the Lightwork native safety scanners (TypeScript / edge)."
-repository = "https://github.com/Daybreak-AI-Labs/Lightwork"
+description = "wasm-bindgen binding for the Maverick native safety scanners (TypeScript / edge)."
+repository = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [lib]
 crate-type = ["cdylib"]

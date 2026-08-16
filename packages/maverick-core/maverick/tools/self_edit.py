@@ -1,6 +1,6 @@
-"""Self-edit tool: propose-only diffs for Lightwork's own code / config.
+"""Self-edit tool: propose-only diffs for Maverick's own code / config.
 
-The tool may inspect and propose exact-match changes to Lightwork source or
+The tool may inspect and propose exact-match changes to Maverick source or
 ``~/.maverick`` config, but it never writes files. A previous implementation
 allowed ``apply`` with a model-supplied ``confirm=true`` flag; that is not a real
 human approval channel because untrusted goals or prompt injection can influence
@@ -108,7 +108,7 @@ def self_edit() -> Tool:
     return Tool(
         name="self_edit",
         description=(
-            "Propose an exact-match edit to Lightwork's own code or config "
+            "Propose an exact-match edit to Maverick's own code or config "
             "(path-confined to the maverick package + ~/.maverick). Writes are "
             "disabled: propose/apply both return diffs for human review only."
         ),

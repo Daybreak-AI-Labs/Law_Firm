@@ -289,7 +289,7 @@ def build_start_request(
     body = encoder(payload)
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Lightwork-Relay/1.0",
+        "User-Agent": "Maverick-Relay/1.0",
     }
     if config.hmac_secret:
         signature, ts = sign_body(body, config.hmac_secret)

@@ -1,4 +1,4 @@
-# Lightwork operations runbook
+# Maverick operations runbook
 
 Quick triage for the alerts in `prometheus-rules.yaml`. Pair with
 `docs/operations.md` (the full operator playbook).

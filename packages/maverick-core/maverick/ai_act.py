@@ -6,7 +6,7 @@ sorts AI systems into risk tiers: **prohibited** (Art. 5), **high-risk**
 determines the obligations — and the tier depends on the *use case*, which only
 the operator knows.
 
-So this helper does the honest thing: it reports what Lightwork *can* determine —
+So this helper does the honest thing: it reports what Maverick *can* determine —
 the deployment's live Art. 50 transparency posture — and hands the operator a
 self-assessment checklist of the prohibited and high-risk categories plus the
 obligations each tier triggers. A conversational agent that discloses it is AI is
@@ -91,7 +91,7 @@ def assess_ai_act() -> dict[str, Any]:
         },
         "obligations_by_tier": {
             "limited_risk_art50": (
-                "Inform users they are interacting with AI (Lightwork does this via "
+                "Inform users they are interacting with AI (Maverick does this via "
                 "the first-turn disclosure) and mark AI-generated content."
             ),
             "high_risk_annex_iii": (

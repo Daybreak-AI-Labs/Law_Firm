@@ -2,7 +2,7 @@
 
 ## Terminal install
 
-The Lightwork distribution names are not yet reserved on public PyPI. Do not
+The Maverick distribution names are not yet reserved on public PyPI. Do not
 install those names from the public index. Use a reviewed source commit:
 
 ```bash

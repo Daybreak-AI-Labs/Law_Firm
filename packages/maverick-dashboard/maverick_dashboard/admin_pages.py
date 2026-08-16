@@ -31,7 +31,7 @@ def _app():
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: str = "") -> HTMLResponse:
     """Operator settings: appearance (theme/density/font/language) + which model
-    Lightwork uses by default. Appearance is applied via the existing
+    Maverick uses by default. Appearance is applied via the existing
     persist_theme middleware (the form GETs back here with the params); the
     model choice is saved to the dashboard-owned runtime overlay."""
     auth.require_permission(request, "admin")

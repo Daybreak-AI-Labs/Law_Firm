@@ -1,7 +1,7 @@
 """Regression tests for first-party package installation trust boundaries.
 
-The Lightwork distribution names are intentionally treated as untrusted on
-public indexes until the organization has reserved and protected them. CI and
+The distribution names are intentionally treated as untrusted on public
+indexes until the organization has reserved and protected them. CI and
 installer entry points must therefore use pinned local source or an explicit
 private index, never an implicit public lookup.
 """
@@ -90,9 +90,9 @@ def test_composite_action_installs_first_party_packages_from_its_checkout():
 def test_reusable_pr_workflow_requires_immutable_runtime_source():
     text = _read(".github/workflows/agent-on-pr.yml")
 
-    assert "lightwork_ref:" in text
+    assert "maverick_ref:" in text
     assert "Full 40-character commit SHA" in text
-    assert "repository: Daybreak-AI-Labs/Lightwork" in text
+    assert "repository: Daybreak-AI-Labs/Law_Firm" in text
     assert "persist-credentials: false" in text
     assert '"$source_root/packages/maverick-core[all]"' in text
     assert "pip install 'maverick-agent[all]'" not in text
@@ -134,7 +134,7 @@ def test_vps_installer_requires_a_clean_immutable_checkout():
     assert "status --porcelain --untracked-files=all" in text
     assert "maverick.stage." in text
     assert "MAVERICK_VERSION" not in text
-    assert "Lightwork/main/deploy/vps/install.sh" not in text
+    assert "Law_Firm/main/deploy/vps/install.sh" not in text
 
 
 def test_training_bootstrap_installs_only_from_verified_checkout():
@@ -159,10 +159,10 @@ def test_homebrew_formula_bootstraps_python_312_without_venv_pip():
     assert '"--no-deps", "--no-build-isolation", buildpath' in formula
     assert '"--python=#{libexec}/bin/python", "check"' in formula
     assert 'libexec/"bin/pip"' not in formula
-    assert "LIGHTWORK_BUILD_REQUIREMENTS_BEGIN" in formula
-    assert "LIGHTWORK_BUILD_REQUIREMENTS_END" in formula
-    assert "LIGHTWORK_RUNTIME_REQUIREMENTS_BEGIN" in formula
-    assert "LIGHTWORK_RUNTIME_REQUIREMENTS_END" in formula
+    assert "MAVERICK_BUILD_REQUIREMENTS_BEGIN" in formula
+    assert "MAVERICK_BUILD_REQUIREMENTS_END" in formula
+    assert "MAVERICK_RUNTIME_REQUIREMENTS_BEGIN" in formula
+    assert "MAVERICK_RUNTIME_REQUIREMENTS_END" in formula
     assert ".fetch(1)" not in formula
     assert 'odie "generated build requirements are missing"' in formula
     assert "That tap is not deployed" in formula

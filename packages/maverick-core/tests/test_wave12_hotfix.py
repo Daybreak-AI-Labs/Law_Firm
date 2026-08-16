@@ -13,7 +13,7 @@ from maverick.llm import MODEL_OPUS
 class TestOpusPricingHotfix:
     """Opus 4.7 is $5/$25 per Mtok — NOT $15/$75 (those were legacy
     Opus 4.0/4.1 rates). Wave 12 commit bfae341 incorrectly raised
-    Lightwork to $15/$75; this hotfix reverts to the correct value.
+    Maverick to $15/$75; this hotfix reverts to the correct value.
     Cross-check: vals.ai measures Opus 4.7 at $2.42/test on SWE-bench
     Verified, which reconciles ONLY with $5/$25 pricing.
     """
@@ -88,7 +88,7 @@ class TestOpus47AdaptiveThinking:
 
 class TestLowCacheWarning:
     """The 4096-token min cacheable block on Sonnet 4.6 / Opus 4.7 means
-    Lightwork's current ~1085-tok system + ~716-tok tools won't actually
+    Maverick's current ~1085-tok system + ~716-tok tools won't actually
     cache. Operators need to see this in logs."""
 
     def test_min_cache_tokens_for_modern_models(self):

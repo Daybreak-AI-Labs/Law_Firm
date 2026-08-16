@@ -91,7 +91,7 @@ def render_rss(
     bulletins: list[Bulletin],
     *,
     base_url: str = "https://example.invalid/security/bulletins",
-    title: str = "Lightwork security bulletins",
+    title: str = "Maverick security bulletins",
 ) -> str:
     """RSS 2.0 over the bulletins. ``base_url`` is where the operator serves
     the bulletin pages (item links are ``<base_url>/<id>``)."""

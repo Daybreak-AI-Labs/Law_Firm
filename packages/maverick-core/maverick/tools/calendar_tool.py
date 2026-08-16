@@ -167,7 +167,7 @@ def _create_event(args: dict[str, Any]) -> str:
         ical = (
             "BEGIN:VCALENDAR\n"
             "VERSION:2.0\n"
-            "PRODID:-//Lightwork//CalDAV//EN\n"
+            "PRODID:-//Maverick//CalDAV//EN\n"
             "BEGIN:VEVENT\n"
             f"UID:{__import__('uuid').uuid4()}@maverick\n"
             f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}\n"

@@ -7,15 +7,15 @@ Four deployment targets, all driven by the same `maverick init` wizard.
 For most users.
 
 ```bash
-git clone https://github.com/Daybreak-AI-Labs/Lightwork
-cd Lightwork
+git clone https://github.com/Daybreak-AI-Labs/Law_Firm
+cd Maverick
 git checkout --detach <reviewed-full-40-character-commit-sha>
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
 maverick init
 ```
 
-Do not install the Lightwork distribution names from public PyPI until the
+Do not install the Maverick distribution names from public PyPI until the
 project has reserved and protected every namespace. The desktop bootstrap
 scripts also require a lowercase, full commit SHA and fail closed.
 
@@ -26,7 +26,7 @@ network port unless you enable a channel that needs one (WhatsApp/SMS).
 **Artifact status:** reviewed source is the dependable installation route
 today. A successful tagged release is configured to publish three single-file
 PyInstaller binaries, checksums, SBOMs, and Sigstore material; check the
-[release assets](https://github.com/Daybreak-AI-Labs/Lightwork/releases) for
+[release assets](https://github.com/Daybreak-AI-Labs/Law_Firm/releases) for
 the exact operating-system file before relying on one. The Tauri and MSI
 projects are authenticated source-bootstrap/build engineering artifacts, not
 self-contained product installers, and are not attached to product releases.
@@ -40,7 +40,7 @@ docker run -it --rm \
   -v ~/maverick-workspace:/workspace \
   -v ~/.maverick/config.toml:/home/maverick/.maverick/config.toml:ro \
   -e ANTHROPIC_API_KEY=... \
-  ghcr.io/daybreak-ai-labs/lightwork:latest \
+  ghcr.io/daybreak-ai-labs/maverick:latest \
   start "..."
 ```
 
@@ -61,21 +61,21 @@ The `vps` deployment target generates:
 - Config under `/etc/maverick/config.toml` (`MAVERICK_CONFIG` env)
 
 ```bash
-LIGHTWORK_REF=<lowercase-full-40-character-commit-sha>
-curl -fsSLo /tmp/lightwork-install.sh \
-  "https://raw.githubusercontent.com/Daybreak-AI-Labs/Lightwork/${LIGHTWORK_REF}/deploy/vps/install.sh"
-sudo MAVERICK_REF="$LIGHTWORK_REF" bash /tmp/lightwork-install.sh
+MAVERICK_REF=<lowercase-full-40-character-commit-sha>
+curl -fsSLo /tmp/maverick-install.sh \
+  "https://raw.githubusercontent.com/Daybreak-AI-Labs/Law_Firm/${MAVERICK_REF}/deploy/vps/install.sh"
+sudo MAVERICK_REF="$MAVERICK_REF" bash /tmp/maverick-install.sh
 sudo systemctl enable --now maverick
 ```
 
 ## Phone (companion mode)
 
-Lightwork itself runs on Desktop or VPS — your phone is a frontend that
+Maverick itself runs on Desktop or VPS — your phone is a frontend that
 talks to it through one of the channels below. This avoids the cost,
 privacy, and capability tradeoffs of running an agent on the phone
 itself, while keeping parity with the desktop experience.
 
-Start the channel server on whichever machine Lightwork runs on:
+Start the channel server on whichever machine Maverick runs on:
 
 ```bash
 maverick serve
@@ -145,7 +145,7 @@ Multiple channels can be enabled at once; each runs in its own async task.
 **WhatsApp / SMS (require public webhook):**
 
 1. Sign up at twilio.com; verify a sender
-2. Run Lightwork on a VPS (you need a public HTTPS endpoint)
+2. Run Maverick on a VPS (you need a public HTTPS endpoint)
 3. Caddyfile in `deploy/vps/Caddyfile` shows the reverse-proxy pattern
 4. `maverick init`, enable whatsapp/sms, paste Twilio creds + from number
 5. In Twilio console, set the webhook URL to

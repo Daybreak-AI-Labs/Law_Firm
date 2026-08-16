@@ -18,7 +18,7 @@ Private software for one firm, proprietary and not for distribution (see
 - **Use your existing chat subscriptions**: ChatGPT Plus, Claude Pro,
   Kimi, X Premium, Gemini Advanced — drive them from the agent via
   captured browser sessions, no extra API spend. Note: session providers
-  have no native function-calling, so Lightwork gives them tools through a
+  have no native function-calling, so Maverick gives them tools through a
   **simulated** markdown tool-call protocol — it works for tool-using
   roles, but reliability is model-dependent and weaker than an API-key
   provider's native tool use.
@@ -53,7 +53,7 @@ Private software for one firm, proprietary and not for distribution (see
 ## Quick start
 
 ```bash
-git clone https://github.com/Daybreak-AI-Labs/Lightwork && cd Lightwork
+git clone https://github.com/Daybreak-AI-Labs/Law_Firm && cd Maverick
 git checkout --detach <reviewed-full-40-character-commit-sha>
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
@@ -77,10 +77,10 @@ maverick cost                # spend summary
 
 ## Licensing & access
 
-Lightwork is **proprietary, commercially licensed** software (see
-[`LICENSE`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/LICENSE)). It is self-hostable — the runtime executes entirely
+Maverick is **proprietary, commercially licensed** software (see
+[`LICENSE`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/LICENSE)). It is self-hostable — the runtime executes entirely
 in your own environment — and use requires a license. Pricing is handled
-per engagement; [contact us](https://github.com/Daybreak-AI-Labs/Lightwork) for
+per engagement; [contact us](https://github.com/Daybreak-AI-Labs/Law_Firm) for
 evaluation or enterprise access.
 
 A deliberately stripped-down **open-source "lite" edition** may be released

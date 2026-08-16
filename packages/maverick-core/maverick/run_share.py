@@ -1,4 +1,4 @@
-"""Share a Lightwork run as a sanitized, private GitHub gist.
+"""Share a Maverick run as a sanitized, private GitHub gist.
 
 ``maverick share <goal-id>`` exports the run's trajectory via
 ``replay_export`` (which scrubs secrets) and uploads it as a PRIVATE gist,
@@ -22,7 +22,7 @@ def build_gist_payload(goal_id: int) -> dict:
         content = out.read_text(encoding="utf-8")
     fname = f"maverick-run-{goal_id}.json"
     return {
-        "description": f"Lightwork run #{goal_id} (sanitized trajectory)",
+        "description": f"Maverick run #{goal_id} (sanitized trajectory)",
         "public": False,  # secret gist -- shareable by URL, not listed/searchable
         "files": {fname: {"content": content}},
     }

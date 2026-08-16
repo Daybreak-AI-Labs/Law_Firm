@@ -1,6 +1,6 @@
 # maverick-verify-audit
 
-A standalone Rust binary that **independently verifies Lightwork's Ed25519
+A standalone Rust binary that **independently verifies Maverick's Ed25519
 hash-chained NDJSON audit log** — the *same* chain `maverick audit verify`
 checks — so an auditor or procurement reviewer can prove a day-file is intact
 with **one binary and no Python**.

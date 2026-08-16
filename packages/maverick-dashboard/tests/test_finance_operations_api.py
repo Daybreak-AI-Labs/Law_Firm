@@ -131,7 +131,7 @@ def test_regulatory_review_and_licensing_register_are_cited_and_permissioned(api
     assert citation["feed_url"].endswith("/feed.json")
     assert citation["acquisition"] == "operator_supplied"
     assert citation["acquired_by"] == "admin@example.com"
-    assert citation["retrieval_url"].startswith("urn:lightwork:")
+    assert citation["retrieval_url"].startswith("urn:maverick:")
     assert detail["review_history"] == []
     reviewed = _ok(
         client.post(
@@ -173,7 +173,7 @@ def test_regulatory_alert_api_exposes_cursor_pages(api_client):
     first = _ok(
         client.get("/finance-operations/regulatory/alerts", params={"limit": 1})
     )
-    assert first["schema"] == "lightwork.regulatory-alert-page.v1"
+    assert first["schema"] == "maverick.regulatory-alert-page.v1"
     assert first["has_more"] is False
     assert first["next_cursor"] == ""
     assert len(first["alerts"]) == 1
@@ -392,7 +392,7 @@ def test_anomaly_case_api_exposes_bounded_cursor_pages(api_client):
     first = _ok(
         client.get("/finance-operations/anomalies/cases", params={"limit": 1})
     )
-    assert first["schema"] == "lightwork.finance-anomaly-case-page.v1"
+    assert first["schema"] == "maverick.finance-anomaly-case-page.v1"
     assert first["has_more"] is True
     assert first["next_cursor"]
     assert len(first["cases"]) == 1

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-_SCHEMA = "lightwork.finance-operations-health.v1"
+_SCHEMA = "maverick.finance-operations-health.v1"
 _KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _MAX_RECEIPTS = 256
 _MAX_FILE_BYTES = 256 * 1024

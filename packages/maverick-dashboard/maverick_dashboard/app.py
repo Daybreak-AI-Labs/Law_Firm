@@ -1,4 +1,4 @@
-"""FastAPI dashboard for Lightwork.
+"""FastAPI dashboard for Maverick.
 
 v0.1.6: BackgroundTask runner moved to maverick.runner; this file just
 imports it. Eliminates the duplicate that lived in app.py + api.py +
@@ -493,7 +493,7 @@ def enforce_page_visibility(
 
 
 app = FastAPI(
-    title="Lightwork Dashboard + REST API",
+    title="Maverick Dashboard + REST API",
     description="Local browser UI plus REST API for programmatic access.",
     version="0.1.0",
     # Global authentication dependency, applied to every route. It composes
@@ -871,7 +871,7 @@ async def _read_limited_skill_validator_body(request: Request) -> bytes:
 
 
 async def _verify_maverick_webhook(request: Request) -> dict:
-    """Verify a Lightwork-format inbound webhook (HMAC over body+timestamp) and
+    """Verify a Maverick-format inbound webhook (HMAC over body+timestamp) and
     return the parsed JSON object. Shared by /webhook/start and /webhook/run,
     which had byte-identical preambles. Raises HTTPException (401 unconfigured,
     403 bad signature, 400 bad body) and enforces a configured LLM provider."""
@@ -963,7 +963,7 @@ def _require_same_origin(request: Request) -> None:
         raise HTTPException(
             status_code=403,
             detail="cross-site form post blocked — for your security, changes "
-                   "must be made from the Lightwork page itself. Reload the "
+                   "must be made from the Maverick page itself. Reload the "
                    "dashboard and try again.",
         )
 
@@ -1079,7 +1079,7 @@ async def bearer_auth(request: Request, call_next):
             ):
                 return JSONResponse(
                     {"detail": "cross-site request blocked - for your security, "
-                               "changes must be made from the Lightwork page "
+                               "changes must be made from the Maverick page "
                                "itself. Reload the dashboard and try again."},
                     status_code=403,
                 )
@@ -1127,7 +1127,7 @@ async def bearer_auth(request: Request, call_next):
             if not _is_same_origin(request) and _allowed_extension_origin(request) is None:
                 return JSONResponse(
                     {"detail": "cross-site request blocked — for your security, "
-                               "changes must be made from the Lightwork page "
+                               "changes must be made from the Maverick page "
                                "itself. Reload the dashboard and try again."},
                     status_code=403,
                 )
@@ -1143,7 +1143,7 @@ async def bearer_auth(request: Request, call_next):
                     return JSONResponse(
                         {"detail": "cross-site request blocked — for your "
                                    "security, changes must be made from the "
-                                   "Lightwork page itself. Reload the "
+                                   "Maverick page itself. Reload the "
                                    "dashboard and try again."},
                         status_code=403,
                     )
@@ -1184,7 +1184,7 @@ async def bearer_auth(request: Request, call_next):
         ):
             return JSONResponse(
                 {"detail": "cross-site request blocked - for your security, "
-                           "changes must be made from the Lightwork page "
+                           "changes must be made from the Maverick page "
                            "itself. Reload the dashboard and try again."},
                 status_code=403,
             )
@@ -1657,7 +1657,7 @@ async def public_demo(request: Request) -> HTMLResponse:
         "<!doctype html>"
         "<html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>Lightwork public demo</title>"
+        "<title>Maverick public demo</title>"
         "<style>"
         ":root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;"
         "background:#0d1117;color:#e6edf3}"
@@ -1670,7 +1670,7 @@ async def public_demo(request: Request) -> HTMLResponse:
         "a{color:#58a6ff}"
         "</style></head><body>"
         "<header><p class='eyebrow'>read-only public snapshot</p>"
-        "<h1>Lightwork demo</h1>"
+        "<h1>Maverick demo</h1>"
         "<p>This page intentionally shows only seeded demo-owned finished runs. "
         "Operator state, audit logs, spend, facts, plugins, permissions, and "
         "the rest of the authenticated dashboard are not proxied publicly.</p>"
@@ -2441,7 +2441,7 @@ async def model_risk_assurance_page(request: Request) -> HTMLResponse:
                     "No records were read."
                 )
                 gateway_error_action = (
-                    "Set [client] id in the Lightwork configuration or set "
+                    "Set [client] id in the Maverick configuration or set "
                     "MAVERICK_TENANT, then restart the dashboard."
                 )
             else:
@@ -2525,7 +2525,7 @@ async def model_risk_assurance_page(request: Request) -> HTMLResponse:
 
 @app.get("/security/threats", response_class=HTMLResponse)
 async def platform_threats_page(request: Request) -> HTMLResponse:
-    """Internal Lightwork platform threat-hunter console."""
+    """Internal Maverick platform threat-hunter console."""
     require_permission(request, "operate")
     from maverick import platform_hunt
 
@@ -3699,7 +3699,7 @@ def _permissions_snapshot() -> dict:
 
 @app.get("/permissions", response_class=HTMLResponse)
 async def permissions_page(request: Request) -> HTMLResponse:
-    """What Lightwork can do — tools, capabilities, channels, data flow."""
+    """What Maverick can do — tools, capabilities, channels, data flow."""
     return templates.TemplateResponse(
         request, "permissions.html", {"perm": _permissions_snapshot()},
     )
@@ -4645,7 +4645,7 @@ async def webhook_start(request: Request, bg: BackgroundTasks) -> JSONResponse:
     middleware (see ``_AUTH_EXEMPT``); the HMAC signature is the only
     credential. We fail closed -- a missing/empty secret yields 401.
 
-    Replay defence (Lightwork-CONTROLLED format): the signature binds the
+    Replay defence (Maverick-CONTROLLED format): the signature binds the
     ``X-Maverick-Timestamp``; a request whose timestamp is outside the
     configured freshness window (``[webhooks] max_age_seconds``) is rejected,
     so a captured signed request can't be replayed to re-spend budget.
@@ -6012,13 +6012,13 @@ async def api_goal_events_stream(request: Request, goal_id: int, since: int = 0)
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
-@app.get("/static/lightwork-analytics.js")
+@app.get("/static/maverick-analytics.js")
 async def embed_analytics_js() -> FileResponse:
-    """The embeddable ``<lightwork-analytics>`` web component (plain JS, no
+    """The embeddable ``<maverick-analytics>`` web component (plain JS, no
     framework). See the file's header comment for the same-origin + token
     caveats; /embed-demo shows it running."""
     return FileResponse(
-        _STATIC_DIR / "lightwork-analytics.js",
+        _STATIC_DIR / "maverick-analytics.js",
         media_type="application/javascript; charset=utf-8",
     )
 
@@ -6026,21 +6026,21 @@ async def embed_analytics_js() -> FileResponse:
 @app.get("/static/maverick-analytics.js")
 async def embed_analytics_js_legacy() -> FileResponse:
     """Pre-rebrand URL for the analytics component. Pages that embedded the
-    script before the Lightwork rebrand keep working; the file itself also
+    script before the Maverick rebrand keep working; the file itself also
     registers the old <maverick-analytics> tag as an alias."""
     return FileResponse(
-        _STATIC_DIR / "lightwork-analytics.js",
+        _STATIC_DIR / "maverick-analytics.js",
         media_type="application/javascript; charset=utf-8",
     )
 
 
-@app.get("/static/lightwork.css")
+@app.get("/static/maverick.css")
 async def shell_stylesheet() -> FileResponse:
     """The dashboard shell's design system, extracted from base.html so the
     template stays markup. Short-lived cache: the browser revalidates cheaply
     but a dashboard upgrade restyles without a hard refresh."""
     return FileResponse(
-        _STATIC_DIR / "lightwork.css",
+        _STATIC_DIR / "maverick.css",
         media_type="text/css; charset=utf-8",
         headers={"Cache-Control": "public, max-age=300"},
     )
@@ -6057,25 +6057,25 @@ async def board_engine_js() -> FileResponse:
     )
 
 
-@app.get("/static/lightwork-ui.js")
+@app.get("/static/maverick-ui.js")
 async def shell_behaviors_js() -> FileResponse:
     """The shell behaviors (mvToast/mvConfirm/mvForm primitives, halt pill,
     sidebar + preferences) extracted from base.html; loaded at the end of
     <body> on every page."""
     return FileResponse(
-        _STATIC_DIR / "lightwork-ui.js",
+        _STATIC_DIR / "maverick-ui.js",
         media_type="application/javascript; charset=utf-8",
         headers={"Cache-Control": "public, max-age=300"},
     )
 
 
-@app.get("/static/lightwork-voice.js")
+@app.get("/static/maverick-voice.js")
 async def natural_voice_js() -> FileResponse:
     """The natural-voice layer: ranked speech voices, humanized text, and
     sentence-chunked delivery for every browser read-aloud fallback — the
     bare default utterance is what makes an agent sound robotic."""
     return FileResponse(
-        _STATIC_DIR / "lightwork-voice.js",
+        _STATIC_DIR / "maverick-voice.js",
         media_type="application/javascript; charset=utf-8",
         headers={"Cache-Control": "public, max-age=300"},
     )
@@ -6555,7 +6555,7 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Lightwork dashboard")
+    parser = argparse.ArgumentParser(description="Maverick dashboard")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
@@ -6566,7 +6566,7 @@ def main() -> None:
             "MAVERICK_DASHBOARD_TOKEN set."
         )
 
-    # Apply Lightwork's shared logging config (JSON via MAVERICK_LOG_FORMAT=json,
+    # Apply Maverick's shared logging config (JSON via MAVERICK_LOG_FORMAT=json,
     # correlation-id context filter, secret scrubbing) at the real process
     # entrypoint — not in the lifespan, so the in-process TestClient never
     # reconfigures global logging. The most network-exposed process otherwise

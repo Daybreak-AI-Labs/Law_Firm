@@ -1,6 +1,6 @@
 """Anchor-gated evaluator co-evolution: let the *judge* improve, safely.
 
-Lightwork's learning loop already defends against a rotting evaluator by
+Maverick's learning loop already defends against a rotting evaluator by
 *freezing* (:mod:`maverick.calibration`): when the verifier stops discriminating
 correct from incorrect, learning halts. That is the conservative half of the
 story. The aggressive half -- recently formalised by the Red Queen Gödel Machine

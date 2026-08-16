@@ -141,7 +141,7 @@ def shared() -> GuardrailRegistry:
     with _shared_lock:
         reg = _shared.get(path)
         if reg is None:
-            # The default data root is Lightwork-owned.  Explicit registry
+            # The default data root is platform-owned.  Explicit registry
             # paths retain their caller-managed parent ACL.
             ensure_private_directory(path.parent)
             reg = GuardrailRegistry(path=path)

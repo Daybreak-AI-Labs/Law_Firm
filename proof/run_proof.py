@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightwork -- proof of guarantees.
+"""Maverick -- proof of guarantees.
 
 Not unit assertions buried in a suite: a single reproducible run that drives the
 REAL roster (the shipped domain packs) through the REAL enforcement code -- the

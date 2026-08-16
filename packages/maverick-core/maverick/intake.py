@@ -522,7 +522,7 @@ def run_intake(spec: IntakeSpec, *, llm=None, kb=None,
 
 
 INTAKE_PERSONA = (
-    "You are Lightwork's onboarding specialist. Interview the business to learn "
+    "You are Maverick's onboarding specialist. Interview the business to learn "
     "what it does, its industry, and its goals, and ask for any documents or "
     "process diagrams it can share. As you learn, call record_business, "
     "add_goal, and add_document. Ask one focused question at a time -- don't "

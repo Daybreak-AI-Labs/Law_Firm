@@ -95,7 +95,7 @@ def test_prime_profile_is_deterministic_content_addressed_and_exactly_pinned():
         "upload_enabled": False,
         "telemetry_enabled": False,
         "model_visible_fields": ["prompt"],
-        "ambient_lightwork_dependency": False,
+        "ambient_platform_dependency": False,
         "trusted_scoring_function": (
             f"{first.module_name}.scorer.score_output"
         ),
@@ -223,8 +223,8 @@ def test_export_keeps_only_prompt_model_visible_and_runtime_verifies_tasks():
     assert "EXPECTED_VERIFIERS_VERSION = \"0.2.0\"" in source
     assert va.VERIFIERS_COMMIT in source
     assert "EXPECTED_RUNTIME_LOCK_SHA256" in source
-    assert "Lightwork task data integrity verification failed" in source
-    assert "Lightwork scorer integrity verification failed" in source
+    assert "Maverick task data integrity verification failed" in source
+    assert "Maverick scorer integrity verification failed" in source
     assert source.index("hashlib.sha256(scorer_blob)") < source.index(
         "exec(compile(scorer_blob",
     )
@@ -246,7 +246,7 @@ def test_export_keeps_only_prompt_model_visible_and_runtime_verifies_tasks():
 def test_portable_scorer_matches_authoritative_reward_for_shipped_cases():
     namespace: dict[str, object] = {}
     source = va._portable_scorer_source()
-    exec(compile(source, "locked-lightwork-scorer.py", "exec"), namespace)
+    exec(compile(source, "locked-maverick-scorer.py", "exec"), namespace)
     portable_score = namespace["score_output"]
     assert callable(portable_score)
     assert namespace["SCORER_CONTRACT"] == va.PORTABLE_SCORER_CONTRACT
@@ -334,7 +334,7 @@ def test_generated_taskset_loads_verified_scorer_and_scores(
         generated.__dict__,
     )
 
-    tasks = generated.LightworkTaskset(FakeTasksetConfig()).load()
+    tasks = generated.MaverickTaskset(FakeTasksetConfig()).load()
     assert tasks
     first = tasks[0]
     case = next(

@@ -1,7 +1,7 @@
 """Embeddable-mode markers.
 
 Library users who import ``maverick`` to drive an agent from inside
-their own app don't want Lightwork's CLI cost: click imports, command
+their own app don't want Maverick's CLI cost: click imports, command
 discovery, plugin entry-point scanning, etc. They can set
 ``MAVERICK_NO_CLI=1`` in the environment before importing, and the
 core kernel skips CLI-only paths.
@@ -16,7 +16,7 @@ from ._envparse import env_bool
 
 
 def no_cli() -> bool:
-    """True if Lightwork is being imported as a library (no CLI needed)."""
+    """True if Maverick is being imported as a library (no CLI needed)."""
     return env_bool("MAVERICK_NO_CLI")
 
 

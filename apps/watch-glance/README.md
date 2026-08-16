@@ -1,7 +1,7 @@
-# Lightwork watch glance (watchOS scaffold)
+# Maverick watch glance (watchOS scaffold)
 
 A minimal SwiftUI watchOS app + complication rendering the fixed glance
-payload from a self-hosted Lightwork dashboard:
+payload from a self-hosted Maverick dashboard:
 
 ```
 GET https://<your-host>:8765/api/v1/glance

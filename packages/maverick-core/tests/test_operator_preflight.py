@@ -109,7 +109,7 @@ def test_missing_config_has_stable_blocker_and_copyable_next_action(isolated_con
     report = collect()
 
     assert report.ready is False
-    assert report.schema == "lightwork.operator-preflight.v1"
+    assert report.schema == "maverick.operator-preflight.v1"
     assert _by_id(report)["config"].status == "blocked"
     assert report.next_action == "maverick init --fast"
     # No volatile timestamp: two reads produce the exact same automation shape.

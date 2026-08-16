@@ -1,4 +1,4 @@
-"""Live agent factory: turn an evolved config into a real Lightwork run.
+"""Live agent factory: turn an evolved config into a real Maverick run.
 
 This is the bridge that makes config-evolution operate on *real* runs instead of
 a synthetic landscape. An evolved config (knob dict from ``config_space``) is

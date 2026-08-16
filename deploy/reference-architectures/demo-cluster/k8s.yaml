@@ -1,4 +1,4 @@
-# Lightwork public read-only demo (demo.maverick.dev) — Kubernetes blueprint.
+# Maverick public read-only demo (demo.maverick.dev) — Kubernetes blueprint.
 #
 # Mirrors the compose stack in this directory: seed (init container) ->
 # dashboard (loopback-bound, token-protected) -> nginx path-allowlist proxy

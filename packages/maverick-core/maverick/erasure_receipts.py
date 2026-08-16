@@ -27,8 +27,8 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-RECEIPT_SCHEMA = "lightwork.erasure-receipt.v2"
-ERASURE_CLOSURE_SCHEMA = "lightwork.erasure-closure.v1"
+RECEIPT_SCHEMA = "maverick.erasure-receipt.v2"
+ERASURE_CLOSURE_SCHEMA = "maverick.erasure-closure.v1"
 RECEIPT_RETENTION_DAYS = 365 * 7
 MAX_RECEIPT_IDS = 100_000
 

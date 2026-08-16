@@ -51,7 +51,7 @@ def fetch_release_state(
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "User-Agent": "Lightwork-release-state/1",
+            "User-Agent": "Maverick-release-state/1",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )

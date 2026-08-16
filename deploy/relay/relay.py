@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Self-hosted Lightwork relay (roadmap: 2027 H2 distribution — "self-hosted relay reference").
+"""Self-hosted Maverick relay (roadmap: 2027 H2 distribution — "self-hosted relay reference").
 
 A thin, dependency-free edge service that accepts a simple inbound POST and
-forwards it as a properly HMAC-signed request to a Lightwork dashboard's
+forwards it as a properly HMAC-signed request to a Maverick dashboard's
 ``/webhook/start``. This is the self-hostable counterpart to a hosted bridge
 (e.g. the glasses/wearable adapter): run it on your own box/VPS/edge instead of
 depending on someone's cloud function.
@@ -129,7 +129,7 @@ def main() -> int:
     if not CALLER_TOKEN:
         raise SystemExit("Set MAVERICK_RELAY_TOKEN (required bearer token for relay callers).")
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Lightwork relay on {HOST}:{PORT} -> {TARGET}/webhook/start")
+    print(f"Maverick relay on {HOST}:{PORT} -> {TARGET}/webhook/start")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -103,7 +103,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "spawn_swarm": "high",
     "spawn_specialist": "high",
     "delegate_to_agent": "high",
-    # Network-reachable Lightwork MCP actions.  These names are the server's
+    # Network-reachable Maverick MCP actions.  These names are the server's
     # own tools (not third-party ``mcp_*`` imports), so classify them explicitly:
     # goal execution can fan out into arbitrary tools, and the remaining writes
     # mutate durable code/state/memory or resume privileged execution.
@@ -247,7 +247,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "currency": "low",
     "preview_diff": "low",
     "erp_read": "low",  # read-only (GET) ERP access; no writes / host mutation
-    # Read-only Lightwork MCP queries.  Agent Trust max_risk ceilings use this
+    # Read-only Maverick MCP queries.  Agent Trust max_risk ceilings use this
     # same table, so a low-risk remote principal sees queries but not mutations.
     "maverick_status": "low",
     "maverick_skills_list": "low",

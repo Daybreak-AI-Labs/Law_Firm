@@ -1170,7 +1170,7 @@ def _replay_donations(
 ) -> tuple[list[dict], list[dict]]:
     """Fleet-level aggregation: replay donated trajectory records.
 
-    An org running many Lightwork instances points each at the same outbox
+    An org running many Maverick instances points each at the same outbox
     drop (or syncs them to one central dir); a central ``maverick dream
     --donations-dir`` then consolidates the whole fleet's experience. Returns
     ``(successes, failures)`` shaped for the normal cycle phases; selection

@@ -1,4 +1,4 @@
-# Lightwork on Fly.io — minimal reference architecture.
+# Maverick on Fly.io — minimal reference architecture.
 #
 #   fly launch --no-deploy --copy-config \
 #     --config deploy/reference-architectures/fly/fly.toml

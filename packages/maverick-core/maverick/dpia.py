@@ -7,10 +7,10 @@ description of the processing (a), an assessment of necessity/proportionality
 (b), an assessment of the risks (c), and the measures envisaged to address them
 (d).
 
-Lightwork can pre-fill the parts it knows. The differentiated half is the **risk
+Maverick can pre-fill the parts it knows. The differentiated half is the **risk
 register**: the risks specific to running an AI agent on personal data — data
 egress to an LLM, unsupervised automated action, audit tampering, indefinite
-retention — each mapped to the Lightwork control that mitigates it and whether
+retention — each mapped to the Maverick control that mitigates it and whether
 that control is *active right now* (read live from the compliance report). The
 necessity/proportionality judgement and the residual-risk sign-off are left to
 the controller.

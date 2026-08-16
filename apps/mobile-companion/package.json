@@ -2,7 +2,7 @@
   "name": "maverick-mobile-companion",
   "version": "0.1.0",
   "private": true,
-  "description": "Read-only mobile companion for the Lightwork dashboard (Expo). Watch runs, never drive them.",
+  "description": "Read-only mobile companion for the Maverick dashboard (Expo). Watch runs, never drive them.",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",

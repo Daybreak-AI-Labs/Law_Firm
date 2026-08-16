@@ -39,9 +39,9 @@ SPLIT_PAYMENT_RULE_ID = "finance.approval_limit.split_payment"
 OFF_HOURS_RULE_ID = "finance.off_hours_posting"
 RULE_VERSION = "1.0.0"
 
-FINDING_SCHEMA = "lightwork.finance-anomaly-finding.v1"
-CASE_SCHEMA = "lightwork.finance-anomaly-case.v1"
-CASE_PAGE_SCHEMA = "lightwork.finance-anomaly-case-page.v1"
+FINDING_SCHEMA = "maverick.finance-anomaly-finding.v1"
+CASE_SCHEMA = "maverick.finance-anomaly-case.v1"
+CASE_PAGE_SCHEMA = "maverick.finance-anomaly-case-page.v1"
 SCREENING_NOTICE = (
     "Deterministic screening lead for human review; not evidence of fraud, an "
     "accounting conclusion, or an instruction to block or reverse a transaction."

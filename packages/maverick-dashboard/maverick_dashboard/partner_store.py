@@ -1,6 +1,6 @@
 """Partner fleet registry — the client deployments a partner operates.
 
-A partner (an advisory firm running Lightwork agents for its clients) tracks
+A partner (an advisory firm running Maverick agents for its clients) tracks
 each client deployment here: name, base URL, an optional bearer token, and
 the white-label theme it runs. Probe results (health, latency, version, the
 agent's own counted value ledger) are stored alongside so the console shows

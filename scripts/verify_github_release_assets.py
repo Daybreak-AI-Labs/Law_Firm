@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the exact byte inventory of a Lightwork GitHub release."""
+"""Verify the exact byte inventory of a Maverick GitHub release."""
 
 from __future__ import annotations
 

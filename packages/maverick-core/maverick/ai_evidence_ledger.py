@@ -32,9 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SEGMENT_HEADER_SCHEMA = "lightwork.ai-evidence-receipt-segment.v1"
+SEGMENT_HEADER_SCHEMA = "maverick.ai-evidence-receipt-segment.v1"
 SEGMENT_HEADER_EVENT = "ai_evidence_receipt_segment_opened"
-INDEX_STATE_SCHEMA = "lightwork.ai-evidence-receipt-index-state.v1"
+INDEX_STATE_SCHEMA = "maverick.ai-evidence-receipt-index-state.v1"
 INDEX_STATE_EVENT = "ai_evidence_receipt_index_state"
 
 _SEGMENT_RE = re.compile(r"segment-([0-9]{8})\.ndjson\Z")

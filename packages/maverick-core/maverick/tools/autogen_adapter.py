@@ -1,8 +1,8 @@
 """AutoGen adapter (roadmap: 2027 H2 — interop with Microsoft AutoGen).
 
-Pure, offline schema translation between Lightwork tools and Microsoft AutoGen's
+Pure, offline schema translation between Maverick tools and Microsoft AutoGen's
 function/tool spec shape. No SDK import, no network — this just reshapes dicts so
-a Lightwork tool can be handed to an AutoGen agent and vice-versa.
+a Maverick tool can be handed to an AutoGen agent and vice-versa.
 
 AutoGen describes a callable tool as a function spec::
 
@@ -12,7 +12,7 @@ AutoGen describes a callable tool as a function spec::
 ops:
   - tool_spec(name, description, params_schema) -> the AutoGen function spec
     (JSON string), wrapping a JSON-Schema object of parameters.
-  - from_autogen(spec) -> Lightwork's {name, description, input_schema} (JSON),
+  - from_autogen(spec) -> Maverick's {name, description, input_schema} (JSON),
     accepting either the wrapped {"function": {...}} form or a bare function dict.
 """
 from __future__ import annotations
@@ -112,7 +112,7 @@ def autogen_adapter() -> Tool:
             "Microsoft AutoGen interop (schema only). op=tool_spec {name, "
             "description, params_schema} -> an AutoGen function spec "
             "{type:function, function:{name, description, parameters}} as JSON. "
-            "op=from_autogen {spec} -> Lightwork's {name, description, "
+            "op=from_autogen {spec} -> Maverick's {name, description, "
             "input_schema} as JSON (accepts wrapped or bare function dicts). "
             "Pure stdlib translation; no SDK, no network."
         ),

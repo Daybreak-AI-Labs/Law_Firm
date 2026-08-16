@@ -1,6 +1,6 @@
 """The Emergent Substrate -- a learned, auditable coordination shorthand.
 
-Lightwork's swarms coordinate in English: every handoff, every blackboard post is
+Maverick's swarms coordinate in English: every handoff, every blackboard post is
 tokens through a frontier model. Most of that traffic is boilerplate the agents
 say over and over. So let them **evolve their own shorthand** -- a codebook
 learned from the swarm's *actual* messages (the phrases they repeat get short

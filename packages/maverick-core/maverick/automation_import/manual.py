@@ -78,9 +78,9 @@ def translate(raw: dict[str, Any], *, source: str) -> ImportedAutomation:
 def connect_note(source: str) -> str:
     """The standard 'how to connect this platform' guidance."""
     return (
-        f"{source} does not expose its automations over an API, so Lightwork "
+        f"{source} does not expose its automations over an API, so Maverick "
         f"can't read them directly. Connect it instead: in {source}, add a step "
-        "that POSTs to your Lightwork inbound webhook (the imported template is "
+        "that POSTs to your Maverick inbound webhook (the imported template is "
         "what that webhook runs), or describe the automation as JSON and import "
         "it with `--from-file`."
     )

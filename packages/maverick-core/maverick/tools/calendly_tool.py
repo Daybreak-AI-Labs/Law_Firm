@@ -163,7 +163,7 @@ def _op_cancel(args: dict) -> str:
         return f"DRY RUN: would cancel {uid}. Re-run with confirm=true."
     code, data = _post(
         f"/scheduled_events/{uid}/cancellation",
-        {"reason": args.get("reason") or "Cancelled by Lightwork"},
+        {"reason": args.get("reason") or "Cancelled by Maverick"},
     )
     if code >= 400 or not isinstance(data, dict):
         return f"ERROR: cancel ({code}): {data}"

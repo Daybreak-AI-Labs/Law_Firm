@@ -1,9 +1,9 @@
 """Linear + Jira inbound triggers — assign an issue to the bot, get a goal.
 
 Mirrors ``github_app.py`` (label an issue, get a PR) for the two other
-trackers Lightwork already has read/write tools for (``tools/linear.py``,
+trackers Maverick already has read/write tools for (``tools/linear.py``,
 ``tools/jira.py``). When a Linear or Jira issue is *assigned to the bot*,
-the receiver creates a Lightwork goal from the issue title + body.
+the receiver creates a Maverick goal from the issue title + body.
 
 Two pure pieces, kept transport-free so they unit-test without a server
 (the FastAPI routes live in ``maverick_dashboard.app`` next to
@@ -24,7 +24,7 @@ Who is "the bot": set ``MAVERICK_BOT_LINEAR_ID`` (Linear user id) and/or
 Matching is case-insensitive and also accepts the assignee's email so an
 operator can configure either. With no bot id configured the receiver
 fails closed: a signed tracker event alone must not be enough to trigger
-Lightwork unless the assignee matches an explicitly configured bot.
+Maverick unless the assignee matches an explicitly configured bot.
 """
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def replay_window_seconds() -> int:
     """Anti-replay freshness window (seconds).
 
     Shares the ``[webhooks] max_age_seconds`` knob (env
-    ``MAVERICK_WEBHOOK_MAX_AGE_SECONDS``) with the Lightwork-signed
+    ``MAVERICK_WEBHOOK_MAX_AGE_SECONDS``) with the Maverick-signed
     ``/webhook/start`` path so operators tune one window. Defaults to 300s.
     """
     try:
@@ -313,12 +313,12 @@ def parse_issue_event(provider: str, payload: dict) -> IssueEvent | None:
 
 
 def build_brief(event: IssueEvent) -> str:
-    """Render the assigned issue into a Lightwork goal brief."""
+    """Render the assigned issue into a Maverick goal brief."""
     return (
         f"{event.provider.title()} issue: {event.issue_id}\n"
         f"Title: {event.title}\n\n"
         f"Issue body:\n{event.body}\n\n"
-        "This issue was assigned to Lightwork. Implement a minimal fix or "
+        "This issue was assigned to Maverick. Implement a minimal fix or "
         "feature satisfying it."
     )
 

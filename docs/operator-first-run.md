@@ -1,6 +1,6 @@
 # Operator first run
 
-This is the shortest path from an installed Lightwork build to a working
+This is the shortest path from an installed Maverick build to a working
 runtime and an evidence-visible operator cockpit. It separates deterministic
 configuration checks from live connectivity checks so a deployment script can
 fail for the right reason.
@@ -63,7 +63,7 @@ maverick preflight --profile cockpit --json
 The command has stable check ordering and no generated timestamp. It makes no
 network request and creates no runtime state. It exits non-zero when the
 selected profile has a blocker. Each blocker carries one copyable remediation.
-The JSON schema is `lightwork.operator-preflight.v1`.
+The JSON schema is `maverick.operator-preflight.v1`.
 
 Offline preflight verifies configuration, routed provider dependencies, local
 storage permissions, package presence, and the selected feature dependency

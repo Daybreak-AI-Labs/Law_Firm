@@ -123,7 +123,7 @@
               'signed audit delivery is pending. Retrying is safe' +
               (pending.decision_id ? ' (' + pending.decision_id.slice(0, 20) + 'â€¦).' : '.');
           } else if (r.status === 204) {
-            const approvalState = r.headers.get('X-Lightwork-Approval-State') || '';
+            const approvalState = r.headers.get('X-Maverick-Approval-State') || '';
             if (approvalState === 'pending') {
               // This vote is signed, but an N-of-M approval still needs quorum.
               // Keep the shared queue row visible rather than implying that the

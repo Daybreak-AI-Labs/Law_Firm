@@ -1,4 +1,4 @@
-"""Per-domain document knowledge (vector RAG) for Lightwork agents.
+"""Per-domain document knowledge (vector RAG) for Maverick agents.
 
 The pure core works with no extra deps (``DeterministicEmbedder`` +
 ``SqliteVectorStore`` + text/markdown/HTML parsing). Hosted/local embedders,

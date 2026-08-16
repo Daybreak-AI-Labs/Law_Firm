@@ -40,7 +40,7 @@ from .signing import (
     verify_anchors,
 )
 
-CHECKPOINT_SCHEMA = "lightwork.audit.checkpoint.v2"
+CHECKPOINT_SCHEMA = "maverick.audit.checkpoint.v2"
 CHECKPOINT_PREFIX = "audit-checkpoint-"
 _CHECKPOINT_RE = re.compile(r"^audit-checkpoint-(\d{20})\.ndjson$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

@@ -129,7 +129,7 @@ def test_notify_routes_to_batcher_when_active(monkeypatch):
 
     monkeypatch.setattr(nb, "shared", lambda: FakeBatcher())
     n = N.notify("hi", backends=["ntfy"], priority="default")
-    assert n == 0 and calls == [("hi", "Lightwork", "default")]
+    assert n == 0 and calls == [("hi", "Maverick", "default")]
 
 
 def test_notify_sync_bypasses_batcher(monkeypatch):

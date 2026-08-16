@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical secret-bearing environment registry for the GitHub Action.
 
-This module deliberately has no Lightwork imports.  The public composite
+This module deliberately has no Maverick imports.  The public composite
 action loads it with the isolated standard-library-only Python interpreter
 before and after untrusted work runs.
 

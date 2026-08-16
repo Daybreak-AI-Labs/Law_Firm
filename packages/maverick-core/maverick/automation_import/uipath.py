@@ -7,7 +7,7 @@ than n8n/Make: the Orchestrator API exposes deployed **Releases** (a process:
 (time triggers: ``{Name, ReleaseName, StartProcessCron, Enabled}``). We import a
 Release as a one-step automation ("run the UiPath process X") and a schedule as
 the same with a schedule trigger. UiPath cron is Quartz (6-7 fields), which the
-Lightwork scheduler (5-field) can't run directly, so we capture it in the
+Maverick scheduler (5-field) can't run directly, so we capture it in the
 trigger for the operator to translate rather than auto-creating a schedule.
 
 Single-tenant creds (env): ``UIPATH_BASE_URL`` (Orchestrator URL incl. tenant

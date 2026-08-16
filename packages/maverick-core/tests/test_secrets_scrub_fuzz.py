@@ -1,6 +1,6 @@
 """Fuzz + ReDoS hardening for the secret redactors.
 
-Lightwork has two mirror secret redactors -- ``maverick.secrets.scrub`` and
+Maverick has two mirror secret redactors -- ``maverick.secrets.scrub`` and
 ``maverick.safety.secret_detector.redact`` -- and both are security
 controls: they run on tool stdout, MCP stderr drains, and LLM error
 payloads before any of those are logged / audited / replay-exported. All

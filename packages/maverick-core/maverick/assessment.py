@@ -4,7 +4,7 @@ This is the OneTrust-style assessment core: a structured questionnaire is run
 against a *subject* (a processing activity, an AI system, a vendor), each answer
 is scored, and the result is a completed assessment with **findings** and an
 overall **risk rating**. Distinct from ``maverick ropa`` / ``dpia`` / ``ai-act``,
-which generate a scaffold from Lightwork's *own* deployment config -- this assesses
+which generate a scaffold from Maverick's *own* deployment config -- this assesses
 an arbitrary third-party subject.
 
 A template is plain data (:class:`AssessmentTemplate` -> :class:`Question`), so
@@ -3871,7 +3871,7 @@ def render_result_json(result: AssessmentResult) -> str:
 # --- The conversational assessor agent -------------------------------------
 
 ASSESSMENT_PERSONA = (
-    "You are Lightwork's compliance assessor. You conduct structured assessments "
+    "You are Maverick's compliance assessor. You conduct structured assessments "
     "(privacy impact, AI risk, vendor risk). First call list_assessments to see "
     "the types, then start_assessment with the type and the subject being "
     "assessed. Answer each question from the documents and facts you were given, "
@@ -3911,7 +3911,7 @@ def build_assessment_agent(ctx, session: AssessmentSession | None = None):
 # --- The first-round privacy analyst ---------------------------------------
 
 PRIVACY_ANALYST_PERSONA = (
-    "You are Lightwork's privacy & security analyst -- the first-round analyst. "
+    "You are Maverick's privacy & security analyst -- the first-round analyst. "
     "Given a subject (a vendor, an AI system, or a processing activity) you "
     "conduct the assessment end to end:\n"
     "1. RESEARCH the subject from the documents/context you are given (read_file, "
@@ -3978,7 +3978,7 @@ def build_privacy_analyst_agent(ctx, session: AssessmentSession | None = None):
 
 
 COMPLIANCE_AUDITOR_PERSONA = (
-    "You are Lightwork's compliance auditor. Given a framework (hipaa / soc2 / "
+    "You are Maverick's compliance auditor. Given a framework (hipaa / soc2 / "
     "pci_dss, or another from list_assessments) and a subject -- usually THIS "
     "deployment, sometimes a vendor -- you produce an audit-readiness report a "
     "human compliance officer signs off.\n"

@@ -1,6 +1,6 @@
 # Finance regulatory operations and assurance
 
-Lightwork's finance operations layer is deterministic decision-support plumbing
+Maverick's finance operations layer is deterministic decision-support plumbing
 for regulated finance teams. It gathers cited facts, creates review work, and
 preserves human authority. It does not use an LLM to interpret a rule, declare a
 license requirement, clear a sanctions match, decide a SAR, or issue an audit
@@ -36,7 +36,7 @@ configuration.
 
 `maverick.finance.regulatory_change` provides bounded JSON, Federal Register
 JSON, RSS, and Atom normalization. The dashboard scheduler retrieves configured
-HTTPS sources through Lightwork's DNS-pinned SSRF guard, with redirect
+HTTPS sources through Maverick's DNS-pinned SSRF guard, with redirect
 revalidation, a 20-second timeout, and a 5 MiB per-page body ceiling. Federal
 Register collection pagination follows the publisher's explicit same-host
 `next_page_url`, rejects cycles, and stops at 100 pages or 50 MiB cumulative.
@@ -66,7 +66,7 @@ enabled regime or domain, it reopens with a system scope-change event. The initi
 source is the [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1).
 An opt-in built-in uses the official [Texas Register RSS](https://www.sos.state.tx.us/texreg/texreg.xml).
 That feed is issue-level, so its HTML/PDF/archive items route to human review;
-Lightwork does not pretend they are notice-level rule records. Up to 50 other
+Maverick does not pretend they are notice-level rule records. Up to 50 other
 state sources may be configured explicitly, with no invented or silently
 substituted URL.
 
@@ -226,7 +226,7 @@ only after a recent successful scheduled operation.
 
 Mutations return revision conflicts as HTTP 409, validation failures as 422,
 missing records as 404, and unexpected failures as a redacted 503. Dashboard
-mutations require the same-origin header enforced across Lightwork.
+mutations require the same-origin header enforced across Maverick.
 
 ## YC demo path
 

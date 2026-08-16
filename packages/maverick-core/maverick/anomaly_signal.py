@@ -11,7 +11,7 @@ import json
 import re
 from dataclasses import dataclass
 
-SIGNAL_SCHEMA = "lightwork.anomaly-signal.v1"
+SIGNAL_SCHEMA = "maverick.anomaly-signal.v1"
 _TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SEVERITIES = frozenset({"low", "medium", "high", "critical"})

@@ -1,6 +1,6 @@
 """gRPC dispatch (roadmap: 2027 H1 performance).
 
-Move goal execution to a remote Lightwork worker over gRPC: a
+Move goal execution to a remote Maverick worker over gRPC: a
 :class:`GrpcDispatcher` implements the :class:`maverick.runner.Dispatcher`
 protocol by calling the worker's ``RunGoal`` RPC (added to
 ``grpc_api/maverick.proto``), which runs an **existing** goal row to

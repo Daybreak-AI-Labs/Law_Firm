@@ -2,7 +2,7 @@
 
 Routes ``complete()`` calls through the locally installed OpenAI Codex
 CLI (``codex exec``) instead of a metered API SDK, so a ChatGPT/Codex
-subscription can back Lightwork roles and benchmarks. Spec form:
+subscription can back Maverick roles and benchmarks. Spec form:
 ``codex_cli:<model-id>`` (aliases ``codex-cli:`` / ``codex:``), e.g.::
 
     [models]
@@ -34,7 +34,7 @@ Differences from API-key providers, by design:
     block (``{"tool_call": {"name": ..., "input": {...}}}``), which is parsed
     back into a ``ToolCall``. Fine for benchmarks and general agent loops;
     weaker guarantees than a native tools API.
-  - The subprocess runs with ``--sandbox read-only`` by default: Lightwork
+  - The subprocess runs with ``--sandbox read-only`` by default: Maverick
     owns tool execution, Codex is used purely as the model backend.
 
 Config knobs (``[providers.codex_cli]``): ``binary`` (default ``codex``),
@@ -126,7 +126,7 @@ def _auth_file_present(env: dict | None = None) -> bool:
 
 
 class CodexCLIClient:
-    """``codex exec`` as a Lightwork provider (structural ``Provider`` type).
+    """``codex exec`` as a Maverick provider (structural ``Provider`` type).
 
     ``api_key`` is the ChatGPT/Codex ACCESS TOKEN (from
     ``[providers.codex_cli] api_key`` or ``CODEX_ACCESS_TOKEN``); it is held
@@ -337,7 +337,7 @@ class CodexCLIClient:
     ) -> str:
         """Flatten system + Anthropic-format history into one exec prompt."""
         lines: list[str] = [
-            "You are the model backend for the Lightwork agent runtime. "
+            "You are the model backend for the Maverick agent runtime. "
             "Continue the conversation below as the assistant. Do not run "
             "commands or edit files yourself; just produce the assistant's "
             "next reply.",

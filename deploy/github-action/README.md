@@ -1,15 +1,15 @@
-# Lightwork GitHub Action
+# Maverick GitHub Action
 
-Run a Lightwork agent swarm inside a GitHub workflow — on a PR, on a
+Run a Maverick agent swarm inside a GitHub workflow — on a PR, on a
 schedule, or on demand — under a **hard spend cap**. It installs
-Lightwork from the action's own pinned source checkout and runs `maverick
+Maverick from the action's own pinned source checkout and runs `maverick
 start` with the inputs you give it, then writes the final answer to the job
 summary and exposes sanitized, bounded output as a step output. It never
-falls back to an unqualified public-index install of a Lightwork
+falls back to an unqualified public-index install of a Maverick
 distribution.
 
 ```yaml
-- uses: Daybreak-AI-Labs/Lightwork/deploy/github-action@<full-40-character-commit-sha>
+- uses: Daybreak-AI-Labs/Law_Firm/deploy/github-action@<full-40-character-commit-sha>
   with:
     goal: "Summarize the changes in this PR and flag anything risky."
     max-dollars: "0.50"
@@ -60,7 +60,7 @@ distribution.
 ### Review every pull request
 
 ```yaml
-name: Lightwork review
+name: Maverick review
 on: pull_request
 permissions:
   contents: read
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      - uses: Daybreak-AI-Labs/Lightwork/deploy/github-action@<full-40-character-commit-sha>
+      - uses: Daybreak-AI-Labs/Law_Firm/deploy/github-action@<full-40-character-commit-sha>
         with:
           template: code-review
           params: |
@@ -86,7 +86,7 @@ jobs:
 
 ```yaml
       - id: maverick
-        uses: Daybreak-AI-Labs/Lightwork/deploy/github-action@<full-40-character-commit-sha>
+        uses: Daybreak-AI-Labs/Law_Firm/deploy/github-action@<full-40-character-commit-sha>
         with:
           goal: "Review the diff on this PR and list concrete risks."
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -114,7 +114,7 @@ composite-action steps inherit it:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
-      - uses: Daybreak-AI-Labs/Lightwork/deploy/github-action@<full-40-character-commit-sha>
+      - uses: Daybreak-AI-Labs/Law_Firm/deploy/github-action@<full-40-character-commit-sha>
         with:
           goal: "..."
           model: gpt-4.1

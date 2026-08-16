@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maverick-installer"
 version = "0.1.7"
-description = "Interactive setup wizard for Lightwork"
+description = "Interactive setup wizard for Maverick"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Daybreak-AI-Labs/Lightwork"
+Homepage = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [project.scripts]
 maverick-init = "maverick_installer.main:main"

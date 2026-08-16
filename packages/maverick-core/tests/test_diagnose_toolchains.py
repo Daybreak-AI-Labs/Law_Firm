@@ -1,6 +1,6 @@
 """`diagnose` reports coding-language toolchains (polyglot operator UX).
 
-Lightwork can now build/test Rust/Go/TS, but only the `local` sandbox uses the
+Maverick can now build/test Rust/Go/TS, but only the `local` sandbox uses the
 host toolchain -- container backends get it from their image. diagnose surfaces
 which toolchains are reachable and which backend supplies them, so an operator
 setting up polyglot can see what's missing.

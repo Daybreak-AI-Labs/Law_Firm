@@ -194,7 +194,7 @@ def _resolve_key(key_file: Path, *, owned_parent: bool) -> bytes:
         return env.encode("ascii")
     if owned_parent or not key_file.parent.exists():
         # The default authority directory (or a missing directory created here)
-        # is Lightwork-owned and may be tightened.
+        # is platform-owned and may be tightened.
         ensure_private_directory(key_file.parent)
     else:
         # An injected key path is an integrity boundary. Verify its parent but

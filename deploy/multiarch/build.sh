@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Multi-architecture image build for Lightwork (deploy/multiarch).
+# Multi-architecture image build for Maverick (deploy/multiarch).
 #
 # Run from the REPO ROOT:
 #   deploy/multiarch/build.sh                       # amd64 + arm64

@@ -163,8 +163,8 @@ def test_issues_complete_tenant_private_receipt_and_verifies():
         issued, trust = _issue()
         receipt = issued.receipt
 
-        assert receipt["schema"] == "lightwork.training-receipt.v2"
-        assert tr.APPROVAL_MESSAGE_VERSION == "lightwork-training-approval-v2"
+        assert receipt["schema"] == "maverick.training-receipt.v2"
+        assert tr.APPROVAL_MESSAGE_VERSION == "maverick-training-approval-v2"
         assert tr.verify_training_receipt(
             receipt,
             trusted_receipt_pubkeys=trust["receipt"],
@@ -851,7 +851,7 @@ def test_public_commitment_is_verified_and_disclosure_minimal():
             trusted_approver_pubkeys=trust["approval"],
         )
         assert commitment == issued.public_commitment
-        assert commitment["schema"] == "lightwork.training-transparency-commitment.v1"
+        assert commitment["schema"] == "maverick.training-transparency-commitment.v1"
         assert set(commitment) == {
             "schema",
             "dataset_sha256",

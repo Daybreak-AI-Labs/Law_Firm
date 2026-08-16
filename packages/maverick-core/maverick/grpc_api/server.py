@@ -37,7 +37,7 @@ def _require_grpc():
         import grpc  # noqa: F401
     except ImportError as e:
         raise ImportError(
-                "grpc not installed. Run from a reviewed Lightwork checkout: "
+                "grpc not installed. Run from a reviewed Maverick checkout: "
                 "python -m pip install -e './packages/maverick-core[grpc]'"
         ) from e
     return __import__("grpc")
@@ -63,7 +63,7 @@ def _generate_stubs() -> None:
     except ImportError as e:
         raise ImportError(
             "grpcio-tools not installed (needed to generate stubs). "
-            "Run from a reviewed Lightwork checkout: "
+            "Run from a reviewed Maverick checkout: "
             "python -m pip install -e './packages/maverick-core[grpc]'"
         ) from e
     out = str(_PROTO.parent)
@@ -82,7 +82,7 @@ def _resolve_bearer_token(bearer_token: str | None = None) -> str:
     token = (bearer_token if bearer_token is not None else os.getenv(_TOKEN_ENV, "")).strip()
     if not token:
         raise ValueError(
-            "Lightwork gRPC requires a bearer token. Set "
+            "Maverick gRPC requires a bearer token. Set "
             f"{_TOKEN_ENV} or pass --bearer-token, and send it as "
             "metadata: authorization: Bearer <token>."
         )
@@ -649,7 +649,7 @@ def serve(
     from ..grpc_tls import bind_port
     secure = bind_port(server, address, "grpc")
     server.start()
-    log.info("Lightwork gRPC API listening on %s (%s)", address,
+    log.info("Maverick gRPC API listening on %s (%s)", address,
              "TLS" if secure else "plaintext")
     return server
 
@@ -658,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     import sys
 
-    ap = argparse.ArgumentParser("maverick-grpc", description="Lightwork gRPC API server")
+    ap = argparse.ArgumentParser("maverick-grpc", description="Maverick gRPC API server")
     ap.add_argument("--address", default=_DEFAULT_ADDR, help="host:port to bind")
     ap.add_argument("--max-workers", type=int, default=None,
                     help="thread pool size (default: MAVERICK_GRPC_MAX_WORKERS "

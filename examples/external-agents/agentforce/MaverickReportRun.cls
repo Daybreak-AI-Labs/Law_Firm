@@ -1,18 +1,18 @@
 /**
- * Lightwork BYOA gateway — the "report-after" half for Salesforce
+ * Maverick BYOA gateway — the "report-after" half for Salesforce
  * Agentforce.
  *
- * Companion to LightworkGateway.cls (Apex allows one @InvocableMethod per
+ * Companion to MaverickGateway.cls (Apex allows one @InvocableMethod per
  * class, so the two agent actions are two classes sharing one HTTP layer).
- * The agent calls "Lightwork: Report Run" exactly once when a job
- * completes; the run lands on the Lightwork Operating Record as a
+ * The agent calls "Maverick: Report Run" exactly once when a job
+ * completes; the run lands on the Maverick Operating Record as a
  * first-class goal owned by agent:<id>, metered against the enrolled
  * budget ceiling.
  *
  * Pass a stable idempotencyKey per logical run: a retried report returns
  * the original record instead of double-counting spend.
  */
-public with sharing class LightworkReportRun {
+public with sharing class MaverickReportRun {
 
     public class ReportRequest {
         @InvocableVariable(
@@ -61,8 +61,8 @@ public with sharing class LightworkReportRun {
     }
 
     @InvocableMethod(
-        label='Lightwork: Report Run'
-        description='Report a completed run to Lightwork so it lands on the Operating Record with its cost. Call once per job, with a stable idempotency key.'
+        label='Maverick: Report Run'
+        description='Report a completed run to Maverick so it lands on the Operating Record with its cost. Call once per job, with a stable idempotency key.'
         callout=true)
     public static List<ReportResult> report(List<ReportRequest> requests) {
         List<ReportResult> results = new List<ReportResult>();
@@ -91,18 +91,18 @@ public with sharing class LightworkReportRun {
 
         try {
             HttpResponse response =
-                LightworkGateway.post('/api/v1/external/runs', gen.getAsString());
+                MaverickGateway.post('/api/v1/external/runs', gen.getAsString());
             if (response.getStatusCode() != 201) {
-                result.errorMessage = LightworkGateway.readableHttpError(response);
+                result.errorMessage = MaverickGateway.readableHttpError(response);
                 return result;
             }
             Map<String, Object> body =
                 (Map<String, Object>) JSON.deserializeUntyped(response.getBody());
-            result.ok = LightworkGateway.asBoolean(body.get('ok'));
-            result.goalId = LightworkGateway.asInteger(body.get('goal_id'));
-            result.overBudget = LightworkGateway.asBoolean(body.get('over_budget'));
+            result.ok = MaverickGateway.asBoolean(body.get('ok'));
+            result.goalId = MaverickGateway.asInteger(body.get('goal_id'));
+            result.overBudget = MaverickGateway.asBoolean(body.get('over_budget'));
         } catch (Exception e) {
-            result.errorMessage = 'Lightwork gateway callout failed: ' + e.getMessage();
+            result.errorMessage = 'Maverick gateway callout failed: ' + e.getMessage();
         }
         return result;
     }

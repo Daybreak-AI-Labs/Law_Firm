@@ -22,7 +22,7 @@ def test_cef_header_escapes_pipe_in_kind():
     # header field (e.g. a future/plugin-supplied kind) must be escaped so it
     # can't shift the header columns and corrupt the record.
     line = to_cef({"kind": "policy|halt", "agent": "x"})
-    assert line.startswith("CEF:0|Lightwork|maverick-agent|")
+    assert line.startswith("CEF:0|Maverick|maverick-agent|")
     # both kind header slots carry the escaped form, not a raw delimiter
     assert "policy\\|halt|policy\\|halt|" in line
 
@@ -76,7 +76,7 @@ def test_to_jsonl_roundtrips():
 def test_to_cef_header_and_extensions():
     ev = {"v": 1, "kind": "tool_call", "agent": "system", "name": "read_file"}
     cef = to_cef(ev)
-    assert cef.startswith("CEF:0|Lightwork|maverick-agent|")
+    assert cef.startswith("CEF:0|Maverick|maverick-agent|")
     assert "|tool_call|tool_call|" in cef
     assert "name=read_file" in cef
     assert "kind=tool_call" in cef
@@ -210,7 +210,7 @@ def test_cli_export_cef(monkeypatch, tmp_path):
     res = CliRunner().invoke(main, ["audit", "export", "--format", "cef"])
     assert res.exit_code == 0, res.output
     line = res.output.strip().splitlines()[0]
-    assert line.startswith("CEF:0|Lightwork|maverick-agent|")
+    assert line.startswith("CEF:0|Maverick|maverick-agent|")
     assert "name=read_file" in line
 
 

@@ -344,7 +344,7 @@ def test_gateway_receipt_verification_and_exact_packet_download(monkeypatch):
         "assurance": {"status": "current", "reasons": []},
     }
     packet = {
-        "schema": "lightwork.ai-evidence-assurance-packet.v1",
+        "schema": "maverick.ai-evidence-assurance-packet.v1",
         "packet_id": "AEP-api-1",
         "signature": {"key_id": "server-owned", "value": "ab"},
     }
@@ -421,7 +421,7 @@ def test_gateway_receipt_verification_and_exact_packet_download(monkeypatch):
     assert downloaded.headers["idempotent-replay"] == "false"
     assert downloaded.headers["cache-control"] == "no-store"
     assert downloaded.headers["content-disposition"] == (
-        'attachment; filename="lightwork-ai-assurance-packet.json"'
+        'attachment; filename="maverick-ai-assurance-packet.json"'
     )
     replayed = client.post(
         f"{prefix}/assurance-packet",

@@ -2,7 +2,7 @@
 
 ## Current readiness
 
-Lightwork's governed code-rung evaluator is fail-closed. No bundled sandbox
+Maverick's governed code-rung evaluator is fail-closed. No bundled sandbox
 backend currently supplies controller-authenticated terminal test counts, so
 the stock DGM runner refuses before a model proposal or candidate test runs.
 
@@ -27,7 +27,7 @@ def exec_authenticated_tests(request, timeout=None):
     ...
 ```
 
-`request` is an `AuthenticatedTestRequest` issued by the Lightwork controller.
+`request` is an `AuthenticatedTestRequest` issued by the Maverick controller.
 It binds a fresh 256-bit nonce to the exact command, a controller-computed
 SHA-256 manifest of the evaluated artifact/workspace, and a stable execution-
 context digest covering the baseline/candidate arm, sandbox identity, pinned
@@ -38,7 +38,7 @@ an exact `AuthenticatedTestEvidence` carrying:
 - the backend's pinned non-secret authority identity; and
 - terminal passed, failed, skipped, and error counts.
 
-Lightwork rejects a stale nonce, a command/digest mismatch, a wrong artifact or
+Maverick rejects a stale nonce, a command/digest mismatch, a wrong artifact or
 arm/context binding, another authority, a subclass or lookalike result object,
 non-terminal evidence, negative or boolean counts, zero outcomes, and
 implausibly large totals. Skips and errors remain in the denominator. The
@@ -78,12 +78,12 @@ limits, and an exact workspace binding for each baseline/candidate arm.
    caches or state from a prior split must not change the next evaluation arm.
 4. Observe terminal test events outside the candidate process and include
    skipped, collection, and runtime errors.
-5. Authenticate the response before returning the exact Lightwork evidence
+5. Authenticate the response before returning the exact Maverick evidence
    type; never translate candidate-authored summaries into evidence.
 6. Refuse retries or duplicate response nonces at the broker, and retain an
    append-only audit record keyed by request digest.
 7. Pin the backend as `[sandbox] backend = "ep:<name>"`, then run a stock DGM
-   cycle. Lightwork performs static readiness and workspace-binding checks
+   cycle. Maverick performs static readiness and workspace-binding checks
    before proposal/evaluation.
 
 Until that external provider exists and passes adversarial conformance tests,

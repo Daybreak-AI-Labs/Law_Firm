@@ -1,4 +1,4 @@
-"""Fail-closed verification adapter for the signed Lightwork audit chain."""
+"""Fail-closed verification adapter for the signed Maverick audit chain."""
 from __future__ import annotations
 
 import time

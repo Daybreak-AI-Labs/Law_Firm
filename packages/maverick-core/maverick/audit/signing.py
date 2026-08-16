@@ -25,7 +25,7 @@ Externally-managed key (enterprise / H29): set
 base64). It then becomes the active signer and is held IN MEMORY ONLY -- the
 private key is never written to the local key dir, so the chain's trust anchor
 can be custodied in a KMS / HSM / secrets manager and injected at deploy time
-instead of generated-and-left on the host. Lightwork consumes and removes this
+instead of generated-and-left on the host. Maverick consumes and removes this
 environment entry the first time audit signing loads, then caches only decoded
 key material in memory; inherited startup environments are not an HSM/KMS
 security boundary. Only the public half (plus an ``.injected`` marker) is

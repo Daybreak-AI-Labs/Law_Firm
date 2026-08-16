@@ -1,4 +1,4 @@
-// Zed tasks for the Lightwork CLI. Copy this file's entries into
+// Zed tasks for the Maverick CLI. Copy this file's entries into
 // .zed/tasks.json (per project) or ~/.config/zed/tasks.json (global), then
 // run them via `task: spawn`. Every command below is a real CLI verb
 // (packages/maverick-core/maverick/cli.py); the WASI extension sandbox can't

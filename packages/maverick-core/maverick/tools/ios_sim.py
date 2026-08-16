@@ -1,7 +1,7 @@
 """iOS Simulator tool via xcrun simctl.
 
 Mirrors the android tool: lets the agent drive an iOS Simulator
-runtime (booted on the same Mac as Lightwork) for QA / RPA tasks.
+runtime (booted on the same Mac as Maverick) for QA / RPA tasks.
 
 Auth: none — uses local Xcode `xcrun simctl`. Mac-only by definition;
 the tool fails loudly with an actionable message on Linux / Windows.

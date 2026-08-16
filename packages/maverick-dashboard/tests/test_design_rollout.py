@@ -53,7 +53,7 @@ def test_store_modernized_off_bespoke_classes(monkeypatch, tmp_path):
 def test_buttons_have_tactile_transition(monkeypatch, tmp_path):
     # Buttons gained a smooth transition + a subtle press, gated by reduced motion.
     _isolate(monkeypatch, tmp_path)
-    t = _client().get("/static/lightwork.css").text
+    t = _client().get("/static/maverick.css").text
     assert ".btn:active { transform: translateY(1px); }" in t
     assert ".btn:active { transform: none; }" in t
 

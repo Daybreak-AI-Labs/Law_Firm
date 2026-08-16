@@ -1,4 +1,4 @@
-# Lightwork on AWS ECS (Fargate)
+# Maverick on AWS ECS (Fargate)
 
 Single-service deployment: one Fargate task running the dashboard, state on
 EFS (so redeploys keep `~/.maverick`), secrets from SSM Parameter Store.

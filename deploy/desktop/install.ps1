@@ -1,8 +1,8 @@
 <#
-  Lightwork desktop bootstrap (Windows).
+  Maverick desktop bootstrap (Windows).
 
   Zero prerequisites. It installs Python 3.12 if missing, checks out an exact
-  Lightwork commit into an isolated pipx environment, and launches the wizard
+  Maverick commit into an isolated pipx environment, and launches the wizard
   (`maverick init`). There is deliberately no public-package-index fallback.
 
   Set $env:MAVERICK_REF to a reviewed, lowercase, full 40-character commit
@@ -15,9 +15,9 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Repo   = if ($env:MAVERICK_REPO) { $env:MAVERICK_REPO } else { 'Daybreak-AI-Labs/Lightwork' }
+$Repo   = if ($env:MAVERICK_REPO) { $env:MAVERICK_REPO } else { 'Daybreak-AI-Labs/Law_Firm' }
 $Ref    = if ($env:MAVERICK_REF)  { $env:MAVERICK_REF }  else { '' }
-$SrcDir = Join-Path $env:LOCALAPPDATA 'Lightwork\src'
+$SrcDir = Join-Path $env:LOCALAPPDATA 'Maverick\src'
 
 # How to call the resolved Python: $PyExe + $PyPre (e.g. 'py' + '-3').
 $script:PyExe = $null
@@ -25,7 +25,7 @@ $script:PyPre = @()
 
 function Write-Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Write-Warn($m) { Write-Host "!!  $m" -ForegroundColor Yellow }
-function Die($m) { throw "Lightwork install failed: $m" }
+function Die($m) { throw "Maverick install failed: $m" }
 function Have($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 function Py { & $script:PyExe @($script:PyPre + $args) }
 
@@ -35,7 +35,7 @@ function Test-PinnedRef($ref) {
 
 function Ensure-SourcePin {
   if (-not $Ref) {
-    Die "MAVERICK_REF is required. Set it to a reviewed, full 40-character Lightwork commit SHA; public-index fallback is disabled."
+    Die "MAVERICK_REF is required. Set it to a reviewed, full 40-character Maverick commit SHA; public-index fallback is disabled."
   }
   if (Test-PinnedRef $Ref) { return }
   Die "MAVERICK_REF must be a lowercase, full 40-character commit SHA; got '$Ref'."
@@ -165,7 +165,7 @@ function Resolve-Python {
 }
 
 Write-Host ""
-Write-Host "Lightwork desktop installer (Windows)" -ForegroundColor Green
+Write-Host "Maverick desktop installer (Windows)" -ForegroundColor Green
 Write-Host ""
 Ensure-SourcePin
 
@@ -199,27 +199,27 @@ function Fetch-Source {
   Ensure-SourcePin
   Ensure-RepoSlug
   Ensure-GitForSource
-  Write-Step "Downloading a fresh Lightwork source tree ($Repo@$Ref) ..."
+  Write-Step "Downloading a fresh Maverick source tree ($Repo@$Ref) ..."
   $srcParent = Split-Path $SrcDir
   New-Item -ItemType Directory -Force -Path $srcParent | Out-Null
   $stageDir = Join-Path $srcParent ("src.stage." + [Guid]::NewGuid().ToString('N'))
   try {
     git clone --no-checkout --filter=blob:none "https://github.com/$Repo" $stageDir
-    if ($LASTEXITCODE -ne 0) { Die "Could not clone the Lightwork source repository." }
+    if ($LASTEXITCODE -ne 0) { Die "Could not clone the Maverick source repository." }
     git -C $stageDir fetch --depth 1 origin $Ref
-    if ($LASTEXITCODE -ne 0) { Die "Could not fetch required Lightwork commit '$Ref'." }
+    if ($LASTEXITCODE -ne 0) { Die "Could not fetch required Maverick commit '$Ref'." }
     git -C $stageDir -c advice.detachedHead=false checkout --detach FETCH_HEAD | Out-Null
-    if ($LASTEXITCODE -ne 0) { Die "Could not check out required Lightwork commit '$Ref'." }
+    if ($LASTEXITCODE -ne 0) { Die "Could not check out required Maverick commit '$Ref'." }
     $actualRef = ((git -C $stageDir rev-parse HEAD 2>$null) | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $actualRef -cne $Ref) {
       Die "Checked-out source is at '$actualRef', not required ref '$Ref'."
     }
     $dirty = ((git -C $stageDir status --porcelain --untracked-files=all 2>$null) | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $dirty) {
-      Die "Fresh pinned Lightwork checkout is unexpectedly dirty."
+      Die "Fresh pinned Maverick checkout is unexpectedly dirty."
     }
     if (-not (Test-Path (Join-Path $stageDir 'packages\maverick-core\pyproject.toml'))) {
-      Die "Pinned checkout is not a complete Lightwork source tree."
+      Die "Pinned checkout is not a complete Maverick source tree."
     }
     Remove-Item -Recurse -Force -LiteralPath $SrcDir -ErrorAction SilentlyContinue
     Move-Item -LiteralPath $stageDir -Destination $SrcDir
@@ -232,10 +232,10 @@ function Fetch-Source {
 }
 
 # 3. Install the complete release cohort into one pipx venv.
-Write-Step "Installing the complete Lightwork package cohort (this can take a minute) ..."
+Write-Step "Installing the complete Maverick package cohort (this can take a minute) ..."
 Fetch-Source
 Py -m pipx install --force --pip-args=--no-deps (Join-Path $SrcDir 'packages\maverick-core')
-if ($LASTEXITCODE -ne 0) { Die "pipx could not install the pinned Lightwork core source." }
+if ($LASTEXITCODE -ne 0) { Die "pipx could not install the pinned Maverick core source." }
 $venvsDir = (Py -m pipx environment --value PIPX_LOCAL_VENVS).Trim()
 $venvPython = Join-Path $venvsDir 'maverick-agent\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
@@ -245,7 +245,7 @@ Py (Join-Path $SrcDir 'scripts\install_release_cohort.py') `
   --source-root $SrcDir `
   --target-python $venvPython `
   --core-extra release-runtime
-if ($LASTEXITCODE -ne 0) { Die "The constrained Lightwork cohort install failed." }
+if ($LASTEXITCODE -ne 0) { Die "The constrained Maverick cohort install failed." }
 
 # 4. Locate the maverick shim and launch the wizard.
 $binDir = $null
@@ -258,9 +258,9 @@ Write-Host ""
 # The desktop GUI installer sets MAVERICK_NO_WIZARD: install but skip the
 # interactive wizard (the app then points the user at `maverick init`).
 if ($env:MAVERICK_NO_WIZARD) {
-  Write-Host "Lightwork installed. Run 'maverick init' to configure it." -ForegroundColor Green
+  Write-Host "Maverick installed. Run 'maverick init' to configure it." -ForegroundColor Green
 } else {
-  Write-Host "Lightwork installed." -ForegroundColor Green
+  Write-Host "Maverick installed." -ForegroundColor Green
   Write-Host "Launching the setup wizard..." -ForegroundColor Green
   Write-Host ""
   if (Have maverick) {

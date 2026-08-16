@@ -1,12 +1,12 @@
-# Lightwork GitLab CI template
+# Maverick GitLab CI template
 
-Run a Lightwork agent goal inside a GitLab pipeline — on a merge request, on
+Run a Maverick agent goal inside a GitLab pipeline — on a merge request, on
 a schedule, or on demand — under a **hard spend cap** and with
 non-interactive safety defaults. The reusable
 [`maverick.gitlab-ci.yml`](./maverick.gitlab-ci.yml) template installs
-Lightwork from a verified source checkout or an explicitly configured trusted
+Maverick from a verified source checkout or an explicitly configured trusted
 private index, then runs `maverick start "$MAVERICK_GOAL"`. There is no public
-PyPI fallback while the Lightwork project names remain unreserved.
+PyPI fallback while the Maverick project names remain unreserved.
 
 It is the GitLab counterpart to the [`deploy/github-action`](../github-action)
 wrapper and mirrors the same safety inputs: consent mode, budget cap, and
@@ -19,7 +19,7 @@ that `extends` the hidden `.maverick` job:
 
 ```yaml
 include:
-  - remote: 'https://gitlab.example/Lightwork/-/raw/<full-commit-sha>/deploy/gitlab-ci/maverick.gitlab-ci.yml'
+  - remote: 'https://gitlab.example/Maverick/-/raw/<full-commit-sha>/deploy/gitlab-ci/maverick.gitlab-ci.yml'
 
 maverick:
   extends: .maverick
@@ -43,8 +43,8 @@ Set these under **Settings → CI/CD → Variables** (mark the API key as
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | Provider key, written into the generated config. For another provider, leave it blank and set that provider's env var on the job. |
 | `MAVERICK_GOAL` | yes | The goal text passed to `maverick start`. The job fails fast if it is empty. |
-| `MAVERICK_SOURCE_DIR` + `MAVERICK_SOURCE_REF` | one install mode required | Path to an already checked-out Lightwork repository and its lowercase, full 40-character commit SHA. The job verifies `HEAD` before installing all first-party distributions locally. |
-| `MAVERICK_PACKAGE_INDEX_URL` + `MAVERICK_VERSION` | one install mode required | Explicit trusted private/simple index and exact Lightwork version. Ambient pip configuration is ignored and public PyPI hosts are rejected. |
+| `MAVERICK_SOURCE_DIR` + `MAVERICK_SOURCE_REF` | one install mode required | Path to an already checked-out Maverick repository and its lowercase, full 40-character commit SHA. The job verifies `HEAD` before installing all first-party distributions locally. |
+| `MAVERICK_PACKAGE_INDEX_URL` + `MAVERICK_VERSION` | one install mode required | Explicit trusted private/simple index and exact Maverick version. Ambient pip configuration is ignored and public PyPI hosts are rejected. |
 | `MAVERICK_MAX_DOLLARS` | no (default `1.0`) | Hard USD spend cap, wired into `[budget] max_dollars`. The kernel refuses to exceed it. |
 | `MAVERICK_MODEL` | no | Model override, e.g. `anthropic:claude-sonnet-4-6` (passed as `maverick --model`). |
 | `MAVERICK_PYTHON_VERSION` | no (default `3.12`) | Python image tag used for the job. |

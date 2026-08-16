@@ -1,5 +1,5 @@
-name: "Lightwork swarm"
-description: "Run a Lightwork agent swarm on a goal (or a goal template) inside a GitHub workflow, under a hard spend cap."
+name: "Maverick swarm"
+description: "Run a Maverick agent swarm on a goal (or a goal template) inside a GitHub workflow, under a hard spend cap."
 author: "Daybreak Labs"
 
 branding:
@@ -53,7 +53,7 @@ inputs:
     required: false
     default: ""
   version:
-    description: "Optional expected version of the Lightwork source bundled with this action (e.g. 0.1.7). The action fails if it does not match."
+    description: "Optional expected version of the Maverick source bundled with this action (e.g. 0.1.7). The action fails if it does not match."
     required: false
     default: ""
   python-version:
@@ -65,7 +65,7 @@ inputs:
     required: false
     default: "true"
   dry-run:
-    description: "Install Lightwork and print the resolved command, but do NOT run the swarm (no LLM calls, no spend). Useful for wiring/smoke tests."
+    description: "Install Maverick and print the resolved command, but do NOT run the swarm (no LLM calls, no spend). Useful for wiring/smoke tests."
     required: false
     default: "false"
 
@@ -85,7 +85,7 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install Lightwork
+    - name: Install Maverick
       shell: bash
       env:
         IN_VERSION: ${{ inputs.version }}
@@ -95,28 +95,28 @@ runs:
         core_project="$action_root/packages/maverick-core/pyproject.toml"
 
         if [ ! -f "$core_project" ]; then
-          echo "::error::The action checkout does not contain the Lightwork source tree."
+          echo "::error::The action checkout does not contain the Maverick source tree."
           exit 1
         fi
 
         if [ -n "$IN_VERSION" ]; then
-          actual_version="$(LIGHTWORK_CORE_PROJECT="$core_project" python - <<'PY'
+          actual_version="$(MAVERICK_CORE_PROJECT="$core_project" python - <<'PY'
         import os
         import pathlib
         import re
 
-        project = pathlib.Path(os.environ["LIGHTWORK_CORE_PROJECT"])
+        project = pathlib.Path(os.environ["MAVERICK_CORE_PROJECT"])
         match = re.search(
             r'(?m)^version\s*=\s*"([^"]+)"\s*$',
             project.read_text(encoding="utf-8"),
         )
         if match is None:
-            raise SystemExit("could not read bundled Lightwork version")
+            raise SystemExit("could not read bundled Maverick version")
         print(match.group(1))
         PY
           )"
           if [ "$IN_VERSION" != "$actual_version" ]; then
-            echo "::error::Requested Lightwork version does not match the bundled source version."
+            echo "::error::Requested Maverick version does not match the bundled source version."
             exit 1
           fi
         fi
@@ -197,7 +197,7 @@ runs:
         # enable container networking/root. MAVERICK_HOME remains unchanged so
         # installed templates and normal run state are still available.
         umask 077
-        private_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lightwork-action.XXXXXX")"
+        private_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/maverick-action.XXXXXX")"
         raw_file="$private_root/raw.log"
         out_file="$private_root/result.log"
         summary_file="$private_root/summary.html"
@@ -347,13 +347,13 @@ runs:
 
         if [ "$IN_SUMMARY" = "true" ]; then
           {
-            echo "## Lightwork run"
+            echo "## Maverick run"
             echo ""
             cat -- "$summary_file"
           } >> "$GITHUB_STEP_SUMMARY"
         fi
 
         if [ "$status" -ne 0 ]; then
-          echo "::error::The Lightwork run failed; see the sanitized output above."
+          echo "::error::The Maverick run failed; see the sanitized output above."
         fi
         exit "$status"

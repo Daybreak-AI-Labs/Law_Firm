@@ -2,7 +2,7 @@
 
 ``ts_plugin_host`` hosts NDJSON-over-stdio plugins (the TypeScript SDK); this
 module is the same seam for every other language — anything that can serve two
-gRPC methods can ship Lightwork tools. The contract lives in
+gRPC methods can ship Maverick tools. The contract lives in
 ``grpc_api/plugin_host.proto``::
 
     service MaverickPlugin {

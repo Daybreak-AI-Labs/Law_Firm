@@ -1,6 +1,6 @@
 schema_version = 1
 version = "0.1.7"
-repository = "Daybreak-AI-Labs/Lightwork"
+repository = "Daybreak-AI-Labs/Law_Firm"
 
 # The eight public Python distributions are released, tested, and supported as
 # one lockstep cohort.  Release workflows and tests consume this manifest

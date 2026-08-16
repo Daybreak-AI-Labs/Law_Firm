@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a double-click Lightwork.app (+ optional .dmg) on macOS — compiled,
+# Build a double-click Maverick.app (+ optional .dmg) on macOS — compiled,
 # no PyPI, no source shipped. Mirrors the proven release.yml "binaries" recipe
 # (non-editable installs so PyInstaller can bundle them), then wraps the
 # compiled `maverick` binary into an .app that opens the local dashboard.
@@ -14,10 +14,10 @@
 #
 # OUTPUT:
 #   dist/maverick            — the compiled single-file CLI binary
-#   dist/Lightwork.app       — double-click app (opens the dashboard)
-#   dist/Lightwork.dmg       — drag-to-Applications installer (if create-dmg present)
+#   dist/Maverick.app       — double-click app (opens the dashboard)
+#   dist/Maverick.dmg       — drag-to-Applications installer (if create-dmg present)
 #
-# NOTE: unsigned. First open: right-click Lightwork.app -> Open -> Open.
+# NOTE: unsigned. First open: right-click Maverick.app -> Open -> Open.
 # Signing/notarization needs an Apple Developer account (see docs/DISTRIBUTION.md).
 set -euo pipefail
 
@@ -66,40 +66,40 @@ voice_status="$(./dist/maverick voice status)"
 printf '%s\n' "$voice_status"
 grep -F "pywhispercpp engine (installed)" <<<"$voice_status"
 
-echo ">> [5/6] wrap the compiled binary into Lightwork.app"
-APP="dist/Lightwork.app"
+echo ">> [5/6] wrap the compiled binary into Maverick.app"
+APP="dist/Maverick.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp dist/maverick "$APP/Contents/MacOS/maverick"
 # icon, if the Tauri source icon exists
 if [ -f apps/installer-desktop/src-tauri/icons/icon.icns ]; then
-  cp apps/installer-desktop/src-tauri/icons/icon.icns "$APP/Contents/Resources/Lightwork.icns"
+  cp apps/installer-desktop/src-tauri/icons/icon.icns "$APP/Contents/Resources/Maverick.icns"
 fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Lightwork</string>
-  <key>CFBundleDisplayName</key><string>Lightwork</string>
-  <key>CFBundleIdentifier</key><string>com.daybreaklabs.lightwork</string>
+  <key>CFBundleName</key><string>Maverick</string>
+  <key>CFBundleDisplayName</key><string>Maverick</string>
+  <key>CFBundleIdentifier</key><string>com.daybreaklabs.maverick</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>Lightwork</string>
-  <key>CFBundleIconFile</key><string>Lightwork</string>
+  <key>CFBundleExecutable</key><string>Maverick</string>
+  <key>CFBundleIconFile</key><string>Maverick</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 # Launcher: start the compiled dashboard, then open the URL it prints.
-cat > "$APP/Contents/MacOS/Lightwork" <<'LAUNCH'
+cat > "$APP/Contents/MacOS/Maverick" <<'LAUNCH'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG="${TMPDIR:-/tmp}/lightwork-dashboard.log"
+LOG="${TMPDIR:-/tmp}/maverick-dashboard.log"
 # First run drops into the wizard if unconfigured; the dashboard serves the
 # local web UI. Both are the SAME compiled binary — no Python on the machine.
 if [ ! -f "$HOME/.maverick/config.toml" ]; then
-  osascript -e 'display dialog "First run: open Terminal and run the maverick binary once to set up (maverick init). Then reopen Lightwork." buttons {"OK"} default button 1' >/dev/null 2>&1 || true
+  osascript -e 'display dialog "First run: open Terminal and run the maverick binary once to set up (maverick init). Then reopen Maverick." buttons {"OK"} default button 1' >/dev/null 2>&1 || true
 fi
 "$DIR/maverick" dashboard --host 127.0.0.1 --port 8765 >"$LOG" 2>&1 &
 SRV=$!
@@ -110,14 +110,14 @@ done
 open "${URL:-http://127.0.0.1:8765}"
 wait "$SRV"
 LAUNCH
-chmod +x "$APP/Contents/MacOS/Lightwork" "$APP/Contents/MacOS/maverick"
+chmod +x "$APP/Contents/MacOS/Maverick" "$APP/Contents/MacOS/maverick"
 
 echo ">> [6/6] optional .dmg"
 if command -v create-dmg >/dev/null 2>&1; then
-  rm -f dist/Lightwork.dmg
-  create-dmg --volname "Lightwork" --app-drop-link 480 170 \
-    --window-size 720 380 dist/Lightwork.dmg "$APP" >/dev/null 2>&1 \
-    && echo "   dist/Lightwork.dmg" || echo "   (create-dmg failed; the .app still works)"
+  rm -f dist/Maverick.dmg
+  create-dmg --volname "Maverick" --app-drop-link 480 170 \
+    --window-size 720 380 dist/Maverick.dmg "$APP" >/dev/null 2>&1 \
+    && echo "   dist/Maverick.dmg" || echo "   (create-dmg failed; the .app still works)"
 else
   echo "   create-dmg not installed (brew install create-dmg) — skipping .dmg; the .app works."
 fi
@@ -125,6 +125,6 @@ fi
 deactivate || true
 echo
 echo "DONE."
-echo "  dist/Lightwork.app   double-click (first open: right-click -> Open -> Open)"
+echo "  dist/Maverick.app   double-click (first open: right-click -> Open -> Open)"
 echo "  dist/maverick        the compiled CLI"
 echo "Unsigned build — see docs/DISTRIBUTION.md for signing/notarization."

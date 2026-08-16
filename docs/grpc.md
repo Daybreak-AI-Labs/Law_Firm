@@ -1,6 +1,6 @@
 # gRPC API
 
-Lightwork exposes a small gRPC surface for driving the agent runtime from any
+Maverick exposes a small gRPC surface for driving the agent runtime from any
 language: start a goal, stream its episode events, cancel it, and read status.
 It is the cross-language complement to the [REST API](./api.md) — pick gRPC
 when you want a typed, streaming RPC contract and your own client codegen.
@@ -23,7 +23,7 @@ proto to generate a client in Go, Rust, TypeScript, C#, Java, etc.
 
 The proto identifier is `service Maverick` in `package maverick.v1` — these
 wire names are STABLE and frozen by the contract gate, so they keep the
-original product name even though the docs are branded "Lightwork". Use them
+original product name even though the docs are branded "Maverick". Use them
 verbatim in your codegen.
 
 ```proto
@@ -56,7 +56,7 @@ service Maverick {
   remains supported over gRPC.
 
 The full message definitions are in
-[`maverick.proto`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/packages/maverick-core/maverick/grpc_api/maverick.proto).
+[`maverick.proto`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/packages/maverick-core/maverick/grpc_api/maverick.proto).
 
 ## Authentication
 

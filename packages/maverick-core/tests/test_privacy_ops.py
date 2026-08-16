@@ -321,7 +321,7 @@ class TestDsar:
         assert calls[-1] == ("bob", "teams", None)
         artifact = json.loads(second_path.read_text(encoding="utf-8"))
         assert artifact["subject"] == {"user_id": "bob", "channel": "teams"}
-        assert artifact["_lightwork_export"]["intent"]["request_id"] == second["id"]
+        assert artifact["_maverick_export"]["intent"]["request_id"] == second["id"]
         assert len(second_done["fulfillment"]["artifact_sha256"]) == 64
 
     def test_crash_after_artifact_write_reuses_bound_export(self, monkeypatch):

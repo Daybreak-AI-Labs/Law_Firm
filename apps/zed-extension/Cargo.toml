@@ -2,10 +2,10 @@
 name = "maverick-zed-extension"
 version = "0.1.6"
 edition = "2021"
-description = "Zed editor extension for the Lightwork agent runtime"
+description = "Zed editor extension for the Maverick agent runtime"
 authors = ["cdayAI"]
 license = "LicenseRef-Proprietary"
-repository = "https://github.com/Daybreak-AI-Labs/Lightwork"
+repository = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [lib]
 # Zed loads extensions as WASM components; cdylib is the required crate type.

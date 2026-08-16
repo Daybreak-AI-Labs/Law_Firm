@@ -154,8 +154,8 @@ def test_catalog_is_present_in_the_training_package():
 def test_catalog_rejects_duplicate_nonstandard_and_unexpected_fields(tmp_path):
     duplicate = tmp_path / "duplicate.json"
     duplicate.write_text(
-        '{"schema":"lightwork.specialist-model-catalog.v1",'
-        '"schema":"lightwork.specialist-model-catalog.v1",'
+        '{"schema":"maverick.specialist-model-catalog.v1",'
+        '"schema":"maverick.specialist-model-catalog.v1",'
         '"as_of":"2026-07-23","models":[]}',
         encoding="utf-8",
     )
@@ -164,7 +164,7 @@ def test_catalog_rejects_duplicate_nonstandard_and_unexpected_fields(tmp_path):
 
     nonstandard = tmp_path / "nonstandard.json"
     nonstandard.write_text(
-        '{"schema":"lightwork.specialist-model-catalog.v1",'
+        '{"schema":"maverick.specialist-model-catalog.v1",'
         '"as_of":"2026-07-23","models":[NaN]}',
         encoding="utf-8",
     )

@@ -1,4 +1,4 @@
-/* Read-only client for the Lightwork dashboard REST API.
+/* Read-only client for the Maverick dashboard REST API.
  *
  * Every function here is a GET against an endpoint that exists today in
  * packages/maverick-dashboard/maverick_dashboard/api.py:

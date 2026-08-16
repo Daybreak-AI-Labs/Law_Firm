@@ -1,7 +1,7 @@
 """Agent Trust Plane — the single registry + decision point for talking to
 *external* agents.
 
-Lightwork grew several independent cross-agent pathways, each with its own
+Maverick grew several independent cross-agent pathways, each with its own
 enable flag, its own auth model, and its own "who's allowed" list:
 
   * fleet memory (``agents.ndjson`` roster)     — a registration list;

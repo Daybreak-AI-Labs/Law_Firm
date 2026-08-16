@@ -1,6 +1,6 @@
 # Firm-platform refactor plan
 
-The Lightwork fork will be reduced by measured, reversible slices rather than by deleting
+The Maverick fork will be reduced by measured, reversible slices rather than by deleting
 every optional client or integration in one change. A surface is removed only after its
 runtime imports, configuration, installer choices, tests, documentation, and replacement
 workflow have been identified together.

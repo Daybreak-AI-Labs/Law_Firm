@@ -181,7 +181,7 @@ SERVING_ALIAS_REVERIFY_SECONDS = 0.0
 MAX_APPROVAL_PAYLOAD_BYTES = 128 * 1024
 ADAPTER_AUTHORITY_PAYLOAD_VERSION = 1
 MODEL_IMPROVEMENT_BINDING_SCHEMA = (
-    "lightwork.adapter-model-improvement-binding.v1"
+    "maverick.adapter-model-improvement-binding.v1"
 )
 
 
@@ -1721,7 +1721,7 @@ def _model_improvement_runtime_requirement(
     if receipt is None or qualification is None:
         raise ValueError("model-improvement runtime requires signed qualification")
     return {
-        "schema": "lightwork.serving-runtime-attestation.v1",
+        "schema": "maverick.serving-runtime-attestation.v1",
         "runtime_attestation_sha256": qualification[
             "runtime_attestation_sha256"
         ],

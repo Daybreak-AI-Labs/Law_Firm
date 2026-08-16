@@ -227,7 +227,7 @@ def _check_shield() -> list[str]:
 
 
 def _run(args: dict[str, Any]) -> str:
-    lines: list[str] = ["Lightwork self-diagnose:"]
+    lines: list[str] = ["Maverick self-diagnose:"]
     lines.extend(_check_python())
     lines.extend(_check_provider_keys())
     lines.extend(_check_config_dir())
@@ -241,7 +241,7 @@ def diagnose() -> Tool:
     return Tool(
         name="diagnose",
         description=(
-            "Run a self-diagnosis on the Lightwork install: Python "
+            "Run a self-diagnosis on the Maverick install: Python "
             "version, configured provider keys, sandbox readiness, "
             "coding-language toolchains (rust/go/node), config dir, "
             "shield availability. Use when something feels off (e.g. "

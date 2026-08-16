@@ -87,7 +87,7 @@ def test_short_body_fails(tmp_path):
 
 
 def test_hardcoded_secret_fails(tmp_path):
-    # The canonical AWS example access key id — Lightwork's own secret detector
+    # The canonical AWS example access key id — Maverick's own secret detector
     # must flag it. It's AWS's published docs example (not a real credential);
     # the pragma keeps the repo's detect-secrets CI gate from treating this
     # test fixture as a newly committed secret.

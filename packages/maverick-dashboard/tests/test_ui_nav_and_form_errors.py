@@ -71,8 +71,8 @@ def test_chat_form_submits_via_fetch(monkeypatch, tmp_path):
     """
     _prep(monkeypatch, tmp_path)
     r = _client().get("/chat")
-    assert '/static/lightwork-ui.js' in r.text
-    ui = _client().get("/static/lightwork-ui.js").text
+    assert '/static/maverick-ui.js' in r.text
+    ui = _client().get("/static/maverick-ui.js").text
     assert "new FormData(form)" in ui
     # It reads Retry-After so a rate-limited user sees the wait time.
     assert "Retry-After" in ui
@@ -86,8 +86,8 @@ def test_chat_can_handoff_an_unsaved_flow_or_agent_draft(monkeypatch, tmp_path):
     assert '<option value="flow">Draft a workflow</option>' in page
     assert '<option value="agent">Draft an agent</option>' in page
 
-    ui = _client().get("/static/lightwork-ui.js").text
-    assert "lightwork.authoring-handoff" in ui
+    ui = _client().get("/static/maverick-ui.js").text
+    assert "maverick.authoring-handoff" in ui
     assert "sessionStorage.setItem" in ui
     assert "kind === 'flow' ? '/flows/designer' : '/workflow-builder'" in ui
 

@@ -13,7 +13,7 @@ def _request_for(sub: str) -> Request:
     request.state.principal = VerifiedPrincipal(
         sub=sub,
         issuer="https://issuer.example",
-        audience="lightwork",
+        audience="maverick",
         claims={"sub": sub},
     )
     return request

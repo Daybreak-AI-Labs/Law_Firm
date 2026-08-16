@@ -7,9 +7,8 @@ build-backend = "setuptools.build_meta"
 # published under it today (pypi.org/project/maverick-agent 404s as of July
 # 2026), so read this as the intended name, not a live one. The bare 'maverick'
 # name was squatted on PyPI, hence the suffix. The Python *import* name stays as
-# `maverick` (see [tool.setuptools.packages.find]) and the CLI is
-# installed under both names -- `maverick` and its Lightwork-brand
-# alias `lightwork` (see [project.scripts]).
+# `maverick` (see [tool.setuptools.packages.find]) and the CLI installs as
+# `maverick` (see [project.scripts]).
 name = "maverick-agent"
 version = "0.1.7"
 description = "Recursive multi-agent swarm for long-horizon work"
@@ -157,14 +156,13 @@ all        = [
 
 [project.scripts]
 maverick = "maverick.cli:main"
-lightwork = "maverick.cli:main"
 
 [project.urls]
-Homepage      = "https://github.com/Daybreak-AI-Labs/Lightwork"
-Repository    = "https://github.com/Daybreak-AI-Labs/Lightwork"
-Issues        = "https://github.com/Daybreak-AI-Labs/Lightwork/issues"
-Changelog     = "https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/Daybreak-AI-Labs/Lightwork/tree/main/docs"
+Homepage      = "https://github.com/Daybreak-AI-Labs/Law_Firm"
+Repository    = "https://github.com/Daybreak-AI-Labs/Law_Firm"
+Issues        = "https://github.com/Daybreak-AI-Labs/Law_Firm/issues"
+Changelog     = "https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Daybreak-AI-Labs/Law_Firm/tree/main/docs"
 
 [tool.setuptools.packages.find]
 where = ["."]

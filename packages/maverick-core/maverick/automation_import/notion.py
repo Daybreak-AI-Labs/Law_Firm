@@ -2,9 +2,9 @@
 
 The Notion API exposes databases, pages, and blocks -- but NOT Notion's
 automations (database-button / formula automations aren't in the public API), so
-Lightwork can't read them. Two supported flows:
+Maverick can't read them. Two supported flows:
 
-* connect-and-trigger -- a Notion automation (or button) calls a Lightwork
+* connect-and-trigger -- a Notion automation (or button) calls a Maverick
   inbound webhook; the imported template is what runs.
 * data + rebuild -- read the client's Notion data with the existing ``notion``
   tool (search / db_query / page_get) and describe the automation as JSON (the

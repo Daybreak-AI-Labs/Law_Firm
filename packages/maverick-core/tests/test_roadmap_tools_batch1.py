@@ -21,10 +21,10 @@ def test_kg_extract_structured_and_heuristic():
     t = knowledge_graph()
     out = t.fn({
         "op": "extract",
-        "text": "Lightwork uses Postgres. Orchestrator | spawns | sub-agents. "
+        "text": "Maverick uses Postgres. Orchestrator | spawns | sub-agents. "
                 "The shield depends on the kernel.",
     })
-    assert "Lightwork | uses | Postgres" in out
+    assert "Maverick | uses | Postgres" in out
     assert "Orchestrator | spawns | sub-agents" in out
     assert "shield | depends_on | kernel" in out
 

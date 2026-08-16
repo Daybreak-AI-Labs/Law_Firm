@@ -5,7 +5,7 @@
 
 ## Motivation
 
-Lightwork already learns **behaviors** — skills and dream insights distilled from
+Maverick already learns **behaviors** — skills and dream insights distilled from
 experience and recalled as prompt context. But the **harness itself** (the
 operating instructions a model runs under) was static and operator-owned: a
 model that keeps making the same class of mistake never adjusts how it is
@@ -22,7 +22,7 @@ edit that overfits its own examples silently regresses unseen cases.
 
 ## What ships
 
-A four-stage loop that **reuses Lightwork's existing governance spine** rather
+A four-stage loop that **reuses Maverick's existing governance spine** rather
 than adding a new ungoverned optimizer:
 
 1. **MINE** — `mine_failures(reflexions, model_id=…)` clusters one model's

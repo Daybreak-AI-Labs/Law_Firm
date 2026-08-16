@@ -1152,7 +1152,7 @@ def arq_enqueue(redis_settings: Any | None = None) -> Callable[[str, dict], None
     except ImportError as exc:  # pragma: no cover - optional queue extra
         raise ImportError(
             "queue backend needs the queue extra from the same reviewed "
-            "Lightwork checkout; public-index lookup is disabled"
+            "Maverick checkout; public-index lookup is disabled"
         ) from exc
 
     settings = (

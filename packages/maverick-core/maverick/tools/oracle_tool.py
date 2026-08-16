@@ -2,7 +2,7 @@
 
 Runs SQL against an ORDS-enabled Oracle schema via the ``/_/sql`` endpoint.
 Read statements run directly; non-read SQL (INSERT/UPDATE/DELETE/DDL) needs
-confirm=true, matching Lightwork's mutation gating.
+confirm=true, matching Maverick's mutation gating.
 
 Auth (Bearer / OAuth2 client token, pre-acquired):
   - ``ORACLE_ORDS_URL``    (e.g. https://host/ords/myschema)

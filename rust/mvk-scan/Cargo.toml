@@ -3,7 +3,7 @@ name = "mvk-scan"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Lightwork native safety scanners (pure logic; shared by the Python and WASM bindings)."
+description = "Maverick native safety scanners (pure logic; shared by the Python and WASM bindings)."
 
 [dependencies]
 unicode-normalization = "0.1"

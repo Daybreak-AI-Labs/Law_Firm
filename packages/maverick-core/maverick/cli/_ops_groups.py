@@ -226,7 +226,7 @@ def local_runtime_group() -> None:
 
 @local_runtime_group.command("plan")
 def local_runtime_plan() -> None:
-    """Print the server command Lightwork WOULD run -- nothing is started.
+    """Print the server command Maverick WOULD run -- nothing is started.
 
     Composes the argv (and any env toggles) from [local_runtime] in
     ~/.maverick/config.toml plus MAVERICK_LOCAL_RUNTIME_* overrides.

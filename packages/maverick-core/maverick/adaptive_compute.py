@@ -1,7 +1,7 @@
 """Adaptive test-time compute: spend where the swarm is uncertain.
 
 SOTA (arXiv 2602.01070): concentrate inference compute on high-uncertainty,
-high-utility trajectories instead of scaling it uniformly. Lightwork already
+high-utility trajectories instead of scaling it uniformly. Maverick already
 *produces* the uncertainty signals (swarm disagreement entropy, verifier
 confidence, PRM progress) but nothing spends on them. This module turns those
 signals into a compute plan: shrink fan-out / search depth when the run is

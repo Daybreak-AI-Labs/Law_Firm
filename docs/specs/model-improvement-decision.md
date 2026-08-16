@@ -10,7 +10,7 @@ was the right decision for speculative GPU training, but it did not distinguish
 training execution from the governance, taskset, evidence, and qualification
 plumbing required to make a later run safe and useful.
 
-Lightwork now has a sharper commercial target: deterministic specialist models
+Maverick now has a sharper commercial target: deterministic specialist models
 for narrow, repeated, human-reviewed work products, starting with privacy and
 compliance decisions. Those environments reuse shipping deterministic engines
 and the existing weights-rung promotion transaction.
@@ -27,7 +27,7 @@ fleet memory systems as federated learning. Do not aggregate cross-tenant weight
 deltas without a new threat model and legal/privacy design.
 
 Prime Intellect Verifiers and prime-rl are optional pinned backends. They do not
-replace Lightwork's taskset locks, data-boundary admission, deterministic
+replace Maverick's taskset locks, data-boundary admission, deterministic
 scoring, signatures, Model Risk review, promotion transaction, or rollback.
 
 ## Effect on the earlier decision

@@ -4,7 +4,7 @@ Persisting agent context creates a memory-poisoning surface: a malicious string
 the agent ingested once (a web page, a tool result, an inbound message) can be
 stored as "memory" and then replay as a standing instruction in every future
 run. OWASP added this as **ASI06 -- Memory & Context Poisoning** to the 2026
-Agentic Top 10. This module is Lightwork's screen between an agent and its memory
+Agentic Top 10. This module is Maverick's screen between an agent and its memory
 store. It does three things:
 
   1. **Provenance** -- stamp every memory write with who authored it
@@ -46,7 +46,7 @@ class TrustTier(IntEnum):
     against a floor, so callers never hard-code tier semantics."""
     EXTERNAL = 0     # third-party / web / inbound-message / raw tool output
     TOOL = 1         # the agent itself, persisting its own working notes
-    LEARNED = 2      # Lightwork's deterministic learning loops (dreaming, etc.)
+    LEARNED = 2      # Maverick's deterministic learning loops (dreaming, etc.)
     FIRST_PARTY = 3  # operator / config / human-authored
 
 

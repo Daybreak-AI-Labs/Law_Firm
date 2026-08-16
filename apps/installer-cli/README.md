@@ -1,6 +1,6 @@
 # maverick-installer
 
-The interactive setup wizard. Until the Lightwork distribution names are
+The interactive setup wizard. Until the Maverick distribution names are
 reserved and protected on public PyPI, install it from the same pinned source
 checkout as the kernel:
 

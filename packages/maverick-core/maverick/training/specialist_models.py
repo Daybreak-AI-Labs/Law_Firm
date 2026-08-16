@@ -21,7 +21,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-CATALOG_SCHEMA = "lightwork.specialist-model-catalog.v1"
+CATALOG_SCHEMA = "maverick.specialist-model-catalog.v1"
 MAX_CATALOG_BYTES = 2 * 1024 * 1024
 MAX_MODELS = 256
 MAX_LIST_ITEMS = 64

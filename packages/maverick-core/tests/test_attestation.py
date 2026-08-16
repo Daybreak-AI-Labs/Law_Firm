@@ -154,7 +154,7 @@ def test_a_foreign_artifact_is_not_mistaken_for_a_bundle(audit_dir):
 # ---- claim 1: the policy envelope -------------------------------------------
 
 def test_an_empty_envelope_is_not_a_passing_grade(audit_dir):
-    """Lightwork's community default forbids nothing. 'No action violated the
+    """Maverick's community default forbids nothing. 'No action violated the
     envelope' is then vacuous, and a green badge would be the most misleading
     thing this tool could print."""
     _write_chain(audit_dir, "2026-01-01", [_tool_row("read_file")])

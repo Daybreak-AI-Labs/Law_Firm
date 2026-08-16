@@ -114,7 +114,7 @@ def _cef_header_escape(value: str) -> str:
 def to_cef(event: dict[str, Any]) -> str:
     """Render one event as an ArcSight CEF line.
 
-    ``CEF:0|Lightwork|maverick-agent|<version>|<kind>|<kind>|<sev>|<extensions>``
+    ``CEF:0|Maverick|maverick-agent|<version>|<kind>|<kind>|<sev>|<extensions>``
     where extensions are space-separated ``key=value`` of the event's scalar
     fields (CEF-escaped). Non-scalar fields (dicts/lists) are skipped.
     """
@@ -122,7 +122,7 @@ def to_cef(event: dict[str, Any]) -> str:
     severity = _CEF_SEVERITY.get(kind, _DEFAULT_SEVERITY)
     hk = _cef_header_escape(kind)
     ver = _cef_header_escape(_audit_version())
-    header = f"CEF:0|Lightwork|maverick-agent|{ver}|{hk}|{hk}|{severity}|"
+    header = f"CEF:0|Maverick|maverick-agent|{ver}|{hk}|{hk}|{severity}|"
     parts = []
     for key, val in event.items():
         if isinstance(val, bool) or isinstance(val, (str, int, float)) or val is None:

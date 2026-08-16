@@ -1,4 +1,4 @@
-// Splash controller for the Lightwork desktop shell.
+// Splash controller for the Maverick desktop shell.
 //
 // The Rust side (src/lib.rs) starts `maverick dashboard` on 127.0.0.1:8765 if
 // nothing is listening; this page waits for it and navigates in.
@@ -42,7 +42,7 @@
     if (connected) return;
     tries += 1;
 
-    if (tries === 1) setStatus("Starting the Lightwork engine…");
+    if (tries === 1) setStatus("Starting the Maverick engine…");
     else if (tries < TROUBLE_AFTER) setStatus("Waiting for the dashboard…");
 
     fetch(DASH + "/healthz", { mode: "no-cors", cache: "no-store" })

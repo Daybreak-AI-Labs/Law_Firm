@@ -95,7 +95,7 @@ def _ephemeral(obj: dict) -> dict:
     # write, no cache read on subsequent calls). Older Claude 4.x and
     # 3.x models use 1,024.
     #
-    # Lightwork's current system prompt (~1,085 tokens) + tool catalog
+    # Maverick's current system prompt (~1,085 tokens) + tool catalog
     # (~716 tokens) sit BELOW the 4,096 threshold individually, which
     # means cache_control on them is currently a no-op. The messages
     # breakpoint is the one that actually delivers caching on long

@@ -9,7 +9,7 @@ to a single :class:`~maverick.agent_trust.TrustedAgent` registry entry:
   ID/access token verified offline against key material read from a LOCAL
   file (PEM public key or JSON JWKS); the token's ``sub`` must equal the
   agent id exactly, so a token minted for agent A can never authenticate B.
-* **HMAC** (``hmac_secret_ref``) — the Lightwork webhook signature format
+* **HMAC** (``hmac_secret_ref``) — the Maverick webhook signature format
   (``X-Maverick-Timestamp`` + ``X-Maverick-Signature``) verified through
   :func:`maverick.webhooks.verify_signature`; the registry stores a secret
   NAME resolved through ``maverick.secret_provider.get_secret`` at verify
@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 #: Domain-separated, versioned message prefix for the Ed25519 request scheme,
 #: so a request signature can never double as a handoff/approval/federation
 #: signature (mirrors ``approval_signing.APPROVAL_MESSAGE_VERSION``).
-ENVELOPE_MESSAGE_VERSION = "lightwork-external-request-v1"
+ENVELOPE_MESSAGE_VERSION = "maverick-external-request-v1"
 ENVELOPE_MAX_AGE_SECONDS = 300.0
 ENVELOPE_CLOCK_SKEW_SECONDS = 60.0
 HMAC_MAX_AGE_SECONDS = 300
@@ -310,7 +310,7 @@ def verify_agent_hmac(
     *,
     registry: dict[str, TrustedAgent] | None = None,
 ) -> tuple[TrustedAgent | None, str]:
-    """Authenticate a request signed in the Lightwork webhook HMAC format.
+    """Authenticate a request signed in the Maverick webhook HMAC format.
 
     The caller names itself in a header; the entry's ``hmac_secret_ref`` is
     resolved through the secret provider at verify time and the signature +
@@ -385,7 +385,7 @@ def envelope_message(agent_id: str, timestamp: str, nonce: str,
     ``<version>|<agent_id>|<ts>|<nonce>|`` + the hex SHA-256 of the raw body —
     every field an attacker could swap (identity, freshness, replay key,
     payload) is under the signature, and the version prefix domain-separates
-    it from every other Lightwork signature format. Exported so clients build
+    it from every other Maverick signature format. Exported so clients build
     byte-identical material."""
     digest = hashlib.sha256(body).hexdigest()
     return (f"{ENVELOPE_MESSAGE_VERSION}|{agent_id}|{timestamp}|{nonce}|".encode()

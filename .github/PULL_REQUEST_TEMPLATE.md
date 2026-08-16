@@ -1,7 +1,7 @@
 # Pull request
 
 <!--
-Thanks for contributing to Lightwork! Keep this PR small and focused.
+Thanks for contributing to Maverick! Keep this PR small and focused.
 See CONTRIBUTING.md for the dev setup and house rules.
 -->
 

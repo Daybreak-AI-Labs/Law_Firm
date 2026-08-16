@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightwork -- proof that the self-learning (self-harness) loop works, consistently.
+"""Maverick -- proof that the self-learning (self-harness) loop works, consistently.
 
 Not unit assertions buried in a suite: a single reproducible run that drives the
 REAL ``maverick.self_harness`` loop through the REAL ``maverick.self_improvement``

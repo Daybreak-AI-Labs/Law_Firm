@@ -1,4 +1,4 @@
-// Lightwork VS Code extension (MVP).
+// Maverick VS Code extension (MVP).
 //
 // Minimum-surface integration: sidebar tree view of recent runs +
 // commands that shell out to the user's local `maverick` CLI. No
@@ -147,7 +147,7 @@ class RunsProvider implements vscode.TreeDataProvider<RunItem>, vscode.Disposabl
       out = await runCliCapture(["runs", "--json"]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Lightwork CLI failed: ${msg}`);
+      vscode.window.showErrorMessage(`Maverick CLI failed: ${msg}`);
       return [];
     }
     let rows: RunRecord[];
@@ -155,7 +155,7 @@ class RunsProvider implements vscode.TreeDataProvider<RunItem>, vscode.Disposabl
       rows = JSON.parse(out.trim() || "[]") as RunRecord[];
     } catch {
       vscode.window.showErrorMessage(
-        "Lightwork: could not parse `maverick runs --json` output.",
+        "Maverick: could not parse `maverick runs --json` output.",
       );
       return [];
     }
@@ -167,7 +167,7 @@ let outputChannel: vscode.OutputChannel | undefined;
 
 function getOutput(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel("Lightwork");
+    outputChannel = vscode.window.createOutputChannel("Maverick");
   }
   return outputChannel;
 }
@@ -186,7 +186,7 @@ async function startGoalCommand() {
     const code = await runCliStream(["start", goal], (line) => out.appendLine(line));
     out.appendLine(`[exit ${code}]`);
   } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Lightwork start failed: ${(e as Error).message}`);
+    vscode.window.showErrorMessage(`Maverick start failed: ${(e as Error).message}`);
   }
 }
 
@@ -197,7 +197,7 @@ async function statusCommand() {
     out.show(true);
     out.append(txt);
   } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Lightwork status failed: ${(e as Error).message}`);
+    vscode.window.showErrorMessage(`Maverick status failed: ${(e as Error).message}`);
   }
 }
 
@@ -217,7 +217,7 @@ async function exportCommand() {
     await runCliCapture(["export", idStr.trim(), "-o", dest.fsPath]);
     vscode.window.showInformationMessage(`Exported goal ${idStr} → ${dest.fsPath}`);
   } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Lightwork export failed: ${(e as Error).message}`);
+    vscode.window.showErrorMessage(`Maverick export failed: ${(e as Error).message}`);
   }
 }
 
@@ -247,7 +247,7 @@ async function shouldSendDashboardToken(url: URL, token: string): Promise<boolea
   if (isLoopbackHost(url.hostname)) return true;
 
   const choice = await vscode.window.showWarningMessage(
-    `Send the configured Lightwork dashboard token to ${url.origin}? Only continue if you trust this dashboard URL.`,
+    `Send the configured Maverick dashboard token to ${url.origin}? Only continue if you trust this dashboard URL.`,
     { modal: true },
     "Send token",
   );
@@ -264,7 +264,7 @@ async function watchRunCommand(): Promise<void> {
     liveAbort();
     liveAbort = null;
   }
-  const channel = vscode.window.createOutputChannel(`Lightwork run #${goalId}`);
+  const channel = vscode.window.createOutputChannel(`Maverick run #${goalId}`);
   channel.show(true);
   const url = new URL(`${dashboardBase()}/api/v1/goals/${goalId.trim()}/events/stream`);
   const configuredToken = vscode.workspace.getConfiguration("maverick").get<string>("dashboardToken", "");
@@ -345,19 +345,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("maverick.halt", async () => {
       try {
         await runCliCapture(["halt"]);
-        vscode.window.showInformationMessage("Lightwork halted.");
+        vscode.window.showInformationMessage("Maverick halted.");
       } catch (e: unknown) {
         // A silent failure here is dangerous: the user would believe the
         // agent was halted when the CLI call actually failed.
-        vscode.window.showErrorMessage(`Lightwork halt failed: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Maverick halt failed: ${(e as Error).message}`);
       }
     }),
     vscode.commands.registerCommand("maverick.unhalt", async () => {
       try {
         await runCliCapture(["unhalt"]);
-        vscode.window.showInformationMessage("Lightwork resumed.");
+        vscode.window.showInformationMessage("Maverick resumed.");
       } catch (e: unknown) {
-        vscode.window.showErrorMessage(`Lightwork unhalt failed: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Maverick unhalt failed: ${(e as Error).message}`);
       }
     }),
     vscode.commands.registerCommand("maverick.openExport", exportCommand),

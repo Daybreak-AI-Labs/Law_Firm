@@ -1,13 +1,13 @@
-"""Bedrock agent action-group forwarder for the Lightwork BYOA gateway.
+"""Bedrock agent action-group forwarder for the Maverick BYOA gateway.
 
 Receives Amazon Bedrock agent action-group events (OpenAPI mode), maps the
-invoked operation to the matching Lightwork external-gateway route, forwards
+invoked operation to the matching Maverick external-gateway route, forwards
 it over HTTPS with the per-agent ``rest`` bearer read from AWS Secrets
 Manager, and returns the Bedrock action-group response shape.
 
 Stdlib + boto3 only (both ship in the Lambda Python 3.12 runtime), so
 ``sam build`` needs no requirements step. The endpoint contract is
-``bedrock/lightwork-external.json`` — the gateway's own importable OpenAPI
+``bedrock/maverick-external.json`` — the gateway's own importable OpenAPI
 description (``GET /api/v1/external/openapi.json``).
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 #: operationId -> (HTTP method, path template), straight from
-#: lightwork-external.json. Bedrock events carry apiPath + httpMethod rather
+#: maverick-external.json. Bedrock events carry apiPath + httpMethod rather
 #: than the operationId, so _BY_ROUTE indexes the same table both ways.
 OPERATIONS: dict[str, tuple[str, str]] = {
     "screenAction": ("POST", "/api/v1/external/screen"),
@@ -50,7 +50,7 @@ _secret_cache: tuple[str, float] | None = None
 
 
 def _bearer_token(refresh: bool = False) -> str:
-    """The Lightwork ``rest`` bearer from Secrets Manager (cached ~5 min).
+    """The Maverick ``rest`` bearer from Secrets Manager (cached ~5 min).
 
     Accepts either a raw token string or a JSON object with a ``token``
     key, so ``put-secret-value`` rotation works with both shapes.
@@ -59,7 +59,7 @@ def _bearer_token(refresh: bool = False) -> str:
     now = time.monotonic()
     if not refresh and _secret_cache and now - _secret_cache[1] < _SECRET_TTL_SECONDS:
         return _secret_cache[0]
-    arn = os.environ["LIGHTWORK_TOKEN_SECRET_ARN"]
+    arn = os.environ["MAVERICK_TOKEN_SECRET_ARN"]
     value = boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]
     try:
         parsed = json.loads(value)
@@ -130,7 +130,7 @@ def _request_body(event: dict) -> dict:
 
 
 def _forward(method: str, path: str, body: dict, token: str) -> tuple[int, str]:
-    base = os.environ["LIGHTWORK_BASE_URL"].rstrip("/")
+    base = os.environ["MAVERICK_BASE_URL"].rstrip("/")
     request = urllib.request.Request(
         base + path,
         method=method,

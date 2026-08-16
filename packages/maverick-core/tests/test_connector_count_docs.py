@@ -2,7 +2,7 @@
 
 Ten documentation locations claimed "214 write-capable" connectors while the
 registry held 2,877 -- a 13x internal contradiction that survived because nothing
-asserted the number. Two other files (docs/connectors.md, docs/FEATURES.md) had
+asserted the number. Another file (docs/connectors.md) had
 the right figure the whole time, so the repo simultaneously published both. The
 stale number was an *under*-claim, which is why nobody noticed: an inflated
 number gets challenged, a deflated one just sits there.
@@ -25,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCS_STATING_THE_COUNT = (
     "docs/architecture.md",
     "docs/connectors.md",
-    "docs/FEATURES.md",
-    "docs/handbook.md",
     "docs/index.md",
 )
 

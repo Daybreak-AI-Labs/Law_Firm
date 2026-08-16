@@ -1886,7 +1886,7 @@ enable = true
 
     def transport(request):
         calls.append(request)
-        if request.query == "lightwork:related-events-v1":
+        if request.query == "maverick:related-events-v1":
             return [{
                 "eventID": "cloud-related-1",
                 "eventTime": 1_020,
@@ -1943,7 +1943,7 @@ enable = true
     assert ingest["investigation_pivot_events"] == 1
     assert len(calls) == 2
     assert calls[1].limit <= 1_000
-    assert calls[1].filters["lightwork_related_targets"] == ["evil.example.com"]
+    assert calls[1].filters["maverick_related_targets"] == ["evil.example.com"]
     summary = _assert_ok(client.get("/api/v1/security/soc/summary"))
     investigation = next(
         row for row in summary["investigations"]

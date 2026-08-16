@@ -60,7 +60,7 @@ _HTML_HEAD_TMPL = (
     '<html lang="en">\n'
     '<head>\n'
     '<meta charset="utf-8" />\n'
-    '<title>Lightwork replay — goal __GOAL__</title>\n'
+    '<title>Maverick replay — goal __GOAL__</title>\n'
     '<style>\n'
     '  body { background: #0d1117; color: #e6edf3; '
     'font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; '

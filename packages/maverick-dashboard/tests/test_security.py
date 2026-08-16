@@ -149,7 +149,7 @@ def test_oidc_bearer_api_mutation_does_not_require_browser_origin(
         lambda _token: VerifiedPrincipal(
             sub="api-client",
             issuer="https://issuer.example",
-            audience="lightwork",
+            audience="maverick",
             claims={"iat": 1},
         ),
     )
@@ -182,7 +182,7 @@ def test_invalid_oidc_bearer_without_origin_is_401_not_cookie_fallback(
         lambda _request: VerifiedPrincipal(
             sub="ambient-cookie-user",
             issuer="browser-session",
-            audience="lightwork",
+            audience="maverick",
             claims={"via": "session", "iat": 1},
         ),
     )
@@ -227,7 +227,7 @@ def test_static_token_composes_with_ambient_identity(
     principal = VerifiedPrincipal(
         sub=f"{identity_kind}-user",
         issuer="https://issuer.example",
-        audience="lightwork",
+        audience="maverick",
         claims={"via": "invite" if identity_kind == "invite" else "session", "iat": 1},
     )
     headers = {"Origin": "http://testserver"}
@@ -271,7 +271,7 @@ def test_static_token_composes_with_explicit_oidc_bearer_without_origin(
         lambda _token: VerifiedPrincipal(
             sub="api-client",
             issuer="https://issuer.example",
-            audience="lightwork",
+            audience="maverick",
             claims={"iat": 1},
         ),
     )
@@ -304,7 +304,7 @@ def test_invalid_explicit_bearer_cannot_fall_back_in_mixed_auth(
         lambda _request: VerifiedPrincipal(
             sub="ambient-cookie-user",
             issuer="browser-session",
-            audience="lightwork",
+            audience="maverick",
             claims={"via": "session", "iat": 1},
         ),
     )
@@ -384,7 +384,7 @@ def test_static_assets_keep_explicit_caching(monkeypatch, tmp_path):
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
     monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
-    resp = _client().get("/static/lightwork.css")
+    resp = _client().get("/static/maverick.css")
     assert resp.status_code == 200
     assert "max-age" in resp.headers["Cache-Control"]
     assert "no-store" not in resp.headers["Cache-Control"]

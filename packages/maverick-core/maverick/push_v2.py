@@ -127,7 +127,7 @@ class PushRegistry:
 
     # -- routing ----------------------------------------------------------------
 
-    def push(self, body: str, *, title: str = "Lightwork",
+    def push(self, body: str, *, title: str = "Maverick",
              priority: str = "default", hour: int | None = None,
              send=None, now: float | None = None) -> list[dict]:
         """Fan out to eligible devices; record + return per-device outcomes.

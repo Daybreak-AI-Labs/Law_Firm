@@ -63,8 +63,8 @@ def _v2_document(
             "model_sha256": _digest("model"),
             "prompt_sha256": _digest("prompt-template"),
             "run_id": "factory-eval-2026-07-14",
-            "producer": "lightwork-eval-harness",
-            "source": "urn:lightwork:test-evidence",
+            "producer": "maverick-eval-harness",
+            "source": "urn:maverick:test-evidence",
         },
         "corrections": {
             key: {

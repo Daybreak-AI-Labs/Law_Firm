@@ -989,7 +989,7 @@ def _notify_flow(flow, run) -> None:
         return
     try:
         from maverick import notifications
-        notifications.notify(body, title="Lightwork flow", priority=prio)
+        notifications.notify(body, title="Maverick flow", priority=prio)
     except Exception:  # pragma: no cover -- notification is best-effort
         log.debug("flow notify failed", exc_info=True)
 

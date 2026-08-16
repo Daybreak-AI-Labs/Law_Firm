@@ -1,12 +1,12 @@
 # Reference architectures
 
-Self-hostable deployment blueprints for the governed Lightwork runtime. Every
+Self-hostable deployment blueprints for the governed Maverick runtime. Every
 one runs the dashboard + control plane from the published container image and
 keeps state on a persistent volume; secrets come from the platform's secret
 store, never the image. Pick the one that matches where you already run things.
 
 > All four target the same container (`deploy/docker/Dockerfile` /
-> `ghcr.io/daybreak-ai-labs/lightwork`), expose the dashboard on port **8765**, and
+> `ghcr.io/daybreak-ai-labs/maverick`), expose the dashboard on port **8765**, and
 > use auth-exempt **`/readyz`** readiness and **`/livez`** liveness probes where
 > the platform supports both. Keep exactly **one** dashboard/control-plane
 > instance, including with `[world_model] backend = "postgres"`; Postgres and
@@ -14,10 +14,10 @@ store, never the image. Pick the one that matches where you already run things.
 
 | Platform | Manifest | State | Secrets |
 |---|---|---|---|
-| Kubernetes | [`kubernetes/maverick.yaml`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/deploy/reference-architectures/kubernetes/maverick.yaml) | PVC (`ReadWriteOnce`) | `Secret` → `envFrom` |
-| AWS ECS (Fargate) | [`ecs/task-definition.json`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/deploy/reference-architectures/ecs/task-definition.json) | EFS volume | Secrets Manager → `secrets` |
-| Fly.io | [`flyio/fly.toml`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/deploy/reference-architectures/flyio/fly.toml) | Fly volume at `/state` | `fly secrets set` |
-| Railway | [`railway/railway.json`](https://github.com/Daybreak-AI-Labs/Lightwork/blob/main/deploy/reference-architectures/railway/railway.json) | Railway volume at `/state` | service variables |
+| Kubernetes | [`kubernetes/maverick.yaml`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/reference-architectures/kubernetes/maverick.yaml) | PVC (`ReadWriteOnce`) | `Secret` → `envFrom` |
+| AWS ECS (Fargate) | [`ecs/task-definition.json`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/reference-architectures/ecs/task-definition.json) | EFS volume | Secrets Manager → `secrets` |
+| Fly.io | [`flyio/fly.toml`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/reference-architectures/flyio/fly.toml) | Fly volume at `/state` | `fly secrets set` |
+| Railway | [`railway/railway.json`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/reference-architectures/railway/railway.json) | Railway volume at `/state` | service variables |
 
 ## Kubernetes
 

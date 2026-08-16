@@ -2354,7 +2354,7 @@ def test_designer_page_has_copilot_and_toolbar(monkeypatch, tmp_path):
                    "/api/v1/flows/chat", "upstreamOutputs", "validateFlow"):
         assert needle in r.text, needle
     # A Copilot handoff is short-lived, consumed once, and drafts without saving.
-    for needle in ("lightwork.authoring-handoff", "handoff.kind !== 'flow'",
+    for needle in ("maverick.authoring-handoff", "handoff.kind !== 'flow'",
                    "10 * 60 * 1000", "sessionStorage.removeItem", "draft();"):
         assert needle in r.text, needle
 

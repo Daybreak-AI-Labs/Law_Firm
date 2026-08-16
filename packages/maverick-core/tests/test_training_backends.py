@@ -66,7 +66,7 @@ def _workspace(tmp_path, **changes):
 def _bundle_path(tmp_path, tenant_id, bundle):
     return (
         tmp_path
-        / "lightwork-bundles"
+        / "maverick-bundles"
         / backends.training_tenant_namespace(tenant_id)
         / bundle.package_id
     )
@@ -649,7 +649,7 @@ def test_resume_rejects_every_immutable_semantic_change(tmp_path, mutation):
         alternate = str(
             (
                 tmp_path
-                / "lightwork-runs"
+                / "maverick-runs"
                 / backends.training_tenant_namespace("alpha")
                 / "privacy-specialist-001"
                 / "unrelated-output"

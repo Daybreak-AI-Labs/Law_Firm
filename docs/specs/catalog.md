@@ -1,4 +1,4 @@
-# Lightwork content catalog (federated)
+# Maverick content catalog (federated)
 
 A catalog lets users browse and install community content — skills
 today, plugins / MCP servers / personas next — without editing config

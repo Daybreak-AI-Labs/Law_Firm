@@ -614,7 +614,7 @@ def _windows_current_user_sid() -> str:
 
 
 def _windows_acl_is_restricted(sddl: str, owner_sid: str) -> bool:
-    """Validate the exact protected allow-only ACL installed by Lightwork."""
+    """Validate the exact protected allow-only ACL installed by Maverick."""
     if not sddl.startswith("D:P"):
         return False
     current_sid = _windows_current_user_sid()
@@ -829,7 +829,7 @@ def _prepare_parent_directory(path: str | Path) -> Path:
 
     Generic persistence helpers accept caller-selected paths.  Tightening a
     pre-existing parent would revoke access to unrelated files and services in
-    that directory.  A parent created by this call is Lightwork-owned and may
+    that directory.  A parent created by this call is platform-owned and may
     be hardened; an existing (or concurrently-created) parent is only checked
     for a safe directory type.
     """
@@ -857,7 +857,7 @@ def prepare_private_directory(path: str | Path) -> Path:
     Unlike :func:`ensure_private_directory`, this never tightens a directory
     that was already present.  It is the safe boundary for caller-selected
     integrity-sensitive storage: a missing dedicated directory may become
-    Lightwork-owned, while a shared existing directory is refused unchanged.
+    platform-owned, while a shared existing directory is refused unchanged.
     """
     prepared = _prepare_parent_directory(path)
     return require_private_directory(prepared)

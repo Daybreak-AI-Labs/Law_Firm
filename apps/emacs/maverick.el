@@ -1,4 +1,4 @@
-;;; maverick.el --- Drive the Lightwork agent runtime from Emacs -*- lexical-binding: t; -*-
+;;; maverick.el --- Drive the Maverick agent runtime from Emacs -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2027 Day AI Labs
 
@@ -6,7 +6,7 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: tools, processes
-;; URL: https://github.com/Daybreak-AI-Labs/Lightwork
+;; URL: https://github.com/Daybreak-AI-Labs/Law_Firm
 
 ;;; Commentary:
 
@@ -25,7 +25,7 @@
 ;;; Code:
 
 (defgroup maverick nil
-  "Drive the Lightwork agent runtime."
+  "Drive the Maverick agent runtime."
   :group 'tools
   :prefix "maverick-")
 
@@ -47,8 +47,8 @@
 
 ;;;###autoload
 (defun maverick-start (goal)
-  "Start the Lightwork swarm on GOAL (asynchronously)."
-  (interactive "sGoal for Lightwork: ")
+  "Start the Maverick swarm on GOAL (asynchronously)."
+  (interactive "sGoal for Maverick: ")
   (let ((cmd (if maverick-default-max-dollars
                  (maverick--command "start" goal "--max-dollars"
                                     (number-to-string maverick-default-max-dollars))
@@ -57,7 +57,7 @@
 
 ;;;###autoload
 (defun maverick-status ()
-  "Show Lightwork runtime status, including cost."
+  "Show Maverick runtime status, including cost."
   (interactive)
   (let ((buf (get-buffer-create "*maverick-status*")))
     (with-current-buffer buf
@@ -78,24 +78,24 @@
 
 ;;;###autoload
 (defun maverick-logs ()
-  "Show recent Lightwork run logs."
+  "Show recent Maverick run logs."
   (interactive)
   (compilation-start (maverick--command "logs") nil (lambda (_) "*maverick-logs*")))
 
 ;;;###autoload
 (defun maverick-halt ()
-  "Arm the Lightwork killswitch (aborts all running goals)."
+  "Arm the Maverick killswitch (aborts all running goals)."
   (interactive)
   (when (yes-or-no-p "Arm the killswitch and abort ALL running goals? ")
     (shell-command (maverick--command "halt"))
-    (message "Lightwork killswitch armed.")))
+    (message "Maverick killswitch armed.")))
 
 ;;;###autoload
 (defun maverick-unhalt ()
-  "Clear the Lightwork killswitch."
+  "Clear the Maverick killswitch."
   (interactive)
   (shell-command (maverick--command "unhalt"))
-  (message "Lightwork killswitch cleared."))
+  (message "Maverick killswitch cleared."))
 
 (provide 'maverick)
 

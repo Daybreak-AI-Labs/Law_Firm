@@ -1365,7 +1365,7 @@
     var WF_PREFILL = {{ prefill | tojson }};
     var AUTHOR_HANDOFF = null;
     try {
-      AUTHOR_HANDOFF = JSON.parse(sessionStorage.getItem('lightwork.authoring-handoff') || 'null');
+      AUTHOR_HANDOFF = JSON.parse(sessionStorage.getItem('maverick.authoring-handoff') || 'null');
       if (!AUTHOR_HANDOFF || AUTHOR_HANDOFF.kind !== 'agent' || !AUTHOR_HANDOFF.brief
           || Date.now() - Number(AUTHOR_HANDOFF.created_at || 0) > 10 * 60 * 1000) {
         AUTHOR_HANDOFF = null;
@@ -1392,7 +1392,7 @@
       showScheduling({ name: WF_PREFILL.name, params: WF_PREFILL.params || [] });
       showTriggers({ name: WF_PREFILL.name, params: WF_PREFILL.params || [] });
     } else if (AUTHOR_HANDOFF) {
-      sessionStorage.removeItem('lightwork.authoring-handoff');
+      sessionStorage.removeItem('maverick.authoring-handoff');
       setForm('playbook');
       brief.value = String(AUTHOR_HANDOFF.brief).slice(0, 8000);
       draft();

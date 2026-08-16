@@ -49,13 +49,13 @@ _DEPLOYMENTS = GovernedRecordStore(
     "model_risk_deployments", "MRL", "model_risk_deployment_lineage",
 )
 
-OBSERVATION_SCHEMA = "lightwork.model-risk-observation.v1"
-DECLARATION_SCHEMA = "lightwork.model-risk-declaration.v1"
-EVIDENCE_SCHEMA = "lightwork.model-risk-evidence.v1"
-INCIDENT_SCHEMA = "lightwork.model-risk-incident.v1"
-DECISION_SCHEMA = "lightwork.model-risk-human-decision.v1"
-DEPLOYMENT_SCHEMA = "lightwork.model-risk-deployment-lineage.v1"
-PACK_SCHEMA = "lightwork.model-risk-assurance-pack.v1"
+OBSERVATION_SCHEMA = "maverick.model-risk-observation.v1"
+DECLARATION_SCHEMA = "maverick.model-risk-declaration.v1"
+EVIDENCE_SCHEMA = "maverick.model-risk-evidence.v1"
+INCIDENT_SCHEMA = "maverick.model-risk-incident.v1"
+DECISION_SCHEMA = "maverick.model-risk-human-decision.v1"
+DEPLOYMENT_SCHEMA = "maverick.model-risk-deployment-lineage.v1"
+PACK_SCHEMA = "maverick.model-risk-assurance-pack.v1"
 PACK_EVENT = "model_risk_assurance_pack"
 _MAX_NAMESPACE_RECORDS = 5_000
 
@@ -131,7 +131,7 @@ _TOKEN_RE = re.compile(r"[a-z][a-z0-9_:-]{0,63}\Z")
 _TRAINING_KEY_ID_RE = re.compile(r"[0-9a-f]{16}\Z")
 _TRAINING_LICENSE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+/-]{0,127}\Z")
 
-_TRAINING_COMMITMENT_SCHEMA = "lightwork.training-transparency-commitment.v1"
+_TRAINING_COMMITMENT_SCHEMA = "maverick.training-transparency-commitment.v1"
 _TRAINING_COMMITMENT_FIELDS = frozenset({
     "schema",
     "dataset_sha256",
@@ -143,7 +143,7 @@ _TRAINING_COMMITMENT_FIELDS = frozenset({
     "event_hash",
     "key_id",
 })
-_TRAINING_ASSURANCE_SCHEMA = "lightwork.training-assurance-commitment.v1"
+_TRAINING_ASSURANCE_SCHEMA = "maverick.training-assurance-commitment.v1"
 _TRAINING_ASSURANCE_FIELDS = frozenset({
     "schema",
     "dataset_sha256",

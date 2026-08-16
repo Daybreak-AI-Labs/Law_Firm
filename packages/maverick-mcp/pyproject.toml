@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maverick-mcp-server"
 version = "0.1.7"
-description = "Model Context Protocol server for Lightwork (exposes the swarm to MCP clients)"
+description = "Model Context Protocol server for Maverick (exposes the swarm to MCP clients)"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
@@ -27,7 +27,7 @@ http = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Daybreak-AI-Labs/Lightwork"
+Homepage = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [project.scripts]
 maverick-mcp = "maverick_mcp.server:main"

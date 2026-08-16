@@ -1,6 +1,6 @@
 """Governed self-improvement: the promotion ladder that makes learning *safe*.
 
-Lightwork already *learns* in several places (skills, reflexions, dreams,
+Maverick already *learns* in several places (skills, reflexions, dreams,
 config evolution). What it lacks is a single governed gate that decides whether
 a proposed self-change is allowed to take effect -- and that is the whole moat.
 A frontier lab can train a better policy; what it will not ship into a bank is a

@@ -14,13 +14,13 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-ppl_state_dir="$(mktemp -d "${TMPDIR:-/tmp}/lightwork-prepush.XXXXXXXX")" || {
+ppl_state_dir="$(mktemp -d "${TMPDIR:-/tmp}/maverick-prepush.XXXXXXXX")" || {
   echo "FAILED — could not create isolated pre-push workspace."
   exit 1
 }
 cleanup_pre_push() {
   case "$ppl_state_dir" in
-    "${TMPDIR:-/tmp}"/lightwork-prepush.*) rm -rf -- "$ppl_state_dir" ;;
+    "${TMPDIR:-/tmp}"/maverick-prepush.*) rm -rf -- "$ppl_state_dir" ;;
     *) printf 'refusing to clean unexpected path: %s\n' "$ppl_state_dir" >&2 ;;
   esac
 }

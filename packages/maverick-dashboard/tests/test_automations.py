@@ -118,7 +118,7 @@ def test_templates_empty_uses_mv_empty(monkeypatch, tmp_path):
 
 def test_shared_card_motion_gated_by_reduced_motion(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert "@keyframes mv-rise" in css and "animation: mv-rise" in css
     assert "prefers-reduced-motion: reduce) { .mv-toast, .mv-row, .card" in css
 
@@ -154,7 +154,7 @@ def test_p0_council_fixes_automations(monkeypatch, tmp_path):
     # base.html primitives: assertive error region + mvConfirm focus-return
     # (the behavior itself ships from the extracted shell script)
     assert 'id="mv-toasts-alert"' in t and 'aria-live="assertive"' in t
-    ui = _client().get("/static/lightwork-ui.js").text
+    ui = _client().get("/static/maverick-ui.js").text
     assert "opener" in ui and "isConnected" in ui
     assert 'id="i-clock"' in t and "#i-clock" in t     # Automations has its own nav icon
 
@@ -163,9 +163,9 @@ def test_p2_shared_primitives_and_scrim(monkeypatch, tmp_path):
     # P2 hygiene: one --scrim token (defined + used), mvCopy shipped, and the
     # killswitch dogfoods mvConfirm rather than native confirm().
     _isolate(monkeypatch, tmp_path)
-    css = _client().get("/static/lightwork.css").text
+    css = _client().get("/static/maverick.css").text
     assert "--scrim:" in css and "var(--scrim)" in css
-    ui = _client().get("/static/lightwork-ui.js").text
+    ui = _client().get("/static/maverick-ui.js").text
     assert "window.mvCopy" in ui
     assert "mvConfirm('Stop all work" in ui
 
@@ -185,8 +185,8 @@ def test_base_provides_shared_confirm_and_toast(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     t = _client().get("/automations").text
     assert 'id="mv-confirm"' in t and 'id="mv-toasts"' in t
-    assert '/static/lightwork-ui.js' in t
-    ui = _client().get("/static/lightwork-ui.js").text
+    assert '/static/maverick-ui.js' in t
+    ui = _client().get("/static/maverick-ui.js").text
     assert "window.mvConfirm" in ui and "window.mvToast" in ui
 
 

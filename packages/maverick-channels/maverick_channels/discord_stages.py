@@ -1,7 +1,7 @@
 """Discord Stages voice channel v2 (roadmap: 2027 H1 UX — "voice in
 channels v2 (Discord stages)").
 
-Drive Lightwork from a Discord **Stage channel**: the bot joins the stage,
+Drive Maverick from a Discord **Stage channel**: the bot joins the stage,
 listens to speakers, transcribes utterances, routes them through the normal
 handler, and answers — as speech when it holds a speaker slot, else as text
 in the stage's chat. The voice plumbing (gateway voice, Opus decode,
@@ -60,7 +60,7 @@ class StageSession:
     _buffer: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Discord Stage speakers can trigger the normal Lightwork handler, so
+        # Discord Stage speakers can trigger the normal Maverick handler, so
         # require the same explicit Discord allowlist used by the text adapter.
         self.allowed_user_ids = normalize_allowlist(
             self.allowed_user_ids,

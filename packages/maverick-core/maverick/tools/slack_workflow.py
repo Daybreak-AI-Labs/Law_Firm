@@ -1,7 +1,7 @@
 """Slack workflow integration (roadmap: 2028 H1).
 
 Build the JSON for a Slack Workflow custom step — the function definition you
-register so a Lightwork goal can appear as a step in Workflow Builder — and the
+register so a Maverick goal can appear as a step in Workflow Builder — and the
 payload that invokes that step's trigger. This constructs and validates the JSON
 offline; calling the Slack API is a separate step (http_fetch). Deterministic;
 offline; pure stdlib (json). No disk, no network.

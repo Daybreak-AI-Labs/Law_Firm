@@ -554,7 +554,7 @@ def test_execute_rate_limit_trips_and_commit_shares_the_bucket(monkeypatch):
 # -- platform-native identity over HTTP ---------------------------------------
 
 _ISSUER = "https://partner-idp.example.com"
-_AUDIENCE = "lightwork-gateway"
+_AUDIENCE = "maverick-gateway"
 _HMAC_REF = "XA_GATEWAY_TEST_SECRET"
 _HMAC_SECRET = "gw-test-secret"  # pragma: allowlist secret
 _SCREEN_BODY = b'{"tool": "crm_update", "risk": "low"}'
@@ -581,10 +581,10 @@ def _envelope_headers(priv, body: bytes, *, nonce: str) -> dict:
     from maverick.external_identity import envelope_message
     ts = str(int(time.time()))
     sig = priv.sign(envelope_message("sf-quotebot", ts, nonce, body)).hex()
-    return {"X-Lightwork-Agent-Id": "sf-quotebot",
+    return {"X-Maverick-Agent-Id": "sf-quotebot",
             "X-Maverick-Timestamp": ts,
-            "X-Lightwork-Nonce": nonce,
-            "X-Lightwork-Request-Signature": sig,
+            "X-Maverick-Nonce": nonce,
+            "X-Maverick-Request-Signature": sig,
             "Content-Type": "application/json"}
 
 
@@ -621,7 +621,7 @@ def _hmac_headers(body: bytes, *, ts: str | None = None) -> dict:
     ts = ts or str(int(time.time()))
     mac = hmac_mod.new(_HMAC_SECRET.encode(), f"{ts}.".encode() + body,
                        hashlib.sha256)
-    return {"X-Lightwork-Agent-Id": "sf-quotebot",
+    return {"X-Maverick-Agent-Id": "sf-quotebot",
             "X-Maverick-Timestamp": ts,
             "X-Maverick-Signature": "sha256=" + mac.hexdigest(),
             "Content-Type": "application/json"}

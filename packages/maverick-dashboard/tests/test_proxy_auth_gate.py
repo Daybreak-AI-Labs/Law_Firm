@@ -103,7 +103,7 @@ def test_proxy_can_fall_back_to_valid_oidc_bearer(monkeypatch):
         lambda _token: VerifiedPrincipal(
             sub="oidc-user",
             issuer="https://issuer.example",
-            audience="lightwork",
+            audience="maverick",
             claims={"iat": 1},
         ),
     )
@@ -264,7 +264,7 @@ def test_websocket_invalid_explicit_bearer_cannot_fall_back_to_session(
         lambda _request: VerifiedPrincipal(
             sub="ambient-cookie-user",
             issuer="browser-session",
-            audience="lightwork",
+            audience="maverick",
             claims={"via": "session", "iat": 1},
         ),
     )
@@ -286,7 +286,7 @@ def test_websocket_static_and_oidc_bearers_compose(monkeypatch):
     principal = VerifiedPrincipal(
         sub="api-client",
         issuer="https://issuer.example",
-        audience="lightwork",
+        audience="maverick",
         claims={"iat": 1},
     )
     monkeypatch.setattr(auth, "verify_oidc_token", lambda _token: principal)

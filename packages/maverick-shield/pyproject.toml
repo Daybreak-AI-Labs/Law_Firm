@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maverick-shield"
 version = "0.1.7"
-description = "Agent Shield integration + builtin fallback rules for Lightwork"
+description = "Agent Shield integration + builtin fallback rules for Maverick"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
@@ -17,7 +17,7 @@ dependencies = []
 scan = ["agent-shield>=14.0"]
 
 [project.urls]
-Homepage = "https://github.com/Daybreak-AI-Labs/Lightwork"
+Homepage = "https://github.com/Daybreak-AI-Labs/Law_Firm"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -193,7 +193,7 @@ def test_nested_extras_and_duplicate_reason_codes_cannot_pass():
         "required_citations": [],
         "provenance": "synthetic",
         "source_uri": "https://example.test/synthetic-source",
-        "license": "Lightwork synthetic benchmark",
+        "license": "Maverick synthetic benchmark",
         "data_classification": "public",
         "redaction_evidence": {"status": "not_applicable"},
         "answer_visibility": "published",

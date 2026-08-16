@@ -1,4 +1,4 @@
-"""REST API for Lightwork (mounted at /api/v1).
+"""REST API for Maverick (mounted at /api/v1).
 
 v0.1.6: BackgroundTask runner moved to maverick.runner.
 """
@@ -1763,7 +1763,7 @@ async def create_paper_review(
         return docx_redline.build_redlined_docx(
             review.source_paragraphs, edits, date=stamp,
             title=f"{review.vendor or 'Vendor'} — "
-                  f"{review.to_dict()['instrument_label']} (Lightwork redline)")
+                  f"{review.to_dict()['instrument_label']} (Maverick redline)")
 
     result = await run_in_threadpool(_redline)
     stem = _safe_filename(review.vendor or "vendor")[:60] or "vendor"
@@ -3453,10 +3453,10 @@ async def record_outcome_by_key(request: Request, payload: OutcomeByKeyIn) -> di
     """Ingest a real downstream outcome using only the business key.
 
     The endpoint a system-of-record webhook (Stripe "invoice.paid", Zendesk
-    "ticket.reopened") calls: it knows its own key, not a Lightwork episode. We
+    "ticket.reopened") calls: it knows its own key, not a Maverick episode. We
     resolve the key to the episode that acted (registered via ``/outcomes/link``)
     and ground the reward there. ``matched`` is ``false`` when no run has linked
-    that key -- the connector reported an outcome for work Lightwork didn't do.
+    that key -- the connector reported an outcome for work Maverick didn't do.
     """
     require_permission(request, "operate")
     from maverick import consequence
@@ -7184,7 +7184,7 @@ async def event_trigger_outcomes(request: Request) -> dict:
     return {"outcomes": outcomes}
 
 
-# ---- automation import: pull clients' existing automations into Lightwork -----
+# ---- automation import: pull clients' existing automations into Maverick -----
 
 
 def _require_automation_import() -> None:
@@ -7200,7 +7200,7 @@ def _require_automation_import() -> None:
 
 @router.get("/import/sources")
 async def import_sources_endpoint() -> dict:
-    """Automation platforms Lightwork can import from + each one's mode."""
+    """Automation platforms Maverick can import from + each one's mode."""
     from maverick.automation_import import available_sources, get_importer
     sources = []
     for s in available_sources():
@@ -7582,7 +7582,7 @@ _FEATURE_SWITCHES: dict = {
     "flows": ("Flow engine", "Runs the visual flow designer's automations "
               "end to end."),
     "threat_hunt": ("Platform threat hunter", "Defensively scans "
-                    "Lightwork's own signed telemetry for anomalies."),
+                    "Maverick's own signed telemetry for anomalies."),
     "env_hunt": ("Environment threat hunter", "Reads your configured "
                  "telemetry sources and flags suspicious activity."),
     "entity_graph": ("Entity graph", "Links vendors, documents, clauses, "
@@ -7671,15 +7671,15 @@ async def copilot_endpoint(request: Request, payload: CopilotIn) -> dict:
         budget = Budget(max_dollars=0.25, max_output_tokens=1500,
                         max_tool_calls=0)
         system = (
-            "You are the Lightwork copilot -- a concise in-app guide for a "
+            "You are the Maverick copilot -- a concise in-app guide for a "
             "governed AI-workforce platform. The user is on the page "
-            f"{page or 'unknown'} of the Lightwork dashboard. Explain what "
+            f"{page or 'unknown'} of the Maverick dashboard. Explain what "
             "pages and controls do and point the user to the right place; "
             "keep answers under 120 words, plain language, no code or "
             "config-file instructions (everything is managed inside the "
             "app). You cannot take actions -- when asked to do something, "
             "explain where in the app to do it. If asked something outside "
-            "Lightwork, say so briefly."
+            "Maverick, say so briefly."
         )
         resp = llm.complete(
             system=system,
@@ -8252,7 +8252,7 @@ async def compliance_packet_download(request: Request) -> Response:
         content=body,
         media_type="application/json",
         headers={
-            "Content-Disposition": 'attachment; filename="lightwork-compliance-packet.json"',
+            "Content-Disposition": 'attachment; filename="maverick-compliance-packet.json"',
         },
     )
 
@@ -8453,8 +8453,8 @@ def _record_vote_or_raise(world, approval_id: int, status: str, who: str):
                 },
                 headers={
                     "Retry-After": "1",
-                    "X-Lightwork-Decision-Id": event_id,
-                    "X-Lightwork-Approval-State": "uncertain",
+                    "X-Maverick-Decision-Id": event_id,
+                    "X-Maverick-Approval-State": "uncertain",
                 },
             ) from reconcile_error
         if event is not None and not event.matches(approval_id, status, who):
@@ -8471,8 +8471,8 @@ def _record_vote_or_raise(world, approval_id: int, status: str, who: str):
                     "retry_safe": False,
                 },
                 headers={
-                    "X-Lightwork-Decision-Id": event_id,
-                    "X-Lightwork-Approval-State": "integrity_error",
+                    "X-Maverick-Decision-Id": event_id,
+                    "X-Maverick-Approval-State": "integrity_error",
                 },
             ) from decision_error
         if event is None:
@@ -8517,11 +8517,11 @@ def _approval_decision_response(world, event, audit_delivered: bool) -> Response
     )
     approval_status = str(state.get("status") or fallback_status)
     common_headers = {
-        "X-Lightwork-Decision-Id": event.event_id,
-        "X-Lightwork-Approval-Audit": (
+        "X-Maverick-Decision-Id": event.event_id,
+        "X-Maverick-Approval-Audit": (
             "delivered" if audit_delivered else "pending"
         ),
-        "X-Lightwork-Approval-State": approval_status,
+        "X-Maverick-Approval-State": approval_status,
     }
     if audit_delivered:
         return Response(status_code=204, headers=common_headers)
@@ -9012,7 +9012,7 @@ async def compliance_report_md(framework: str = "all") -> Response:
     from maverick.compliance import render_report_text
     framework, checks = _compliance_checks(framework)
     body = render_report_text(checks)
-    fname = f"lightwork-compliance-{framework}.md"
+    fname = f"maverick-compliance-{framework}.md"
     return Response(
         content=body,
         media_type="text/markdown",
@@ -9045,7 +9045,7 @@ async def compliance_report_csv(framework: str = "all") -> Response:
         _csv_formula_safe("disclaimer"),
         _csv_formula_safe(COMPLIANCE_DISCLAIMER),
     ])
-    fname = f"lightwork-compliance-{framework}.csv"
+    fname = f"maverick-compliance-{framework}.csv"
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",

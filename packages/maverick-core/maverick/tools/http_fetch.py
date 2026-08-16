@@ -470,7 +470,7 @@ def _run_fetch(args: dict[str, Any]) -> str:
 
     method = (args.get("method") or "GET").upper()
     headers = dict(args.get("headers") or {})
-    headers.setdefault("User-Agent", "Mozilla/5.0 (compatible; Lightwork/1.0)")
+    headers.setdefault("User-Agent", "Mozilla/5.0 (compatible; Maverick/1.0)")
     headers.setdefault("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
     body = args.get("body")
     # 64 KB default: a page render trims to markdown anyway, and the old

@@ -1145,7 +1145,7 @@ def restore_backup(
         ):
             raise BackupError(
                 f"backup world schema v{backup_schema} is newer than this "
-                f"binary's v{SCHEMA_VERSION}; upgrade Lightwork first, or pass "
+                f"binary's v{SCHEMA_VERSION}; upgrade Maverick first, or pass "
                 "force=True to override"
             )
         expected = _manifest_files(

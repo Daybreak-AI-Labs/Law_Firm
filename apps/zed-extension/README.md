@@ -1,10 +1,10 @@
 # maverick-zed-extension
 
-Drive the [Lightwork](https://github.com/Daybreak-AI-Labs/Lightwork) agent runtime
+Drive the [Maverick](https://github.com/Daybreak-AI-Labs/Law_Firm) agent runtime
 from the [Zed](https://zed.dev) editor. Two surfaces:
 
 1. **Assistant context server (MCP).** The extension registers
-   `maverick mcp` — Lightwork's official MCP server
+   `maverick mcp` — Maverick's official MCP server
    (`packages/maverick-mcp`, stdio transport) — as a Zed context server, so
    Zed's assistant can start goals, check status, and read results through
    MCP tools.
@@ -28,10 +28,10 @@ split; anything else would be pretending the sandbox isn't there.
 ## Prerequisites
 
 - The `maverick` CLI installed and on PATH, with the MCP server package:
-  from the reviewed Lightwork checkout, run
+  from the reviewed Maverick checkout, run
   `pip install -e ./packages/maverick-core -e ./packages/maverick-mcp` (or use
   the pinned-source installers under `apps/` / `deploy/`). Public PyPI names
-  remain disabled until every Lightwork namespace is reserved and protected.
+  remain disabled until every Maverick namespace is reserved and protected.
 - Zed (stable) with assistant/context-server support.
 
 ## Building / installing as a dev extension
@@ -60,5 +60,5 @@ Zed compiles `src/lib.rs` against the WIT world for the pinned
 - The `zed_extension_api` pin in `Cargo.toml` may need a bump to match the
   Zed release you install into; the API is versioned and Zed only loads
   extensions built against versions it supports.
-- The extension does not install the Lightwork CLI; it assumes `maverick`
+- The extension does not install the Maverick CLI; it assumes `maverick`
   resolves on PATH and surfaces Zed's own error if it does not.

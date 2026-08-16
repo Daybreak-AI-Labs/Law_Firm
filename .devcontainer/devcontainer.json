@@ -1,5 +1,5 @@
 {
-  "name": "Lightwork",
+  "name": "Maverick",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "features": {
     "ghcr.io/devcontainers/features/git:1": {}
@@ -20,7 +20,7 @@
   },
   "forwardPorts": [8765],
   "portsAttributes": {
-    "8765": {"label": "Lightwork dashboard", "onAutoForward": "notify"}
+    "8765": {"label": "Maverick dashboard", "onAutoForward": "notify"}
   },
   "remoteEnv": {
     "MAVERICK_DEVCONTAINER": "1"

@@ -1,4 +1,4 @@
-# Buildozer spec for the Lightwork mobile-skills Kivy shell (Android).
+# Buildozer spec for the Maverick mobile-skills Kivy shell (Android).
 #
 # Building the APK is a MAINTAINER ACT on a Linux host with the buildozer
 # toolchain (Android SDK/NDK are downloaded by buildozer on first run):
@@ -13,7 +13,7 @@
 # this file: that path is kivy-ios + Xcode (see ../README.md).
 
 [app]
-title = Lightwork Skills
+title = Maverick Skills
 package.name = maverickskills
 package.domain = dev.maverick
 version = 0.1.6

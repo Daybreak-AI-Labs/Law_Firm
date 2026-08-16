@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Lightwork External Agent Gateway",
+    "title": "Maverick External Agent Gateway",
     "version": "1",
-    "description": "Governance and run accounting for agents built on other platforms. Authenticate every call with the per-agent rest bearer minted on the Lightwork /external-agents page."
+    "description": "Governance and run accounting for agents built on other platforms. Authenticate every call with the per-agent rest bearer minted on the Maverick /external-agents page."
   },
   "components": {
     "securitySchemes": {

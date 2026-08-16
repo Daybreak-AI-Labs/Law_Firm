@@ -1,4 +1,4 @@
-"""MCP client: let Lightwork consume external MCP servers as tools.
+"""MCP client: let Maverick consume external MCP servers as tools.
 
 v0.1.6 hardening (council review):
   - Env passed to the child process is now an EXPLICIT allowlist, not

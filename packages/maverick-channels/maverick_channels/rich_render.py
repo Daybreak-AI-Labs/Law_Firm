@@ -101,7 +101,7 @@ def has_rich_blocks(text: str) -> bool:
     return bool(counts["math"] or counts["mermaid"])
 
 
-def render_html(text: str, *, title: str = "Lightwork reply") -> str:
+def render_html(text: str, *, title: str = "Maverick reply") -> str:
     """Render a message into a standalone HTML doc.
 
     Math is left inline for KaTeX auto-render; mermaid fences become

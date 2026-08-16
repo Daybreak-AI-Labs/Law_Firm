@@ -5,7 +5,7 @@ control policy: resolve the user's roles (with transitive role inheritance),
 union their permissions, and decide ALLOW/DENY — honoring ``*`` (all) and
 prefix wildcards like ``doc:*``. A decision tool the agent can use to reason
 about a *target system's* authorization, distinct from ``capability_query``
-(Lightwork's own run grant). Pure set/graph work — deterministic and offline.
+(Maverick's own run grant). Pure set/graph work — deterministic and offline.
 
 ops:
   - check(roles, assignments, user, permission, [inherits])  — ``roles`` is

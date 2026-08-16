@@ -746,7 +746,7 @@ def acquire_mcp_server(name: str, *, need: str = "") -> Any:
 # --------------------------------------------------------------------------
 # acquire: generated tools
 # --------------------------------------------------------------------------
-TOOL_AUTHOR_SYSTEM = """You author a single self-contained Lightwork tool module in Python.
+TOOL_AUTHOR_SYSTEM = """You author a single self-contained Maverick tool module in Python.
 
 Output ONLY the module source (no markdown fences, no prose). The module MUST define:
 

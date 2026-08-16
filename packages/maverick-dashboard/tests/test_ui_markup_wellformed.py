@@ -66,7 +66,7 @@ def test_theme_switch_preserves_query_params(monkeypatch, tmp_path):
 
 def test_halt_pill_activates_on_space(monkeypatch, tmp_path):
     _prep(monkeypatch, tmp_path)
-    ui = _client().get("/static/lightwork-ui.js").text
+    ui = _client().get("/static/maverick-ui.js").text
     assert "pill.addEventListener('keydown'" in ui
 
 

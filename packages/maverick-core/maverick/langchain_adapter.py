@@ -2,12 +2,12 @@
 
 Two directions, both behind the ``[langchain]`` extra:
 
-  - **Lightwork as a LangChain tool** — :func:`maverick_langchain_tool` returns a
-    LangChain ``StructuredTool`` that delegates a goal to the Lightwork swarm and
-    returns its result, so a LangChain/LangGraph agent can call Lightwork as one
+  - **Maverick as a LangChain tool** — :func:`maverick_langchain_tool` returns a
+    LangChain ``StructuredTool`` that delegates a goal to the Maverick swarm and
+    returns its result, so a LangChain/LangGraph agent can call Maverick as one
     of its tools.
-  - **A LangChain tool as a Lightwork tool** — :func:`wrap_langchain_tool` adapts
-    any LangChain ``BaseTool`` into a Lightwork :class:`~maverick.tools.Tool`, so
+  - **A LangChain tool as a Maverick tool** — :func:`wrap_langchain_tool` adapts
+    any LangChain ``BaseTool`` into a Maverick :class:`~maverick.tools.Tool`, so
     the swarm can use the LangChain ecosystem's tools.
 
 The delegation core (:func:`run_maverick_goal`) is transport-agnostic and
@@ -43,12 +43,12 @@ def run_maverick_goal(
     world_factory: Callable[[], Any] | None = None,
     dispatch: Callable[..., Any] | None = None,
 ) -> str:
-    """Delegate a goal to the Lightwork swarm and return its result text.
+    """Delegate a goal to the Maverick swarm and return its result text.
 
     Creates the goal, runs it to completion, and returns its result (or a short
     status line if it produced none). ``channel``, ``user_id``, and
     ``capability`` are forwarded to the runner so host integrations can bind
-    Lightwork execution to the authenticated caller's policy context.
+    Maverick execution to the authenticated caller's policy context.
     Dependencies are injected for testing."""
     if not (goal or "").strip():
         raise ValueError("goal is required")
@@ -89,12 +89,12 @@ def maverick_langchain_tool(
     user_id: str | None = None,
     capability: Any | None = None,
 ):
-    """A LangChain ``StructuredTool`` that delegates a goal to Lightwork.
+    """A LangChain ``StructuredTool`` that delegates a goal to Maverick.
 
     Pass ``channel``, ``user_id``, and/or ``capability`` from the trusted host
     application when constructing this tool for an authenticated request. Those
     values are not exposed as model-controlled tool inputs; they are forwarded
-    with each Lightwork goal dispatch for ACLs, quotas, and capability checks.
+    with each Maverick goal dispatch for ACLs, quotas, and capability checks.
     """
     try:
         from langchain_core.tools import StructuredTool
@@ -117,14 +117,14 @@ def maverick_langchain_tool(
         _run,
         name="maverick",
         description=(
-            "Delegate a complex, long-horizon goal to the Lightwork multi-agent "
+            "Delegate a complex, long-horizon goal to the Maverick multi-agent "
             "swarm and return its result. Use for tasks needing research, coding, "
             "verification, or multi-step planning."),
     )
 
 
 def wrap_langchain_tool(lc_tool: Any) -> Tool:
-    """Adapt a LangChain ``BaseTool`` into a Lightwork :class:`~maverick.tools.Tool`.
+    """Adapt a LangChain ``BaseTool`` into a Maverick :class:`~maverick.tools.Tool`.
 
     The wrapped tool takes a single ``input`` string (the common LangChain tool
     shape) and returns the LangChain tool's string output."""

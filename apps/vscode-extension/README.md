@@ -1,11 +1,11 @@
-# Lightwork for VS Code
+# Maverick for VS Code
 
-Sidebar + commands for the [Lightwork](https://github.com/Daybreak-AI-Labs/Lightwork)
+Sidebar + commands for the [Maverick](https://github.com/Daybreak-AI-Labs/Law_Firm)
 agent framework, accessible from inside VS Code.
 
 This is an MVP (v0.1):
 
-- Sidebar **Lightwork** view with a recent-runs summary.
+- Sidebar **Maverick** view with a recent-runs summary.
 - Commands: **Start goal**, **Show status**, **Halt**, **Unhalt**,
   **Export run as JSON**, **Refresh runs**.
 - All commands shell out to the user's local `maverick` CLI. No
@@ -13,7 +13,7 @@ This is an MVP (v0.1):
 
 ## Setup
 
-1. Install Lightwork from a reviewed source commit:
+1. Install Maverick from a reviewed source commit:
    `pip install -e ./packages/maverick-core` (then run `maverick init`). Do
    not install the unreserved distribution name from public PyPI.
 2. Build the extension: `cd apps/vscode-extension && npm install && npm run compile`.

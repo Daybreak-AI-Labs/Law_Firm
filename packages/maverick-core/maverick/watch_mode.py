@@ -1,7 +1,7 @@
 """Watch Mode — file-marker-triggered goals (Aider parity).
 
 Inspired by Aider's Watch Mode: the user drops a marker comment in
-their code, saves the file, and Lightwork picks it up as a goal. No
+their code, saves the file, and Maverick picks it up as a goal. No
 chat input needed.
 
 Default marker patterns (configurable):

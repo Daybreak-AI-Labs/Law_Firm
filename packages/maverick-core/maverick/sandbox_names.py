@@ -1,4 +1,4 @@
-"""Canonical names for Lightwork's built-in execution backends.
+"""Canonical names for Maverick's built-in execution backends.
 
 This module intentionally has no backend imports. The CLI reads it while
 building Click options, so keeping the registry lightweight preserves fast

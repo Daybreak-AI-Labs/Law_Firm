@@ -1,4 +1,4 @@
-"""crewai_adapter: CrewAI Task <-> Lightwork goal translation."""
+"""crewai_adapter: CrewAI Task <-> Maverick goal translation."""
 from __future__ import annotations
 
 import json

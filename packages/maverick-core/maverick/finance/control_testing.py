@@ -27,9 +27,9 @@ from typing import Any
 from ..governed_records import GovernedRecordStore
 from ..privacy_ops import RecordConflict, _actor_label
 
-CONTROL_SET_VERSION = "lightwork-finance-controls-v1"
-CYCLE_SCHEMA = "lightwork.finance-control-cycle.v1"
-RECONCILE_STATE_SCHEMA = "lightwork.finance-control-reconcile-state.v1"
+CONTROL_SET_VERSION = "maverick-finance-controls-v1"
+CYCLE_SCHEMA = "maverick.finance-control-cycle.v1"
+RECONCILE_STATE_SCHEMA = "maverick.finance-control-reconcile-state.v1"
 NON_OPINION_NOTICE = (
     "Automated control observation only. Every GRC test remains needs_review "
     "until a qualified human reviews and approves cited evidence."
@@ -216,8 +216,8 @@ def _status_observations() -> list[FinanceControlObservation]:
                 detail=_bounded(check.detail),
                 framework=str(check.regulation or "Finance controls")[:500],
                 citations=(
-                    "urn:lightwork:finance-status",
-                    "urn:lightwork:finance-regimes",
+                    "urn:maverick:finance-status",
+                    "urn:maverick:finance-regimes",
                 ),
             )
         )
@@ -325,7 +325,7 @@ def _licensing_observation() -> FinanceControlObservation:
             + ", ".join(digests)
         ),
         "State licensing",
-        tuple(dict.fromkeys(citations))[:10] or ("urn:lightwork:licensing-pack",),
+        tuple(dict.fromkeys(citations))[:10] or ("urn:maverick:licensing-pack",),
     )
 
 
@@ -353,7 +353,7 @@ def _anomaly_observation() -> FinanceControlObservation:
         "active" if ready else "action_needed",
         detail,
         "Finance monitoring",
-        ("urn:lightwork:finance-anomaly-rules-v1",),
+        ("urn:maverick:finance-anomaly-rules-v1",),
     )
 
 
@@ -378,7 +378,7 @@ def default_observations(*, now: float | None = None) -> list[FinanceControlObse
                     "probe_error",
                     f"Probe failed safely ({type(exc).__name__}).",
                     "Finance controls",
-                    ("urn:lightwork:finance-control-probe",),
+                    ("urn:maverick:finance-control-probe",),
                 )
             )
     return rows
@@ -669,7 +669,7 @@ def _procedure(
 
 
 def _engagement_marker(cycle_id: str) -> str:
-    return f"Lightwork finance control cycle {cycle_id}"
+    return f"Maverick finance control cycle {cycle_id}"
 
 
 def _engagement_id(cycle_id: str) -> str:

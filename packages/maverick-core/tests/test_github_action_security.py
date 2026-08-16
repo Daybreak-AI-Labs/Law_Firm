@@ -1,4 +1,4 @@
-"""Security contract for the public Lightwork composite GitHub Action."""
+"""Security contract for the public Maverick composite GitHub Action."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def test_action_uses_the_reviewed_setup_python_release() -> None:
     ) in text
 
 
-def test_sanitizer_tracks_every_lightwork_provider_credential() -> None:
+def test_sanitizer_tracks_every_maverick_provider_credential() -> None:
     from maverick.config import (
         PROVIDER_CREDENTIAL_ENV_MAP,
         PROVIDER_CREDENTIAL_ENV_VARS,
@@ -969,8 +969,8 @@ def test_sanitizer_bounds_the_exposed_result(tmp_path: Path) -> None:
     )
 
     assert len(result) <= 256
-    assert "Lightwork output truncated" in result
-    assert "Lightwork output truncated" in summary
+    assert "Maverick output truncated" in result
+    assert "Maverick output truncated" in summary
 
 
 def test_sanitizer_redacts_secret_crossing_cap_and_unterminated_key(

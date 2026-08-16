@@ -1,4 +1,4 @@
-"""Configuration loader for Lightwork.
+"""Configuration loader for Maverick.
 
 Reads ``~/.maverick/config.toml`` (or the path set by ``$MAVERICK_CONFIG``).
 Supports environment variable interpolation in string values: ``${VAR_NAME}``
@@ -832,7 +832,7 @@ def get_automation_import() -> dict:
     UiPath definitions, plus connect-and-trigger for Zapier/Notion) is OFF by
     default: it reaches out to third-party platforms and writes user templates,
     so the operator opts in. ``create_schedules`` lets a recovered cron trigger
-    auto-create a Lightwork schedule; off by default so an import never starts
+    auto-create a Maverick schedule; off by default so an import never starts
     spending on a recurring run without an explicit second step.
     Env override: ``MAVERICK_AUTOMATION_IMPORT``.
     """
@@ -1644,7 +1644,7 @@ def get_external_agents() -> dict:
         # Governed-REST connectors external agents may EXECUTE through (the
         # enforcement tier above screening). Empty = screen-only; naming one
         # here is the operator's explicit decision to let foreign agents act
-        # through Lightwork's egress-guarded, receipted connector path.
+        # through Maverick's egress-guarded, receipted connector path.
         "connectors": [str(p).strip().lower() for p in raw if str(p).strip()],
         # Step-up re-auth on credential minting: when on, ``mint_token`` parks
         # a world approval (dual-control quorum at "high" risk) and refuses to
@@ -2493,7 +2493,7 @@ def get_earned_autonomy() -> dict:
 def get_deployment() -> dict:
     """Return the ``[deployment]`` section (install provenance).
 
-    Written by the installer wizard to record where Lightwork runs
+    Written by the installer wizard to record where Maverick runs
     (desktop/docker/vps/phone). Read back so a re-run of ``maverick init``
     can default to the prior choice. ``type`` is empty when never recorded.
     """

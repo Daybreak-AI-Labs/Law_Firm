@@ -1,4 +1,4 @@
-/* <lightwork-analytics> — embeddable Lightwork analytics web component.
+/* <maverick-analytics> — embeddable Maverick analytics web component.
  *
  * Self-contained (Web Components API, no framework, no dependencies).
  * Renders total spend, an episode-cost sparkline, and a goals-by-status bar
@@ -20,12 +20,12 @@
  *     pages whose audience you would trust with the dashboard itself.
  *   - No-token loopback mode needs no token attribute at all.
  *
- * The legacy <maverick-analytics> tag from before the Lightwork rebrand stays
+ * The legacy <maverick-analytics> tag from before the Maverick rebrand stays
  * registered as an alias so pages embedded earlier keep rendering.
  */
 (function () {
   "use strict";
-  if (typeof customElements === "undefined" || customElements.get("lightwork-analytics")) return;
+  if (typeof customElements === "undefined" || customElements.get("maverick-analytics")) return;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -65,7 +65,7 @@
       labels.map((k) => esc(k) + " " + counts[k]).join(", ") + '">' + rows + "</svg>";
   }
 
-  class LightworkAnalytics extends HTMLElement {
+  class MaverickAnalytics extends HTMLElement {
     connectedCallback() {
       const root = this.attachShadow({ mode: "open" });
       root.innerHTML =
@@ -128,10 +128,10 @@
     }
   }
 
-  customElements.define("lightwork-analytics", LightworkAnalytics);
+  customElements.define("maverick-analytics", MaverickAnalytics);
   // Legacy alias (pre-rebrand embeds). A subclass, because one constructor
   // cannot be registered under two names.
   if (!customElements.get("maverick-analytics")) {
-    customElements.define("maverick-analytics", class extends LightworkAnalytics {});
+    customElements.define("maverick-analytics", class extends MaverickAnalytics {});
   }
 })();

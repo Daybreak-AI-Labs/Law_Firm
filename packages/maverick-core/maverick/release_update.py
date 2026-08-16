@@ -58,7 +58,7 @@ def build_manifest(version: str, artifacts: list[dict], *, min_from: str,
                    notes: str = "") -> dict:
     """Sign a release manifest. ``artifacts`` are ``{name, sha256, size}`` dicts."""
     payload = {
-        "kind": "lightwork.release",
+        "kind": "maverick.release",
         "version": str(version),
         "min_from": str(min_from),
         "artifacts": artifacts,
@@ -315,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
     import argparse
 
     p = argparse.ArgumentParser(prog="maverick.release_update",
-                                description="Verify + plan Lightwork updates offline.")
+                                description="Verify + plan Maverick updates offline.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     vb = sub.add_parser("verify-bundle", help="verify an offline update bundle dir")

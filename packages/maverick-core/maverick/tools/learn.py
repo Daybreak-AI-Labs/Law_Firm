@@ -91,7 +91,7 @@ async def _op_add_mcp_server(agent: Agent, ctx, bb, self_learning, args: dict, n
             "= true, or MAVERICK_ALLOW_MCP_ACQUISITION=1); it still installs "
             "only curated, hash-pinned catalog servers and requires operator "
             "approval. Otherwise add a trusted [mcp_servers.<name>] block to "
-            "the Lightwork config and restart the run."
+            "the Maverick config and restart the run."
         )
     name = (args.get("name") or "").strip()
     if not name:

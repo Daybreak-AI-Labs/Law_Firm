@@ -1,9 +1,9 @@
-//! Zed extension for the Lightwork agent runtime.
+//! Zed extension for the Maverick agent runtime.
 //!
 //! Zed extensions run as WASM in a WASI sandbox: they cannot spawn
 //! processes themselves. The one extension hook that launches a real local
 //! process is the context-server hook — the extension *returns* a command
-//! and Zed spawns it. We use it to register Lightwork's MCP server
+//! and Zed spawns it. We use it to register Maverick's MCP server
 //! (`maverick mcp`, stdio transport — packages/maverick-mcp), which is the
 //! product's official cross-language surface, so Zed's assistant can drive
 //! the swarm: start goals, check status, read results.

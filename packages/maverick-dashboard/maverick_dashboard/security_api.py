@@ -1558,7 +1558,7 @@ def _budget_receipt_hunt_rows() -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def _collect_platform_events(hours: int):
-    from maverick.platform_hunt import collect_lightwork_events
+    from maverick.platform_hunt import collect_platform_events
 
     (
         audit_rows,
@@ -1570,7 +1570,7 @@ def _collect_platform_events(hours: int):
         snapshot_after_read,
     ) = _audit_window(hours)
     budget_rows, degraded = _budget_receipt_hunt_rows()
-    events = list(collect_lightwork_events(
+    events = list(collect_platform_events(
         audit_events=audit_rows,
         budget_receipts=budget_rows,
     ))
@@ -2014,7 +2014,7 @@ def _environment_tenant_binding(tenant: str | None = None) -> str:
 def environment_response_registry(*, tenant: str | None = None):
     """Process-wide vendor-neutral executor extension point.
 
-    Lightwork intentionally registers no mutating executor. Deployments may
+    Maverick intentionally registers no mutating executor. Deployments may
     register a narrow adapter during trusted startup; the REST API can only
     select one of those already-registered adapters after all governance gates.
     """
@@ -2415,13 +2415,13 @@ def _environment_pivot_events(
         return batch.events, 0
     filters = dict(body.filters)
     if principals:
-        filters["lightwork_related_principals"] = principals
+        filters["maverick_related_principals"] = principals
     if targets:
-        filters["lightwork_related_targets"] = targets
+        filters["maverick_related_targets"] = targets
     pivot_request = env_hunt.QueryRequest(
         start=body.start,
         end=body.end,
-        query="lightwork:related-events-v1",
+        query="maverick:related-events-v1",
         filters=filters,
         limit=min(body.limit, 1000),
         read_only=True,

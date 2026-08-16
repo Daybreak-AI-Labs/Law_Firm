@@ -6,7 +6,7 @@ opens a revision-CAS case for independent human review.  It never blocks a
 payment, closes a customer, or files a report on its own.
 
 List parsing and matching are offline and deterministic.  The transparent
-matching ladder mirrors Lightwork's existing typo-tolerant lookup behavior:
+matching ladder mirrors Maverick's existing typo-tolerant lookup behavior:
 normalised exact match, unique prefix/substring candidates, token overlap, and
 a bounded character-similarity fallback.  Unlike an inventory lookup, a
 sanctions ambiguity is never discarded: every plausible candidate is retained
@@ -33,9 +33,9 @@ from urllib.parse import urlparse
 from ..governed_records import GovernedRecordStore
 from ..privacy_ops import RecordConflict, _actor_label
 
-LIST_SCHEMA = "lightwork.finance-screening-list.v1"
-LIST_METADATA_SCHEMA = "lightwork.finance-screening-list-metadata.v1"
-CASE_SCHEMA = "lightwork.finance-screening-case.v1"
+LIST_SCHEMA = "maverick.finance-screening-list.v1"
+LIST_METADATA_SCHEMA = "maverick.finance-screening-list-metadata.v1"
+CASE_SCHEMA = "maverick.finance-screening-case.v1"
 PARSER_VERSION = "finance-watchlist-parser-v1"
 MATCH_RULE_VERSION = "finance-entity-match-ladder-v1"
 NON_DETERMINATION_NOTICE = (
@@ -911,7 +911,7 @@ def ingest_configured_sdn_path(
     return ingest_list(
         list_kind="sanctions",
         source_name="Configured [screening] sdn_path",
-        source_ref=f"urn:lightwork:screening:sdn-path:{path_identity}",
+        source_ref=f"urn:maverick:screening:sdn-path:{path_identity}",
         version=f"sha256:{digest}",
         payload=payload,
         ingested_by=ingested_by,

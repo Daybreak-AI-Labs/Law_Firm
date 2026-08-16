@@ -150,7 +150,7 @@ What makes this a real multi-agent system, not just N parallel instances:
 | Target | How it runs | Status |
 |---|---|---|
 | **Desktop** | Reviewed source checkout or signed release binary; runs in user's home dir. | v0.1.1 |
-| **Docker** | `docker run -v ~/.maverick:/root/.maverick ghcr.io/daybreak-ai-labs/lightwork:<tag>`. Isolated sandbox. | v0.1.1 |
+| **Docker** | `docker run -v ~/.maverick:/root/.maverick ghcr.io/daybreak-ai-labs/maverick:<tag>`. Isolated sandbox. | v0.1.1 |
 | **VPS** | `deploy/vps/install.sh` provisions a systemd unit. `MAVERICK_VERSION=v0.1.0 deploy/vps/install.sh` pins the release. | v0.1.1 |
 | **Phone (companion)** | Swarm runs on Desktop or VPS; phone talks via Telegram / iMessage / WhatsApp / Signal / Discord / Slack / SMS / Matrix / email. Native iOS/Android later. | v0.1.1 |
 

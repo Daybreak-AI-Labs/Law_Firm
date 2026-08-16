@@ -1,4 +1,4 @@
-# Lightwork on Fly.io — reference architecture.
+# Maverick on Fly.io — reference architecture.
 #
 #   fly launch --copy-config --no-deploy   # then review
 #   fly volumes create maverick_state --size 10

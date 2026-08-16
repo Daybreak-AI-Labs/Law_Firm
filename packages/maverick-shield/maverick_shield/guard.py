@@ -1,4 +1,4 @@
-"""Lightwork's safety chokepoints, backed by Agent Shield with a built-in fallback.
+"""Maverick's safety chokepoints, backed by Agent Shield with a built-in fallback.
 
 The agent wraps three sinks through this module:
   - on every user input    -> Shield.scan_input

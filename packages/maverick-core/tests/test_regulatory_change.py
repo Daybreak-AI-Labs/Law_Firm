@@ -79,7 +79,7 @@ def test_federal_register_ingestion_is_idempotent_and_cited(tmp_path):
     assert len(alert.citations[0].source_record_sha256) == 64
     assert alert.citations[0].acquisition == "operator_supplied"
     assert alert.citations[0].retrieval_url == (
-        "urn:lightwork:regulatory-acquisition:operator-supplied"
+        "urn:maverick:regulatory-acquisition:operator-supplied"
     )
     assert engine.get_alert(alert.alert_id) == alert
     assert engine.get_alert("missing") is None

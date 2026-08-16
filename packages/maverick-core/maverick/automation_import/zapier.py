@@ -1,9 +1,9 @@
 """Zapier importer (connect-and-trigger).
 
 Zapier does NOT expose a user's existing Zaps over its public API (the Platform
-API is for building catalog apps; the NLA actions API was retired), so Lightwork
+API is for building catalog apps; the NLA actions API was retired), so Maverick
 cannot read a client's Zaps. The supported flow is connect-and-trigger: the
-client's Zap calls a Lightwork inbound webhook (Zapier's "Webhooks by Zapier ->
+client's Zap calls a Maverick inbound webhook (Zapier's "Webhooks by Zapier ->
 POST" action), and the imported template is what that webhook runs. An operator
 can also describe a Zap as JSON (the shared IR shape) and import it with
 ``--from-file`` to scaffold that template.

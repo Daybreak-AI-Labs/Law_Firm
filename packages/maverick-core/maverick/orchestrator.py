@@ -1072,7 +1072,7 @@ def _evidence_ready_goal_output(
     )
     context_sha = hashlib.sha256(brief.encode("utf-8")).hexdigest()
     conversation = (
-        f"{channel or 'lightwork'}:{conversation_id}"
+        f"{channel or 'maverick'}:{conversation_id}"
         if conversation_id is not None
         else f"goal:{goal_id}"
     )
@@ -1141,7 +1141,7 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
         _record_quota_usage()
         world.set_goal_status(goal_id, "blocked", result="halted")
         return (
-            "Stopped: Lightwork is halted (a HALT file is present).\n"
+            "Stopped: Maverick is halted (a HALT file is present).\n"
             "Run `maverick unhalt` to clear it, then try again."
         )
 
@@ -1545,7 +1545,7 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
                     "goal_id": goal_id, "status": "blocked", "result": "halted",
                 })
                 return (
-                    "Stopped: Lightwork was halted mid-run (a HALT file is present).\n"
+                    "Stopped: Maverick was halted mid-run (a HALT file is present).\n"
                     f"Run `maverick unhalt` to clear it, then `maverick resume {goal_id}`."
                 )
             _end_episode_with_spend(world, episode_id, result.error, "failure", budget, goal_id)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Lightwork desktop bootstrap (macOS / Linux).
+# Maverick desktop bootstrap (macOS / Linux).
 #
 # Zero prerequisites. It installs Python 3 if missing, checks out an exact
-# Lightwork commit into an isolated pipx environment, and launches the wizard
+# Maverick commit into an isolated pipx environment, and launches the wizard
 # (`maverick init`). There is deliberately no public-package-index fallback.
 #
 # Set MAVERICK_REF to a reviewed, lowercase, full 40-character commit SHA.
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REPO="${MAVERICK_REPO:-Daybreak-AI-Labs/Lightwork}"
+REPO="${MAVERICK_REPO:-Daybreak-AI-Labs/Law_Firm}"
 REF="${MAVERICK_REF:-}"
 SRC_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/maverick/src"
 STAGED_SRC=""
@@ -24,7 +24,7 @@ trap cleanup_staged_source EXIT
 
 log()  { printf '==> %s\n' "$*" >&2; }
 warn() { printf '!!  %s\n' "$*" >&2; }
-die()  { printf 'Lightwork install failed: %s\n' "$*" >&2; exit 1; }
+die()  { printf 'Maverick install failed: %s\n' "$*" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -79,7 +79,7 @@ ensure_pipx() {
 }
 
 validate_source_pin() {
-  [ -n "$REF" ] || die "MAVERICK_REF is required. Set it to a reviewed, full 40-character Lightwork commit SHA; public-index fallback is disabled."
+  [ -n "$REF" ] || die "MAVERICK_REF is required. Set it to a reviewed, full 40-character Maverick commit SHA; public-index fallback is disabled."
   [[ "$REF" =~ ^[0-9a-f]{40}$ ]] && return 0
   die "MAVERICK_REF must be a lowercase, full 40-character commit SHA; got '$REF'."
 }
@@ -98,7 +98,7 @@ validate_repo() {
 fetch_source() {
   validate_repo
   validate_source_pin
-  log "Downloading a fresh Lightwork source tree ($REPO@$REF) ..."
+  log "Downloading a fresh Maverick source tree ($REPO@$REF) ..."
   mkdir -p "$(dirname "$SRC_DIR")"
   STAGED_SRC="$(mktemp -d "$(dirname "$SRC_DIR")/src.stage.XXXXXX")"
   git clone --no-checkout --filter=blob:none \
@@ -109,16 +109,16 @@ fetch_source() {
   actual_ref="$(git -C "$STAGED_SRC" rev-parse HEAD)"
   [ "$actual_ref" = "$REF" ] || die "Checked-out source is at '$actual_ref', not required ref '$REF'."
   [ -z "$(git -C "$STAGED_SRC" status --porcelain --untracked-files=all)" ] \
-    || die "Fresh pinned Lightwork checkout is unexpectedly dirty."
+    || die "Fresh pinned Maverick checkout is unexpectedly dirty."
   [ -f "$STAGED_SRC/packages/maverick-core/pyproject.toml" ] \
-    || die "Pinned checkout is not a complete Lightwork source tree."
+    || die "Pinned checkout is not a complete Maverick source tree."
   rm -rf -- "$SRC_DIR"
   mv -- "$STAGED_SRC" "$SRC_DIR"
   STAGED_SRC=""
 }
 
 install_maverick() {
-  log "Installing the complete Lightwork package cohort (this can take a minute) ..."
+  log "Installing the complete Maverick package cohort (this can take a minute) ..."
   fetch_source
   # Let pipx create and expose the managed environment without resolving a
   # partial dependency graph. The cohort helper immediately performs the one

@@ -2,7 +2,7 @@
 
 Most enterprise SaaS exposes a token-authed JSON REST API with the same shape:
 a base URL, a bearer/basic/custom-header token, GET to read, POST/PUT/PATCH/
-DELETE to write. ``make_rest_tool`` turns that shape into a Lightwork ``Tool``
+DELETE to write. ``make_rest_tool`` turns that shape into a Maverick ``Tool``
 so the long tail of connectors is a one-line spec instead of a hand-written
 module — while keeping the house rules: explicit-env auth (no ambient creds),
 ``confirm=true`` gating on every write, ``ERROR:``-prefixed failures, and a

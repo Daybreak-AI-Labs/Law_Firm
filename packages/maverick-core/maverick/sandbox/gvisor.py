@@ -17,7 +17,7 @@ from typing import Any
 
 DOCKER_RUNTIMES_FORMAT = "{{json .Runtimes}}"
 
-# These are the standard runsc registration names Lightwork deliberately
+# These are the standard runsc registration names Maverick deliberately
 # supports. Custom aliases remain possible by registering one of the explicit
 # platform names below; substring matches are intentionally forbidden.
 TRUSTED_GVISOR_RUNTIME_NAMES = frozenset(

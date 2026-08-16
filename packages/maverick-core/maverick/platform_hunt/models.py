@@ -1,4 +1,4 @@
-"""Stable data contracts for Lightwork's deterministic platform hunter."""
+"""Stable data contracts for Maverick's deterministic platform hunter."""
 from __future__ import annotations
 
 import hashlib

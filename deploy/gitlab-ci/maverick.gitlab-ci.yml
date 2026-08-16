@@ -1,14 +1,14 @@
-# Lightwork GitLab CI template (reusable)
+# Maverick GitLab CI template (reusable)
 #
 # The GitLab counterpart to the `deploy/github-action` wrapper: install
-# Lightwork from a verified local checkout or an explicitly configured private
+# Maverick from a verified local checkout or an explicitly configured private
 # index and run a goal under a hard spend cap and non-interactive defaults.
 #
 # A downstream project pulls this in with `include:` and sets a few CI/CD
 # variables (see deploy/gitlab-ci/README.md):
 #
 #     include:
-#       - remote: 'https://gitlab.example/Lightwork/-/raw/<full-commit-sha>/deploy/gitlab-ci/maverick.gitlab-ci.yml'
+#       - remote: 'https://gitlab.example/Maverick/-/raw/<full-commit-sha>/deploy/gitlab-ci/maverick.gitlab-ci.yml'
 #
 #     maverick:
 #       extends: .maverick
@@ -62,16 +62,16 @@
         fi
         source_root="$(cd "$MAVERICK_SOURCE_DIR" && pwd -P)"
         if [ ! -f "$source_root/packages/maverick-core/pyproject.toml" ]; then
-          echo "MAVERICK_SOURCE_DIR is not a complete Lightwork checkout." >&2
+          echo "MAVERICK_SOURCE_DIR is not a complete Maverick checkout." >&2
           exit 1
         fi
         actual_ref="$(git -c core.fsmonitor=false -C "$source_root" rev-parse HEAD)"
         if [ "$actual_ref" != "$MAVERICK_SOURCE_REF" ]; then
-          echo "Lightwork source is at $actual_ref, not the required $MAVERICK_SOURCE_REF." >&2
+          echo "Maverick source is at $actual_ref, not the required $MAVERICK_SOURCE_REF." >&2
           exit 1
         fi
         if [ -n "$(git -c core.fsmonitor=false -C "$source_root" status --porcelain --untracked-files=all)" ]; then
-          echo "Lightwork source contains local or untracked changes; refusing to install unreviewed content." >&2
+          echo "Maverick source contains local or untracked changes; refusing to install unreviewed content." >&2
           exit 1
         fi
         python "$source_root/scripts/install_release_cohort.py" \
@@ -94,7 +94,7 @@
           raise SystemExit("MAVERICK_PACKAGE_INDEX_URL must be an absolute HTTPS URL")
       if host in {"pypi.org", "pypi.python.org", "files.pythonhosted.org"}:
           raise SystemExit(
-              "Public PyPI is blocked until all Lightwork project names are "
+              "Public PyPI is blocked until all Maverick project names are "
               "reserved and protected."
           )
       PY
@@ -113,7 +113,7 @@
         python -m pip check
         python -c "import maverick, maverick_shield, maverick_channels, maverick_evolve, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer"
       else
-        echo "No trusted Lightwork install source configured. Set MAVERICK_SOURCE_DIR + MAVERICK_SOURCE_REF or MAVERICK_PACKAGE_INDEX_URL + MAVERICK_VERSION." >&2
+        echo "No trusted Maverick install source configured. Set MAVERICK_SOURCE_DIR + MAVERICK_SOURCE_REF or MAVERICK_PACKAGE_INDEX_URL + MAVERICK_VERSION." >&2
         exit 1
       fi
     - maverick version || maverick --help

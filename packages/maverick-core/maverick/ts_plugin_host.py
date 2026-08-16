@@ -1,6 +1,6 @@
 """TypeScript plugin host: tools served by an external process over NDJSON stdio.
 
-Lightwork's native plugins are Python entry points (see ``plugins``). The
+Maverick's native plugins are Python entry points (see ``plugins``). The
 TypeScript plugin SDK (``sdks/plugin-ts``, npm ``@maverick/plugin-sdk``) lets an
 author ship tools as a Node script instead; this module is the Python side of
 that seam. The wire protocol is NDJSON, one JSON object per line:

@@ -3,7 +3,7 @@
 The built-in OIDC browser-login flow (``maverick.oidc.login_enabled``) needs a
 way to remember "this browser already completed SSO" across requests. The usual
 answer is a signed cookie, but Starlette's ``SessionMiddleware`` /
-``itsdangerous`` are NOT in Lightwork's dependency graph and adding them would
+``itsdangerous`` are NOT in Maverick's dependency graph and adding them would
 violate the "no new top-level dependencies" rule. So we sign the cookie
 ourselves with the standard library only (``hmac``/``hashlib``/``secrets``/
 ``base64``/``json``/``time``).

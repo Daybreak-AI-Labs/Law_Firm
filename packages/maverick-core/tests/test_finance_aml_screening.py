@@ -750,7 +750,7 @@ def test_configured_legacy_sdn_path_is_imported_with_governed_provenance(
     assert governed["source_name"] == "Configured [screening] sdn_path"
     assert governed["content_sha256"] == hashlib.sha256(payload.encode()).hexdigest()
     assert governed["provenance"]["source_ref"].startswith(
-        "urn:lightwork:screening:sdn-path:"
+        "urn:maverick:screening:sdn-path:"
     )
     assert str(source) not in governed["provenance"]["source_ref"]
 

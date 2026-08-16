@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 #   MAVERICK_AI_DISCLOSURE="<your custom text>"
 # or [compliance] disclosure_text in ~/.maverick/config.toml.
 DEFAULT_DISCLOSURE = (
-    "Hi -- I'm Lightwork, an AI assistant. Conversations may be reviewed "
+    "Hi -- I'm Maverick, an AI assistant. Conversations may be reviewed "
     "for safety. Reply STOP to end."
 )
 
@@ -287,7 +287,7 @@ def compliance_report() -> list[ControlCheck]:
     # There is no single US AI statute, so map the same live controls onto the
     # US de-facto anchor (NIST AI RMF) and the enforceable state/sector laws.
     # Several obligations are part legal/operator process -- flagged "available"
-    # (Lightwork supplies the evidence trail) rather than "active".
+    # (Maverick supplies the evidence trail) rather than "active".
     checks.append(ControlCheck(
         "Governance, accountability & records", "NIST AI RMF (GOVERN / MANAGE)",
         "active" if (signing_on or oversight_on) else "available",

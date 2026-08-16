@@ -433,7 +433,7 @@ class EvidenceGatewayPolicyUpsertIn(BaseModel):
         max_length=16,
     )
     machine_marker: str = Field(
-        "[lightwork-ai-generated; evidence-receipt={receipt_id}]",
+        "[maverick-ai-generated; evidence-receipt={receipt_id}]",
         min_length=1,
         max_length=1000,
     )

@@ -2,7 +2,7 @@
 governed workforce.
 
 An Agentforce, Bedrock, OpenAI, LangChain, or home-grown agent runs on its own
-runtime — Lightwork cannot orchestrate it, but it CAN govern and account for
+runtime — Maverick cannot orchestrate it, but it CAN govern and account for
 it. This module is the missing spine between the two registries that already
 exist (the Agent Trust Plane for identity/ceilings, the fleet-memory roster
 for learning) and the Operating Record:
@@ -1328,7 +1328,7 @@ def execute(agent_id: str, request: dict, *,
     connector — the enforcement tier above :func:`screen`.
 
     ``screen`` answers "may I?" and trusts the agent to act on its own
-    platform; ``execute`` makes Lightwork the actor. The request runs through
+    platform; ``execute`` makes Maverick the actor. The request runs through
     the same admission chain, then through the governed-REST connector path —
     host IP-pinning, enterprise egress allowlists, no redirects — with a
     tamper-evident PREPARE/COMMIT receipt around the effect. Reads are

@@ -2,7 +2,7 @@
 
 SOTA (HERA / "Experience as a Compass", arXiv 2604.00901): an orchestrator that
 conditions on *what worked and what failed* on similar prior tasks outperforms
-one that re-plans from scratch. Lightwork already recalls similar prior *goals*
+one that re-plans from scratch. Maverick already recalls similar prior *goals*
 into the brief (``orchestrator._maybe_recall_prior_work``); this adds the
 missing outcome signal -- a short "N similar tasks: X succeeded, Y failed;
 lean on …, avoid …" guidance distilled from the persistent world model.

@@ -1,4 +1,4 @@
-//! Tauri shell for the local Lightwork dashboard.
+//! Tauri shell for the local Maverick dashboard.
 //!
 //! The window first shows a bundled splash page (ui/index.html + ui/app.js)
 //! that polls `http://127.0.0.1:8765/healthz` (an auth-exempt endpoint, see
@@ -12,7 +12,7 @@
 //! Why spawn the installed CLI instead of bundling a true Tauri "sidecar"
 //! binary: the dashboard is a Python process; bundling it would mean shipping a
 //! Python runtime inside the app. The CLI installers (apps/installer-desktop,
-//! apps/installer-msi, pipx) already own "how Lightwork gets installed"; this
+//! apps/installer-msi, pipx) already own "how Maverick gets installed"; this
 //! shell stays a thin window.
 
 use std::ffi::OsString;
@@ -133,8 +133,8 @@ pub fn run() {
             let reload = MenuItemBuilder::with_id("reload", "Reload Dashboard")
                 .accelerator("CmdOrCtrl+R")
                 .build(handle)?;
-            let quit = PredefinedMenuItem::quit(handle, Some("Quit Lightwork"))?;
-            let app_menu = SubmenuBuilder::new(handle, "Lightwork")
+            let quit = PredefinedMenuItem::quit(handle, Some("Quit Maverick"))?;
+            let app_menu = SubmenuBuilder::new(handle, "Maverick")
                 .item(&open_browser)
                 .item(&reload)
                 .separator()
@@ -161,7 +161,7 @@ pub fn run() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("error while building the Lightwork desktop shell")
+        .expect("error while building the Maverick desktop shell")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 // Kill only the dashboard *we* started; an externally started

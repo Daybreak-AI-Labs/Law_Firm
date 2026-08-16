@@ -1,4 +1,4 @@
-"""Lightwork Proof Pack — one signed, reproducible evidence bundle.
+"""Maverick Proof Pack — one signed, reproducible evidence bundle.
 
 The artifact a POC ends on and a diligence team runs: a single command that
 composes the evidence behind the product's claims, each from REAL code, and
@@ -287,7 +287,7 @@ def render_markdown(manifest: dict) -> str:
     signed = "signed (Ed25519)" if manifest.get("signature") else "UNSIGNED"
     verdict = "ALL HARD GUARANTEES HOLD" if manifest.get("passed") else "A HARD GUARANTEE FAILED"
     lines = [
-        "# Lightwork — Proof Pack",
+        "# Maverick — Proof Pack",
         "",
         f"**{verdict}.** Hard guarantees: {', '.join(hard)}.",
         "",

@@ -6,7 +6,7 @@ sync function returning str, or an async coroutine returning str.
 v0.1.2: ``base_registry`` accepts an optional list of MCPClient
 instances. If provided, every tool the MCP servers expose is
 registered as ``mcp_<server>__<tool>`` and routed through the
-MCPClient. This is how Lightwork consumes the wider MCP ecosystem.
+MCPClient. This is how Maverick consumes the wider MCP ecosystem.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _hardware_sensors_enabled() -> bool:
     """Opt-in gate for host hardware telemetry.
 
     The tool reads host state and imports the optional psutil dependency in the
-    Lightwork process, so keep it out of the default model-visible registry
+    Maverick process, so keep it out of the default model-visible registry
     unless an operator enables it explicitly.
     """
     if _env_true("MAVERICK_ENABLE_HARDWARE_SENSORS"):
@@ -704,7 +704,7 @@ def base_registry(
     reg = ToolRegistry(principal=principal or None)
     # SSHBackend executes shell commands remotely, but filesystem tools
     # are local pathlib operations. Registering read/write/list for SSH
-    # would access the Lightwork host filesystem instead of the remote
+    # would access the Maverick host filesystem instead of the remote
     # sandbox host.
     if sandbox.__class__.__name__ != "SSHBackend":
         reg.register(read_file(sandbox))
@@ -1328,7 +1328,7 @@ def base_registry(
     # registration now matches the documented contract.
     reg.register(teams_tool())
     # self_edit intentionally is not registered in the default tool set.
-    # It can edit Lightwork source/config and cannot rely on a model-supplied
+    # It can edit Maverick source/config and cannot rely on a model-supplied
     # boolean as a real human approval gate. Keep it importable for explicit
     # offline diff proposal workflows, but do not expose it to agents by default.
 

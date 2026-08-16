@@ -3,7 +3,7 @@
 The standard, low-risk way to put browser SSO in front of an internal service:
 a proxy (oauth2-proxy, your IdP's, an ALB OAuth listener, ...) authenticates the
 user and forwards their identity in a request header (e.g. ``X-Forwarded-User``).
-Lightwork maps that value to a ``user:<id>`` principal that drops straight into
+Maverick maps that value to a ``user:<id>`` principal that drops straight into
 the capability/role + tenant model -- no hand-rolled OAuth flow to own.
 
 SECURITY: a forwarded header is trivially spoofable by a *direct* client, so it

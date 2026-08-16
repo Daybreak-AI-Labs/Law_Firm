@@ -27,7 +27,7 @@ What enforces "no egress" today (found by reading the seams):
   ``NO_PROXY`` — best-effort for host subprocesses (curl/pip/requests honor
   it; a hostile raw socket does not), which is why the ACL denial above and
   the container backends carry the hard guarantee. It also sets
-  ``MAVERICK_CONTAINMENT=1`` so a nested Lightwork process self-applies the
+  ``MAVERICK_CONTAINMENT=1`` so a nested Maverick process self-applies the
   profile.
 
 Registry-ACL composition note: ``ToolRegistry.set_acl`` **replaces** the ACL
@@ -148,7 +148,7 @@ def assert_no_network_env(env: dict) -> dict:
 
     Black-holes the standard proxy variables to :data:`NO_EGRESS_PROXY`,
     strips the proxy-bypass vars, and marks ``MAVERICK_CONTAINMENT=1`` so a
-    nested Lightwork self-applies containment. This is the *only* env-mediated
+    nested Maverick self-applies containment. This is the *only* env-mediated
     egress mechanism the codebase's subprocess paths respect (the policy
     modules are config-driven, the container backends engine-driven); it is
     best-effort for arbitrary host subprocesses — the registry ACL denial in

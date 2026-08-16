@@ -9,7 +9,7 @@ dropped in later behind the same interface without touching callers.
 Each member screens a blob and returns a :class:`DetectorSignal` (a 0–1 score,
 whether it fired, and human-readable reasons). The ensemble is **deny-wins**
 (any member firing blocks — the union of risks, the same posture as the rest of
-Lightwork's safety layer), reports the dominant score as severity, and — the
+Maverick's safety layer), reports the dominant score as severity, and — the
 point of v3 — emits a structured **reason_codes** list explaining *which*
 detector objected and *why*, instead of an opaque block.
 

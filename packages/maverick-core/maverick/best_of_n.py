@@ -2,7 +2,7 @@
 
 SOTA test-time scaling: scaling the *generator* axis (sample N candidate
 answers) and selecting with a verifier as the value function beats a single
-greedy pass on hard tasks. Lightwork already scales the *verifier* axis (MAV
+greedy pass on hard tasks. Maverick already scales the *verifier* axis (MAV
 ensemble in ``verifier.py``); this adds the orthogonal generator axis.
 
 This is the tractable core of verifier-guided search. It is dependency-injected

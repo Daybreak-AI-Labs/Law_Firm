@@ -7,8 +7,8 @@ compact token::
     LW1.<base64url(payload JSON)>.<base64url(Ed25519 signature)>
 
 with payload ``{customer, sku, capabilities, issued_at, expires_at}``. The
-agent ships only the PUBLIC key (env ``LIGHTWORK_LICENSE_PUBKEY``) and the
-token (``LIGHTWORK_LICENSE``); the private key never leaves the vendor. An
+agent ships only the PUBLIC key (env ``MAVERICK_LICENSE_PUBKEY``) and the
+token (``MAVERICK_LICENSE``); the private key never leaves the vendor. An
 upsell is a key swap, not a reinstall. No license -> the agent runs in
 evaluation mode (bounded, honest, never crippled mid-flight).
 
@@ -89,7 +89,7 @@ def verify_license(token: str, public_pem: str) -> dict:
     from cryptography.hazmat.primitives import serialization
     parts = (token or "").strip().split(".")
     if len(parts) != 3 or parts[0] != PREFIX:
-        raise LicenseError("not a Lightwork license token")
+        raise LicenseError("not a Maverick license token")
     try:
         body = _b64d(parts[1])
         sig = _b64d(parts[2])

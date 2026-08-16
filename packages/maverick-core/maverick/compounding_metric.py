@@ -1,7 +1,7 @@
 """The compounding metric -- does the workforce get cheaper and better with use?
 
 This is the moat made measurable. A stateless agent runs the same task at the
-same cost forever; Lightwork's whole differentiator is that, per task class, runs
+same cost forever; Maverick's whole differentiator is that, per task class, runs
 get cheaper and more reliable as skills/reflexions/learned policy accumulate.
 This module computes that as a *live* signal from the world model: for each task
 class, compare the earliest runs ("cold") against the most recent ("warm") and

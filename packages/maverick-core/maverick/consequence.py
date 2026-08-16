@@ -4,7 +4,7 @@ Every learning signal in production AI is a proxy: a human saying "looks good"
 (RLHF), an LLM judge (RLAIF), or a hardcoded checker (RLVR). None is the *actual
 consequence* of the action in the world -- because no one else operates a
 governed workforce that acts on real business systems and can observe the
-result. Lightwork can: weeks later, the invoice gets paid or it doesn't, the
+result. Maverick can: weeks later, the invoice gets paid or it doesn't, the
 contract renews or it doesn't, the ticket stays closed or it reopens. That
 downstream fact is **ground truth** -- the one signal that can't be gamed,
 because a policy that fools an LLM judge still fails reality.
@@ -197,7 +197,7 @@ def record_self_outcome(world, goal_id: int, value: float, *, kind: str,
                         store: ConsequenceStore | None = None) -> bool:
     """Ground a **first-party** outcome against a goal's latest episode.
 
-    The single helper for the outcomes Lightwork observes directly -- a human's
+    The single helper for the outcomes Maverick observes directly -- a human's
     certify/reject, a thumbs-up/down, or the run's own terminal failure -- as
     opposed to :func:`record_outcome`, which a system-of-record connector calls
     with an episode id it already knows. Resolves the episode from ``world``

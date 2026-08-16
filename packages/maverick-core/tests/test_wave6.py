@@ -249,7 +249,7 @@ class TestArticle50Disclosure:
         wm = WorldModel(tmp_path / "w.db")
         msg = first_turn_disclosure(wm, "telegram", "user-42")
         assert msg is not None
-        assert "Lightwork" in msg
+        assert "Maverick" in msg
         assert "AI" in msg
 
     def test_after_assistant_turn_returns_none(self, tmp_path):

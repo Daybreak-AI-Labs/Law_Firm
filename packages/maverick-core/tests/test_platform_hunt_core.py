@@ -190,8 +190,8 @@ def test_red_team_fixture_fires_every_platform_rule_with_exact_evidence(
     assert [finding.rule_id for finding in blocked.findings] == ["LW-PLAT-000"]
 
 
-def test_collect_lightwork_events_normalizes_all_sources():
-    events = platform_hunt.collect_lightwork_events(
+def test_collect_platform_events_normalizes_all_sources():
+    events = platform_hunt.collect_platform_events(
         audit_events=[{"ts": 1, "kind": "shield_block", "agent": "a"}],
         approvals=[{"id": 2, "requested_at": 2, "action": "delete", "status": "denied"}],
         budgets=[{"id": 3, "timestamp": 3, "used": 2, "limit": 1}],
@@ -211,8 +211,8 @@ def test_audit_event_identity_is_stable_when_the_hunt_window_slides():
         "hash": "a" * 64,
         "sig": "signed-row-material",
     }
-    alone = platform_hunt.collect_lightwork_events(audit_events=[signed])
-    shifted = platform_hunt.collect_lightwork_events(
+    alone = platform_hunt.collect_platform_events(audit_events=[signed])
+    shifted = platform_hunt.collect_platform_events(
         audit_events=[{"ts": 1, "kind": "benign"}, signed]
     )
 
@@ -223,7 +223,7 @@ def test_audit_event_identity_is_stable_when_the_hunt_window_slides():
 
 
 def test_production_scan_never_treats_mutable_world_rows_as_verdict_evidence():
-    rows = platform_hunt.collect_lightwork_events(
+    rows = platform_hunt.collect_platform_events(
         approvals=[{
             "id": 10,
             "requested_at": 100,

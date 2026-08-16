@@ -275,7 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_goal_events_ts          ON goal_events(ts);
 
 -- v0.2 multi-turn: per-channel-user conversation threads.
 -- (channel, user_id) is the natural key so the same iMessage user
--- across separate Lightwork goals lands in a single conversation.
+-- across separate Maverick goals lands in a single conversation.
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel TEXT NOT NULL,
@@ -955,7 +955,7 @@ def default_db_path() -> Path:
 
 def _resolve_world_path(path: Path | str | None) -> tuple[Path, bool]:
     if path is None:
-        # The built-in dynamic path is Lightwork-owned. A replaced DEFAULT_DB
+        # The built-in dynamic path is platform-owned. A replaced DEFAULT_DB
         # is a public embedder/operator override and therefore caller-owned: it
         # must already have a private parent, never have its ACL seized.
         return default_db_path(), DEFAULT_DB is _INITIAL_DEFAULT_DB
@@ -1012,7 +1012,7 @@ class WorldModel:
         # backup could read everyone's data. Lock the dir + the file.
         if str(path) != ":memory:":
             # Tenant/home context is deliberately resolved at request time.
-            # Treat the current managed default as Lightwork-owned and let the
+            # Treat the current managed default as platform-owned and let the
             # tenant factory explicitly mark its paths.  A genuinely
             # caller-supplied parent still goes through
             # ``prepare_private_directory`` so we never seize its ACLs.

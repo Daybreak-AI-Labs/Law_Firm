@@ -1,7 +1,7 @@
-// Lightwork browser extension — background service worker (Manifest V3).
+// Maverick browser extension — background service worker (Manifest V3).
 //
 // All network I/O lives here so a request survives the popup closing and the
-// popup stays a thin UI. Every fetch goes to the LOCAL Lightwork dashboard
+// popup stays a thin UI. Every fetch goes to the LOCAL Maverick dashboard
 // (http://127.0.0.1:<port> — see host_permissions in manifest.json; no other
 // host is reachable) and reuses the dashboard's existing REST API:
 //

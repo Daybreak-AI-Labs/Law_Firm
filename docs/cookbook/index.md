@@ -1,4 +1,4 @@
-# Lightwork cookbook
+# Maverick cookbook
 
 End-to-end recipes you can paste into `maverick start "..."` (or into a
 GitHub issue body when using the `agent-on-pr` reusable workflow).
@@ -6,7 +6,7 @@ GitHub issue body when using the `agent-on-pr` reusable workflow).
 Each recipe is:
 
 - **Self-contained**: doesn't assume you have anything beyond a fresh
-  Lightwork install (native installer or source today; `pip install
+  Maverick install (native installer or source today; `pip install
   maverick-agent` once published) + `maverick init`.
 - **Bounded**: ~3 minutes of agent runtime on Claude Sonnet 4.6,
   budget-capped at $1.

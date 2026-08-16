@@ -1,4 +1,4 @@
--- maverick.nvim — drive the Lightwork agent runtime from Neovim.
+-- maverick.nvim — drive the Maverick agent runtime from Neovim.
 --
 -- A thin front end over the locally installed `maverick` CLI; nothing here
 -- talks to a network itself.
@@ -33,7 +33,7 @@ end
 
 function M.start(goal)
   if goal == nil or goal == "" then
-    vim.ui.input({ prompt = "Goal for Lightwork: " }, function(input)
+    vim.ui.input({ prompt = "Goal for Maverick: " }, function(input)
       if input and input ~= "" then
         M.start(input)
       end
@@ -62,18 +62,18 @@ end
 
 function M.halt()
   vim.ui.select({ "No", "Yes — abort ALL running goals" },
-    { prompt = "Arm the Lightwork killswitch?" },
+    { prompt = "Arm the Maverick killswitch?" },
     function(choice)
       if choice and choice:sub(1, 3) == "Yes" then
         vim.fn.system({ M.config.cli, "halt" })
-        vim.notify("Lightwork killswitch armed.", vim.log.levels.WARN)
+        vim.notify("Maverick killswitch armed.", vim.log.levels.WARN)
       end
     end)
 end
 
 function M.unhalt()
   vim.fn.system({ M.config.cli, "unhalt" })
-  vim.notify("Lightwork killswitch cleared.", vim.log.levels.INFO)
+  vim.notify("Maverick killswitch cleared.", vim.log.levels.INFO)
 end
 
 return M

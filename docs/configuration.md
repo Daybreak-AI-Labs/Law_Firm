@@ -1,6 +1,6 @@
 # Configuration
 
-Lightwork reads `~/.maverick/config.toml`. The installer wizard writes it; you can also edit by hand.
+Maverick reads `~/.maverick/config.toml`. The installer wizard writes it; you can also edit by hand.
 
 ## Full schema
 
@@ -222,12 +222,12 @@ state_feeds = []
 
 [persona]
 # Appended to every agent's system prompt. Optional.
-name      = "Lightwork"
+name      = "Maverick"
 style     = "concise"   # concise | thorough | friendly | formal | playful
 addendum  = ""           # free-form extra instruction
 
 [mcp_servers.filesystem]
-# External MCP servers Lightwork consumes as tools. Each one is spawned as
+# External MCP servers Maverick consumes as tools. Each one is spawned as
 # a subprocess; their tools appear in the agent's catalog as
 # `mcp_<name>__<tool>` and still pass through Shield.
 command       = "npx"
@@ -252,7 +252,7 @@ invoices or chargebacks. `MAVERICK_BILLING_STRICT=true|false` overrides the
 file setting.
 
 `backend = "local"` runs tools in the same runtime environment as
-Lightwork. For untrusted skills, avoid mounting secret-bearing paths into
+Maverick. For untrusted skills, avoid mounting secret-bearing paths into
 that runtime and prefer sandbox isolation that does not expose host
 state.
 
@@ -536,7 +536,7 @@ Token comparison is constant-time (`hmac.compare_digest`).
 
 ## External MCP servers
 
-Lightwork can consume any MCP server (filesystem, GitHub, Postgres,
+Maverick can consume any MCP server (filesystem, GitHub, Postgres,
 browser, etc.) as tools. Add entries under `[mcp_servers.<name>]`:
 
 ```toml

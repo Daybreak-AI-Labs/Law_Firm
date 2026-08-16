@@ -8,7 +8,7 @@ question, so everyone guessed, and the guesses went both ways.
   "roadmap: 2027 H2" and nothing in production imports it. In the same review,
   ``erasure_verify.py`` was skipped as unbuilt -- it is tagged 2028 H2 and
   backs the shipping ``maverick erase-verify`` command.
-* **Documentation drift.** ``FEATURES.md`` opens with "what Lightwork does
+* **Documentation drift.** ``FEATURES.md`` opens with "what Maverick does
   today" and names modules that nothing calls.
 
 The ``roadmap: 20XX HN`` header was the only signal available, and it is

@@ -1,6 +1,6 @@
-"""Lightwork interactive installer.
+"""Maverick interactive installer.
 
-Configures Lightwork for a fresh install. Sets up:
+Configures Maverick for a fresh install. Sets up:
   - AI providers and per-role models
   - channels (Telegram, Discord, Slack, Signal, WhatsApp, SMS, Email,
     Matrix, iMessage)
@@ -511,7 +511,7 @@ def show_install_failure(exc: BaseException) -> None:
 
 def welcome() -> None:
     console.print(Panel.fit(
-        "[bold]Lightwork installer[/bold]\n\n"
+        "[bold]Maverick installer[/bold]\n\n"
         "Next you'll pick a setup mode: a quick consumer flow (a few\n"
         "questions, safe defaults) or advanced (configure every model,\n"
         "channel, safety level, and budget). Re-run any time with\n"
@@ -525,7 +525,7 @@ def pick_deployment() -> str:
         "desktop  - This computer (recommended for first-time users)",
         "docker   - Local Docker container (isolated, easy to remove)",
         "vps      - Remote server you own (always-on)",
-        "phone    - Phone companion (Lightwork runs on desktop/VPS; phone is a frontend)",
+        "phone    - Phone companion (Maverick runs on desktop/VPS; phone is a frontend)",
     ]
     # Default to the previously recorded target on a re-run of `maverick init`
     # (what [deployment] type was written for).
@@ -536,7 +536,7 @@ def pick_deployment() -> str:
         default = next((c for c in choices if c.split()[0] == prior), None)
     except Exception:  # pragma: no cover -- never block the wizard
         default = None
-    pick = _q_select("Where will Lightwork run?", choices, default=default)
+    pick = _q_select("Where will Maverick run?", choices, default=default)
     return pick.split()[0]
 
 
@@ -1045,7 +1045,7 @@ def pick_ekko() -> dict[str, Any]:
     """
     console.print()
     console.print(
-        "[dim]Ekko finds repeatable work that Lightwork could improve or "
+        "[dim]Ekko finds repeatable work that Maverick could improve or "
         "automate. It records authorized application names and timing only by "
         "default -- never screen pixels, window titles, clipboard, keystrokes, "
         "URLs, or document contents. Data stays local and recommendations "
@@ -1116,26 +1116,26 @@ def pick_ekko() -> dict[str, Any]:
 
 
 def pick_automation_import() -> dict[str, Any]:
-    """Opt-in to importing clients' existing automations into Lightwork.
+    """Opt-in to importing clients' existing automations into Maverick.
 
     Off by default. When on, ``maverick import`` can pull workflow definitions
     from platforms that expose them (n8n/Make/Workato/Power Automate/UiPath) and
-    turn each into a Lightwork template, plus connect-and-trigger for Zapier/
+    turn each into a Maverick template, plus connect-and-trigger for Zapier/
     Notion. It reaches out to third-party platforms and writes user templates,
     so it ships disabled. Returns a dict written under ``[automation_import]``.
     """
     console.print()
     console.print(
         "[dim]Automation import pulls workflows your clients already built "
-        "(n8n/Make/Workato/Power Automate/UiPath) into Lightwork templates, and "
-        "lets Zapier/Notion trigger Lightwork. It calls third-party APIs and "
+        "(n8n/Make/Workato/Power Automate/UiPath) into Maverick templates, and "
+        "lets Zapier/Notion trigger Maverick. It calls third-party APIs and "
         "writes templates, so it's OFF by default.[/dim]"
     )
     enable = _q_confirm("Enable automation import?", default=False)
     if not enable:
         return {"enable": False}
     create_schedules = _q_confirm(
-        "  Auto-create Lightwork schedules for imported cron triggers? "
+        "  Auto-create Maverick schedules for imported cron triggers? "
         "(off = import the template, you activate the schedule yourself)",
         default=False,
     )
@@ -1390,7 +1390,7 @@ def pick_assessments() -> dict[str, Any]:
                        "vendor drafting?", default=True)
     console.print()
     console.print(
-        "[dim]When a vendor signs YOUR paper, Lightwork drafts your template "
+        "[dim]When a vendor signs YOUR paper, Maverick drafts your template "
         "DPA/addendum as a Word document with the vendor-specific values "
         "filled in red for counsel to verify. Your legal entity name goes on "
         "the party line; leave blank to keep a red placeholder.[/dim]"
@@ -1437,7 +1437,7 @@ def pick_security_suite() -> dict[str, Any]:
     console.print(
         "[dim]Security & GRC maintains control, evidence, risk, POA&M, policy, "
         "vendor, incident, and audit records locally. The platform hunter "
-        "defensively scans Lightwork's signed telemetry; the environment "
+        "defensively scans Maverick's signed telemetry; the environment "
         "hunter reads configured customer telemetry. Hunters are OFF until "
         "enabled. Approved response execution is a separate opt-in.[/dim]"
     )
@@ -1480,7 +1480,7 @@ def pick_security_suite() -> dict[str, Any]:
             default=False,
         )
     threat_hunt = _q_confirm(
-        "Enable the defensive Lightwork platform threat hunter?", default=False
+        "Enable the defensive Maverick platform threat hunter?", default=False
     )
     env_hunt = _q_confirm(
         "Enable the defensive customer-environment threat hunter?", default=False
@@ -1769,7 +1769,7 @@ def _ask_external_agent_followups(advanced: dict[str, Any]) -> None:
 
     Governed execution rides on the gateway: naming a connector is the
     operator's explicit decision to let foreign agents ACT through
-    Lightwork's egress-guarded, receipted connector path. Blank keeps the
+    Maverick's egress-guarded, receipted connector path. Blank keeps the
     gateway screen-only; the kernel intersects with its reference factories
     anyway, so the filter here just surfaces a typo at answer time instead
     of silently at runtime.
@@ -1925,7 +1925,7 @@ def pick_advanced() -> dict[str, Any]:
         ),
         "fleet_memory": _q_confirm(
             "Fleet memory? Let EXTERNAL agents (Agentforce, Copilot, custom) "
-            "deposit experience into and recall from Lightwork's governed "
+            "deposit experience into and recall from Maverick's governed "
             "memory -- Shield-scanned, provenance-tagged, audited reads. "
             "An explicit trust decision; OFF by default.",
             default=False,
@@ -2292,7 +2292,7 @@ def pick_advanced() -> dict[str, Any]:
             default=False,
         ),
         "client_id": _q_text(
-            "Client/tenant id for THIS deployment (one Lightwork per enterprise "
+            "Client/tenant id for THIS deployment (one Maverick per enterprise "
             "client). All data (world DB, audit, memory, fleet) is isolated under "
             "this id — leave blank only for a personal/single-user install. "
             "Letters/digits/._- e.g. \"acme-corp\".",
@@ -2857,7 +2857,7 @@ def pick_ts_plugins() -> list[list[str]]:
     """TypeScript (NDJSON stdio) plugin commands — writes ``[plugins].ts``.
 
     Each entry is the argv that serves the plugin (e.g.
-    ``node /path/to/plugin.js``); Lightwork discovers its tools via
+    ``node /path/to/plugin.js``); Maverick discovers its tools via
     ``--describe`` at boot. Skipped by default — most setups have none.
     """
     if not _q_confirm(
@@ -2999,7 +2999,7 @@ def pick_persona() -> dict[str, str]:
         default=False,
     ):
         return {}
-    name = _q_text("  Agent name", default="Lightwork").strip() or "Lightwork"
+    name = _q_text("  Agent name", default="Maverick").strip() or "Maverick"
     style_pick = _q_select(
         "  Style:",
         [
@@ -3144,7 +3144,7 @@ def pick_connectors() -> dict[str, str]:
         return {}
     console.print()
     console.print(
-        f"[dim]Lightwork ships {len(entries)} enterprise connectors "
+        f"[dim]Maverick ships {len(entries)} enterprise connectors "
         "(ServiceNow, Salesforce, Snowflake, SAP, Workday, Datadog, ...). "
         "Full list: docs/connectors.md. Connect any now, or add them later in "
         "~/.maverick/.env.[/dim]"
@@ -3420,7 +3420,7 @@ def _cfg_automation_import(automation_import: dict[str, Any] | None) -> list[str
     if not automation_import:
         return []
     # Automation import. enable gates the whole feature; create_schedules lets a
-    # recovered cron trigger auto-create a Lightwork schedule on import.
+    # recovered cron trigger auto-create a Maverick schedule on import.
     lines = ["", "[automation_import]"]
     for k, v in automation_import.items():
         _emit_kv(lines, k, v)
@@ -4647,7 +4647,7 @@ def write_config(
             flows.setdefault("public_url", _flows_url)
 
     lines = [
-        "# Lightwork config. Regenerate with:  maverick init",
+        "# Maverick config. Regenerate with:  maverick init",
         "",
     ]
     lines += _cfg_deployment(deployment)
@@ -4736,7 +4736,7 @@ def smoke_test() -> bool:
 
     try:
         import maverick_shield  # noqa: F401
-        console.print("[green]✓[/green] Lightwork Shield available")
+        console.print("[green]✓[/green] Maverick Shield available")
     except ImportError:
         console.print("[yellow]⚠[/yellow] maverick-shield not installed (safety will be disabled)")
 
@@ -4865,8 +4865,7 @@ def run_fast() -> int:
     console.print(Panel.fit(
         "[bold green]Fast setup finished.[/bold green]\n\n"
         "Try: [bold]maverick start \"hello\"[/bold]\n"
-        "(If ANTHROPIC_API_KEY wasn't set, edit ~/.maverick/.env first.)\n"
-        "[dim]The maverick command is also available as lightwork.[/dim]",
+        "(If ANTHROPIC_API_KEY wasn't set, edit ~/.maverick/.env first.)\n",
         border_style="green",
     ))
     return 0
@@ -4931,7 +4930,7 @@ def _consumer_api_key() -> dict[str, str]:
     """
     console.print()
     console.print(
-        "Lightwork needs an account with Claude (Anthropic). "
+        "Maverick needs an account with Claude (Anthropic). "
         "Get a key at: [cyan]https://console.anthropic.com/settings/keys[/cyan]\n"
         "[dim]It looks like 'sk-ant-...' and is about 100 characters long.[/dim]",
     )
@@ -5023,7 +5022,7 @@ def write_consumer_config(
             "mcp_*": "20/60",
         },
         retention=dict(preset["retention"]),
-        persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+        persona={"name": "Maverick", "style": "balanced", "user_name": user_name},
         web_search_enabled=True,
         governance_profile=profile,
     )
@@ -5034,7 +5033,7 @@ def run_consumer() -> int:
     consumer-grade safe defaults, then prints a one-line demo command."""
     console.print()
     console.print(Panel.fit(
-        "[bold]Lightwork setup[/bold]\n\n"
+        "[bold]Maverick setup[/bold]\n\n"
         "Five quick questions. About a minute. You can change anything later\n"
         "by running [bold]maverick init[/bold] again.",
         border_style="cyan",
@@ -5056,7 +5055,7 @@ def run_consumer() -> int:
     keys = _consumer_api_key()
 
     workdir = _q_text(
-        "Where can Lightwork work?",
+        "Where can Maverick work?",
         default=str(Path.home() / "Documents" / "Maverick"),
     ).strip() or str(Path.home() / "Documents" / "Maverick")
 
@@ -5083,8 +5082,7 @@ def run_consumer() -> int:
             "Try your first goal:\n"
             f"  [bold]maverick start \"{CONSUMER_DEMO_GOAL}\" --model {CONSUMER_DEMO_MODEL}[/bold]\n\n"
             "Then:\n"
-            "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n"
-            "[dim]The maverick command is also available as lightwork.[/dim]",
+            "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n",
             border_style="green",
         ))
     else:
@@ -5099,7 +5097,7 @@ def run_consumer() -> int:
 
 
 # Express mode turns on the safe, single-user PRODUCT + self-improvement
-# features with sane defaults -- everything that makes Lightwork "fully lit up"
+# features with sane defaults -- everything that makes Maverick "fully lit up"
 # WITHOUT the host-dangerous or infra-shaped toggles that must stay explicit
 # opt-in (computer/browser control, code execution, autonomous self-
 # modification, at-rest encryption + multi-tenancy, channel tokens, license
@@ -5288,7 +5286,7 @@ def run_express() -> int:
     infra-shaped toggles stay off (and are listed for the user)."""
     console.print()
     console.print(Panel.fit(
-        "[bold]Lightwork express setup[/bold]\n\n"
+        "[bold]Maverick express setup[/bold]\n\n"
         "A few questions, then every safe single-user feature is turned on:\n"
         "the flow engine, named connections, the self-improvement lifecycle\n"
         "(reflexion, dreaming, experience, self-harness, data engine),\n"
@@ -5313,7 +5311,7 @@ def run_express() -> int:
     profile = pick_governance_profile()
     keys = _consumer_api_key()
     workdir = _q_text(
-        "Where can Lightwork work?",
+        "Where can Maverick work?",
         default=str(Path.home() / "Documents" / "Maverick"),
     ).strip() or str(Path.home() / "Documents" / "Maverick")
     budget = _consumer_budget()
@@ -5346,7 +5344,7 @@ def run_express() -> int:
             capabilities={"computer_use": False, "browser": False,
                           "ros": False, "code_exec": False},
             advanced={**_EXPRESS_ADVANCED, **preset["advanced"]},
-            persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+            persona={"name": "Maverick", "style": "balanced", "user_name": user_name},
             web_search_enabled=True,
             self_learning=dict(_EXPRESS_SELF_LEARNING),
             automation_import={"enable": True},
@@ -5725,7 +5723,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
         # Aborting on empty selection forced the user to restart the
         # whole wizard (UX seat finding). Re-ask instead.
         console.print(
-            "[yellow]Pick at least one provider; Lightwork needs an LLM.[/yellow]"
+            "[yellow]Pick at least one provider; Maverick needs an LLM.[/yellow]"
         )
         providers = pick_providers()
     state["providers"] = providers
@@ -5897,8 +5895,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
             "Try:\n"
             f"  [bold]{next_step}[/bold]\n"
             "  [bold]maverick status[/bold]\n"
-            "  [bold]maverick dashboard[/bold]    # web UI at http://127.0.0.1:8765\n\n"
-            "[dim]The maverick command is also available as lightwork.[/dim]",
+            "  [bold]maverick dashboard[/bold]    # web UI at http://127.0.0.1:8765\n\n",
             border_style="green",
         ))
         show_compliance_commands(advanced)

@@ -1,4 +1,4 @@
-"""Read-only normalization seams for Lightwork platform telemetry."""
+"""Read-only normalization seams for Maverick platform telemetry."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -52,7 +52,7 @@ def _normalize(rows: Iterable[object], source: str, default_kind: str) -> list[H
     return events
 
 
-def collect_lightwork_events(
+def collect_platform_events(
     *,
     audit_events: Iterable[object] = (),
     approvals: Iterable[object] = (),
@@ -77,4 +77,4 @@ def collect_lightwork_events(
     return tuple(sorted(events, key=lambda event: (event.observed_at, event.event_id)))
 
 
-__all__ = ["collect_lightwork_events"]
+__all__ = ["collect_platform_events"]

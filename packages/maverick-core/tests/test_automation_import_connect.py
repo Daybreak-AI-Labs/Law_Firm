@@ -2,7 +2,7 @@
 
 These platforms don't expose automation definitions over an API, so fetch()
 raises with connect guidance and translate() lowers a hand-authored IR-shaped
-description into a Lightwork template.
+description into a Maverick template.
 """
 from __future__ import annotations
 

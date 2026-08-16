@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install or wheel a reviewed Lightwork release cohort in one transaction."""
+"""Install or wheel a reviewed Maverick release cohort in one transaction."""
 from __future__ import annotations
 
 import argparse
@@ -48,7 +48,7 @@ print(json.dumps(value, sort_keys=True))
         # A minimal Python 3.10 environment may have neither stdlib tomllib nor
         # an importable pip vendor. Bootstrap the exact reviewed tomli pin into
         # an isolated temporary target before parsing any repository metadata.
-        with tempfile.TemporaryDirectory(prefix="lightwork-tomli-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="maverick-tomli-") as tmp:
             subprocess.run(
                 [
                     python,
@@ -301,7 +301,7 @@ def verify_installed(
         "        raise SystemExit("
         "f'{distribution}: expected {version}, installed {actual}')\n"
         "    importlib.import_module(module)\n"
-        "print(f'verified {len(expected)} Lightwork distributions')\n"
+        "print(f'verified {len(expected)} Maverick distributions')\n"
     )
     subprocess.run([python, "-c", script], check=True)
 
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.verify_only and not args.validate_only and not constraint.is_file():
             raise ValueError(f"constraint file does not exist: {constraint}")
         if args.validate_only:
-            print(f"validated {len(selected)} Lightwork cohort source projects")
+            print(f"validated {len(selected)} Maverick cohort source projects")
         elif args.verify_only:
             verify_installed(args.target_python, version, selected)
         elif args.wheel_dir is not None:

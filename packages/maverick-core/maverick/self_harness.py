@@ -1,7 +1,7 @@
 """Self-Harness: learn a MODEL-SPECIFIC harness addendum from failure traces.
 
 Implements the loop from *"Self-Harness: Harnesses That Improve Themselves"*
-(arXiv 2606.09498) on top of Lightwork's existing governance spine, rather than
+(arXiv 2606.09498) on top of Maverick's existing governance spine, rather than
 as a new ungoverned optimizer:
 
   MINE     recurring failure *signatures* from one model's reflexion traces
@@ -15,7 +15,7 @@ as a new ungoverned optimizer:
            and the signed learning audit, exactly like every other learned rung.
 
 Why this shape. The paper credits its gains to treating the harness as a
-*model-specific, learnable* artifact. Lightwork already learns *behaviors*
+*model-specific, learnable* artifact. Maverick already learns *behaviors*
 (skills, insights) that are recalled as context; this adds a learned, per-model
 **operating-guidance addendum** that is recalled into the system prompt at build
 time (:func:`recall_addendum`) -- never a mutation of the kernel templates. So

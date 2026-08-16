@@ -2,7 +2,7 @@
 
 Agents that run on OTHER platforms (Agentforce, Bedrock, Copilot Studio,
 LangChain, custom runtimes) call these routes to be governed and accounted by
-Lightwork while doing their work elsewhere:
+Maverick while doing their work elsewhere:
 
 * ``POST /api/v1/external/screen``     — ask before acting (trust ceilings,
   budget cutoff, Shield input scan, approval floor).
@@ -207,10 +207,10 @@ async def _require_agent(request: Request) -> str:
         log.warning("external gateway: trust state unreadable (fail-closed)")
         raise HTTPException(status_code=401,
                             detail="invalid credentials") from e
-    agent_hdr = request.headers.get("x-lightwork-agent-id", "")
+    agent_hdr = request.headers.get("x-maverick-agent-id", "")
     ts = request.headers.get("x-maverick-timestamp", "")
-    nonce = request.headers.get("x-lightwork-nonce", "")
-    envelope_sig = request.headers.get("x-lightwork-request-signature", "")
+    nonce = request.headers.get("x-maverick-nonce", "")
+    envelope_sig = request.headers.get("x-maverick-request-signature", "")
     hmac_sig = request.headers.get("x-maverick-signature", "")
     if agent_hdr and ts and nonce and envelope_sig:
         scheme = "envelope"
@@ -430,12 +430,12 @@ async def external_execution_commit(
 _OPENAPI: dict = {
     "openapi": "3.0.3",
     "info": {
-        "title": "Lightwork External Agent Gateway",
+        "title": "Maverick External Agent Gateway",
         "version": "1",
         "description": (
             "Governance and run accounting for agents built on other "
             "platforms. Authenticate every call with the per-agent rest "
-            "bearer minted on the Lightwork /external-agents page."),
+            "bearer minted on the Maverick /external-agents page."),
     },
     "components": {
         "securitySchemes": {

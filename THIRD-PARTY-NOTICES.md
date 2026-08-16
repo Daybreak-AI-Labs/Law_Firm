@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Lightwork is distributed with, or depends on, third-party open-source software.
+Maverick is distributed with, or depends on, third-party open-source software.
 This file inventories the **declared** runtime and optional dependencies of the
 `maverick-*` packages and their best-known SPDX license identifiers, so that
 attribution and license obligations can be tracked.

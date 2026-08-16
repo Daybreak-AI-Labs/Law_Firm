@@ -184,7 +184,7 @@ def _ffmpeg_concat(
     safe_status = "".join(
         char for char in str(proof_status)[:64] if char.isalnum() or char in "_-"
     ) or "unknown"
-    lines = ["ffconcat version 1.0", f"# lightwork-proof-status: {safe_status}"]
+    lines = ["ffconcat version 1.0", f"# maverick-proof-status: {safe_status}"]
     for frame in checked:
         name = f"frame_{frame.index:05d}.png"
         lines.append(f"file {name}")

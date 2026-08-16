@@ -373,7 +373,7 @@ def test_render_pack_binds_nodes_edges_and_coverage():
     )
     assert node is not None
     pack = evidence_graph.render_pack(required_controls=["TEN-01", "IAM-01"])
-    assert pack["schema"] == "lightwork.evidence-graph-pack.v1"
+    assert pack["schema"] == "maverick.evidence-graph-pack.v1"
     assert pack["graph_sha256"]
     assert pack["coverage"]["covered_controls"] == ["TEN-01"]
     assert pack["nodes"][0]["id"] == node["id"]

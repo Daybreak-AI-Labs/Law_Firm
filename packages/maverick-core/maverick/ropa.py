@@ -1,7 +1,7 @@
 """GDPR Article 30 — Records of Processing Activities (ROPA) generator.
 
 Article 30 requires a data controller to maintain a record of its processing
-activities. Lightwork already *knows* the technical half of that record from its
+activities. Maverick already *knows* the technical half of that record from its
 own schema and configuration: what categories of personal data it stores,
 whether that data can leave the deployment boundary (the egress lock), how long
 it is kept (retention), and which Art. 32 security measures are active (read
@@ -31,7 +31,7 @@ ROPA_DISCLAIMER = (
     "purposes) and have a DPO / qualified counsel review it."
 )
 
-# The personal-data categories Lightwork persists, mapped to where they live —
+# The personal-data categories Maverick persists, mapped to where they live —
 # the inventory half of Art. 30(1)(c). A stable description of the schema.
 _DATA_CATEGORIES: tuple[dict[str, str], ...] = (
     {
