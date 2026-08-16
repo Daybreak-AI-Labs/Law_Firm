@@ -70,9 +70,9 @@ def test_marketplace_connectors_count_and_search():
     full = client.get("/api/v1/marketplace/connectors").json()
     assert full["total"] > 50
     filtered = client.get("/api/v1/marketplace/connectors",
-                          params={"q": "zendesk"}).json()
+                          params={"q": "clio"}).json()
     assert filtered["total"] == full["total"]
-    assert any(c["name"] == "zendesk" for c in filtered["connectors"])
+    assert any(c["name"] == "clio" for c in filtered["connectors"])
 
 
 def test_workforce_page_renders():

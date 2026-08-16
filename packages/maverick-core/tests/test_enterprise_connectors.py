@@ -331,19 +331,6 @@ def test_every_bespoke_deferred_connector_is_ambient_blocked_or_scoped(tmp_path)
     assert unscoped == set()
 
 
-def test_automation_platform_connectors_present():
-    from maverick.tools.enterprise_connectors import ENTERPRISE_CONNECTOR_NAMES, connector_catalog
-
-    for name in ("zapier", "n8n", "power_automate", "make", "workato"):
-        assert name in ENTERPRISE_CONNECTOR_NAMES
-
-    catalog = {e["name"]: e for e in connector_catalog()}
-    assert catalog["n8n"]["env"] == [("N8N_BASE_URL", False), ("N8N_TOKEN", True)]
-    assert catalog["power_automate"]["env"] == [
-        ("POWER_AUTOMATE_BASE_URL", False), ("POWER_AUTOMATE_TOKEN", True),
-    ]
-
-
 def test_slack_and_google_calendar_connectors_present():
     from maverick.tools.enterprise_connectors import ENTERPRISE_CONNECTOR_NAMES, connector_catalog
 

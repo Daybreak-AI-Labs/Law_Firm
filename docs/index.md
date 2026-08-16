@@ -32,9 +32,9 @@ Private software for one firm, proprietary and not for distribution (see
   SAM.gov, CourtListener, Federal Register, GLEIF, OpenCorporates,
   NWS/NOAA, EPA, Climatiq, …) so they cite authoritative sources instead of
   model recall. On by default; kill-switch via `[workforce] data_grounding
-  = false`. Alongside 2,877 write-capable enterprise REST/GraphQL connectors
-  and dedicated modules (Salesforce, HubSpot, Stripe, ServiceNow,
-  Snowflake, …).
+  = false`. Alongside 95 write-capable connectors scoped to legal practice
+  (Clio, Westlaw, PACER, Everlaw, iManage, DocuSign, Ironclad, QuickBooks, …)
+  and dedicated tool modules.
 - **Proven governance**: a roster-wide invariant test suite checks six
   governance invariants (tool-reachability, autonomy dial, capability
   attenuation, compartment isolation, unstrippable hard refusals, budget

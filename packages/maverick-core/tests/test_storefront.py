@@ -43,7 +43,7 @@ def test_connector_marketplace_counts_and_searches():
     assert len(full["connectors"]) == full["total"]
     assert all({"name", "label", "env_count"} <= set(c) for c in full["connectors"])
     # Search narrows the list but total stays the full catalog size (honest count).
-    filtered = marketplace.connector_marketplace("zendesk")
+    filtered = marketplace.connector_marketplace("clio")
     assert filtered["total"] == full["total"]
     assert len(filtered["connectors"]) < full["total"]
-    assert any(c["name"] == "zendesk" for c in filtered["connectors"])
+    assert any(c["name"] == "clio" for c in filtered["connectors"])
