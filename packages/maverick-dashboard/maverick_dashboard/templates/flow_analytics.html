@@ -20,7 +20,7 @@
 <div class="fa">
   <h1 class="page-title" style="margin:0 0 4px;">Flow analytics</h1>
   <p class="fa__sub">Success rate, throughput, and duration across recent runs of each flow.
-    <a href="/automations">Automations</a> · <a href="/flows/designer">Designer</a></p>
+    <a href="/automations">Automations</a></p>
   <p class="fa__msg" id="fa-msg">Loading…</p>
   <div style="overflow-x:auto;">
     <table class="fa__table" id="fa-table" hidden>
@@ -55,7 +55,7 @@
     flows.forEach(function (f) {
       var tr = document.createElement('tr');
       var nameTd = el('td');
-      var a = document.createElement('a'); a.href = '/flows/designer/' + encodeURIComponent(f.flow_id); a.textContent = f.flow_id;
+      var a = document.createElement('span'); a.textContent = f.flow_id;
       nameTd.appendChild(a); tr.appendChild(nameTd);
       tr.appendChild(el('td', 'num', String(f.runs)));
       var rate = el('td');

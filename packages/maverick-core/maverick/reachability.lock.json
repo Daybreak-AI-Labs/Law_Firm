@@ -3,8 +3,8 @@
   "counts": {
     "CI_ONLY": 12,
     "CLI_ONLY": 23,
-    "PRODUCTION": 770,
-    "TEST_ONLY": 62,
+    "PRODUCTION": 768,
+    "TEST_ONLY": 63,
     "UNREACHED": 4
   },
   "modules": {
@@ -196,7 +196,6 @@
     "maverick.flow": "PRODUCTION",
     "maverick.flow.analytics": "PRODUCTION",
     "maverick.flow.approvals": "PRODUCTION",
-    "maverick.flow.chat": "PRODUCTION",
     "maverick.flow.draft": "PRODUCTION",
     "maverick.flow.evolution_log": "PRODUCTION",
     "maverick.flow.evolve": "PRODUCTION",
@@ -204,7 +203,7 @@
     "maverick.flow.ir": "PRODUCTION",
     "maverick.flow.node_outcomes": "PRODUCTION",
     "maverick.flow.node_tools": "PRODUCTION",
-    "maverick.flow.patch": "PRODUCTION",
+    "maverick.flow.patch": "TEST_ONLY",
     "maverick.flow.redact": "PRODUCTION",
     "maverick.flow.runner": "PRODUCTION",
     "maverick.flow.schema_infer": "PRODUCTION",

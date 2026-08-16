@@ -4,9 +4,9 @@ The dashboard ships as a wheel (and a PyInstaller app that bundles that wheel's
 data files). Templates are declared in ``[tool.setuptools.package-data]``. A
 ``.js`` template that a ``.html`` template ``{% include %}``s but that ISN'T
 covered by a package-data glob renders fine from a source checkout yet raises
-``TemplateNotFound`` at runtime in a built app -- exactly the bug that 500'd the
-flow designer (only ``templates/*.html`` was packaged, so the designer's
-``flow_designer_core.js`` include was missing from the bundle).
+``TemplateNotFound`` at runtime in a built app -- exactly the bug class that
+once 500'd a page whose included ``.js`` template was missing from the
+packaged ``templates/*.html`` glob.
 
 This test fails in CI if any template a page includes wouldn't be packaged.
 """

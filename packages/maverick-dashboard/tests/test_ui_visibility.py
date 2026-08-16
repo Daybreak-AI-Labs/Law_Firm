@@ -53,7 +53,6 @@ def test_page_for_prefix_matching():
     assert ui_visibility.page_for("/goals")["path"] == "/goals"
     assert ui_visibility.page_for("/goals/3/plan")["path"] == "/goals"
     assert ui_visibility.page_for("/goal-builder")["path"] == "/goal-builder"
-    assert ui_visibility.page_for("/flows/designer/7")["path"] == "/flows/designer"
     assert ui_visibility.page_for("/tenants/overview")["path"] == "/tenants"
     # unregistered surfaces stay ungoverned: APIs, share links, signed
     # approvals, probes, and flow-run detail pages.
@@ -137,10 +136,10 @@ def test_nav_groups_per_role(monkeypatch, tmp_path):
     # auth off: every sidebar page (in_nav: False pages are reached from
     # in-page links, never the sidebar).
     assert hrefs(None) == in_nav
-    # The redesigned Flows builder is the primary sidebar entry; the older
-    # workflow index/builder and the alt goal composer are reached in-page.
-    assert "/flows/designer" in in_nav
-    assert "/goal-builder" not in in_nav and "/workflows" not in in_nav \
+    # The saved-workflows index is the primary sidebar entry; the older
+    # NL builder and the alt goal composer are reached in-page.
+    assert "/workflows" in in_nav
+    assert "/goal-builder" not in in_nav \
         and "/workflow-builder" not in in_nav
     # viewer: read-only pages only -- no run/build/admin surfaces, and the
     # groups left empty (Extend, Admin) are dropped whole.

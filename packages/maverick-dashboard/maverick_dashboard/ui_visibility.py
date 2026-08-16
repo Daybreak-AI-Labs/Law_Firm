@@ -61,14 +61,11 @@ PAGES: tuple[dict, ...] = (
      "floor": "view", "default": "operate"},
     {"path": "/workforce", "label": "Workforce", "group": "Operate", "icon": "agents",
      "floor": "view", "default": "view"},
-    # Flows: the redesigned builder (/flows/designer) is the primary sidebar
-    # entry. The saved-workflows index and the older NL builder are reached from
-    # the Flows builder / Automations / Agents pages rather than the sidebar, so
-    # the nav shows one clear "Flows" job instead of three near-duplicates.
-    {"path": "/flows/designer", "label": "Flows", "group": "Operate", "icon": "workflow",
-     "floor": "view", "default": "operate"},
+    # Flows: the visual designer was removed; the saved-workflows index is the
+    # primary sidebar entry and the flow engine stays reachable from
+    # Automations.
     {"path": "/workflows", "label": "Workflows", "group": "Operate", "icon": "workflow",
-     "floor": "view", "default": "operate", "in_nav": False},
+     "floor": "view", "default": "operate"},
     {"path": "/workflow-builder", "label": "Workflow Builder", "group": "Operate",
      "icon": "workflow", "floor": "view", "default": "operate", "in_nav": False},
     {"path": "/automations", "label": "Automations", "group": "Operate", "icon": "clock",

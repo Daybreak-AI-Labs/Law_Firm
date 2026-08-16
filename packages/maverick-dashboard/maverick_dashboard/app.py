@@ -5571,35 +5571,6 @@ async def connections_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "connections.html", {})
 
 
-@app.get("/flows/designer", response_class=HTMLResponse)
-@app.get("/flows/designer/{flow_id}", response_class=HTMLResponse)
-async def flow_designer_page(request: Request, flow_id: str = "",
-                             from_template: str = "") -> HTMLResponse:
-    """The visual flow designer -- a canvas node editor + the natural-language
-    drafter + the copilot chat. Talks to the /api/v1/flows endpoints; the
-    flow-engine gate is enforced there, so the page renders even when flows are
-    off (empty canvas).
-
-    ``?from_template=<name>`` opens a saved TEMPLATE as its equivalent
-    single-agent flow (the IR's degenerate case) -- the bridge from the text
-    workflow builder into the graph designer: start from what you had, then add
-    branches/approvals/loops around it."""
-    seed_flow = None
-    if from_template:
-        try:
-            from maverick.templates import load_template
-            tpl = load_template(from_template)
-            from maverick.flow.ir import single_agent_flow
-            body = getattr(tpl, "body", "") or getattr(tpl, "title", "") or from_template
-            seed = single_agent_flow("", tpl.title or from_template, str(body)[:8000])
-            seed_flow = seed.to_dict()
-        except (ValueError, FileNotFoundError):
-            seed_flow = None    # unknown template -> a blank canvas, not a 500
-    return templates.TemplateResponse(
-        request, "flow_designer.html",
-        {"flow_id": flow_id, "seed_flow": seed_flow})
-
-
 @app.get("/flows/{flow_id}/runs/{run_id}", response_class=HTMLResponse)
 async def flow_run_page(request: Request, flow_id: str, run_id: str) -> HTMLResponse:
     """The run viewer: one flow run's node-by-node timeline, inputs/outputs

@@ -78,8 +78,6 @@ from .api_schemas import (
     FleetRunIn,
     FlowApplyIn,
     FlowAutonomyIn,
-    FlowChatIn,
-    FlowDraftIn,
     FlowDryRunIn,
     FlowPublishIn,
     FlowResumeIn,
@@ -4097,113 +4095,6 @@ def _flow_tool_catalog(
         if t is not None:
             out.append(dict(t))
     return out
-
-
-def _flow_authoring_catalog(
-    query: str,
-    *,
-    include_tools=(),
-    channel: str | None = None,
-    user_id: str | None = None,
-) -> list[dict]:
-    """Intent-ranked tools from the FULL live registry for one draft/chat turn.
-
-    Existing action tools are appended only when they still exist in the live
-    registry, so a harmless edit can retain a valid current binding while a
-    stale/hallucinated legacy action remains fail-closed.
-    """
-    from maverick.flow.draft import rank_tool_catalog
-    live = _live_tool_index(channel=channel, user_id=user_id)
-    ranked = rank_tool_catalog(query, live, limit=24)
-    by_name = {t["name"]: t for t in live}
-    present = {t["name"] for t in ranked}
-    for name in sorted({str(n) for n in include_tools if str(n)}):
-        item = by_name.get(name)
-        if item is not None and name not in present:
-            ranked.append(item)
-            present.add(name)
-    schemas = _live_tool_schemas(channel=channel, user_id=user_id)
-    return [
-        {**item, "input_schema": dict(schemas.get(item["name"]) or {})}
-        for item in ranked
-    ]
-
-
-@router.post("/flows/draft")
-async def draft_flow_endpoint(request: Request, payload: FlowDraftIn) -> dict:
-    """Draft a first-pass flow from a plain-English description (the designer's
-    ✨ button). Returns the flow graph (not saved) + any notes; falls back to a
-    single agent step if the model can't produce a full graph. The drafter is
-    grounded with each connector's description so action nodes name a real tool."""
-    require_permission(request, "operate")
-    _require_flows()
-    from maverick_dashboard._shared import require_provider_or_400
-    require_provider_or_400(role="orchestrator")
-    from maverick_dashboard.app import check_goal_rate_limit
-    check_goal_rate_limit(request, source="flow-authoring")
-    from maverick.flow.draft import draft_flow
-    user_id = execution_user_id_from_request(request)
-    channel = "api" if user_id else None
-
-    def _draft():
-        catalog = _flow_authoring_catalog(
-            payload.description, channel=channel, user_id=user_id)
-        tool_docs = {t["name"]: t["description"] for t in catalog if t["description"]}
-        tool_schemas = {t["name"]: t["input_schema"] for t in catalog}
-        return draft_flow(
-            payload.description,
-            tools=tuple(t["name"] for t in catalog),
-            tool_docs=tool_docs,
-            tool_schemas=tool_schemas,
-            flow_id=payload.flow_id,
-        )
-    flow, notes = await run_in_threadpool(_draft)
-    return {"flow": flow.to_dict(), "notes": notes}
-
-
-@router.post("/flows/chat")
-async def flow_chat_endpoint(request: Request, payload: FlowChatIn) -> dict:
-    """One turn of the designer's flow copilot: answer a question about the
-    current canvas, or edit it via validated patches (never a whole-graph
-    regeneration on a populated canvas). ``run_id`` grounds "why did this
-    fail?" / "fix it" turns in that run's real per-node trace. The patched
-    graph is returned to the canvas; nothing is saved until the user saves."""
-    require_permission(request, "operate")
-    _require_flows()
-    from maverick_dashboard._shared import require_provider_or_400
-    require_provider_or_400(role="orchestrator")
-    from maverick_dashboard.app import check_goal_rate_limit
-    check_goal_rate_limit(request, source="flow-authoring")
-    from maverick.flow import Flow
-    from maverick.flow.chat import chat_flow
-    from maverick.flow.draft import action_tool_names
-    try:
-        current = Flow.from_dict(payload.flow) if payload.flow else None
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"invalid flow: {e}") from e
-    run = _run_out(_load_owned_run(request, payload.run_id)) if payload.run_id else None
-    user_id = execution_user_id_from_request(request)
-    channel = "api" if user_id else None
-
-    def _turn():
-        catalog = _flow_authoring_catalog(
-            payload.message,
-            include_tools=action_tool_names(current) if current is not None else (),
-            channel=channel,
-            user_id=user_id,
-        )
-        tool_docs = {t["name"]: t["description"] for t in catalog if t["description"]}
-        tool_schemas = {t["name"]: t["input_schema"] for t in catalog}
-        return chat_flow(payload.message, flow=current, history=payload.history,
-                         run=run, tools=tuple(t["name"] for t in catalog),
-                         tool_docs=tool_docs, tool_schemas=tool_schemas)
-    res = await run_in_threadpool(_turn)
-    return {
-        "reply": res.reply,
-        "flow": res.flow.to_dict() if res.flow is not None else None,
-        "applied": res.applied,
-        "notes": res.notes,
-    }
 
 
 @router.get("/flows/runs")

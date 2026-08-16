@@ -271,7 +271,7 @@
             sessionStorage.setItem('maverick.authoring-handoff', JSON.stringify({
               kind: kind, brief: brief, created_at: Date.now()
             }));
-            window.location.href = kind === 'flow' ? '/flows/designer' : '/workflow-builder';
+            window.location.href = '/workflow-builder';
           } catch (e) {
             errBox.textContent = 'Could not stage the draft in this browser session.';
             errBox.style.display = 'block';

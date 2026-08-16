@@ -53,13 +53,3 @@ def test_index_empty_states(monkeypatch, tmp_path):
     assert "mv-empty" in t
 
 
-def test_nav_workflows_points_to_index(monkeypatch, tmp_path):
-    _isolate(monkeypatch, tmp_path)
-    import maverick.domain_edit as de
-    monkeypatch.setattr(de, "list_agents", list)
-    t = _client().get("/workflows").text
-    # The primary flow entry in the sidebar is now the redesigned Flows builder
-    # (/flows/designer); the saved-workflows index is reached in-page, not from
-    # the nav, so the sidebar shows one clear "Flows" job.
-    assert '<span class="nav-label">Flows</span>' in t
-    assert 'href="/flows/designer"' in t

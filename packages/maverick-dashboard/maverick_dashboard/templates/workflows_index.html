@@ -30,7 +30,6 @@
   {% endcall %}
   <div class="wfx__head">
     <span style="display:flex;gap:var(--space-2);margin-inline-start:auto;">
-      {% if flows_enabled %}<a class="btn" href="/flows/designer">New flow</a>{% endif %}
       <a class="btn btn--primary" href="/workflow-builder">New workflow</a>
     </span>
   </div>
@@ -47,7 +46,6 @@
           <div class="mv-row__sub">{{ f.id }} · {{ f.nodes }} step{{ '' if f.nodes == 1 else 's' }}{% if f.single_agent %} · single step{% endif %}</div>
         </div>
         <div class="mv-row__actions">
-          <a class="btn btn--ghost" href="/flows/designer/{{ f.id | urlencode }}">Edit</a>
           <a class="btn btn--ghost" href="/flows/analytics">Analytics</a>
         </div>
       </li>
@@ -55,7 +53,7 @@
     </ul>
     {% else %}
     <div class="mv-empty"><p class="mv-empty__title">No flows yet</p>
-      <p class="mv-empty__sub"><a href="/flows/designer">Open the designer</a> or ask the copilot to build one.</p></div>
+      <p class="mv-empty__sub">Ask the copilot to build one from the Workflow Builder.</p></div>
     {% endif %}
   </section>
   {% endif %}
@@ -72,7 +70,6 @@
         </div>
         <div class="mv-row__actions">
           <a class="btn btn--ghost" href="/workflow-builder?edit={{ t.name | urlencode }}">Edit</a>
-          <a class="btn btn--ghost" href="/flows/designer?from_template={{ t.name | urlencode }}" title="Open this template as a one-step flow, then add branches, approvals, and loops around it">Open as flow</a>
           {% if scheduling_enabled or triggers_enabled %}<a class="btn btn--ghost" href="/workflow-builder?template={{ t.name | urlencode }}">Automate</a>{% endif %}
           <a class="btn btn--ghost" href="/chat?title={{ t.title | urlencode }}">Use</a>
         </div>
