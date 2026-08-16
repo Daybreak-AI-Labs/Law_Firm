@@ -1687,13 +1687,21 @@ async def projects_page(request: Request) -> HTMLResponse:
 @app.post("/projects")
 async def projects_create(request: Request, name: str = Form(...),
                           description: str = Form(""), domain: str = Form("")) -> RedirectResponse:
-    """Create a project, then redirect to it. Same-origin; owned by the caller."""
+    """Create a project, then redirect to it. Same-origin; owned by the caller.
+
+    The owner comes from ``caller_principal``, NOT ``goal_owner_filter``: the
+    latter returns None for an admin (it exists to mean "do not filter the
+    listing"), so an admin-created project was stored ownerless -- and an
+    ownerless project was readable by every authenticated user. Auth-off local
+    mode still has no principal and still stores "", which is the historical
+    single-user behaviour.
+    """
     _require_same_origin(request)
     if not name.strip():
         raise HTTPException(status_code=422, detail="a project needs a name")
     pid = _world().create_project(
         name.strip(), description=description.strip(),
-        owner=goal_owner_filter(request) or "", domain=domain.strip())
+        owner=caller_principal(request) or "", domain=domain.strip())
     return RedirectResponse(f"/projects/{pid}", status_code=303)
 
 
@@ -1704,10 +1712,18 @@ async def project_detail(request: Request, project_id: int) -> HTMLResponse:
     if project is None:
         raise HTTPException(status_code=404, detail="no such project")
     # Owner-scoped like goals: a project you don't own 404s rather than leaks.
+    # An ownerless project is NOT public. `list_projects` filters on
+    # `owner = ?`, so an ownerless row never appears in the listing -- but this
+    # route used to admit `""` alongside the caller, which made it readable by
+    # direct id. Hidden from the index and fetchable by id is the shape of an
+    # IDOR, not of a shared workspace.
     owner = goal_owner_filter(request)
-    if owner is not None and project["owner"] not in ("", owner):
+    if owner is not None and project["owner"] != owner:
         raise HTTPException(status_code=404, detail="no such project")
-    goals = w.list_goals(project_id=project_id, order="desc")
+    # Scope the goal list too: the titles and statuses on this page belong to
+    # whoever filed them, and an unfiltered listing leaked them to any viewer
+    # who could reach the project.
+    goals = w.list_goals(project_id=project_id, owner=owner, order="desc")
     return templates.TemplateResponse(
         request, "project_detail.html",
         {"project": project, "goals": goals, "counts": w.project_status_counts(project_id)})
@@ -1717,7 +1733,12 @@ async def project_detail(request: Request, project_id: int) -> HTMLResponse:
 async def goal_set_project(request: Request, goal_id: int,
                            project_id: str = Form("")) -> RedirectResponse:
     """File a goal under a project (empty value clears it). Same-origin; the
-    caller must be able to access the goal."""
+    caller must be able to access BOTH the goal and the target project.
+
+    Authorizing only the goal let anyone who owned a goal file it into any
+    project id -- the goal's title and status then rendered on a stranger's
+    project page. Filing is a write to two objects, so it takes two checks.
+    """
     _require_same_origin(request)
     w = _world()
     g = w.get_goal(goal_id)
@@ -1725,6 +1746,13 @@ async def goal_set_project(request: Request, goal_id: int,
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
     pid = int(project_id) if project_id.strip() else None
+    if pid is not None:
+        target = w.get_project(pid)
+        if target is None:
+            raise HTTPException(status_code=404, detail="no such project")
+        owner = goal_owner_filter(request)
+        if owner is not None and target["owner"] != owner:
+            raise HTTPException(status_code=404, detail="no such project")
     w.set_goal_project(goal_id, pid)
     return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
 
