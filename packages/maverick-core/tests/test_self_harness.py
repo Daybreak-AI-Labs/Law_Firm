@@ -470,28 +470,8 @@ def test_count_eligible_matches_mining_filter():
 
 # ---------- CLI inspector ----------
 
-def test_cli_requires_enable(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-    monkeypatch.setenv("MAVERICK_SELF_HARNESS", "0")
-    monkeypatch.setattr("maverick.config.load_config", dict)
-    res = CliRunner().invoke(main, ["self-harness", "preview", "--model", "m"])
-    assert res.exit_code != 0 and "self-harness is off" in res.output
 
 
-def test_cli_reports_mined_weaknesses(monkeypatch, tmp_path):
-    from click.testing import CliRunner
-    from maverick import reflexion
-    from maverick.cli import main
-    monkeypatch.setenv("MAVERICK_SELF_HARNESS", "1")
-    p = tmp_path / "r.ndjson"
-    for goal in ("export the nightly ledger", "export the ledger again",
-                 "export ledger nightly run"):
-        reflexion.record(goal, "timeout", "timed out", "r", model_id="m", path=p)
-    monkeypatch.setattr(reflexion, "default_path", lambda: p)
-    res = CliRunner().invoke(main, ["self-harness", "preview", "--model", "m", "--min-support", "3"])
-    assert res.exit_code == 0
-    assert "Weaknesses for 'm'" in res.output and "would add:" in res.output
 
 
 # ---------- gate reason surfaced + runner wiring ----------

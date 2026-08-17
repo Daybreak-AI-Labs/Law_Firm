@@ -94,41 +94,5 @@ def test_bad_kek_length_raises():
         F.rotate_local_fleet("00", _NEW)      # 1 byte -> not a 32-byte KEK
 
 
-def test_cli_kms_rotate_reads_keks_from_files(tmp_path):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    _provision("a")
-    old_file = tmp_path / "old-kek"
-    new_file = tmp_path / "new-kek"
-    old_file.write_text(_OLD + "\n", encoding="utf-8")
-    new_file.write_text(_NEW + "\n", encoding="utf-8")
-
-    res = CliRunner().invoke(main, [
-        "tenant", "kms-rotate",
-        "--old-kek-file", str(old_file),
-        "--new-kek-file", str(new_file),
-        "--dry-run",
-    ])
-
-    assert res.exit_code == 0, res.output
-    assert "fleet KEK rotation (dry run): 1 tenant(s) with a DEK" in res.output
 
 
-def test_cli_kms_rotate_rejects_raw_kek_argv():
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    res = CliRunner().invoke(main, [
-        "tenant", "kms-rotate",
-        "--old-kek", _OLD,
-        "--new-kek", _NEW,
-        "--dry-run",
-    ])
-
-    assert res.exit_code != 0
-    # The raw KEK option is rejected (only --old-kek-file is accepted, so secrets
-    # never land in argv). Match on the option name, not click's exact phrasing,
-    # which varies by version ("No such option: --old-kek" vs. "No such option
-    # '--old-kek'. Did you mean '--old-kek-file'?").
-    assert "No such option" in res.output and "--old-kek" in res.output

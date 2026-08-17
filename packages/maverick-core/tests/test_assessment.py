@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
-from click.testing import CliRunner
-from maverick.cli import main
 
 
 @pytest.fixture(autouse=True)
@@ -206,29 +202,6 @@ def test_persistence_round_trip():
     assert data["result"]["findings"][0]["question_id"] == "vr_dpa"
 
 
-def test_cli_assess_flow(tmp_path):
-    from maverick.assessment import list_saved
-
-    runner = CliRunner()
-    assert runner.invoke(main, ["assess", "templates"]).exit_code == 0
-
-    q = runner.invoke(main, ["assess", "questions", "pia"])
-    assert q.exit_code == 0 and "pia_security" in q.output
-
-    answers = tmp_path / "answers.json"
-    answers.write_text(json.dumps({"vr_dpa": "no", "vr_soc2": "yes"}))
-    scored = runner.invoke(
-        main,
-        ["assess", "score", "vendor_risk", "--subject", "Acme", "--answers", str(answers)],
-    )
-    assert scored.exit_code == 0
-    assert "HIGH" in scored.output and "saved:" in scored.output
-
-    lst = runner.invoke(main, ["assess", "list"])
-    assert lst.exit_code == 0 and "Acme" in lst.output
-
-    shown = runner.invoke(main, ["assess", "show", list_saved()[0]["id"]])
-    assert shown.exit_code == 0 and "Acme" in shown.output
 
 
 def test_load_saved_rejects_path_traversal():

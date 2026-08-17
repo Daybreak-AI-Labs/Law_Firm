@@ -136,57 +136,5 @@ def test_validation():
                                  max_iterations=0)
 
 
-def test_plan_reflect_command_registered():
-    from maverick.cli import main
-    assert "plan-reflect" in main.commands
 
 
-def test_plan_reflect_command_prints_trace(monkeypatch):
-    # The commands now preflight providers (round-3 fix); the LLM is
-    # still mocked -- a dummy key just satisfies the gate.
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
-    import maverick.plan_execute_reflect as per_mod
-    from maverick import cli as cli_mod
-    from maverick.plan_execute_reflect import (
-        PlanExecuteReflectResult,
-        Reflection,
-        StepResult,
-    )
-
-    class _FakeLLM:
-        def __init__(self, model=None):
-            self.model = model
-
-        def complete(self, **kw):  # never reached -- run is stubbed
-            raise AssertionError("run_plan_execute_reflect is stubbed")
-
-    monkeypatch.setattr(
-        cli_mod, "_kernel",
-        lambda: types.SimpleNamespace(LLM=_FakeLLM, DEFAULT_MODEL="fake"),
-    )
-
-    captured: dict = {}
-
-    def _fake_run(goal, **kw):
-        captured["goal"] = goal
-        captured["max_iterations"] = kw.get("max_iterations")
-        return PlanExecuteReflectResult(
-            goal=goal,
-            plan=["a", "b"],
-            results=[StepResult("a", "did a")],
-            reflections=[Reflection("done", "ok")],
-            iterations=1,
-            status="done",
-            total_dollars=0.01,
-        )
-
-    monkeypatch.setattr(per_mod, "run_plan_execute_reflect", _fake_run)
-
-    from click.testing import CliRunner
-    res = CliRunner().invoke(
-        cli_mod.main, ["plan-reflect", "build a thing", "--max-iterations", "2"],
-    )
-    assert res.exit_code == 0, res.output
-    assert captured["goal"] == "build a thing"
-    assert captured["max_iterations"] == 2
-    assert "Status: done" in res.output

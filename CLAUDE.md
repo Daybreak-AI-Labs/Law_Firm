@@ -228,6 +228,15 @@ What changed from upstream, and why:
   `speculative.py` (the async overlap primitive — distinct from the deleted
   speculative_exec), `tools/data_residency.py`, `tools/quorum_approval.py`,
   the `android` tool.
+- **CLI reduced 110 -> 17 commands.** Everything user-facing happens in the
+  dashboard; the CLI that remains is the operational surface: launchers
+  (`dashboard` / `mcp` / `worker`), setup + health (`doctor`, `migrate`,
+  `config-lint`), the audit + privacy record (`audit`, `erase`,
+  `erase-verify`, `export-user`), the emergency stop (`halt` / `unhalt`),
+  `knowledge`, `domains-lint`, the nightly `dream` beat, and `tax`
+  (operator-rescued). Eight CLI group modules deleted outright; modules whose
+  only production consumer was a deleted command flipped to TEST_ONLY in the
+  reachability lock (follow-up cascade candidates, not yet deleted).
 - **Retained deliberately:** `agent-shield`; the multi-tenant/`tenant` layer
   (load-bearing — 227 source references, 163 test files, single-tenant is its
   default path); `marketplace/storefront.py` +

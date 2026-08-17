@@ -1,9 +1,6 @@
 """A clean-home install reaches activation and evidence-visible cockpit pages."""
 from __future__ import annotations
 
-import json
-
-from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 
@@ -41,30 +38,13 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
 
     from maverick import config, providers, world_model
-    from maverick.cli import main
 
-    config.reset_config_cache()
-    before = CliRunner().invoke(main, ["preflight", "--json"])
-    assert before.exit_code == 1
-    assert json.loads(before.output)["checks"][0]["id"] == "config"
-
-    installed_result = CliRunner().invoke(
-        main,
-        ["init", "--from-file", str(source)],
-    )
-    assert installed_result.exit_code == 0, installed_result.output
-    assert "installed config" in installed_result.output
+    # The reviewed config is installed by copying it into place (the operator
+    # installs config out of band; the CLI installer surface was removed).
+    installed.parent.mkdir(parents=True, exist_ok=True)
+    installed.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     config.reset_config_cache()
     monkeypatch.setattr(providers, "missing_sdks", lambda _specs: [])
-
-    ready = CliRunner().invoke(
-        main,
-        ["preflight", "--profile", "cockpit", "--json"],
-    )
-    assert ready.exit_code == 0, ready.output
-    report = json.loads(ready.output)
-    assert report["ready"] is True
-    assert report["blocker_count"] == 0
 
     from maverick_dashboard import app as dashboard
 

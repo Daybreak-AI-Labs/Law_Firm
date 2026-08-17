@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 
-from click.testing import CliRunner
-from maverick.cli import main
 from maverick.controls import CONTROLS, find_controls, render_control
 
 
@@ -59,9 +57,6 @@ def test_privacy_analyst_pack_grants_find_controls():
     assert "find_controls" in pack.allow_tools
 
 
-def test_cli_controls():
-    r = CliRunner().invoke(main, ["controls", "vendor", "has", "no", "DPA"])
-    assert r.exit_code == 0 and "VN-1" in r.output
 
 
 def test_find_controls_tool_tolerates_a_non_integer_limit():

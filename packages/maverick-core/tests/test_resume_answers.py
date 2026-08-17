@@ -46,31 +46,6 @@ async def test_run_goal_threads_answered_questions_into_brief(
     assert "Which language should I use?" in blob
 
 
-def test_resume_builds_and_passes_a_sandbox(tmp_path: Path, monkeypatch):
-    import maverick.cli as cli
-    import maverick.orchestrator as orch
-    from click.testing import CliRunner
-    from maverick.world_model import open_world
-
-    monkeypatch.setattr(cli, "_require_llm_key", lambda *args: "test")
-    captured: dict = {}
-
-    def fake_run_goal_sync(llm, world, bud, goal_id, **kwargs):
-        captured["sandbox"] = kwargs.get("sandbox")
-        return "DONE."
-
-    monkeypatch.setattr(orch, "run_goal_sync", fake_run_goal_sync)
-
-    db = tmp_path / "world.db"
-    w = open_world(db)
-    gid = w.create_goal("g", "")
-    w.set_goal_status(gid, "blocked")
-
-    result = CliRunner().invoke(cli.main, ["--db", str(db), "resume", "--goal-id", str(gid)])
-    assert result.exit_code == 0, result.output
-    # resume must construct a sandbox and pass it (not rely on run_goal's
-    # default), so the configured backend is honored.
-    assert captured["sandbox"] is not None
 
 
 @pytest.mark.asyncio

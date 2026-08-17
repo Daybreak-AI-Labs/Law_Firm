@@ -6,7 +6,6 @@ import sys
 import textwrap
 import types
 
-from click.testing import CliRunner
 from maverick import plugins as plugins_mod
 from maverick.plugins import reload_plugin
 
@@ -83,14 +82,3 @@ def test_reload_drops_submodules_too(tmp_path, monkeypatch):
         sys.path.remove(str(tmp_path))
 
 
-def test_cli_plugin_reload_command(monkeypatch):
-    from maverick import cli as cli_mod
-    monkeypatch.setattr(plugins_mod, "reload_plugin", lambda d: ["m1", "m2"])
-    res = CliRunner().invoke(cli_mod.main, ["plugin", "reload", "some-dist"])
-    assert res.exit_code == 0, res.output
-    assert "dropped 2 module(s)" in res.output
-
-    monkeypatch.setattr(plugins_mod, "reload_plugin", lambda d: [])
-    res = CliRunner().invoke(cli_mod.main, ["plugin", "reload", "ghost"])
-    assert res.exit_code == 1
-    assert "no maverick entry points" in res.output

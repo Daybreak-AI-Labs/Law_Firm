@@ -227,48 +227,7 @@ def test_evicted_cache_owned_world_is_not_closed_by_borrower(monkeypatch):
         first.close()
 
 
-def test_cli_defaults_world_db_to_active_tenant(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.setenv("MAVERICK_TENANT", "acme")
-
-    # `status` opens the world at the resolved default db (no --db passed).
-    result = CliRunner().invoke(main, ["status"])
-    assert result.exit_code == 0, result.output
-
-    # The run history landed in acme's OWN world.db, not the shared default.
-    assert (maverick_home() / "tenants" / "acme" / "world.db").exists()
-    assert not (maverick_home() / "world.db").exists()
 
 
-def test_cli_no_tenant_uses_legacy_world_db(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-
-    result = CliRunner().invoke(main, ["status"])
-    assert result.exit_code == 0, result.output
-
-    # Single-tenant unchanged: the legacy shared world.db, no per-tenant dir.
-    assert (maverick_home() / "world.db").exists()
-    assert not (maverick_home() / "tenants").exists()
 
 
-def test_cli_explicit_db_overrides_tenant(tmp_path, monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.setenv("MAVERICK_TENANT", "acme")
-    explicit = tmp_path / "explicit" / "world.db"
-
-    result = CliRunner().invoke(main, ["--db", str(explicit), "status"])
-    assert result.exit_code == 0, result.output
-
-    # An explicit --db always wins over the tenant default.
-    assert explicit.exists()
-    assert not (maverick_home() / "tenants" / "acme" / "world.db").exists()

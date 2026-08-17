@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-from click.testing import CliRunner
 
 
 def test_valid_name():
@@ -83,46 +82,10 @@ def test_load_rejects_malformed_fleet_json(monkeypatch, tmp_path):
     assert load_fleet("bad_agents") is None
     assert list_fleets() == []
 
-def test_cli_create_list_show_rm(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    # `fleet create` validates roles against config (undefined roles are
-    # rejected), so the roles this fleet declares must be configured.
-    monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {
-        "roles": {"analyst": {"allow_tools": ["read_file"]},
-                  "engineer": {"allow_tools": ["read_file", "write_file"]}},
-    })
-    from maverick.cli import main
-    r = CliRunner()
-    c = r.invoke(main, ["fleet", "create", "acme", "--owner", "user:alice",
-                        "--agent", "researcher:analyst", "--agent", "coder:engineer"])
-    assert c.exit_code == 0, c.output
-    assert "2 agent" in c.output
-
-    lst = r.invoke(main, ["fleet", "list"])
-    assert "acme" in lst.output and "user:alice" in lst.output
-
-    show = r.invoke(main, ["fleet", "show", "acme"])
-    assert "researcher" in show.output and "analyst" in show.output
-    assert "agent:acme.coder" in show.output
-
-    assert r.invoke(main, ["fleet", "rm", "acme"]).exit_code == 0
-    assert "no fleets" in r.invoke(main, ["fleet", "list"]).output
 
 
-def test_cli_create_rejects_bad_agent(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["fleet", "create", "f", "--owner", "x",
-                                    "--agent", "noRole"])
-    assert res.exit_code == 2
-    assert "NAME:ROLE" in res.output
 
 
-def test_cli_show_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    from maverick.cli import main
-    assert CliRunner().invoke(main, ["fleet", "show", "ghost"]).exit_code == 1
 
 
 def test_remove_fleet_deletes_run_index(monkeypatch, tmp_path):

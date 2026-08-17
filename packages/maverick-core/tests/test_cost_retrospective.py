@@ -1,8 +1,6 @@
 """Cost retrospective: aggregation, failed-work + concentration, CLI."""
 from __future__ import annotations
 
-from click.testing import CliRunner
-from maverick.cli import main
 from maverick.cost import retrospective as cr
 from maverick.world_model import WorldModel
 
@@ -67,32 +65,7 @@ def test_empty_world(tmp_path):
     assert "no priced goals" in rep["observations"][0]
 
 
-def test_cli_cost_retro(tmp_path):
-    db = tmp_path / "world.db"
-    _seed(db, [("g", [(1.0, "succeeded")]), ("bad", [(2.0, "failed")])])
-    res = CliRunner().invoke(main, ["--db", str(db), "cost-retro"])
-    assert res.exit_code == 0
-    assert "Cost retrospective" in res.output
-    assert "Observations" in res.output
 
 
-def test_cli_cost_retro_strips_terminal_control_from_titles(tmp_path):
-    db = tmp_path / "world.db"
-    malicious_title = "normal\x1b]52;c;SGVsbG8=\x07SPOOF\nNEXTLINE\x1b[2K"
-    _seed(db, [(malicious_title, [(1.0, "succeeded")])])
-
-    res = CliRunner().invoke(main, ["--db", str(db), "cost-retro"])
-
-    assert res.exit_code == 0
-    assert "\x1b" not in res.output
-    assert "\x07" not in res.output
-    assert "normalSPOOFNEXTLINE" in res.output
 
 
-def test_cli_cost_retro_json(tmp_path):
-    db = tmp_path / "world.db"
-    _seed(db, [("g", [(1.0, "succeeded")])])
-    res = CliRunner().invoke(main, ["--db", str(db), "cost-retro", "--json"])
-    assert res.exit_code == 0
-    import json
-    assert json.loads(res.output)["total_spend"] == 1.0

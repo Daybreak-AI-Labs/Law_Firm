@@ -199,36 +199,7 @@ def test_configured_model_env_beats_default(monkeypatch, tmp_path):
 # ---- maverick voice CLI ------------------------------------------------------
 
 
-def test_cli_voice_status_runs(monkeypatch, tmp_path):
-    _home(monkeypatch, tmp_path)
-    for env in ("OPENAI_API_KEY", "GROQ_API_KEY", "MAVERICK_WHISPER_CPP",
-                "MAVERICK_VOICE_STT_BACKEND"):
-        monkeypatch.delenv(env, raising=False)
-    from click.testing import CliRunner
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["voice", "status"])
-    assert res.exit_code == 0, res.output
-    assert "Speech-to-text backends" in res.output
-    assert "default backend: auto" in res.output
 
 
-def test_cli_voice_setup_downloads_and_reports(monkeypatch, tmp_path):
-    _home(monkeypatch, tmp_path)
-    payload = b"cli fetched weights"
-    _pin(monkeypatch, "tiny", payload)
-    _serve(monkeypatch, payload)
-    from click.testing import CliRunner
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["voice", "setup", "--model", "tiny"])
-    assert res.exit_code == 0, res.output
-    assert "installed" in res.output
-    assert voice_models.model_path("tiny").read_bytes() == payload
 
 
-def test_cli_voice_setup_unknown_model_fails_cleanly(monkeypatch, tmp_path):
-    _home(monkeypatch, tmp_path)
-    from click.testing import CliRunner
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["voice", "setup", "--model", "bogus"])
-    assert res.exit_code != 0
-    assert "unknown Whisper model" in res.output

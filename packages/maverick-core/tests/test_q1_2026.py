@@ -361,16 +361,6 @@ def test_q1_tools_in_base_registry():
 
 # ---------- CLI surface (smoke import) ----------
 
-def test_cli_imports_with_new_commands():
-    """Ensure the new commands attached to main don't break import."""
-    from maverick.cli import main
-    cmds = main.commands.keys()
-    assert "audit" in cmds
-    assert "halt" in cmds
-    assert "unhalt" in cmds
-    assert "cost" in cmds
-    assert "export" in cmds
-    assert "logs" in cmds
 
 
 def test_cli_audit_subgroup_has_tail_grep():

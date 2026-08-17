@@ -6,9 +6,7 @@ real experiment surfaced: bytes and tokens diverge, and the probe must report th
 token truth -- including when the codec costs *more* tokens than it saves."""
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick import codec_probe as cp
-from maverick.cli import main
 from maverick.emergent_protocol import Codebook
 
 
@@ -66,20 +64,5 @@ class _World:
         return ["spawning sub-agent for research task"] * 6
 
 
-def test_codec_probe_cli(tmp_path, monkeypatch):
-    monkeypatch.setattr("maverick.cli.open_world", lambda db: _World())
-    # Inject the stub counter so the CLI needs no real tokenizer.
-    monkeypatch.setattr("maverick.codec_probe.resolve_counter",
-                        lambda **kw: _words)
-    res = CliRunner().invoke(main, ["--db", str(tmp_path / "w.db"), "codec-probe"])
-    assert res.exit_code == 0, res.output
-    assert "tokens:" in res.output
-    assert "bytes :" in res.output
 
 
-def test_codec_probe_cli_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr("maverick.cli.open_world",
-                        lambda db: type("E", (), {"recent_event_contents": lambda s, limit=5000: []})())
-    res = CliRunner().invoke(main, ["--db", str(tmp_path / "w.db"), "codec-probe"])
-    assert res.exit_code == 0, res.output
-    assert "no coordination messages" in res.output

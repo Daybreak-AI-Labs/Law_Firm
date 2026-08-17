@@ -7,7 +7,6 @@ state-mutator) and the report shape.
 """
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick.domain import DomainProfile, builtin_dir, load_domains
 from maverick.domain_audit import (
     audit_profile,
@@ -131,20 +130,5 @@ def test_json_export_is_well_formed():
         assert key in row
 
 
-def test_cli_reports_and_exits_clean():
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["domains-audit"])
-    assert res.exit_code == 0, res.output
-    assert "must be 0" in res.output
-    assert "with a declared deliverable" in res.output
 
 
-def test_cli_json_export(tmp_path):
-    import json
-
-    from maverick.cli import main
-    out = tmp_path / "audit.json"
-    res = CliRunner().invoke(main, ["domains-audit", "--json", str(out)])
-    assert res.exit_code == 0, res.output
-    doc = json.loads(out.read_text())
-    assert doc["summary"]["drafting_agents_reaching_a_mutator"] == 0

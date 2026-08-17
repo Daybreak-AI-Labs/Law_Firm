@@ -129,26 +129,8 @@ def test_scaffold_refuses_to_overwrite(tmp_path: Path):
 
 # ---------- CLI integration ----------
 
-def test_cli_plugin_new_writes_files(tmp_path: Path):
-    """Drives `maverick plugin new` end-to-end via subprocess."""
-    result = subprocess.run(
-        [sys.executable, "-m", "maverick.cli", "plugin", "new",
-         "from-cli", "--kind", "tool", "--dest", str(tmp_path)],
-        capture_output=True, text=True, timeout=15,
-    )
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "from-cli" / "pyproject.toml").exists()
-    assert "Scaffolded from-cli (tool)" in result.stdout
 
 
-def test_cli_plugin_new_rejects_bad_name(tmp_path: Path):
-    result = subprocess.run(
-        [sys.executable, "-m", "maverick.cli", "plugin", "new",
-         "Bad_Name", "--kind", "tool", "--dest", str(tmp_path)],
-        capture_output=True, text=True, timeout=10,
-    )
-    assert result.returncode != 0
-    assert "lowercase" in result.stderr
 
 
 def test_emitted_pytest_smoke_runs(tmp_path: Path):

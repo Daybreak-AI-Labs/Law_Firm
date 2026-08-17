@@ -13,8 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from click.testing import CliRunner
-from maverick.cli import _configure_cli_logging, _humanize_run_error, main
+from maverick.cli import _configure_cli_logging, _humanize_run_error
 from maverick.world_model import WorldModel
 
 # ---------- task 1: live mid-run spend ----------
@@ -41,34 +40,8 @@ def test_update_episode_spend_mirrors_running_totals(tmp_path: Path):
     wm.close()
 
 
-def test_runs_command_shows_mid_run_spend(tmp_path: Path):
-    db = tmp_path / "world.db"
-    wm = WorldModel(db)
-    goal_id = wm.create_goal("live goal", "")
-    ep = wm.start_episode(goal_id)
-    wm.update_episode_spend(ep, cost_dollars=1.23, tool_calls=5)
-    wm.close()
-
-    result = CliRunner().invoke(main, ["--db", str(db), "runs"])
-    assert result.exit_code == 0
-    assert "running" in result.output
-    assert "$1.2300" in result.output
-    assert "tools=5" in result.output
 
 
-def test_budget_command_shows_mid_run_spend(tmp_path: Path):
-    db = tmp_path / "world.db"
-    wm = WorldModel(db)
-    goal_id = wm.create_goal("live goal", "")
-    ep = wm.start_episode(goal_id)
-    wm.update_episode_spend(ep, cost_dollars=0.77, tool_calls=2)
-    wm.close()
-
-    result = CliRunner().invoke(main, ["--db", str(db), "budget"])
-    assert result.exit_code == 0
-    # The live (not-yet-ended) episode shows in the per-run history as running.
-    assert "running" in result.output
-    assert "$0.7700" in result.output
 
 
 def test_mirror_does_not_count_toward_total_spend(tmp_path: Path):

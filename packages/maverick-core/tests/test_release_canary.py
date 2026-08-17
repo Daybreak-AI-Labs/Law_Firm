@@ -1,9 +1,7 @@
 """Cost/perf release canary: direction-aware comparison, store, CLI."""
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick import release_canary as rc
-from maverick.cli import main
 from maverick.file_lock import private_path_is_restricted
 
 # ---- compare (pure, direction-aware) ----
@@ -81,33 +79,9 @@ def test_store_roundtrip(tmp_path):
 
 # ---- CLI ----
 
-def test_cli_record_then_compare_regression(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    r = CliRunner()
-    assert r.invoke(main, ["canary", "record", "v1", "--metric", "cost_usd=1.0"]).exit_code == 0
-    assert r.invoke(main, ["canary", "record", "v2", "--metric", "cost_usd=1.5"]).exit_code == 0
-    res = r.invoke(main, ["canary", "compare", "v1", "v2"])
-    assert res.exit_code == 1            # regression -> non-zero gate
-    assert "FAIL" in res.output and "regressed" in res.output
 
 
-def test_cli_compare_pass(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    r = CliRunner()
-    r.invoke(main, ["canary", "record", "a", "--metric", "cost_usd=1.0"])
-    r.invoke(main, ["canary", "record", "b", "--metric", "cost_usd=1.02"])
-    res = r.invoke(main, ["canary", "compare", "a", "b"])
-    assert res.exit_code == 0 and "PASS" in res.output
 
 
-def test_cli_compare_missing_baseline(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    res = CliRunner().invoke(main, ["canary", "compare", "nope", "nope2"])
-    assert res.exit_code != 0
-    assert "no recorded metrics for baseline" in res.output
 
 
-def test_cli_record_bad_metric(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    res = CliRunner().invoke(main, ["canary", "record", "v", "--metric", "oops"])
-    assert res.exit_code != 0 and "name=value" in res.output

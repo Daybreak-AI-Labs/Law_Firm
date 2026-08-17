@@ -1,8 +1,6 @@
 """Fresh-install operator preflight: stable, offline, and actionable."""
 from __future__ import annotations
 
-import json
-
 import pytest
 from click.testing import CliRunner
 
@@ -469,22 +467,6 @@ def test_azure_route_honors_config_auth_mode_like_runtime(
     assert _route_configuration_missing("azure", config) == expected
 
 
-def test_cli_json_reports_corrupt_config_instead_of_resolving_world_storage(
-    isolated_config,
-):
-    isolated_config.write_text("[client\ninvalid", encoding="utf-8")
-    from maverick import config
-    from maverick.cli import main
-
-    config.reset_config_cache()
-    result = CliRunner().invoke(main, ["preflight", "--json"])
-
-    assert result.exit_code == 1
-    body = json.loads(result.output)
-    assert body["ready"] is False
-    assert body["checks"][0]["id"] == "config"
-    assert "invalid" in body["checks"][0]["detail"]
-    assert "ClientBindingError" not in result.output
 
 
 def test_preflight_json_never_echoes_provider_secret(isolated_config):

@@ -248,20 +248,6 @@ def test_multi_tenant_gates_named_tenant_provisioning_only(monkeypatch):
         registry.create_tenant("acme")
 
 
-def test_support_export_emits_a_redacted_audit_event(monkeypatch, tmp_path):
-    import maverick.cli as C
-    from click.testing import CliRunner
-    calls = []
-    monkeypatch.setattr("maverick.audit.record",
-                        lambda kind, **kw: calls.append((kind, kw)) or True)
-    out = tmp_path / "bundle.json"
-    res = CliRunner().invoke(C.main, ["support", "-o", str(out)])
-    assert res.exit_code == 0, res.output
-    assert out.exists()
-    ev = [kw for kind, kw in calls if kind == "support_bundle_exported"]
-    assert len(ev) == 1                                    # exactly one export event
-    assert ev[0].get("correlation_id", "").startswith("sup_")
-    assert ev[0].get("filename") == "bundle.json"          # basename only, no path
 
 
 def test_ticket_summary_is_redacted_and_routable():

@@ -6,9 +6,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from click.testing import CliRunner
 from maverick import catalog, config, skills, templates
-from maverick.cli import main
 
 _BODY = "---\ntitle: Plan a trip\nparams:\n  - city\n---\nPlan a trip to {{ city }}.\n"
 _SHA = hashlib.sha256(_BODY.encode()).hexdigest()
@@ -161,17 +159,5 @@ def test_catalog_install_requires_signature_when_trust_anchor_configured(
 
 # ---- CLI ----
 
-def test_cli_browse(monkeypatch):
-    entries = [catalog.CatalogEntry(name="trip-plan", version="1.0.0", kind="templates",
-                                    summary="Plan a trip.", source="gh:o/r:t.md", sha256="ab")]
-    monkeypatch.setattr(templates, "browse_templates", lambda: entries)
-    r = CliRunner().invoke(main, ["template", "browse"])
-    assert r.exit_code == 0 and "trip-plan" in r.output
 
 
-def test_cli_add(monkeypatch, tmp_path):
-    fake = templates.Template(name="trip-plan", title="Plan a trip", body="...",
-                              path=tmp_path / "trip-plan.md")
-    monkeypatch.setattr(templates, "install_template_from_catalog", lambda name: fake)
-    r = CliRunner().invoke(main, ["template", "add", "trip-plan"])
-    assert r.exit_code == 0 and "installed: trip-plan" in r.output

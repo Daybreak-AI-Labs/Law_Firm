@@ -297,24 +297,6 @@ def test_create_errors_when_no_data(monkeypatch, tmp_path):
         backup.create_backup()
 
 
-def test_cli_backup_create_info_restore():
-    from click.testing import CliRunner
-    from maverick.cli import main
-    from maverick.paths import data_dir
-    _seed(data_dir())
-    runner = CliRunner()
-
-    r = runner.invoke(main, ["backup", "create"])
-    assert r.exit_code == 0 and "backup written" in r.output
-    tarball = r.output.split("backup written:")[1].strip()
-
-    r = runner.invoke(main, ["backup", "info", tarball])
-    assert r.exit_code == 0 and "acme" in r.output
-
-    (data_dir() / "world.db").unlink()
-    r = runner.invoke(main, ["backup", "restore", tarball])
-    assert r.exit_code == 0 and "restored into" in r.output
-    assert (data_dir() / "world.db").exists()
 
 
 def test_create_requires_operator_key_by_default(monkeypatch):

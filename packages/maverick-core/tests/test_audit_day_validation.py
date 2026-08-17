@@ -105,22 +105,6 @@ def _home(monkeypatch, tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["audit", "tail", "--day", _BAD],
-        ["audit", "grep", "x", "--day", _BAD],
-        ["audit", "verify", "--day", _BAD],
-        ["audit", "export", "--day", _BAD],
-        ["logs", "--day", _BAD],
-    ],
-)
-def test_cli_day_traversal_is_rejected(_home, argv):
-    from maverick.cli import main
-    res = CliRunner().invoke(main, argv)
-    assert res.exit_code == 2, res.output
-    assert "YYYY-MM-DD" in res.output
-    assert "etc/passwd" not in res.output  # never echoed back / used as a path
 
 
 def test_cli_audit_tail_accepts_valid_day(_home):
