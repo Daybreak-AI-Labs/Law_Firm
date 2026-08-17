@@ -28,7 +28,8 @@ not prune it to save space without an explicit retention decision.
 
 **4. Nothing self-approves.** Every legal seat's deliverable carries a review or
 approval gate and names a human consumer. A drafting agent cannot reach a
-state-mutating tool — `maverick domains-audit` proves this across all 125 packs. If you
+state-mutating tool — the domain audit (`maverick.domain_audit`, surfaced in the
+dashboard) proves this across all 125 packs. If you
 add a pack, it inherits that floor; do not widen an envelope to unblock a task.
 
 **5. Shell goes through the sandbox.** All command execution routes through
@@ -55,6 +56,6 @@ matter note. The repository is scanned for committed secrets on every push.
 ## Hardening
 
 See `docs/security-hardening.md` for the opt-in controls: egress locks, encryption at
-rest, RBAC, capability tokens, per-tool ACLs, and consent gates. `maverick safety`
-prints the current posture — shield status, sandbox backend, and egress policy — and is
-worth checking after any configuration change.
+rest, RBAC, capability tokens, per-tool ACLs, and consent gates. `maverick doctor`
+prints the current posture — deployment profile and egress policy, sandbox backend,
+and shield status — and is worth checking after any configuration change.

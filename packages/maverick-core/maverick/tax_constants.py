@@ -6,7 +6,7 @@ constants, not new code. This module makes that a governed, automatic
 update instead of a release wait:
 
 * The publisher (Daybreak) ships a **signed constants bundle** (Ed25519,
-  the same fail-closed posture as :mod:`maverick.insight_exchange`): an
+  fail-closed): an
   unsigned bundle, an unknown key, or a bad signature is rejected outright.
   Trust anchors live in ``[tax] trusted_constants_pubkeys`` — configured by
   the operator, never TOFU.

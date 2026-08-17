@@ -445,9 +445,8 @@ class TrustLedger:
 class GraduationPolicy:
     """The evidence bar an action type must clear to earn auto-approval.
 
-    Deliberately stricter than :mod:`maverick.predictive_approvals` (which
-    only ever *suggests*, and never for high risk): this policy *decides*, so
-    it demands a consecutive-hit streak against ground truth, not just a
+    Deliberately strict: this policy *decides* (it does not merely suggest),
+    so it demands a consecutive-hit streak against ground truth, not just a
     lopsided approval history. ``armed`` is the operator's authority-widening
     switch (``[earned_autonomy] auto_graduate``).
     """

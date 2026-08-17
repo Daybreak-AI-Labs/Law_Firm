@@ -157,8 +157,15 @@ def test_urlopen_is_a_network_call(tmp_path) -> None:
     assert census, "urlopen is an outbound request and must be seen"
 
 
-def test_a_stale_recorded_hole_is_reported(tmp_path) -> None:
-    """A module that got migrated must be removed from the register."""
+def test_a_stale_recorded_hole_is_reported(tmp_path, monkeypatch) -> None:
+    """A module that got migrated must be removed from the register.
+
+    KNOWN_UNCOVERED is empty now (the one real hole left with the channel
+    adapters), so a synthetic stale entry proves the reporting path instead of
+    relying on a live hole existing.
+    """
+    monkeypatch.setattr(gate, "KNOWN_UNCOVERED",
+                        {"packages/example/gone.py": "was migrated"})
     problems = gate.problems({})
     assert any("no longer reaches the network" in p for p in problems), problems
 

@@ -32,8 +32,6 @@
   .gs__check--attention .gs__check-state { color: var(--warn); }
   .gs__check--ready .gs__check-state { color: var(--success); }
   .gs__command { display: block; margin-top: var(--space-1); overflow-wrap: anywhere; }
-  .gs__demo { margin-top: var(--space-5); border-left: 4px solid var(--warn); }
-  .gs__demo-label { display: inline-block; color: var(--warn); font-size: var(--text-xs); font-weight: var(--font-semibold); letter-spacing: .06em; }
   @media (max-width: 560px) {
     .gs__step { flex-wrap: wrap; }
     .gs__cta { width: 100%; }
@@ -83,8 +81,6 @@
         <code>{{ preflight.next_action }}</code>
       </p>
     {% endif %}
-    <p><code>maverick preflight --json</code>
-      <span class="muted">— copyable output for deployment automation</span></p>
     <details>
       <summary>View {{ preflight.checks|length }} readiness checks</summary>
       <ul class="gs__checks">
@@ -110,8 +106,8 @@
       </span>
     </div>
     <p class="muted">This stricter, separate posture requires an explicit
-      tenant, dashboard, evidence graph, AI Evidence-Ready Gateway, and Model
-      Risk Officer. Runtime readiness does not imply assurance readiness.</p>
+      tenant, the dashboard, and the evidence graph. Runtime readiness does
+      not imply assurance readiness.</p>
     {% if not assurance_preflight.ready %}
       <p role="alert"><strong>Next assurance fix:</strong>
         <code>{{ assurance_preflight.next_action }}</code>
@@ -121,7 +117,6 @@
         <code>{{ assurance_preflight.next_action }}</code>
       </p>
     {% endif %}
-    <p><code>maverick preflight --profile cockpit --json</code></p>
     <details>
       <summary>View {{ assurance_preflight.checks|length }} assurance checks</summary>
       <ul class="gs__checks">
@@ -154,13 +149,5 @@
     {% endfor %}
   </ol>
 
-  <section class="panel gs__demo" aria-labelledby="synthetic-demo-title">
-    <span class="gs__demo-label">SYNTHETIC DEMO DATA</span>
-    <h2 id="synthetic-demo-title">See an evidence-ready interaction before integration</h2>
-    <p>Use the Assurance Cockpit’s no-network demo only in an empty or dedicated
-      demo tenant. Every generated record stays labeled synthetic and does not
-      count as production assurance evidence.</p>
-    <a class="btn btn--ghost" href="/security/assurance">Open Assurance Cockpit</a>
-  </section>
 </div>
 {% endblock %}

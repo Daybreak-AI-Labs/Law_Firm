@@ -301,66 +301,6 @@
   </section>
   {% endif %}
 
-  {% if snap.dgm %}
-  <section aria-labelledby="lrn-dgm-h">
-    <div class="section-head"><h2 id="lrn-dgm-h" class="lrn__section-h">DGM code-evolution research</h2></div>
-    <div class="panel">
-      <p class="lrn__section-sub" style="margin-bottom: var(--space-3);">
-        Separate from governed learning and <strong>off by default</strong>. When armed, DGM may propose,
-        sandbox-evaluate, and archive bounded code candidates. It cannot deploy or adopt code.</p>
-      <p style="margin:0 0 var(--space-3);">
-        <span class="badge {{ 'active' if snap.dgm.state == 'ready' else '' }}">
-          {{ 'ready for operator-run cycles' if snap.dgm.state == 'ready' else ('armed but blocked' if snap.dgm.state == 'blocked' else 'off') }}
-        </span>
-      </p>
-      {% if snap.dgm.blockers %}
-      <ul class="muted" style="font-size: var(--text-sm); margin-top:0;">
-        {% for blocker in snap.dgm.blockers %}<li>{{ blocker.message }}</li>{% endfor %}
-      </ul>
-      {% endif %}
-      <button type="button" class="btn" id="lrn-dgm"
-              data-on="{{ 'true' if snap.dgm.requested else 'false' }}"
-              {{ 'disabled' if snap.dgm.control_managed else '' }}>
-        {{ 'Turn DGM research off' if snap.dgm.requested else 'Turn DGM research on' }}
-      </button>
-      {% if snap.dgm.control_managed %}
-      <span class="lrn__enable-note">Managed by higher-precedence deployment policy (<code>{{ snap.dgm.managed_by }}</code>).</span>
-      {% endif %}
-      <span class="lrn__enable-note" id="lrn-dgm-msg" aria-live="polite"></span>
-      <script>
-      (function () {
-        var btn = document.getElementById('lrn-dgm');
-        if (!btn) return;
-        btn.addEventListener('click', async function () {
-          var msg = document.getElementById('lrn-dgm-msg');
-          var next = btn.getAttribute('data-on') !== 'true';
-          if (next && !window.confirm(
-            'Enable research-only DGM? It may propose and sandbox-evaluate code, but cannot deploy it.'
-          )) return;
-          btn.disabled = true; msg.textContent = 'Applying…';
-          try {
-            var r = await fetch('/api/v1/learning/dgm', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                enabled: next,
-                acknowledge_research_only: next,
-              }),
-            });
-            if (!r.ok) {
-              var body = await r.json().catch(function () { return {}; });
-              msg.textContent = body.detail || 'Could not update DGM control.';
-              btn.disabled = false; return;
-            }
-            location.reload();
-          } catch (e) {
-            msg.textContent = 'Could not reach the server.'; btn.disabled = false;
-          }
-        });
-      })();
-      </script>
-    </div>
-  </section>
-  {% endif %}
 </div>
 
 <script src="/static/board.js"></script>

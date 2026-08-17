@@ -58,11 +58,6 @@
       <p class="viz-sub">Where the money actually went.</p>
       <div id="bd-top-goals"></div>
     </div>
-    <div class="panel viz-card" id="bd-by-platform-card" hidden>
-      <h2>External-agent spend</h2>
-      <p class="viz-sub">Reported by bring-your-own agents, by home platform.</p>
-      <div id="bd-by-platform"></div>
-    </div>
   </div>
 
   <div class="toolbar">
@@ -198,18 +193,6 @@
         B.empty(document.getElementById('bd-top-goals'), 'No costed goals in this window.');
       }
 
-      if ((D.by_platform || []).length) {
-        document.getElementById('bd-by-platform-card').hidden = false;
-        var xmax = 1;
-        D.by_platform.forEach(function (r) { xmax = Math.max(xmax, r.cost); });
-        B.hbars(document.getElementById('bd-by-platform'),
-          D.by_platform.map(function (r) {
-            return { label: r.label, value_text: B.money(r.cost),
-                     pct: r.cost / xmax * 100,
-                     title: r.label + ' — ' + B.money(r.cost) + ' across ' +
-                            r.runs + ' run(s)' };
-          }), 'Spend reported by external agents, grouped by platform.');
-      }
     }
 
     B.attach({ board: 'spend', render: render });

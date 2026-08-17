@@ -48,18 +48,6 @@ def test_docs_index_landing_exists():
         assert keyword in body, f"index.md missing section: {keyword}"
 
 
-def test_reusable_agent_on_pr_workflow_exists():
-    p = REPO_ROOT / ".github" / "workflows" / "agent-on-pr.yml"
-    assert p.is_file()
-    body = p.read_text()
-    # Must declare reusable workflow_call and required inputs.
-    assert "workflow_call" in body
-    assert "goal:" in body
-    assert "max_dollars:" in body
-    # Posts to PR via REST.
-    assert "createComment" in body or "pull-requests: write" in body
-
-
 def test_conventional_commits_workflow_still_present():
     p = REPO_ROOT / ".github" / "workflows" / "conventional-commits.yml"
     assert p.is_file()

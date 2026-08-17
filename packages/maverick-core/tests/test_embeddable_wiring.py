@@ -15,22 +15,12 @@ class _FakeToolEP:
         return lambda: "a-tool-instance"
 
 
-class _FakeChannelEP:
-    name = "fake_chan"
-
-    def load(self):
-        class _Chan:
-            pass
-        return _Chan
-
-
 def _patch_entry_points(monkeypatch):
     from maverick import plugins
 
     def _eps(group):
         return {
             "maverick.tools": [_FakeToolEP()],
-            "maverick.channels": [_FakeChannelEP()],
             "maverick.skills": [_FakeToolEP()],
             "maverick.personas": [],
         }.get(group, [])
@@ -44,7 +34,6 @@ def test_plugins_discovered_when_not_embedded(monkeypatch):
     monkeypatch.delenv("MAVERICK_NO_CLI", raising=False)
     plugins = _patch_entry_points(monkeypatch)
     assert any(n == "fake_tool" for n, _ in plugins.discover_tools())
-    assert any(n == "fake_chan" for n, _ in plugins.discover_channels())
 
 
 def test_embedded_mode_skips_plugin_discovery(monkeypatch):
@@ -52,6 +41,5 @@ def test_embedded_mode_skips_plugin_discovery(monkeypatch):
     plugins = _patch_entry_points(monkeypatch)
     # Same registered entry points, but embedded mode short-circuits them.
     assert plugins.discover_tools() == []
-    assert plugins.discover_channels() == []
     assert plugins.discover_skills() == []
     assert plugins.discover_personas() == {}

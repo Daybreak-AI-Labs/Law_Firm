@@ -1,10 +1,9 @@
 """Migration governance — the Alembic-grade ratchet over the world-model
-migration ladders (roadmap: regulated-SaaS data-plane).
+migration ladder.
 
-``schema_migrations.py`` lints a single ladder for online/offline safety. This
-module governs the *integrity and evolution* of BOTH backend ladders together —
-SQLite (``world_model.MIGRATIONS`` + ``SCHEMA_VERSION``) and Postgres
-(``world_model_backends.postgres.MIGRATIONS`` + ``_PG_SCHEMA_VERSION``) — the way
+``schema_migrations.py`` lints the ladder for online/offline safety. This
+module governs the *integrity and evolution* of the SQLite ladder
+(``world_model.MIGRATIONS`` + ``SCHEMA_VERSION``) — the way
 Alembic governs a revision graph:
 
 * **Immutability of released migrations.** Each version's statements are
@@ -13,12 +12,8 @@ Alembic governs a revision graph:
   changes — editing a shipped migration silently diverges every DB that already
   applied the old text. Appending a NEW version is fine; it shows up as a
   reviewable lock diff (regenerate with ``--regen``).
-* **Cross-backend head parity.** Both ladders must reach the same head and that
-  head must equal each backend's declared ``SCHEMA_VERSION`` constant, so the
-  two backends can never silently diverge in schema level.
-* **Subset coherence.** The Postgres ladder folds the early SQLite versions into
-  its consolidated base (v1), so every Postgres version must also exist in the
-  SQLite ladder; a Postgres version with no SQLite counterpart is a drift bug.
+* **Head parity.** The ladder head must equal the declared
+  ``SCHEMA_VERSION`` constant.
 * **Additive-only for new versions.** A version added since the lock may not
   carry a destructive statement (``DROP TABLE``/``DROP COLUMN``/``RENAME``):
   those break a rolling deploy where old replicas still read the old schema.
@@ -37,11 +32,8 @@ from pathlib import Path
 # Destructive shapes that must not appear in a NEW migration: they break a
 # rolling deploy (old replicas still expect the column/table) and are
 # non-additive. Grandfathered for already-released versions via the lock.
-# The base-schema seed. SQLite applies its base CREATE at db creation and starts
-# its MIGRATIONS dict at v2; Postgres carries the consolidated base as migration
-# v1. So v1 legitimately exists in the PG ladder with no SQLite MIGRATIONS entry
-# — exclude it from the cross-backend subset check (per-backend checksums still
-# pin it independently).
+# The base-schema seed. SQLite applies its base CREATE at db creation and
+# starts its MIGRATIONS dict at v2; the base carries version 1.
 _BASE_VERSION = 1
 
 _DESTRUCTIVE = (
@@ -88,19 +80,13 @@ def _sqlite_ladder() -> dict[int, list[str]]:
     return ladder
 
 
-def _postgres_ladder() -> dict[int, list[str]]:
-    from .world_model_backends.postgres import MIGRATIONS
-    return {int(v): list(stmts) for v, stmts in MIGRATIONS}
-
-
 def _declared_heads() -> dict[str, int]:
     from .world_model import SCHEMA_VERSION
-    from .world_model_backends.postgres import _PG_SCHEMA_VERSION
-    return {"sqlite": int(SCHEMA_VERSION), "postgres": int(_PG_SCHEMA_VERSION)}
+    return {"sqlite": int(SCHEMA_VERSION)}
 
 
 def ladders() -> dict[str, dict[int, list[str]]]:
-    return {"sqlite": _sqlite_ladder(), "postgres": _postgres_ladder()}
+    return {"sqlite": _sqlite_ladder()}
 
 
 def fingerprint(lads: dict[str, dict[int, list[str]]] | None = None) -> dict:
@@ -116,13 +102,11 @@ def fingerprint(lads: dict[str, dict[int, list[str]]] | None = None) -> dict:
 
 
 def structural_problems(lads: dict[str, dict[int, list[str]]] | None = None) -> list[str]:
-    """Backend-coherence checks that don't need the lock: head parity vs the
-    declared constants, cross-backend head equality, and PG ⊆ SQLite."""
+    """Coherence checks that don't need the lock: head parity vs the
+    declared constant."""
     lads = lads if lads is not None else ladders()
     problems: list[str] = []
     declared = _declared_heads()
-    sqlite_v = set(lads["sqlite"])
-    pg_v = set(lads["postgres"])
 
     for backend, steps in lads.items():
         if not steps:
@@ -133,17 +117,6 @@ def structural_problems(lads: dict[str, dict[int, list[str]]] | None = None) -> 
             problems.append(
                 f"{backend}: head migration v{head} != declared SCHEMA_VERSION "
                 f"{declared[backend]} (bump the constant with the migration)")
-
-    if lads["sqlite"] and lads["postgres"] and max(sqlite_v) != max(pg_v):
-        problems.append(
-            f"backend head mismatch: sqlite v{max(sqlite_v)} != postgres "
-            f"v{max(pg_v)} (the two backends have diverged in schema level)")
-
-    orphan_pg = sorted(pg_v - sqlite_v - {_BASE_VERSION})
-    if orphan_pg:
-        problems.append(
-            f"postgres versions with no sqlite counterpart: {orphan_pg} "
-            "(every PG migration needs a matching SQLite ladder entry)")
     return problems
 
 

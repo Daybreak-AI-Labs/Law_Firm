@@ -1,7 +1,7 @@
 """Speculative post-FINAL finalization in run_goal.
 
-The trajectory-donation write and conversation-turn write are run as
-background threads (via the speculative primitive) so they overlap with
+The conversation-turn write is run as a
+background thread (via the speculative primitive) so it overlaps with
 skill distillation, then joined before run_goal returns. This test proves
 the side effects still happen on the success path — both with the overlap
 on (default) and off (MAVERICK_SPECULATIVE_FINALIZE=0).

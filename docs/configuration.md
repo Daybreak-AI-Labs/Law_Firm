@@ -8,7 +8,7 @@ Maverick reads `~/.maverick/config.toml`. The installer wizard writes it; you ca
 [deployment]
 type = "desktop"       # desktop | docker | vps | phone
 # Break-glass only. Exactly one control plane may write a data root: flows and
-# the audit, budget-receipt, fleet-memory and learning ledgers are hash-chained
+# the audit, budget-receipt and learning ledgers are hash-chained
 # and assume a single author. Two writers do not tear a
 # record -- they interleave valid ones, so the result verifies clean and is
 # unreconstructable. Startup takes an exclusive lock on the data root and a
@@ -83,7 +83,7 @@ skills      = true   # inject distilled/installed skills into agent prompts
 world_model = true   # inject persisted facts (cross-run memory) into runs;
                      #   false = run without prior stored facts. The goal/event/
                      #   checkpoint store (world.db) still works regardless.
-streaming   = true   # stream live progress to the terminal during `maverick start`
+streaming   = true   # stream live progress to the terminal
                      #   (MAVERICK_NO_PROGRESS or non-TTY output still suppress it)
 pack_editing = true  # allow editing/overriding agents (domain packs) from the
                      #   dashboard editor at /agents; false = the editor is
@@ -100,8 +100,8 @@ triggers    = true   # allow binding a saved template to an inbound webhook;
                      #   false = the /api/v1/triggers editor + /webhook/run 404/403.
 
 [durable]
-# Crash-resume: checkpoint a goal's loop state each step so `maverick resume`
-# continues from where a crash left off instead of starting over. Off by
+# Crash-resume: checkpoint a goal's loop state each step so a crashed goal
+# continues from where it left off instead of starting over. Off by
 # default (a small write per step). keep_last bounds retained checkpoints.
 enabled   = false
 keep_last = 5
@@ -111,12 +111,8 @@ keep_last = 5
 # language bucket from each client's User-Agent (typescript/go/rust/c#/java/
 # python) into a local counts file — no request content, no identifiers,
 # nothing uploaded. Feeds the language-bindings decision gate.
-# The wizard asks for consent in its Analytics step (`maverick init`).
+# The installer wizard asks for consent in its Analytics step.
 mcp_client_language = false
-
-[channels.telegram]
-enabled   = false
-bot_token = "${TELEGRAM_BOT_TOKEN}"
 
 [dashboard]
 # Optional bearer token. Required for VPS deploys reachable from the open
@@ -141,7 +137,7 @@ token = "${MAVERICK_DASHBOARD_TOKEN}"
 [flows]
 # The visual flow-automation engine (a deterministic graph of agent/action/
 # branch/switch/foreach/while/parallel/approval/delay/wait_event/scope/subflow/
-# setvar nodes) + the dashboard designer and triggers. OFF by default.
+# setvar nodes) + triggers. OFF by default (the visual designer was removed).
 enable      = false      # or MAVERICK_FLOWS=1
 # Autonomous self-improvement of live flows. Both OFF by default and also
 # toggleable from the dashboard Learning page.
@@ -151,46 +147,14 @@ auto_apply  = false      # apply a proven improvement forward without a human
                          # (needs auto_evolve on for the revert safety net)
 
 [governed_records]
-# Shared CAS record authority used by assurance products. "auto" keeps
-# single-replica installs local and selects configured Postgres when required.
-# Postgres requires application encryption plus MAVERICK_ENCRYPTION_KEY and a
-# matching MAVERICK_ENCRYPTION_KEY_DIGEST="sha256:..." on every replica.
-backend = "auto"          # auto | local | postgres
+# CAS record authority for review-gated records. Local single-replica store.
+backend = "auto"          # auto | local
 
 [evidence_graph]
-# Review-gated evidence metadata and cryptographic bindings. Required by the
-# Model Risk & AI Assurance Officer.
+# Review-gated evidence metadata and cryptographic bindings over the signed
+# audit chain. Closed-schema boolean; a misspelled knob is flagged, not
+# silently defaulted.
 enable = false
-
-[model_risk_assurance]
-# Governed AI inventory, evidence, findings, incidents, decisions, deployment
-# lineage, and signed assurance packs. Both switches must be true for the
-# fail-closed DGM promotion gate.
-enable = false
-gate_promotions = false
-
-[evidence_gateway]
-# AI delivery disclosures, hash-only interaction receipts, cited regulatory
-# impacts, and signed assurance packets. Enabling through the installer also
-# enables the companion evidence graph and Model Risk Officer controls. Runtime
-# use also requires an explicit authenticated tenant/client binding.
-enable = false
-
-[model_improvement]
-# Specialist-model tasksets, qualification, training receipts, and optional
-# external-backend exports. Inert until enabled. Hosted execution is a second
-# opt-in. Cross-tenant training remains structurally refused in v1 even though
-# the reserved key is explicit.
-enable = false
-allow_hosted = false
-allow_cross_tenant = false
-require_signed_receipt = true
-minimum_train_families = 20
-minimum_holdout_families = 20
-# Signed receipts are mandatory whenever enable = true. With an active tenant,
-# global enable/allow_hosted are ceilings and the tenant must opt in separately.
-# Family floors combine by maximum. Mutation boundaries reject malformed or
-# unknown keys instead of silently falling back.
 
 [finance]
 # Regime policies combine strictest-wins. Existing `pci` configurations now
@@ -296,37 +260,26 @@ and DGM code self-modification retain separate controls. If an active config
 source is invalid, the learning defaults fail closed instead of enabling.
 
 ```toml
-[telemetry]                # trajectory donation -> the training corpus (default off)
-donate_trajectories = true # write scrubbed run records to ~/.maverick/outbox/
-donate_text = false        # ALSO keep raw draft/candidate text -- DPO needs it,
-                           #   but it's an egress decision (off => metadata only)
-donate_min_entropy = 0.5   # swarm-disagreement floor; a single-agent run has
-                           #   entropy 0, so set 0 to capture EVERY successful run
-donate_min_confidence = 0.75  # verifier-confidence floor to donate a run
-# Feeds `maverick.training.ingest` / `export_texts` -> PRM/DPO. Full recipe
-# (incl. best-of-N pair mining) in docs/self-learning-runbook.md.
-
 [dreaming]                 # offline experience consolidation (default on)
 enable = true
 # min_cluster / insight_ttl_days / retire_skills / rehearse / prune_facts /
 # snapshots / promote_shared -- see FEATURES.md "Dreaming".
 user_notes = false         # separate privacy opt-in: verbatim cross-chat preferences
-trusted_insight_pubkeys = []   # peers for `maverick insights-import`
 
 [data_engine]              # Cognitive Data Engine flywheel (default on)
 enable = true              # causal failure triage -> guardrails -> habits
-# Reads the trajectory store; mutates nothing until enabled. `maverick flywheel`.
+# Reads the trajectory store; mutates nothing until enabled.
 
 [operations_scientist]     # discover + prove a better process (default on)
 enable = true              # propose a swap, validate it in the world-model first
 
 [consequence]              # reality is the reward (default on)
 enable = true              # a recorded outcome overrides the verifier proxy
-# Feed outcomes via `maverick record-outcome` or POST /api/v1/outcomes.
+# Feed outcomes via POST /api/v1/outcomes.
 
 [emergent_protocol]        # auditable coordination shorthand (default off)
 enable = true              # learn short codes for repeated boilerplate; every
-                           # code decodes EXACTLY back to English. `maverick codebook`.
+                           # code decodes EXACTLY back to English.
 
 [emergent_codec]           # token-aware codec, live measurement (default off)
 enable = true              # measure (never apply) the codec's token savings on
@@ -338,13 +291,11 @@ enable = true
 [self_harness]             # conservative harness learning (default on)
 enable = true              # mine failures -> propose -> regression-validate ->
                            #   gate. Promotion ALSO needs [self_improvement]
-                           #   enable. Operator commands: `maverick self-harness
-                           #   show` (what was learned), `preview` (dry-run of
-                           #   what it would propose), `log` (audit trail), and
-                           #   `forget` (roll a learned line back).
+                           #   enable. What was learned, proposed, and rolled
+                           #   back is recorded in the signed learning audit.
 # A clean install uses the conservative unattended profile below. Existing
 # partial [self_harness] tables retain their explicitly configured lifecycle
-# settings during upgrade. Details: docs/proposals/self-harness.md.
+# settings during upgrade.
 risk_limited = true              # require >=8 held-out
 #                                cases, 2% effect floor, two-arm 95% confidence
 #                                floor, sealed best-of-3, 3 judge votes, recent
@@ -357,8 +308,8 @@ risk_limited = true              # require >=8 held-out
 #                                either `enable` flag on.
 #   holdout_ledger = "/protected/self-harness-holdout.db"
 #                                durable cross-cycle query/alpha accounting;
-#                                provision with `maverick self-harness holdout
-#                                provision --path <path>` before risk-limited use
+#                                must be explicitly provisioned before
+#                                risk-limited use
 #   eval_corpus = "/path.json"   {model|domain: [{goal, expected}]} — enables
 #                                the auto-built live A/B on scheduled runs
 #   eval_budget_dollars = 5.0    spend cap per auto-evaluated cycle (fail-closed)
@@ -374,9 +325,7 @@ auto_run = true                  # run the fleet cycle as part of `maverick drea
 #   mine_bucket_by = ["domain"]  scope mining/recall per domain / role / tool
 #   store = "world"              learning stores AND the eval-corpus family in the
 #                                shared world database so a multi-host fleet learns
-#                                as one (default "files"; import a host's files with
-#                                `maverick self-harness migrate-store`; hand-edit via
-#                                `corpus export` / `corpus import`)
+#                                as one (default "files")
 
 [self_learning]            # governed local learning (default on)
 enable = true
@@ -393,7 +342,7 @@ provision_packs = true     # equip a freshly-approved pack with the skills + too
                            #   Read-only analysis is always safe; applying it is
                            #   gated on the same human approval `save_profile`
                            #   requires and never widens the clamped envelope.
-                           #   Wired into `maverick onboard`. See FEATURES.md.
+                           #   See FEATURES.md.
 
 [ekko]                     # client-controlled work discovery (default OFF)
 enable = false             # independent of self-learning and DGM
@@ -409,7 +358,6 @@ blocked_apps = ["email", "outlook", "gmail", "chat", "teams", "slack",
 provider_egress = false    # reserved/unsupported; true fails closed
 # Enabling policy does not enroll a device, start a service, request OS
 # monitoring permissions, save a generated flow, or activate automation.
-# See ekko-work-discovery.md and `maverick ekko --help`.
 
 [self_improvement]         # promotion ladder for learned guidance (default on)
 enable = true
@@ -419,7 +367,7 @@ factory_learning = true    # close the loop onto generation quality: attribute
                            #   `prompt` rung, and fold into future pack generation.
                            #   Default on once self-improvement is enabled; the
                            #   wizard sets it. Force-enable via MAVERICK_FACTORY_LEARNING.
-                           #   `maverick factory-learn [--dry-run]`. See FEATURES.md.
+                           #   See FEATURES.md.
 evaluator_evolution = true  # promote a BETTER judge instead of only freezing when
                            #   the evaluator drifts: a challenger evaluator replaces
                            #   the incumbent only when its agreement with a fixed,
@@ -460,9 +408,6 @@ data_grounding = true      # auto-grant each analyst pack its suite's primary-
                            #   deferred (no context cost), inert without each
                            #   source's API key. Set false to withhold them.
                            #   Env: MAVERICK_WORKFORCE_DATA_GROUNDING.
-
-[fleet_memory]             # external agents read/write governed memory
-enable = false             # explicit trust decision; roster-gated
 
 [suites]                   # disable whole suites (all on by default)
 # healthcare = false
@@ -509,7 +454,7 @@ The installer keeps these separated automatically.
 ## Overriding the config path
 
 ```bash
-MAVERICK_CONFIG=/etc/maverick/config.toml maverick start "..."
+MAVERICK_CONFIG=/etc/maverick/config.toml maverick dashboard
 ```
 
 Useful for VPS deployments where you want the config under `/etc/`.

@@ -145,26 +145,6 @@ def test_sse_streams_error_as_event(monkeypatch):
     assert "-32601" in body
 
 
-def test_dispatch_binds_caller_identity_for_fleet_ops(monkeypatch):
-    # The authenticated caller identity must reach fleet_memory's ContextVar so
-    # a fleet tool cannot act AS another rostered agent. Capture what the handler
-    # sees mid-dispatch.
-    from maverick import fleet_memory
-
-    seen = {}
-
-    def _capture(params, *, task_owner=None):
-        seen["caller"] = fleet_memory._caller.get()
-        return {"ok": True}
-
-    server = MCPServer()
-    monkeypatch.setattr(server, "handle_tools_call", _capture)
-    ht._dispatch(server, "tools/call", {}, caller_identity="vega")
-    assert seen["caller"] == "vega"
-    # ...and the binding is unwound after dispatch (no cross-request leak).
-    assert fleet_memory._caller.get() is None
-
-
 def test_heartbeat_seconds_env(monkeypatch):
     monkeypatch.setenv("MAVERICK_MCP_SSE_HEARTBEAT", "0.5")
     assert ht._heartbeat_seconds() == 0.5

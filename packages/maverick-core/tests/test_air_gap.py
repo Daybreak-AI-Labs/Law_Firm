@@ -1,9 +1,7 @@
 """Air-gapped preflight audit: flag remote providers / egress / sandbox network."""
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick.air_gap import audit
-from maverick.cli import main
 from maverick.llm import ROLE_MODELS
 from maverick.provider_local_first import is_local
 
@@ -152,17 +150,5 @@ def test_flags_outbound_webhook_telemetry_sink():
     assert any("webhooks" in v.lower() for v in rep["violations"])
 
 
-def test_cli_airgap_check_fails_when_dirty(monkeypatch):
-    monkeypatch.setattr("maverick.air_gap.audit",
-                        lambda: {"clean": False, "violations": ["remote model(s) in use: x"]})
-    res = CliRunner().invoke(main, ["airgap", "check"])
-    assert res.exit_code == 1
-    assert "NOT air-gapped" in res.output
 
 
-def test_cli_airgap_check_passes_when_clean(monkeypatch):
-    monkeypatch.setattr("maverick.air_gap.audit",
-                        lambda: {"clean": True, "violations": []})
-    res = CliRunner().invoke(main, ["airgap", "check"])
-    assert res.exit_code == 0
-    assert "AIR-GAPPED" in res.output

@@ -473,14 +473,10 @@ def _check_channels(cfg: dict) -> None:
 
 
 def _check_world_db() -> None:
-    # Open the SAME configured backend as the runtime.  Inspecting a local
-    # workspace path here used to report a healthy SQLite mirror even when the
-    # deployment's authoritative world was Postgres.
     from .workspace import Workspace
     from .world_model import close_world_if_owned, open_world
-    from .world_model_backends import is_postgres_configured
 
-    label = "Postgres" if is_postgres_configured() else str(Workspace.current().db_path)
+    label = str(Workspace.current().db_path)
     try:
         w = open_world()
         try:
@@ -558,28 +554,6 @@ def _check_profile() -> None:
                  "regulated, data-boundary posture")
 
 
-def _check_data_residency(cfg: dict) -> None:
-    """When the deployment DECLARES a data-residency requirement
-    (``[residency] region`` / ``MAVERICK_RESIDENCY_REGION``), warn about any
-    residency-sensitive feature still defaulting to a US region — silently
-    routing a sovereign client's data through us-east-1/us-central1 is a real
-    compliance hit. No declared requirement -> no-op (no noise)."""
-    region = (os.environ.get("MAVERICK_RESIDENCY_REGION")
-              or str((cfg.get("residency") or {}).get("region") or "")).strip()
-    if not region:
-        return
-    if not os.environ.get("AWS_REGION") and not (cfg.get("s3") or {}).get("region"):
-        _row(YELLOW, "residency",
-             f"residency={region!r} but AWS_REGION is unset — S3 attachments "
-             "default to us-east-1",
-             fix="set AWS_REGION to an in-region value")
-    if not os.environ.get("VERTEX_LOCATION") and not (cfg.get("vertex") or {}).get("location"):
-        _row(YELLOW, "residency",
-             f"residency={region!r} but VERTEX_LOCATION is unset — Vertex "
-             "defaults to us-central1",
-             fix="set VERTEX_LOCATION to an in-region value (if Vertex is used)")
-
-
 def _check_config_perms() -> None:
     """Config may hold tokens/secrets — warn if it's group/world-accessible."""
     try:
@@ -620,47 +594,6 @@ def _check_client_binding() -> None:
         _row(YELLOW, "client",
              "no client binding (shared root) — single-tenant/legacy mode",
              fix="for an enterprise deployment set [client] id + enforce = true")
-
-
-def _check_agent_trust() -> None:
-    """Surface the Agent Trust Plane state — especially the silent footgun
-    where the plane is ENGAGED (e.g. via enterprise mode) but the registry is
-    empty, so every external agent is denied with no other signal."""
-    try:
-        from .agent_trust import status as trust_status
-        st = trust_status()
-    except Exception as e:  # pragma: no cover - never break doctor
-        _row(YELLOW, "agent-trust", f"status unavailable: {e}")
-        return
-    if not st.get("enforced"):
-        _row(GREEN, "agent-trust", "disengaged (external agents ungoverned — default)")
-        return
-    count = int(st.get("count") or 0)
-    if count == 0:
-        _row(RED, "agent-trust",
-             "ENGAGED but the [agent_trust] registry is EMPTY — every external "
-             "agent (federation/A2A/fleet) is denied",
-             fix="add [agent_trust] agents = [...] entries, or unset enforce")
-        return
-    inactive = sum(1 for a in st.get("agents", []) if not a.get("active", True))
-    detail = f"engaged — {count} agent(s) registered"
-    if inactive:
-        _row(YELLOW, "agent-trust", detail + f"; {inactive} expired/revoked",
-             fix="rotate or remove expired/revoked entries")
-    else:
-        _row(GREEN, "agent-trust", detail)
-    # Proactive expiry horizon: warn BEFORE a credential lapses (federation/mTLS
-    # then starts failing with no prior signal), not just after.
-    import time as _time
-    now = _time.time()
-    soon = [a for a in st.get("agents", [])
-            if a.get("active", True) and isinstance(a.get("expires_at"), (int, float))
-            and 0 < (a["expires_at"] - now) <= _EXPIRY_HORIZON_S]
-    for a in sorted(soon, key=lambda a: a["expires_at"]):
-        days = (a["expires_at"] - now) / 86400.0
-        _row(YELLOW, "agent-trust",
-             f"agent {a['id']!r} expires in {days:.1f} day(s)",
-             fix="rotate the credential before it lapses (maverick trust ...)")
 
 
 def _check_governed_execution() -> None:
@@ -720,59 +653,6 @@ def _check_governed_execution() -> None:
         _row(GREEN, "self-refinement", detail)
 
 
-def _check_external_agents() -> None:
-    """Surface the bring-your-own-agent gateway state: an enabled plane with
-    zero enrollments, contained agents nobody released, and over-budget
-    cutoffs — each otherwise visible only when a foreign agent starts
-    getting refused."""
-    try:
-        from .external_agents import roster
-        from .external_agents import status as xa_status
-        st = xa_status()
-    except Exception as e:  # pragma: no cover - never break doctor
-        _row(YELLOW, "external-agents", f"status unavailable: {e}")
-        return
-    if not st.get("enabled"):
-        _row(GREEN, "external-agents", "disabled (default)")
-        return
-    enrolled = int(st.get("enrolled") or 0)
-    if enrolled == 0:
-        _row(RED, "external-agents",
-             "ENABLED but no agents are enrolled — the gateway answers 401 "
-             "to everyone",
-             fix="enroll an agent on /external-agents, or unset "
-                 "[external_agents] enable")
-        return
-    contained = int(st.get("contained") or 0)
-    over_budget = int(st.get("over_budget") or 0)
-    detail = f"enabled — {enrolled} agent(s) enrolled"
-    if contained or over_budget:
-        _row(YELLOW, "external-agents",
-             detail + f"; {contained} contained, {over_budget} over budget",
-             fix="review and release/reset from /external-agents")
-    else:
-        _row(GREEN, "external-agents", detail)
-    # Same proactive expiry horizon as the trust plane: these are minted
-    # credentials that lapse silently.
-    import time as _time
-    now = _time.time()
-    try:
-        rows = roster()
-    except Exception:  # pragma: no cover - never break doctor
-        return
-    from .agent_trust import lookup
-    for r in rows:
-        agent = lookup(r["id"])
-        exp = agent.expires_at if agent else None
-        if (r.get("active") and isinstance(exp, (int, float))
-                and 0 < (exp - now) <= _EXPIRY_HORIZON_S):
-            _row(YELLOW, "external-agents",
-                 f"agent {r['id']!r} enrollment expires in "
-                 f"{(exp - now) / 86400.0:.1f} day(s)",
-                 fix="re-enroll before it lapses (/external-agents)")
-
-
-_EXPIRY_HORIZON_S = 14 * 86400  # warn when a credential expires within 14 days
 _TLS_CERT_HORIZON_S = 30 * 86400  # warn when a TLS cert expires within 30 days
 
 
@@ -861,7 +741,6 @@ def diagnose() -> int:
     _check_config_lint(cfg)
     _check_config_perms()
     _check_profile()
-    _check_data_residency(cfg)
     _check_client_binding()
     _check_proxy_auth()
     _check_anthropic()
@@ -870,8 +749,6 @@ def diagnose() -> int:
     _check_channels(cfg)
     _check_world_db()
     _check_shield()
-    _check_agent_trust()
-    _check_external_agents()
     _check_governed_execution()
     _check_tls_cert_expiry()
     click.echo("")

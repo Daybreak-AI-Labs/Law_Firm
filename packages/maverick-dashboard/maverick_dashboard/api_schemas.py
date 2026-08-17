@@ -293,16 +293,6 @@ class LearningToggleIn(BaseModel):
     enabled: bool
 
 
-class DgmToggleIn(BaseModel):
-    """Request the separate, default-off DGM research harness.
-
-    Enabling requires an explicit acknowledgement because this permits code
-    proposal/evaluation. It still never authorizes live adoption.
-    """
-    enabled: bool
-    acknowledge_research_only: bool = False
-
-
 class FlowAutonomyIn(BaseModel):
     """Toggle the autonomous flow self-improvement loop ([flows] auto_evolve /
     auto_apply). Its own opt-in, distinct from the blanket learning button. Only
@@ -387,59 +377,6 @@ class OAuthExchangeIn(BaseModel):
     client_id: str | None = Field(default=None, max_length=512)
 
 
-class TrustAgentIn(BaseModel):
-    """Register (or replace) an external agent in the Agent Trust Plane's
-    dashboard-managed registry overlay (agent_trust.json) -- so an admin can
-    govern federation / A2A / MCP peers from the app without editing the
-    operator's config file. A managed entry with the same id overrides the
-    config-file one."""
-    id: str = Field(..., min_length=1, max_length=64)
-    pubkey: str = Field(default="", max_length=64)
-    direction: str = Field(default="both", pattern="^(inbound|outbound|both)$")
-    allow_tools: list[str] = Field(default_factory=list)
-    deny_tools: list[str] = Field(default_factory=list)
-    max_risk: str | None = Field(default=None, pattern="^(low|medium|high)$")
-    max_dollars: float | None = Field(default=None, ge=0)
-    max_wall_seconds: float | None = Field(default=None, ge=0)
-    data_scopes: list[str] = Field(default_factory=list)
-
-
-class TrustRevokeIn(BaseModel):
-    """Revoke (or restore) a managed external agent without deleting it."""
-    revoked: bool = True
-
-
-class ExternalAgentIn(BaseModel):
-    """Enroll (or re-enroll) a bring-your-own agent: one call writes the trust
-    entry (inbound, with ceilings + expiry), the fleet-memory roster, and the
-    platform/ownership metadata the /external-agents console shows."""
-    id: str = Field(..., min_length=1, max_length=64)
-    platform: str = Field(..., min_length=1, max_length=32)
-    description: str = Field(default="", max_length=500)
-    owner: str = Field(default="", max_length=200)
-    department: str = Field(default="", max_length=100)
-    allow_tools: list[str] = Field(default_factory=list, max_length=128)
-    deny_tools: list[str] = Field(default_factory=list, max_length=128)
-    max_risk: str | None = Field(default=None, pattern="^(low|medium|high)$")
-    max_dollars: float | None = Field(default=None, ge=0)
-    max_wall_seconds: float | None = Field(default=None, ge=0)
-    data_scopes: list[str] = Field(default_factory=list, max_length=64)
-    expires_days: float | None = Field(default=None, gt=0, le=3650)
-    # "monthly" resets the spend meter each calendar month (UTC); "total"
-    # is a lifetime cap. allow_tools entries may carry the operator's risk
-    # rating as "name:risk", which floors whatever the agent declares.
-    budget_period: str = Field(default="monthly", pattern="^(monthly|total)$")
-
-
-class ExternalCredentialIn(BaseModel):
-    """Mint (or rotate) one per-surface bearer for an enrolled external agent.
-    The response carries the token exactly once; it is never readable again.
-    ``approval_id`` replays a step-up mint approval when ``[external_agents]
-    mint_approval`` gates the mint (one approval mints exactly one token)."""
-    surface: str = Field(default="rest", pattern="^(rest|grpc|mcp)$")
-    approval_id: int | None = None
-
-
 class ConnectionIn(BaseModel):
     """Create/replace a named SaaS connection: the connector it credentials, its
     base URL, and an API token (sealed at rest, never returned). ``name`` lets
@@ -501,24 +438,6 @@ class FlowResumeIn(BaseModel):
     # reject it explicitly.  Never turn a missing request field into consent.
     decision: str = Field(default="", max_length=40)
     inputs: dict = Field(default_factory=dict)
-
-
-class FlowDraftIn(BaseModel):
-    """Draft a flow from a plain-English description (the designer's ✨ button)."""
-    description: str = Field(..., min_length=1, max_length=4000)
-    flow_id: str = Field(default="", max_length=120)
-
-
-class FlowChatIn(BaseModel):
-    """One copilot turn in the designer's chat panel: the user's message, the
-    CURRENT canvas graph (not necessarily saved), the recent transcript, and
-    optionally a run id to ground diagnose/repair questions in a real trace.
-    The reply may carry a patched flow -- the canvas applies it; nothing is
-    saved server-side until the user saves."""
-    message: str = Field(..., min_length=1, max_length=4000)
-    flow: dict = Field(default_factory=dict)
-    history: list[dict] = Field(default_factory=list, max_length=24)
-    run_id: str = Field(default="", max_length=64)
 
 
 class FlowApplyIn(BaseModel):
@@ -1317,20 +1236,6 @@ class EnvironmentExecuteIn(BaseModel):
     expected_revision: int = Field(..., ge=1)
 
 
-class SecuritySuiteConfigIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    security_ops: bool
-    threat_hunt: bool
-    env_hunt: bool
-    response_execution: bool = False
-    expected_revision: int = Field(..., ge=1)
-
-    @model_validator(mode="after")
-    def response_requires_environment_hunter(self):
-        if self.response_execution and not self.env_hunt:
-            raise ValueError("response execution requires env_hunt")
-        return self
 class ModelCostTierIn(BaseModel):
     model: str = Field(..., min_length=1, max_length=200)
     band: str | None = Field(None, pattern="^(low|medium|high|very_high)$")

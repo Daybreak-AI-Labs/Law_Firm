@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click.testing import CliRunner
-from maverick.cli import main
 from maverick.skills import validate_skill_file
 
 _VALID = """---
@@ -109,26 +107,9 @@ def test_missing_file(tmp_path):
 
 # ---- CLI ----
 
-def test_cli_validate_ok(tmp_path):
-    p = _write(tmp_path, _VALID)
-    res = CliRunner().invoke(main, ["skill", "validate", str(p)])
-    assert res.exit_code == 0 and "valid for publishing" in res.output
 
 
-def test_cli_validate_blank_name_reports_invalid(tmp_path):
-    p = _write(tmp_path, _VALID.replace("name: summarize-url", "name:"))
-    res = CliRunner().invoke(main, ["skill", "validate", str(p)])
-    assert res.exit_code == 1 and "INVALID" in res.output and "Traceback" not in res.output
 
 
-def test_cli_validate_invalid_utf8_reports_invalid(tmp_path):
-    p = tmp_path / "skill.md"
-    p.write_bytes(b"---\nname: invalid-utf8\ntriggers:\n  - do x\n---\n\xff")
-    res = CliRunner().invoke(main, ["skill", "validate", str(p)])
-    assert res.exit_code == 1 and "cannot read" in res.output and "Traceback" not in res.output
 
 
-def test_cli_validate_invalid_exits_nonzero(tmp_path):
-    p = _write(tmp_path, "no frontmatter")
-    res = CliRunner().invoke(main, ["skill", "validate", str(p)])
-    assert res.exit_code == 1 and "INVALID" in res.output

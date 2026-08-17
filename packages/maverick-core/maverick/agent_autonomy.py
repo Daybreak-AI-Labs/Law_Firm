@@ -11,8 +11,6 @@ top of primitives the platform already has:
     (the EU AI Act Art. 14 human-oversight gate);
   * :mod:`maverick.approval_delegation` -- route an approval to *one* delegate
     (so not everyone is in the loop -- one person signs off);
-  * :mod:`maverick.predictive_approvals` -- "you approved this 20/20 times --
-    make it auto?" (the trust signal that justifies graduating an agent);
   * :mod:`maverick.review_checkpoint` + consent modes -- the human heartbeat.
 
 Four rungs, lowest to highest authority:
@@ -22,8 +20,7 @@ Four rungs, lowest to highest authority:
                   the platform's historical default (draft, a human commits).
   ``REQUEST``  -- executes the action itself, but only after a human approves
                   *this* action; once approved it proceeds (and a clean record
-                  can graduate the action class to ``AUTO`` via predictive
-                  approvals).
+                  can earn graduation toward ``AUTO``).
   ``AUTO``     -- executes autonomously, within capability, budget, and the
                   pack's hard refusals.
 
@@ -409,21 +406,56 @@ def decide(
 # -- graduation (onboarding -> trusted) ------------------------------------
 #
 # A hire starts supervised (onboarding, clamped one rung down). It graduates the
-# way a person does: a clean record. This reads the same approvals history
-# predictive_approvals learns from -- the human decisions on THIS agent's gated
-# actions -- and reports whether the agent has earned graduation. Advisory by
-# default (the client lifts onboarding in [workforce.agents], matching the
-# suggestion-only contract of predictive_approvals). The parsed
+# way a person does: a clean record. This reads the approvals history -- the
+# human decisions on THIS agent's gated actions -- and reports whether the
+# agent has earned graduation. Advisory by
+# default (the client lifts onboarding in [workforce.agents]). The parsed
 # ``[workforce] auto_graduate`` intent remains advisory until graduation is
 # backed by tenant/owner-scoped durable evidence plus explicit approval and
 # revocation semantics; the runtime does not lift authority from it today.
 
 # Earn graduation only after this many decided actions, at/above this approval
-# share -- mirrors predictive_approvals' _MIN_SAMPLE / _DOMINANCE philosophy but
-# tuned a touch stricter (graduating an employee is a bigger step than auto-ing
-# one action class).
+# share -- graduating an employee is a bigger step than auto-ing one action
+# class, so the bar is deliberately strict.
 _GRAD_MIN_SAMPLE = 8
 _GRAD_DOMINANCE = 0.9
+
+
+def _decided(record: dict) -> bool | None:
+    """Map one history record to True (approved) / False (denied) / None (skip).
+
+    Accepts the shapes the kernel writes: a ``decision`` of approve/deny/grant,
+    a ``status`` of approved/denied, or a boolean ``granted``/``approved``.
+    Pending / unknown records return ``None`` and don't count toward the sample.
+    """
+    for key in ("granted", "approved"):
+        if key in record and isinstance(record[key], bool):
+            return record[key]
+    text = str(record.get("decision") or record.get("status") or "").strip().lower()
+    if text in ("approve", "approved", "grant", "granted", "allow", "yes"):
+        return True
+    if text in ("deny", "denied", "reject", "rejected", "block", "no"):
+        return False
+    return None
+
+
+def _confidence(approvals: int, denials: int) -> float:
+    """A 0..1 confidence that the dominant side is the *real* default.
+
+    Wilson-style: the lower bound of the dominant proportion's 95% interval,
+    which rises with both sample size and one-sidedness (10/10 beats 6/6 beats
+    3/3). Symmetric for approve- and deny-dominant records.
+    """
+    import math
+    n = approvals + denials
+    if n <= 0:
+        return 0.0
+    p = max(approvals, denials) / n
+    z = 1.959963984540054
+    denom = 1.0 + (z * z) / n
+    centre = p + (z * z) / (2.0 * n)
+    margin = z * math.sqrt((p * (1.0 - p) + (z * z) / (4.0 * n)) / n)
+    return round(max(0.0, (centre - margin) / denom), 4)
 
 
 @dataclass(frozen=True)
@@ -472,20 +504,19 @@ def graduation_status(
     ``min_sample`` decided actions and the approval share is at/above
     ``dominance``. Never raises.
     """
-    from . import predictive_approvals as _pa
     rows = _coerce_approvals(history)
     approvals = denials = 0
     for rec in rows:
         if not isinstance(rec, dict) or _principal_name(_agent_of(rec)) != name:
             continue
-        d = _pa._decided(rec)
+        d = _decided(rec)
         if d is True:
             approvals += 1
         elif d is False:
             denials += 1
     sample = approvals + denials
     rate = round(approvals / sample, 4) if sample else 0.0
-    conf = _pa._confidence(approvals, denials)
+    conf = _confidence(approvals, denials)
     if sample < min_sample:
         return GraduationVerdict(
             name, False, sample, rate, conf,

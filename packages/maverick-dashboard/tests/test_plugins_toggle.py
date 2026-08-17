@@ -22,22 +22,6 @@ def _prep(monkeypatch, tmp_path):
     dash_app._world_cache.clear()
 
 
-def test_plugins_page_has_toggle(monkeypatch, tmp_path):
-    _prep(monkeypatch, tmp_path)
-    # No third-party plugins are installed in the test env, so inject one so the
-    # per-row toggle UI renders.
-    import maverick.plugins as plugins
-
-    class _EP:
-        name = "weather"
-        value = "weather_plugin:tool"
-
-    monkeypatch.setattr(plugins, "_entry_points",
-                        lambda group: [_EP()] if group == "maverick.tools" else [])
-    r = _client().get("/plugins")
-    assert r.status_code == 200
-    assert 'action="/plugins/toggle"' in r.text
-    assert "weather" in r.text
 
 
 def test_enable_disable_reset_plugin(monkeypatch, tmp_path):

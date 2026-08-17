@@ -1,6 +1,6 @@
 """Verifier fail-open integrity (#612): a budget-starved orchestrator must not
-report high verifier confidence for an answer it never verified, or donation
-keys off it and ships an "unverified high-confidence" trajectory.
+report high verifier confidence for an answer it never verified, or learning
+keys off it and records an "unverified high-confidence" trajectory.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ async def test_orchestrator_unverified_on_budget_reports_zero(
     assert "the answer" in (result.final or "")
     # Verifier was attempted but hit budget -> NOT high confidence.
     assert result.verifier_confidence == 0.0
-    assert result.verifier_confidence < 0.75  # below the donation reward gate
+    assert result.verifier_confidence < 0.75  # below the reward gate
 
 
 @pytest.mark.asyncio
@@ -48,7 +48,7 @@ async def test_non_verifying_role_keeps_default_confidence(
     ctx, fake_llm, make_llm_response,
 ):
     # A non-orchestrator never verifies; the 1.0 default is unchanged (it isn't
-    # donated as the run's verdict, so this is correct).
+    # recorded as the run's verdict, so this is correct).
     fake_llm.scripted = [make_llm_response(text="FINAL: child result")]
     worker = Agent(ctx=ctx, role="researcher", brief="sub", depth=0)
     result = await worker.run()

@@ -51,7 +51,7 @@ The agent kernel. Ported from `cdayAI/research/maverick/` and evolved here.
 | `mcp_client.py` | Spawns external MCP servers as subprocesses, drains their stderr, registers their tools. |
 | `runner.py` | `run_goal_in_thread(...)` — process-wide BoundedSemaphore-capped background runner shared by the dashboard, REST API, and MCP server. |
 | `health.py` | `maverick doctor` — every red/yellow row carries an actionable `fix=...` remediation. |
-| `cli.py` | `maverick start / status / answer / resume / fact / facts / skills / chat / dashboard / mcp / budget / template / doctor / version / config / logs`. |
+| `cli.py` | The operational surface: `maverick dashboard / mcp / worker / doctor / migrate / config-lint / audit / erase / erase-verify / export-user / halt / unhalt / knowledge / domains-lint / dream / tax / version`. Goals are created and run from the dashboard, not the CLI. |
 | `sandbox/` | Execution backends: `local.py` (subprocess), `docker.py` (`--network=none` default), gVisor (`runsc` runtime), `podman.py`, `devcontainer.py`, `kubernetes.py`, `firecracker.py`, `ssh.py` (uses user's `ssh` binary + keys), `modal_backend.py` — nine selectable. |
 | `tools/` | `read_file`, `write_file`, `list_dir`, `shell`, `ask_user`, `spawn_subagent`, `spawn_swarm`. |
 
@@ -76,17 +76,6 @@ FastAPI local web UI + REST API.
 ### `packages/maverick-mcp/`
 
 The platform exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over both **stdio** and a **streamable HTTP** transport (`http_transport.py`), negotiating the current protocol version `2025-11-25` with a `2024-11-05` fallback. Core tools (`start_goal`, `goal_status`, `goal_events`, `list_goals`, `answer_question`, `set_fact`, `get_facts`, `list_skills`) plus spec features: async pollable **Tasks** and **elicitation**. The HTTP transport is bearer-gated with a DNS-rebinding (Host/Origin) defense for the loopback case; server-initiated `sampling` is the remaining unimplemented capability. Protocol errors return JSON-RPC `error` payloads (e.g. `-32602`). Run via `maverick mcp`.
-
-### `packages/maverick-channels/`
-
-One adapter per messaging surface, all normalizing to the same `IncomingMessage` shape:
-
-- `cli` (stdin/stdout — default)
-- `telegram`, `discord`, `slack`, `matrix`, `signal`, `email`
-- `whatsapp`, `sms` (both via Twilio with **X-Twilio-Signature** verification)
-- `imessage` (macOS; sends via parameterized AppleScript to defeat injection)
-
-This is how phone-companion mode works: the swarm lives on Desktop or VPS, the user talks to it from their phone via Telegram/iMessage/etc.
 
 ### `packages/maverick-installer/` (`apps/installer-cli/` from spec)
 
@@ -118,7 +107,6 @@ off). See `docs/FEATURES.md` for depth.
 |---|---|---|
 | **Governed Actions** | `governed_actions.py`, `governed_connectors.py`, `governed_rest.py`, `governed_tools.py` | A consequential operation is a typed `ActionSpec`: **simulated** before commit, **gated** on risk/approval (`[actions] require_approval_at`), and **lineage-tracked** (tamper-evident hash chain). `governed_rest` adapts the LIVE enterprise REST connectors into this surface; `governed_tools` wraps them in the **live tool path** when `[governed_connectors] enable` — a connector write is previewed and approval-gated against a standing operator approver (the agent can't self-approve), instead of a bare confirm-gated call. |
 | **Closed learning loop** | `dreaming.py`, `hindsight.py`, `reflexion.py`, `self_learning.py`, `skills.py` | Offline consolidation (dream), regression detection (hindsight), snapshot + rollback with a per-cycle signed audit row. |
-| **Training flywheel** | `training/ingest.py`, `training/rlaif.py`, `training/reward_model.py` | Verifier rewards → DPO preference pairs (`rlaif`, GPU/torch for the policy update) and a CPU-trainable Bradley-Terry **reward model** (`reward_model`) that learns real weights over structural trajectory features to rank attempts — and, via `rlaif --reward-model`, cross-checks the verifier's preference labels, downweighting DPO pairs the two signals don't corroborate (label-noise mitigation). |
 | **Multi-tenancy** | `tenant/registry.py`, `tenant/kms.py`, `paths.py`, `world_model_backends/` | Per-tenant data isolation (`~/.maverick/tenants/<t>/`), per-tenant envelope encryption (DEK wrapped by a KEK), Postgres RLS. |
 | **Secrets at rest** | `tenant/kms.py`, `oauth_vault.py` | The OAuth vault seals captured access/refresh tokens under the tenant DEK (no plaintext token files, no cross-tenant readability). |
 | **Knowledge / RAG** | `maverick-knowledge/` | Per-domain vector retrieval; embedded `SqliteVectorStore` by default, `PgVectorStore` (pgvector `<=>` cosine + IVFFlat) as the scale-out backend. |
@@ -131,7 +119,7 @@ What lets the platform work a matter over hours or days rather than one prompt:
 
 1. **Persistent typed world model.** Goals, facts, episodes, and questions survive restarts. The agent can pause overnight and resume.
 2. **Recursive spawning with depth + budget caps.** Sub-agents can spawn sub-sub-agents until depth or budget runs out, never longer. Both `spawn_subagent` (blocking) and `spawn_swarm` (parallel) tools.
-3. **Closed learning loop.** Beyond per-run skill distillation, the platform runs a full learning lifecycle: `maverick dream` consolidates experience offline (replay → consolidate → rehearse → forget → prune), reflexions and insights are department-scoped, learned state is snapshotted with rollback and a per-cycle audit row, and `maverick hindsight` detects learning regressions by replaying past goals against prior snapshots. External agents can join the same memory plane via fleet memory (MCP). See `docs/FEATURES.md` → *Dreaming*, *Hindsight engine*, *Fleet memory*.
+3. **Closed learning loop.** Beyond per-run skill distillation, the platform runs a full learning lifecycle: `maverick dream` consolidates experience offline (replay → consolidate → rehearse → forget → prune), reflexions and insights are department-scoped, and learned state is snapshotted with rollback and a per-cycle audit row. See `docs/FEATURES.md` → *Dreaming*.
 4. **Per-role model routing.** Heavy roles (orchestrator, revisor) get the strongest model; cheap roles (summarizer) get the smallest. Configurable per user.
 5. **Async + streaming.** Workers run in parallel via `asyncio.gather`; orchestrator streams output back to user.
 
@@ -149,7 +137,7 @@ What makes this a real multi-agent system, not just N parallel instances:
 
 | Target | How it runs | Status |
 |---|---|---|
-| **Desktop** | Reviewed source checkout or signed release binary; runs in user's home dir. | v0.1.1 |
+| **Desktop** | Reviewed source checkout; runs in user's home dir. | v0.1.1 |
 | **Docker** | `docker run -v ~/.maverick:/root/.maverick ghcr.io/daybreak-ai-labs/maverick:<tag>`. Isolated sandbox. | v0.1.1 |
 | **VPS** | `deploy/vps/install.sh` provisions a systemd unit. `MAVERICK_VERSION=v0.1.0 deploy/vps/install.sh` pins the release. | v0.1.1 |
 | **Phone (companion)** | Swarm runs on Desktop or VPS; phone talks via Telegram / iMessage / WhatsApp / Signal / Discord / Slack / SMS / Matrix / email. Native iOS/Android later. | v0.1.1 |
@@ -158,9 +146,8 @@ What makes this a real multi-agent system, not just N parallel instances:
 
 `.github/workflows/release.yml` triggers on `git tag v*`:
 
-- **PyPI**: `maverick-agent` (squatted, so we ship under this name; the Python import name + CLI name remain `maverick`), `maverick-shield`, `maverick-dashboard`, `maverick-mcp-server`, `maverick-channels`, `maverick-installer`. Gated on `PYPI_API_TOKEN`.
+- **PyPI**: `maverick-agent` (squatted, so we ship under this name; the Python import name + CLI name remain `maverick`), `maverick-shield`, `maverick-dashboard`, `maverick-mcp-server`, `maverick-installer`. Gated on `PYPI_API_TOKEN`.
 - **GHCR**: multi-tag Docker image — `:latest`, `:vX.Y.Z`, `:vX.Y`.
-- **GitHub Releases**: PyInstaller single-file binaries for Linux x86_64, macOS arm64, Windows x86_64, each **Sigstore-signed keyless** (cosign via GitHub OIDC — `.sig` + `.pem` per artifact, logged to Rekor; verify with `deploy/verify-release.sh`), plus a per-release CycloneDX SBOM.
 
 ## Adding a new feature
 

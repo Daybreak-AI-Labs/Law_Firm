@@ -8,19 +8,7 @@ behavior and the MAVERICK_DEBUG escape hatch.
 from __future__ import annotations
 
 import pytest
-from click.testing import CliRunner
-from maverick.cli import _humane_errors, _humanize_run_error, main
-
-
-def test_sandbox_choice_lists_every_real_backend():
-    # An invalid --sandbox value makes click print the valid choices; all of
-    # the backends build_sandbox() actually supports must be offered.
-    result = CliRunner().invoke(main, ["start", "--sandbox", "nope", "x"])
-    assert result.exit_code != 0
-    from maverick.sandbox_names import BUILTIN_SANDBOX_BACKENDS
-
-    for backend in BUILTIN_SANDBOX_BACKENDS:
-        assert backend in result.output
+from maverick.cli import _humane_errors, _humanize_run_error
 
 
 def test_humanize_sandbox_error_is_actionable():

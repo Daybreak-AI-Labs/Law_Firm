@@ -7,7 +7,6 @@ mcp/server.py.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hmac
 import ipaddress
 import json
@@ -19,7 +18,6 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import (
@@ -376,8 +374,6 @@ async def _lifespan(app: FastAPI):
     """
     from maverick.deployment import require_enterprise_or_die
     require_enterprise_or_die()
-    from maverick.residency import require_residency_or_die
-    require_residency_or_die()  # strict region pin (#41); no-op unless opted in
     # Exactly one control plane may write a data root. Until now that was
     # enforced only by a `helm template` guard, which a raw kubectl apply,
     # `compose up --scale`, or a second local `maverick dashboard` walks past
@@ -491,9 +487,7 @@ app.include_router(admin_pages_router)
 # Ekko Work Discovery: a human review/control surface only.  Endpoint
 # collectors do not enter through HTTP; they write through the local core
 # daemon's owner/device/tenant-scoped store.
-from .ekko_routes import router as ekko_router  # noqa: E402
 
-app.include_router(ekko_router)
 # Built-in OIDC browser-login routes (/auth/login, /auth/callback, /auth/logout).
 # Each route self-gates on maverick.oidc.login_enabled() and 404s when the login
 # flow isn't fully configured, so including the router unconditionally is inert
@@ -519,15 +513,6 @@ app.include_router(scim_router)
 from .saml import router as saml_router  # noqa: E402
 
 app.include_router(saml_router)
-# Bring-your-own-agent gateway (/api/v1/external/...): agents on OTHER
-# platforms report runs and ask for action screening with their per-agent
-# rest bearer. Self-gates on [external_agents] enable (404 off) and the Gold
-# entitlement, so including it unconditionally is inert. The prefix is
-# self-authenticating (see the _AUTH_EXEMPT rationale).
-from .external_gateway import router as external_gateway_router  # noqa: E402
-
-app.include_router(external_gateway_router)
-
 _DOCS_CSP = (
     "default-src 'self'; "
     "img-src 'self' data: https:; "
@@ -946,11 +931,7 @@ async def bearer_auth(request: Request, call_next):
             or request.url.path.startswith("/scim/")
             or request.url.path.startswith("/form/")
             or request.url.path.startswith("/saml/")
-            or request.url.path.startswith("/auth/invite/")
-            # BYOA gateway: per-agent rest bearer from the trust registry is
-            # the credential (external_gateway.py); the trailing slash keeps
-            # the ADMIN surface /api/v1/external-agents under dashboard auth.
-            or request.url.path.startswith("/api/v1/external/")):
+            or request.url.path.startswith("/auth/invite/")):
         # /share/<token> self-authenticates with its signed, revocable token
         # (verified in the route, which 404s an invalid/expired/revoked one) --
         # an external recipient has no dashboard bearer, like the webhook paths.
@@ -1410,41 +1391,12 @@ _RL_GLOBAL_KEY = "__rl_goal_global__"
 
 
 def _shared_rate_limit_check(key: str, cap: int, global_cap: int) -> bool:
-    """Cross-replica goal-creation rate check, backed by the shared world store.
+    """Cross-replica goal-creation rate check.
 
-    The in-process windows below only bound ONE replica, so N replicas admit N x
-    the cap. When Postgres (the HA backend) is configured, count admitted events
-    in the shared ``rate_events`` table across a 60s wall-clock window (shared
-    across replicas, unlike the in-process monotonic clock) and record this one.
-    Returns True when it admitted the request, raises ``HTTPException(429)`` when
-    a cap is exceeded, and returns False when there is no shared backend / it is
-    unavailable (the caller then applies the in-process limiter). A small
-    over-admission race is acceptable for a spend backstop -- it is not a hard
-    security boundary."""
-    try:
-        from maverick.world_model_backends import is_postgres_configured
-        if not is_postgres_configured():
-            return False
-        w = _world()
-        result = w.reserve_rate_events(key, cap, _RL_GLOBAL_KEY, global_cap, time.time())
-        if result == "global":
-            raise HTTPException(
-                status_code=429,
-                detail=f"goal rate limit reached ({global_cap}/min total). Try again shortly.",
-                headers={"Retry-After": "60"},
-            )
-        if result == "key":
-            raise HTTPException(
-                status_code=429,
-                detail=f"goal rate limit reached ({cap}/min). Try again shortly.",
-                headers={"Retry-After": "60"},
-            )
-        return True
-    except HTTPException:
-        raise
-    except Exception:  # pragma: no cover - never fail the request closed on a store blip
-        log.warning("shared rate limiter unavailable, using in-process window")
-        return False
+    There is no shared world backend on this SQLite-only deployment, so the
+    in-process windows below are the whole mechanism. Returns False so the
+    caller applies the in-process limiter."""
+    return False
 
 
 def check_goal_rate_limit(
@@ -1665,12 +1617,6 @@ async def learning_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/perf", response_class=HTMLResponse)
-async def perf_page(request: Request) -> HTMLResponse:
-    """Public perf dashboard: SLA + benchmark history (data via /api/v1/perf)."""
-    return templates.TemplateResponse(request, "perf.html", {})
-
-
 @app.get("/goals", response_class=HTMLResponse)
 async def goals_page(request: Request) -> HTMLResponse:
     goals = _world().list_goals(owner=goal_owner_filter(request), limit=200, order="desc")
@@ -1687,13 +1633,21 @@ async def projects_page(request: Request) -> HTMLResponse:
 @app.post("/projects")
 async def projects_create(request: Request, name: str = Form(...),
                           description: str = Form(""), domain: str = Form("")) -> RedirectResponse:
-    """Create a project, then redirect to it. Same-origin; owned by the caller."""
+    """Create a project, then redirect to it. Same-origin; owned by the caller.
+
+    The owner comes from ``caller_principal``, NOT ``goal_owner_filter``: the
+    latter returns None for an admin (it exists to mean "do not filter the
+    listing"), so an admin-created project was stored ownerless -- and an
+    ownerless project was readable by every authenticated user. Auth-off local
+    mode still has no principal and still stores "", which is the historical
+    single-user behaviour.
+    """
     _require_same_origin(request)
     if not name.strip():
         raise HTTPException(status_code=422, detail="a project needs a name")
     pid = _world().create_project(
         name.strip(), description=description.strip(),
-        owner=goal_owner_filter(request) or "", domain=domain.strip())
+        owner=caller_principal(request) or "", domain=domain.strip())
     return RedirectResponse(f"/projects/{pid}", status_code=303)
 
 
@@ -1704,10 +1658,18 @@ async def project_detail(request: Request, project_id: int) -> HTMLResponse:
     if project is None:
         raise HTTPException(status_code=404, detail="no such project")
     # Owner-scoped like goals: a project you don't own 404s rather than leaks.
+    # An ownerless project is NOT public. `list_projects` filters on
+    # `owner = ?`, so an ownerless row never appears in the listing -- but this
+    # route used to admit `""` alongside the caller, which made it readable by
+    # direct id. Hidden from the index and fetchable by id is the shape of an
+    # IDOR, not of a shared workspace.
     owner = goal_owner_filter(request)
-    if owner is not None and project["owner"] not in ("", owner):
+    if owner is not None and project["owner"] != owner:
         raise HTTPException(status_code=404, detail="no such project")
-    goals = w.list_goals(project_id=project_id, order="desc")
+    # Scope the goal list too: the titles and statuses on this page belong to
+    # whoever filed them, and an unfiltered listing leaked them to any viewer
+    # who could reach the project.
+    goals = w.list_goals(project_id=project_id, owner=owner, order="desc")
     return templates.TemplateResponse(
         request, "project_detail.html",
         {"project": project, "goals": goals, "counts": w.project_status_counts(project_id)})
@@ -1717,7 +1679,12 @@ async def project_detail(request: Request, project_id: int) -> HTMLResponse:
 async def goal_set_project(request: Request, goal_id: int,
                            project_id: str = Form("")) -> RedirectResponse:
     """File a goal under a project (empty value clears it). Same-origin; the
-    caller must be able to access the goal."""
+    caller must be able to access BOTH the goal and the target project.
+
+    Authorizing only the goal let anyone who owned a goal file it into any
+    project id -- the goal's title and status then rendered on a stranger's
+    project page. Filing is a write to two objects, so it takes two checks.
+    """
     _require_same_origin(request)
     w = _world()
     g = w.get_goal(goal_id)
@@ -1725,6 +1692,13 @@ async def goal_set_project(request: Request, goal_id: int,
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
     pid = int(project_id) if project_id.strip() else None
+    if pid is not None:
+        target = w.get_project(pid)
+        if target is None:
+            raise HTTPException(status_code=404, detail="no such project")
+        owner = goal_owner_filter(request)
+        if owner is not None and target["owner"] != owner:
+            raise HTTPException(status_code=404, detail="no such project")
     w.set_goal_project(goal_id, pid)
     return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
 
@@ -1850,16 +1824,14 @@ def _tenant_overview_rows() -> list[dict]:
     scope through the canonical backend selector.
     """
     from maverick.tenant.registry import list_tenants, tenant_spend_today
-    from maverick.world_model_backends import is_postgres_configured
 
-    postgres = is_postgres_configured()
     rows: list[dict] = []
     for t in list_tenants():
         counts: dict[str, int] = {}
         try:
             from maverick.workspace import Workspace
             db = Workspace(t.id).db_path
-            if postgres or db.exists():
+            if db.exists():
                 from maverick.paths import tenant_scope
                 from maverick.world_model import close_world_if_owned, open_world
 
@@ -2125,303 +2097,6 @@ async def privacy_report_page(request: Request) -> HTMLResponse:
                                       {"r": report})
 
 
-@app.get("/security", response_class=HTMLResponse)
-async def security_page(request: Request) -> HTMLResponse:
-    """Security & GRC department workspace over assessments and durable
-    control-program records. Record contents are operate-tier data."""
-    require_permission(request, "operate")
-    from maverick import security_ops
-
-    ctx = _workspace_ctx("security", viewer=caller_principal(request) or "")
-    records = {
-        "enabled": security_ops.enabled(),
-        "kind": "security",
-        "controls": [],
-        "evidence": [],
-        "risks": [],
-        "poams": [],
-        "vendors": [],
-        "policies": [],
-        "incidents": [],
-        "audits": [],
-    }
-    report: dict = {}
-    framework_labels = (
-        ("soc2", "SOC 2"),
-        ("iso27001", "ISO 27001"),
-        ("nist_csf", "NIST CSF 2.0"),
-        ("nist_800_53", "NIST 800-53"),
-        ("cis_v8", "CIS v8.1"),
-        ("pci_dss", "PCI DSS 4.0.1"),
-        ("hipaa", "HIPAA"),
-        ("cmmc_l2", "CMMC L2"),
-        ("fedramp_moderate", "FedRAMP Class C"),
-    )
-    insights = {
-        "coverage_percent": 0.0,
-        "framework_coverage": [],
-        "control_status": {},
-        "open_poams": [],
-        "exceptions_due": [],
-        "crosswalk_links": 0,
-        "crosswalk_frameworks": [
-            {"key": key, "label": label} for key, label in framework_labels
-        ],
-        "crosswalk_matrix": [],
-    }
-    if records["enabled"]:
-        records.update({
-            "controls": security_ops.list_controls(),
-            "evidence": security_ops.list_evidence(),
-            "risks": security_ops.list_risks(),
-            "poams": security_ops.list_poams(),
-            "vendors": security_ops.list_vendor_assessments(),
-            "policies": security_ops.list_policies(),
-            "incidents": security_ops.list_incidents(),
-            "audits": security_ops.list_audit_engagements(),
-        })
-        report = security_ops.program_report()
-        for control in records["controls"]:
-            status = str(control.get("implementation_status") or "unknown")
-            insights["control_status"][status] = (
-                insights["control_status"].get(status, 0) + 1
-            )
-            mappings = control.get("crosswalk") or control.get("mappings") or []
-            insights["crosswalk_links"] += len(mappings) if isinstance(
-                mappings, (list, tuple, dict)
-            ) else 0
-        overall_readiness = security_ops.readiness_report()
-        insights["coverage_percent"] = overall_readiness["coverage_percent"]
-        insights["framework_coverage"] = [
-            {
-                **security_ops.readiness_report(key),
-                "label": label,
-            }
-            for key, label in framework_labels
-        ]
-        insights["crosswalk_matrix"] = security_ops.control_crosswalk()
-        insights["open_poams"] = [
-            row for row in records["poams"]
-            if row.get("status") not in {"closed", "complete", "accepted"}
-        ][:10]
-        insights["exceptions_due"] = [
-            row for row in records["risks"]
-            if row.get("exception_due") or row.get("exception_expired")
-        ][:10]
-    ctx.update({"records": records, "program": report, "insights": insights})
-    return templates.TemplateResponse(request, "security.html", ctx)
-
-
-@app.get("/security/report", response_class=HTMLResponse)
-async def security_report_page(request: Request) -> HTMLResponse:
-    """Print-friendly security readiness and board report."""
-    require_permission(request, "operate")
-    from maverick import security_ops
-
-    if not security_ops.enabled():
-        raise HTTPException(status_code=404, detail="security ops are disabled")
-    report = security_ops.program_report()
-    generated_at = report.get("generated_at")
-    if isinstance(generated_at, (int, float)):
-        report["generated"] = time.strftime(
-            "%Y-%m-%d %H:%M %Z", time.localtime(generated_at)
-        )
-    else:
-        report["generated"] = "unknown"
-    # The click-through must carry substance: each control with what it does,
-    # its governed status, scope decision, owner, and the reviewed evidence
-    # cited behind that status (joined here so the template stays dumb).
-    evidence_index = {
-        str(row.get("id")): row for row in security_ops.list_evidence()
-    }
-    control_rows = []
-    for row in sorted(
-        security_ops.list_controls(),
-        key=lambda item: (
-            str(item.get("framework") or ""),
-            str(item.get("control_id") or item.get("id") or ""),
-        ),
-    ):
-        cited = []
-        for evidence_id in row.get("evidence_ids") or []:
-            evidence = evidence_index.get(str(evidence_id)) or {}
-            cited.append({
-                "id": evidence_id,
-                "title": evidence.get("title") or evidence_id,
-                "status": evidence.get("status") or "unknown",
-                "source": evidence.get("source") or "",
-            })
-        control_rows.append({**row, "cited_evidence": cited})
-    return templates.TemplateResponse(
-        request,
-        "security_report.html",
-        {"r": report, "controls": control_rows},
-    )
-
-
-@app.get("/security/assurance", response_class=HTMLResponse)
-async def model_risk_assurance_page(request: Request) -> HTMLResponse:
-    """Governed AI evidence gateway and model-risk operator cockpit."""
-    require_permission(request, "operate")
-    from maverick import ai_evidence_gateway, model_risk_assurance
-
-    from .auth import has_global_permission
-
-    model_risk_enabled = model_risk_assurance.enabled()
-    model_risk_errors: dict[str, str] = {}
-    if model_risk_enabled:
-        model_results = await asyncio.gather(
-            run_in_threadpool(model_risk_assurance.list_inventory),
-            run_in_threadpool(model_risk_assurance.list_evidence),
-            run_in_threadpool(model_risk_assurance.findings),
-            return_exceptions=True,
-        )
-        assets, evidence, findings = [], [], []
-        for label, result in zip(
-            ("assets", "evidence", "findings"),
-            model_results,
-            strict=True,
-        ):
-            if isinstance(result, Exception):
-                model_risk_errors[label] = (
-                    f"Model-risk {label} are temporarily unavailable."
-                )
-            elif label == "assets":
-                assets = result
-            elif label == "evidence":
-                evidence = result
-            else:
-                findings = result
-    else:
-        assets, evidence, findings = [], [], []
-
-    gateway_enabled = ai_evidence_gateway.enabled()
-    gateway_error = ""
-    gateway_error_action = ""
-    gateway_panel_errors: dict[str, str] = {}
-    gateway_summary: dict[str, Any] = {}
-    policies: list[dict[str, Any]] = []
-    receipts: list[dict[str, Any]] = []
-    regulatory_impacts: list[dict[str, Any]] = []
-    impact_page: dict[str, Any] = {
-        "next_cursor": None,
-        "snapshot_total": 0,
-        "count": 0,
-        "status": None,
-        "pending_first": True,
-    }
-    if gateway_enabled:
-        gateway_results = await asyncio.gather(
-            run_in_threadpool(ai_evidence_gateway.summary),
-            run_in_threadpool(ai_evidence_gateway.list_policies),
-            run_in_threadpool(
-                ai_evidence_gateway.list_interaction_receipts,
-                limit=100,
-            ),
-            run_in_threadpool(
-                ai_evidence_gateway.list_regulatory_impacts_page,
-                limit=100,
-                pending_first=True,
-            ),
-            return_exceptions=True,
-        )
-        summary_result, policy_result, receipt_result, impact_result = (
-            gateway_results
-        )
-        if isinstance(summary_result, Exception):
-            exc = summary_result
-            if (
-                type(exc).__name__ == "EvidenceGatewayStateError"
-                and str(exc)
-                == "AI evidence gateway records require an explicit tenant scope"
-            ):
-                gateway_error = (
-                    "Select a company or tenant before loading evidence. "
-                    "No records were read."
-                )
-                gateway_error_action = (
-                    "Set [client] id in the Maverick configuration or set "
-                    "MAVERICK_TENANT, then restart the dashboard."
-                )
-            else:
-                gateway_error = (
-                    "Gateway records could not be loaded safely. "
-                    "No readiness conclusion is available."
-                )
-                gateway_error_action = (
-                    "Use the built-in health checks on the Get started page "
-                    "to identify the blocker, then reload this cockpit."
-                )
-            gateway_panel_errors["summary"] = gateway_error
-        else:
-            gateway_summary = summary_result
-        if isinstance(policy_result, Exception):
-            gateway_panel_errors["policies"] = (
-                "Policy and model bindings are temporarily unavailable."
-            )
-        else:
-            policies = policy_result
-        if isinstance(receipt_result, Exception):
-            gateway_panel_errors["receipts"] = (
-                "Interaction receipts are temporarily unavailable."
-            )
-        else:
-            receipts = receipt_result
-        if isinstance(impact_result, Exception):
-            gateway_panel_errors["impacts"] = (
-                "Regulatory impacts are temporarily unavailable."
-            )
-        else:
-            impact_page = impact_result
-            regulatory_impacts = list(impact_page["items"])
-    from .operator_cockpit import display_timestamp, gateway_view
-
-    receipt_rows = []
-    for receipt in receipts[:100]:
-        row = dict(receipt)
-        row["issued_display"] = display_timestamp(
-            row.get("issued_at") or row.get("created_at")
-        )
-        receipt_rows.append(row)
-
-    view = gateway_view(
-        gateway_summary,
-        policies,
-        receipts,
-        regulatory_impacts,
-    )
-    # Product surface: the cockpit never shows CLI invocations. The synthetic
-    # next action's copyable code is a CLI command, so it renders as prose only.
-    if "maverick" in str(view["next_action"].get("code", "")).lower():
-        view["next_action"]["code"] = ""
-
-    return templates.TemplateResponse(
-        request,
-        "model_risk_assurance.html",
-        {
-            "model_risk_enabled": model_risk_enabled,
-            "model_risk_totals": {
-                "assets": len(assets),
-                "evidence": len(evidence),
-                "findings": len(findings),
-            },
-            "findings": findings[:20],
-            "model_risk_errors": model_risk_errors,
-            "gateway_enabled": gateway_enabled,
-            "gateway_error": gateway_error,
-            "gateway_error_action": gateway_error_action,
-            "gateway_panel_errors": gateway_panel_errors,
-            "gateway_summary": gateway_summary,
-            "policies": policies[:100],
-            "receipts": receipt_rows,
-            "regulatory_impacts": regulatory_impacts[:100],
-            "impact_page": impact_page,
-            "gateway_view": view,
-            "gateway_admin": has_global_permission(request, "admin"),
-        },
-    )
-
-
 @app.get("/savings", response_class=HTMLResponse)
 async def savings_page(request: Request, days: int = 90) -> HTMLResponse:
     """The value dashboard: money saved vs the typical human cost, computed
@@ -2624,48 +2299,10 @@ async def replay_page(request: Request) -> HTMLResponse:
             pass
 
 
-@app.get("/trust", response_class=HTMLResponse)
-async def trust_page(request: Request) -> HTMLResponse:
-    """Agent Trust Plane: the cross-agent permission graph -- every external
-    agent allowed to interact, with its tool/risk/budget ceilings + lifecycle."""
-    from .control_plane import trust_overview
-    return templates.TemplateResponse(request, "trust.html", trust_overview())
-
-
-@app.get("/external-agents", response_class=HTMLResponse)
-async def external_agents_page(request: Request) -> HTMLResponse:
-    """Bring-your-own-agent console: enroll agents built on other platforms
-    (Agentforce, Bedrock, Copilot Studio, custom), mint their credentials,
-    and watch their governed runs/spend land on the Operating Record."""
-    from maverick import external_agents as xa
-    return templates.TemplateResponse(request, "external_agents.html", {
-        "enabled": xa.enabled(),
-        "status": xa.status(),
-        "agents": xa.roster(),
-        "platforms": xa.PLATFORMS,
-        "surfaces": xa.TOKEN_SURFACES,
-    })
-
-
-@app.get("/external-agents/{agent_id}", response_class=HTMLResponse)
-async def external_agent_scorecard(request: Request,
-                                   agent_id: str) -> HTMLResponse:
-    """One external agent's scorecard: ceilings, spend vs budget, run
-    history on the Operating Record, and governance state (containment,
-    wall violations, credentials)."""
-    from maverick import external_agents as xa
-    try:
-        detail = xa.agent_detail(agent_id)
-    except xa.ExternalAgentsError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    return templates.TemplateResponse(request, "external_agent_detail.html",
-                                      {"a": detail})
-
-
 @app.get("/discovery", response_class=HTMLResponse)
 async def discovery_page(request: Request) -> HTMLResponse:
     """Inventory every governable surface the deployment exposes (tools, MCP
-    servers, providers, channels, external agents)."""
+    servers, providers, channels)."""
     from .control_plane import discovery_overview
     return templates.TemplateResponse(request, "discovery.html", {"discovery": discovery_overview()})
 
@@ -3164,7 +2801,6 @@ async def plugins_page(request: Request) -> HTMLResponse:
     groups: dict[str, list[dict]] = {}
     for label, group in (
         ("tools",    "maverick.tools"),
-        ("channels", "maverick.channels"),
         ("skills",   "maverick.skills"),
         ("personas", "maverick.personas"),
     ):
@@ -3408,10 +3044,6 @@ def _permissions_snapshot() -> dict:
             "backend for untrusted goals."
         )
     snap["providers"] = sorted((cfg.get("providers") or {}).keys())
-    snap["channels"] = [
-        {"name": n, "enabled": bool(c.get("enabled", True))}
-        for n, c in (cfg.get("channels") or {}).items()
-    ]
     sec = cfg.get("security") or {}
     snap["network"] = (sec.get("network_policy") or "open")
 
@@ -3481,8 +3113,6 @@ def _approval_source(provenance: str | None) -> str | None:
     """
     if provenance == "governance":
         return "governance · Art 14"
-    if provenance == "external_agents":
-        return "external agent · BYOA gateway"
     if provenance == "harness_refine":
         # The agent is asking to change its OWN operating instructions.
         # An approver must be able to see that at a glance, not read it as
@@ -3679,80 +3309,6 @@ async def templates_market_page(request: Request) -> HTMLResponse:
             "triggers_enabled": feats.get("triggers", True),
         },
     )
-
-
-@app.get("/channels", response_class=HTMLResponse)
-async def channels_page(request: Request, saved: str = "") -> HTMLResponse:
-    """Channels: manage the common ones (enable + credentials) from the form
-    sections, plus a read-only, secret-redacted view of everything configured.
-    Saved to the dashboard overlay, never config.toml; effective on the next
-    `maverick serve`."""
-    require_permission(request, "admin")
-    sensitive_markers = (
-        "token", "secret", "password", "passwd", "api_key", "apikey", "auth",
-        "credential", "cookie", "session",
-    )
-
-    def _display_channels(channels: dict) -> dict:
-        out: dict = {}
-        for name, cfg in (channels or {}).items():
-            if not isinstance(cfg, dict):
-                out[name] = {"enabled": bool(cfg)}
-                continue
-            safe_cfg: dict = {}
-            for key, value in cfg.items():
-                key_l = str(key).lower()
-                if any(marker in key_l for marker in sensitive_markers):
-                    safe_cfg[key] = "[redacted]"
-                else:
-                    safe_cfg[key] = value
-            out[name] = safe_cfg
-        return out
-
-    try:
-        from maverick.config import load_config
-        channels = _display_channels((load_config() or {}).get("channels") or {})
-    except Exception:
-        channels = {}
-    from maverick_dashboard import settings_store
-    managed = settings_store.channels_state()
-    saved_msg = {"save": "Channel updated.", "clear": "Channel reset."}.get(saved, "")
-    return templates.TemplateResponse(
-        request, "channels.html",
-        {"channels": channels, "managed": managed, "saved": saved_msg},
-    )
-
-
-@app.post("/channels/save")
-async def channels_save(request: Request) -> RedirectResponse:
-    """Enable/disable a channel and set its credentials from the form. Stored in
-    the dashboard overlay (dashboard-config.toml), never config.toml; blank
-    fields keep the current value so a toggle never wipes a hidden secret."""
-    _require_same_origin(request)
-    require_permission(request, "admin")
-    from maverick_dashboard import settings_store
-    form = await request.form()
-    name = (form.get("channel") or "").strip()
-    enabled = form.get("enabled") is not None  # checkbox present == on
-    values = {k: v for k, v in form.items() if k not in ("channel", "enabled")}
-    try:
-        settings_store.set_channel(name, enabled, values)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse("/channels?saved=save", status_code=303)
-
-
-@app.post("/channels/clear")
-async def channels_clear(request: Request, channel: str = Form(...)) -> RedirectResponse:
-    """Remove a channel's dashboard overlay (reverts to config.toml / env)."""
-    _require_same_origin(request)
-    require_permission(request, "admin")
-    from maverick_dashboard import settings_store
-    try:
-        settings_store.clear_channel((channel or "").strip())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return RedirectResponse("/channels?saved=clear", status_code=303)
 
 
 @app.get("/api/v1/providers")
@@ -3960,8 +3516,8 @@ async def skills_validate(request: Request) -> JSONResponse:
     """Skill validator service: lint a SKILL.md body without installing it.
 
     POST the raw SKILL.md text (text/plain or markdown); responds
-    ``{ok, errors, warnings}`` from the same linter `maverick skill validate`
-    runs locally — so a marketplace author can validate from CI or an editor
+    ``{ok, errors, warnings}`` from the kernel's skill linter
+    — so a marketplace author can validate from CI or an editor
     against a self-hosted instance. Size-capped; nothing is persisted."""
     import tempfile as _tempfile
     from pathlib import Path as _Path
@@ -4247,7 +3803,8 @@ async def cost_by_tag_api(
 
     Buckets the priced episodes by their tag (episode field, else the goal's
     metadata/tags) via ``maverick.cost.by_tag`` and returns
-    ``{buckets: [{tag, cost, in_tok, out_tok, runs}, ...]}`` sorted by spend. The JSON face of ``maverick status --cost``'s tag split,
+    ``{buckets: [{tag, cost, in_tok, out_tok, runs}, ...]}`` sorted by spend
+    (the tag split the old ``maverick status --cost`` CLI printed),
     for chargeback exports and BI pulls. Behind the dashboard's normal auth."""
     from maverick.cost.by_tag import gather, split_by_tag
 
@@ -5041,35 +4598,13 @@ _ISSUE_WEBHOOK_SEEN_MAX = 4096
 _ISSUE_WEBHOOK_CHANNEL = "__issue_webhook__"
 
 
-def _shared_issue_webhook_seen(signature: str) -> bool | None:
-    """Record/check ``signature`` in the shared store when Postgres (HA) is
-    configured. Returns True if already seen (replay), False on first delivery,
-    or None when there is no shared backend / it is unavailable (caller falls
-    back to the in-process window). Never raises -- a degraded store must not
-    drop webhooks; the HMAC + freshness checks still hold."""
-    try:
-        from maverick.world_model_backends import is_postgres_configured
-        if not is_postgres_configured():
-            return None
-        # True == first writer (not previously seen) -> NOT a replay.
-        first = bool(_world().mark_message_processed(_ISSUE_WEBHOOK_CHANNEL, signature))
-        return not first
-    except Exception:  # pragma: no cover - shared dedup must never drop a webhook
-        log.warning("issue webhook dedup: shared store unavailable, using in-process window")
-        return None
-
-
 def _issue_webhook_replay_seen(signature: str, ttl_seconds: int) -> bool:
     """True if ``signature`` was already delivered within ``ttl_seconds``.
 
-    Prefers the shared store (cross-replica) when Postgres is configured;
-    otherwise records the signature in the per-process window and evicts
+    Records the signature in the per-process window and evicts
     expired/overflow entries. The first delivery returns False (and is
     recorded); a replay returns True.
     """
-    shared = _shared_issue_webhook_seen(signature)
-    if shared is not None:
-        return shared
     now = time.time()
     with _issue_webhook_seen_lock:
         for k, t in list(_issue_webhook_seen.items()):
@@ -6027,35 +5562,6 @@ async def connections_page(request: Request) -> HTMLResponse:
     be wired without env vars. CRUD + reachability test go through
     /api/v1/connections; the feature gate is enforced there."""
     return templates.TemplateResponse(request, "connections.html", {})
-
-
-@app.get("/flows/designer", response_class=HTMLResponse)
-@app.get("/flows/designer/{flow_id}", response_class=HTMLResponse)
-async def flow_designer_page(request: Request, flow_id: str = "",
-                             from_template: str = "") -> HTMLResponse:
-    """The visual flow designer -- a canvas node editor + the natural-language
-    drafter + the copilot chat. Talks to the /api/v1/flows endpoints; the
-    flow-engine gate is enforced there, so the page renders even when flows are
-    off (empty canvas).
-
-    ``?from_template=<name>`` opens a saved TEMPLATE as its equivalent
-    single-agent flow (the IR's degenerate case) -- the bridge from the text
-    workflow builder into the graph designer: start from what you had, then add
-    branches/approvals/loops around it."""
-    seed_flow = None
-    if from_template:
-        try:
-            from maverick.templates import load_template
-            tpl = load_template(from_template)
-            from maverick.flow.ir import single_agent_flow
-            body = getattr(tpl, "body", "") or getattr(tpl, "title", "") or from_template
-            seed = single_agent_flow("", tpl.title or from_template, str(body)[:8000])
-            seed_flow = seed.to_dict()
-        except (ValueError, FileNotFoundError):
-            seed_flow = None    # unknown template -> a blank canvas, not a 500
-    return templates.TemplateResponse(
-        request, "flow_designer.html",
-        {"flow_id": flow_id, "seed_flow": seed_flow})
 
 
 @app.get("/flows/{flow_id}/runs/{run_id}", response_class=HTMLResponse)

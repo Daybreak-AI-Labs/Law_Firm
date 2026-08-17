@@ -73,25 +73,22 @@ def client_get_readyz():
     [
         ("client", "client_binding_enforced", "client_binding"),
         ("shield_policy", "shield_required", "shield"),
-        ("agent_trust", "load_trust_state", "agent_trust"),
     ],
 )
 def test_readiness_deep_check_errors_fail_closed(
     monkeypatch, module_name, attribute, check_name
 ):
     """An unreadable trust posture is not evidence that a pod is ready."""
-    from maverick import agent_trust, shield_policy
     from maverick import client as client_module
+    from maverick import shield_policy
     from maverick_dashboard import app as dash_app
 
     modules = {
         "client": client_module,
         "shield_policy": shield_policy,
-        "agent_trust": agent_trust,
     }
     monkeypatch.setattr(client_module, "client_binding_enforced", lambda: False)
     monkeypatch.setattr(shield_policy, "shield_required", lambda: False)
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (False, {}))
 
     def _raise_probe_error():
         raise RuntimeError("probe unavailable")

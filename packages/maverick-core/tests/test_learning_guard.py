@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from maverick import dreaming, factory_learning, killswitch, self_harness
+from maverick import dreaming, killswitch, self_harness
 from maverick import self_improvement as si
 from maverick.learning_guard import check_learning_halt
 from maverick.learning_rollout import Stage, run_rollout
@@ -93,45 +93,6 @@ def test_default_halt_file_is_global_across_tenants(monkeypatch, tmp_path):
         paths.reset_tenant(token)
 
 
-def test_learning_refuses_when_configured_cluster_authority_is_unavailable(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        "maverick.world_model_backends.is_postgres_configured", lambda: True)
-    monkeypatch.setattr(
-        "maverick.world_model.open_world",
-        lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")),
-    )
-
-    with pytest.raises(killswitch.Halted) as exc:
-        check_learning_halt("test", "promotion")
-    assert exc.value.source == "shared-error"
-    assert exc.value.reason == "cluster HALT authority unavailable"
-
-
-def test_learning_refuses_when_shared_halt_backend_config_is_malformed(
-    monkeypatch, tmp_path,
-):
-    from maverick import config
-
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    config_path = config.config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        '[world_model\nbackend = "postgres"\n', encoding="utf-8",
-    )
-
-    # The ordinary agent boundary preserves its availability-first behavior.
-    killswitch.check(force_refresh=True)
-    # A privileged learning transition cannot safely infer "no Postgres" from
-    # the defaults returned after the backend policy failed to parse.
-    with pytest.raises(killswitch.Halted) as exc:
-        check_learning_halt("test", "promotion")
-    assert exc.value.source == "shared-error"
-    assert exc.value.reason == "cluster HALT authority unavailable"
-    assert str(config_path) in config.config_source_errors()
-
-
 def test_halt_cache_uses_monotonic_time_and_refreshes_after_clock_regression(
     monkeypatch,
 ):
@@ -205,58 +166,6 @@ def test_local_halt_during_evaluation_blocks_followup_and_promotion(
 
     assert calls == ["candidate"]
     assert not store.exists()
-
-
-def test_cluster_halt_refuses_factory_before_evidence_evaluation(
-    monkeypatch, tmp_path,
-):
-    class ClusterState:
-        active = False
-
-        def active_halt(self):
-            if not self.active:
-                return None
-            return {"reason": "fleet stop", "source": "dashboard"}
-
-    cluster = ClusterState()
-    monkeypatch.setattr(
-        "maverick.world_model_backends.is_postgres_configured", lambda: True)
-    monkeypatch.setattr("maverick.world_model.open_world", lambda: cluster)
-    monkeypatch.setattr(factory_learning, "enabled", lambda: True)
-
-    correction = factory_learning.ProposerCorrection(
-        "*", factory_learning.SIGNAL_TOOL_MISSING,
-        "web_search", 3, "Use a catalog search tool.")
-
-    def mine(*, min_support):
-        assert min_support == 3
-        cluster.active = True
-        return [correction]
-
-    monkeypatch.setattr(factory_learning, "mine_corrections", mine)
-    monkeypatch.setattr(
-        factory_learning, "_recover_artifact_locked",
-        lambda *_args, **_kwargs: factory_learning._CorrectionArtifact(
-            {}, 0, None, "absent:0"),
-    )
-    evaluated = 0
-
-    def evidence_lookup(_self, _correction, _total_packs=0):
-        nonlocal evaluated
-        evaluated += 1
-        raise AssertionError("evidence must not be queried while cluster HALT is active")
-
-    monkeypatch.setattr(
-        factory_learning.MeasuredFactoryEvidence, "__call__", evidence_lookup)
-    evidence = factory_learning.MeasuredFactoryEvidence(
-        version=2, evidence_sha256="a" * 64, source_sha256="b" * 64,
-        provenance={}, rows={})
-
-    with pytest.raises(killswitch.Halted, match="source=dashboard"):
-        factory_learning.review_and_promote(
-            controller=object(), scorer=evidence,
-            promoted_path=tmp_path / "corrections.json")
-    assert evaluated == 0
 
 
 @pytest.mark.parametrize(

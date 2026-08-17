@@ -12,7 +12,7 @@ api_version = "2"
 ## What's new in v2
 
 - **Structured channel replies.** Channel handlers may return
-  `maverick_channels.Reply` (text + attachments + thread_ref) instead of bare
+  a structured Reply (text + attachments + thread_ref) instead of bare
   `str`. Adapters route through `Channel.dispatch` / `dispatch_text`, so a v2
   handler works on every adapter; platforms without a file API drop
   attachments with a debug note and always deliver the text.
@@ -21,7 +21,8 @@ api_version = "2"
   `sensitive_envs`) is skipped unless the user grants it via
   `[plugins] grant = [...]`. (`enforce_permissions = false` downgrades to a
   load-with-warning.)
-- **Lockfile pinning.** `maverick plugin lock` records each enabled plugin's
+- **Lockfile pinning.** A plugin lockfile (`maverick.plugin_lock.write_lock()`,
+  written to `data_dir("plugins.lock.json")`) records each enabled plugin's
   distribution + version; under enforcement a drifted version is refused.
 - **Isolation modes.** `[plugins] isolation = "subprocess" | "subinterpreter"`
   runs plugin tool *calls* outside the host interpreter (scrubbed env, fault

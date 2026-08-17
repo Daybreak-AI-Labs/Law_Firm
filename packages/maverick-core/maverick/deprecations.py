@@ -52,14 +52,6 @@ REGISTRY: tuple[Deprecation, ...] = (
         deprecated_in="0.1.6",
         remove_in="0.3.0",
     ),
-    Deprecation(
-        name="channels.str_handler",
-        kind="contract",
-        target="channel handlers returning bare str",
-        replacement="return maverick_channels.Reply (RFC 0001 C2)",
-        deprecated_in="0.1.6",
-        remove_in="0.3.0",
-    ),
 )
 
 

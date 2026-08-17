@@ -62,20 +62,20 @@ def test_a_real_typo_is_still_caught():
     assert any("enforcee" in (f.key or "") for f in findings), findings
 
 
-def test_evidence_gateway_is_closed_and_boolean():
-    assert lint_config({"evidence_gateway": {"enable": True}}) == []
+def test_evidence_graph_is_closed_and_boolean():
+    assert lint_config({"evidence_graph": {"enable": True}}) == []
 
-    unknown = lint_config({"evidence_gateway": {"enabel": True}})
+    unknown = lint_config({"evidence_graph": {"enabel": True}})
     assert any(
-        finding.section == "evidence_gateway"
+        finding.section == "evidence_graph"
         and finding.key == "enabel"
         and "unknown" in finding.message.lower()
         for finding in unknown
     )
 
-    wrong_type = lint_config({"evidence_gateway": {"enable": "true"}})
+    wrong_type = lint_config({"evidence_graph": {"enable": "true"}})
     assert any(
-        finding.section == "evidence_gateway"
+        finding.section == "evidence_graph"
         and finding.key == "enable"
         and finding.severity == "error"
         for finding in wrong_type

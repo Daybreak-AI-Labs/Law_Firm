@@ -823,10 +823,11 @@ def _dec_field(text: str | None) -> str | None:
         return unseal_from_str(text)
     if strict_at_rest():
         log.error("at-rest strict: withholding an unsealed value in a sealed column "
-                  "(run 'maverick encryption migrate'; tampering if already migrated)")
+                  "(seal legacy rows via maverick.encryption_migrate; tampering if "
+                  "already migrated)")
         return _UNSEALED_WITHHELD
     log.warning("at-rest: unsealed value in a sealed column (pre-migration legacy or "
-                "tampering); run 'maverick encryption migrate'")
+                "tampering); seal legacy rows via maverick.encryption_migrate")
     return text
 
 
@@ -859,14 +860,15 @@ def _dec_fields(texts: list[str | None]) -> list[str | None]:
             if strict:
                 log.error(
                     "at-rest strict: withholding an unsealed value in a sealed "
-                    "column (run 'maverick encryption migrate'; tampering if "
-                    "already migrated)"
+                    "column (seal legacy rows via maverick.encryption_migrate; "
+                    "tampering if already migrated)"
                 )
                 decoded = _UNSEALED_WITHHELD
             else:
                 log.warning(
                     "at-rest: unsealed value in a sealed column (pre-migration "
-                    "legacy or tampering); run 'maverick encryption migrate'"
+                    "legacy or tampering); seal legacy rows via "
+                    "maverick.encryption_migrate"
                 )
         out.append(decoded)
     return out
@@ -3890,42 +3892,19 @@ def reclaim_window_seconds(default: float = 60.0) -> float:
 
 
 def open_world(path: Path | None = None) -> Any:
-    """Open the configured world-model backend.
-
-    Returns the SQLite ``WorldModel`` by default. When the user opts into
-    Postgres (``[world_model] backend = "postgres"`` in config.toml or
-    ``MAVERICK_WORLD_BACKEND=postgres``), returns a ``PostgresWorldModel``
-    whose public surface mirrors ``WorldModel``; the ``path`` argument is
-    ignored in that case (Postgres uses a DSN, not a file).
+    """Open the SQLite world model.
 
     **Client/tenant floor:** when called with no explicit ``path`` and the
     deployment is bound to a client (or a tenant is active), the canonical
     world resolves to that client's isolated ``tenants/<client>/world.db`` via
     :func:`world_for_tenant`, NOT the un-scoped ``~/.maverick/world.db``. This
-    keeps the channel server (``serve``), the goal runner/worker, the gRPC goal
+    keeps the goal runner/worker, the gRPC goal
     API and the dashboard all opening the SAME per-client world DB (one SQLite
-    file = one cached ``WorldModel``); without it a client-bound ``serve`` wrote
+    file = one cached ``WorldModel``); without it a client-bound server wrote
     goals to the shared root while the dashboard read the floored path, silently
     splitting the world. Passing an explicit ``path`` (tests, CLI ``--db``)
     bypasses the floor and is unchanged.
-
-    The Postgres backend (and its ``psycopg`` dependency) is imported only
-    when selected, so the default SQLite path stays dependency-free and the
-    kernel runs without psycopg installed.
-
-    **At-rest encryption:** the Postgres backend now seals the same sensitive
-    content columns as SQLite (goal title/description/result, messages, turns,
-    episodes, facts, questions, approvals, artifacts, projects, sign-off notes,
-    event bodies) with the shared AES-256-GCM field codec, so encryption-at-rest
-    is supported on Postgres too. Text search over sealed columns transparently
-    falls back to scan-then-decrypt.
     """
-    from .world_model_backends import is_postgres_configured
-
-    if is_postgres_configured():
-        from .world_model_backends import open_postgres_world
-
-        return open_postgres_world()
     if path is None:
         # No explicit path: honor the client/tenant floor so every canonical
         # world entry point opens the one per-client DB (see docstring).

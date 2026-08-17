@@ -10,7 +10,6 @@ site                                             status
 ``agent.py`` (``self.tools.run``)                the full eleven-gate chain
 ``flow/execution.py`` (``reg.run``)              partial: tool-policy only
 ``workflow.py`` (``registry.run``)               partial: tool-policy only
-``perf_sla.py`` (``reg.run("noop", {})``)        fixed literal, not routable
 ===============================================  ==========================
 
 The flow path is live -- bound at ``automation_queue`` -- and reaches every
@@ -20,8 +19,8 @@ risk-classification requirement) and nothing else: no shield scan, no
 governance policy, and **no audit row**.
 
 That last omission is the one that matters most for the platform's central
-claim. The attestation bundle's ``policy_envelope`` asserts that *no recorded
-action violated the envelope*. An action dispatched through an ungated path is
+claim. The audit record asserts that *no recorded action violated the policy
+envelope*. An action dispatched through an ungated path is
 not recorded, so it satisfies that sentence trivially. The claim was not false
 so much as **unfalsifiable**, and an unfalsifiable governance claim is worth
 less than none: a hostile auditor cannot attack it, which is precisely why it
@@ -128,7 +127,7 @@ def authorize(
         pass
 
     # 4. Record the dispatch on the signed chain. This is what makes the
-    #    attestation's policy_envelope claim falsifiable for flow actions.
+    #    audit record's policy-envelope claim falsifiable for flow actions.
     from .audit import EventKind, audit_event
 
     audit_event(

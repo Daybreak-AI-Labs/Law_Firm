@@ -2,10 +2,7 @@
 routing rule, lifecycle round-trips, and the migrate-store CLI."""
 from __future__ import annotations
 
-import json
-
 import pytest
-from click.testing import CliRunner
 from maverick import learning_store as ls
 from maverick import self_harness as sh
 from maverick import self_improvement as si
@@ -124,41 +121,8 @@ def test_world_store_concurrency_keeps_every_promotion(world_home, monkeypatch):
     assert len(bullets) == 8
 
 
-def test_migrate_store_imports_and_backs_up(world_home, monkeypatch):
-    from maverick.cli import main
-    # Seed FILE stores at the default path (write raw -- routing is world).
-    src = sh._store_path()
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(json.dumps(
-        {"M": "Operating guidance learned for this model:\n- from the file era"}))
-    sh._meta_path(src).write_text(json.dumps(
-        {sh._line_id("M", "from the file era"): {
-            "model_id": "M", "text": "from the file era"}}))
-    sh._transfer_tried_path(src).write_text(json.dumps({"abc123": 1700000000.0}))
-    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
-    assert r.exit_code == 0, r.output
-    assert "imported 1 addenda key(s)" in r.output
-    assert "from the file era" in sh.recall_addendum("M")
-    assert ls.load_transfer_tried_db() == {"abc123": 1700000000.0}
-    assert not src.exists()                     # renamed to backups
-    assert src.with_name(src.name + ".migrated").exists()
-    # Idempotent: a second run finds nothing to migrate.
-    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
-    assert r.exit_code == 0 and "nothing to migrate" in r.output
 
 
-def test_migrate_store_merges_conflicting_blocks(world_home, monkeypatch):
-    from maverick.cli import main
-    ctrl = _ctrl(monkeypatch, world_home / "promotion-ledger.json")
-    _promote("M", "db-era line", ctrl)          # already in the world store
-    src = sh._store_path()
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(json.dumps(
-        {"M": "Operating guidance learned for this model:\n- file-era line"}))
-    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
-    assert r.exit_code == 0, r.output
-    block = sh.recall_addendum("M")
-    assert "db-era line" in block and "file-era line" in block
 
 
 @pytest.fixture()
@@ -204,56 +168,8 @@ def test_explicit_other_corpus_path_stays_on_files(world_corpus, tmp_path):
     assert ev.load_pending(world_corpus) == {}         # world store untouched
 
 
-def test_corpus_export_import_round_trip(world_corpus, tmp_path):
-    # The hand-editing story: export the world-stored corpus to JSON, edit,
-    # import back -- operator fields and non-list keys survive both ways.
-    from click.testing import CliRunner as _CR
-    from maverick import self_harness_eval as ev
-    from maverick.cli import main
-    cpath = world_corpus
-    ev.import_corpus(cpath, {
-        "M": [{"goal": "live", "expected": "x", "notes": "keep me"}],
-        "_meta": {"owner": "ops"},
-    })
-    out = tmp_path / "export.json"
-    r = _CR().invoke(main, ["self-harness", "corpus", "export",
-                            "--out", str(out)])
-    assert r.exit_code == 0, r.output
-    data = json.loads(out.read_text())
-    assert data["M"][0]["notes"] == "keep me" and data["_meta"] == {"owner": "ops"}
-    # edit: add a case, then import (merge)
-    data["M"].append({"goal": "new", "expected": "y", "reviewed": True})
-    out.write_text(json.dumps(data))
-    r = _CR().invoke(main, ["self-harness", "corpus", "import", str(out)])
-    assert r.exit_code == 0, r.output
-    raw = ev._load_raw(cpath)
-    assert [c["goal"] for c in raw["M"]] == ["live", "new"]
-    assert raw["M"][1]["reviewed"] is True and raw["_meta"] == {"owner": "ops"}
-    # --replace overwrites wholesale
-    out.write_text(json.dumps({"M": [{"goal": "only", "expected": "z"}]}))
-    r = _CR().invoke(main, ["self-harness", "corpus", "import", str(out),
-                            "--replace"])
-    assert r.exit_code == 0, r.output
-    assert [c["goal"] for c in ev._load_raw(cpath)["M"]] == ["only"]
 
 
-def test_migrate_store_carries_the_corpus_family(world_corpus, monkeypatch):
-    from maverick import self_harness_eval as ev
-    from maverick.cli import main
-    cpath = world_corpus
-    cpath.write_text(json.dumps(
-        {"M": [{"goal": "old live", "expected": "x", "notes": "n"}]}))
-    ev.pending_corpus_path(cpath).write_text(json.dumps(
-        {"M": [{"goal": "old pending", "expected": "y"}]}))
-    ev.rejected_corpus_path(cpath).write_text(json.dumps({"M": ["old reject"]}))
-    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
-    assert r.exit_code == 0, r.output
-    assert "corpus: merged 1 live case(s), 1 pending, 1 rejected" in r.output
-    assert not cpath.exists()                          # renamed to backup
-    assert cpath.with_name(cpath.name + ".migrated").exists()
-    assert ev._load_raw(cpath)["M"][0]["notes"] == "n"  # via the world store
-    assert [c["goal"] for c in ev.load_pending(cpath)["M"]] == ["old pending"]
-    assert ev.load_rejected(cpath) == {"M": ["old reject"]}
 
 
 def test_world_corpus_seals_machine_owned_rows(world_corpus, monkeypatch):
@@ -300,10 +216,3 @@ def test_world_corpus_seals_machine_owned_rows(world_corpus, monkeypatch):
     assert is_sealed_str(rejected)
 
 
-def test_migrate_store_requires_world_config(tmp_path, monkeypatch):
-    from maverick.cli import main
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {
-        "self_harness": {"enable": True}})       # store = files
-    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
-    assert r.exit_code != 0 and 'store = "world"' in r.output

@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-from pathlib import Path
 
 from maverick import config
 
@@ -189,8 +188,7 @@ LEARNING_TOGGLES = [(s["section"], s["config_key"]) for s in LEARNING_SUBSYSTEMS
 _LEARNING_SECTIONS = list(dict.fromkeys(s["section"] for s in LEARNING_SUBSYSTEMS))
 
 # Channels offered in the UI: name + per-field spec. Keys MUST match what
-# server.py's _wire_<name> reads from [channels.<name>] (verified against the
-# wiring), so a value saved here actually configures the channel via the
+# (channel adapters removed; the [channels.*] overlay plumbing is gone with
 # load_config() deep-merge. ``secret`` fields are masked + never echoed back;
 # ``type: int`` fields are stored as numbers.
 CHANNELS: list[dict] = [
@@ -343,7 +341,7 @@ def _dump(data: dict) -> str:
     ]
     # "flows" carries the autonomous self-improvement knobs (auto_evolve/auto_apply,
     # both booleans) -- persisted here so set_flow_autonomy survives a restart.
-    for section in ("capabilities", "features", "flows", "self_modify", "ekko",
+    for section in ("capabilities", "features", "flows",
                     "security_ops", "threat_hunt", "env_hunt",
                     "security_suite_control",
                     *_LEARNING_SECTIONS):
@@ -377,23 +375,6 @@ def _dump(data: dict) -> str:
         lines.append(f"[providers.{name}]")
         for field, val in fields:
             lines.append(f"{field} = {_toml_str(val)}")
-        lines.append("")
-    for name in sorted(data.get("channels") or {}):
-        ccfg = data["channels"][name] or {}
-        if not ccfg:
-            continue
-        lines.append(f"[channels.{name}]")
-        lines.append(f"enabled = {'true' if ccfg.get('enabled') else 'false'}")
-        for k in sorted(ccfg):
-            if k == "enabled":
-                continue
-            v = ccfg[k]
-            if isinstance(v, bool):
-                lines.append(f"{k} = {'true' if v else 'false'}")
-            elif isinstance(v, int):
-                lines.append(f"{k} = {v}")
-            else:
-                lines.append(f"{k} = {_toml_str(v)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -462,8 +443,8 @@ def set_toggle(section: str, name: str, enabled: bool) -> None:
 # Platform systems whose [section] enable flag an admin may switch from
 # inside the app -- the single authority the /features/switches API trusts.
 SWITCHABLE_SECTIONS: tuple[str, ...] = (
-    "dreaming", "self_improvement", "self_harness", "fleet_memory",
-    "rehearsal", "flows", "threat_hunt", "env_hunt", "entity_graph",
+    "dreaming", "self_improvement", "self_harness",
+    "rehearsal", "flows", "threat_hunt", "entity_graph",
 )
 
 
@@ -497,103 +478,6 @@ def set_model_cost_tier(model: str, band: str | None) -> None:
         else:
             tiers[model] = band
         _write(data)
-
-
-def set_security_suite(
-    *,
-    security_ops: bool,
-    threat_hunt: bool,
-    env_hunt: bool,
-    response_execution: bool,
-    actor: str,
-    expected_revision: int,
-) -> int:
-    """Atomically publish deployment-wide security-suite enablement.
-
-    Response execution can never be armed without the environment hunter. The
-    signed authorization is durable before the overlay is published, so a
-    crash or concurrent reader can never observe an unaudited authority bit.
-    """
-    if response_execution and not env_hunt:
-        raise ValueError("response execution requires env_hunt")
-    if (
-        isinstance(expected_revision, bool)
-        or not isinstance(expected_revision, int)
-        or expected_revision < 1
-    ):
-        raise ValueError("expected_revision must be a positive integer")
-    requested = {
-        "security_ops": bool(security_ops),
-        "threat_hunt": bool(threat_hunt),
-        "env_hunt": bool(env_hunt),
-        "response_execution": bool(response_execution),
-    }
-    with _locked():
-        before = _load_security_suite_overlay()
-        current_revision = _security_suite_revision(before)
-        if current_revision != expected_revision:
-            raise SecuritySuiteRevisionConflict(
-                f"expected security-suite revision {expected_revision}, "
-                f"found {current_revision}"
-            )
-        effective_before = config.load_global_config() or {}
-        if config.config_source_errors(include_tenant=False):
-            raise SecuritySuiteConfigUnavailable(
-                "an active global config source is unreadable; "
-                "security-suite configuration was not changed"
-            )
-        data = json.loads(json.dumps(before))
-        security_section = dict(data.get("security_ops") or {})
-        platform_section = dict(data.get("threat_hunt") or {})
-        environment_section = dict(data.get("env_hunt") or {})
-        security_section["enable"] = requested["security_ops"]
-        platform_section["enable"] = requested["threat_hunt"]
-        environment_section["enable"] = requested["env_hunt"]
-        environment_section["response_execution"] = requested["response_execution"]
-        # This endpoint owns only the four booleans above. Preserve connector
-        # selections, polling intervals, limits, and vendor extension settings.
-        data["security_ops"] = security_section
-        data["threat_hunt"] = platform_section
-        data["env_hunt"] = environment_section
-        next_revision = current_revision + 1
-        metadata = dict(data.get("security_suite_control") or {})
-        metadata["revision"] = next_revision
-        data["security_suite_control"] = metadata
-        from maverick.config import reset_config_cache
-
-        effective_security = effective_before.get("security_ops") or {}
-        effective_platform = effective_before.get("threat_hunt") or {}
-        effective_environment = effective_before.get("env_hunt") or {}
-        previous = {
-            "security_ops": effective_security.get("enable", True) is True,
-            "threat_hunt": effective_platform.get("enable", False) is True,
-            "env_hunt": effective_environment.get("enable", False) is True,
-            "response_execution": (
-                effective_environment.get("response_execution", False) is True
-            ),
-        }
-        import time
-
-        from maverick.audit import AuditEvent, EventKind, global_audit_log
-        from maverick.privacy_ops import _actor_label
-
-        accepted = global_audit_log().record(AuditEvent(
-            ts=time.time(),
-            kind=EventKind.SECURITY_SUITE_CONTROL_CHANGED,
-            agent="dashboard",
-            payload={
-                "actor": _actor_label(actor),
-                "previous": previous,
-                "requested": requested,
-                "revision": next_revision,
-                "phase": "authorized",
-            },
-        ))
-        if not accepted:
-            raise RuntimeError("security-suite control audit was not accepted")
-        _write(data)
-        reset_config_cache()
-        return next_revision
 
 
 def set_learning(enabled: bool, *, actor: str = "local") -> None:
@@ -633,156 +517,6 @@ def set_learning(enabled: bool, *, actor: str = "local") -> None:
             raise RuntimeError("global learning control audit could not be persisted")
         _write(data)
         reset_config_cache()
-
-
-def set_dgm(
-    enabled: bool,
-    *,
-    actor: str = "local",
-    acknowledged: bool = False,
-) -> dict:
-    """Set only the canonical, default-off DGM request bit.
-
-    Editable surfaces, challenge tests, evaluator policy and adoption authority
-    are deliberately not dashboard-editable. The production runner rechecks all
-    of them and never adopts code.
-    """
-    with _locked():
-        from maverick import self_modify
-        from maverick.config import reset_config_cache
-
-        before_status = self_modify.production_status()
-        blocker_codes = {item["code"] for item in before_status["blockers"]}
-        if before_status["control_managed"]:
-            raise PermissionError("a higher-precedence deployment policy owns DGM")
-        if "config_source_error" in blocker_codes:
-            raise PermissionError("an active global config source is invalid")
-        if enabled and not acknowledged:
-            raise ValueError("research-only acknowledgement is required")
-        if enabled and any(code.startswith("invalid_") for code in blocker_codes):
-            raise PermissionError("DGM boolean configuration is invalid")
-        before = _load_overlay_for_update()
-        data = json.loads(json.dumps(before))
-        data.setdefault("self_modify", {})["enable"] = bool(enabled)
-        # The global audit entry is the durable authorization record; the
-        # subsequent atomic overlay replacement is the commit. Record the
-        # authorization before publishing so an audit failure can never leave
-        # even a transiently observable enabled state.
-        from maverick.audit import EventKind, audit_event
-
-        audited = audit_event(
-            EventKind.LEARNING_CONTROL_CHANGED,
-            _global=True,
-            control="self_modify",
-            enabled=bool(enabled),
-            actor=actor,
-            acknowledged=bool(acknowledged),
-            previous_requested=bool(before_status["requested"]),
-            previous_effective=bool(before_status["effective"]),
-            previous_state=before_status["state"],
-            phase="authorized",
-        )
-        if not audited:
-            raise RuntimeError("global DGM control audit could not be persisted")
-        _write(data)
-        reset_config_cache()
-        after = self_modify.production_status()
-        if bool(after["requested"]) != bool(enabled):
-            _write(before)
-            reset_config_cache()
-            raise PermissionError("a higher-precedence deployment policy owns DGM")
-        return after
-
-
-def _higher_precedence_ekko_enable_owner() -> str | None:
-    """Return the active operator/tenant source that owns ``ekko.enable``.
-
-    The dashboard overlay intentionally overrides the base config, but the
-    optional operator and tenant sources are merged after it.  A non-table
-    ``ekko`` value is also ownership for this purpose: it replaces the whole
-    dashboard table and is invalid as an Ekko policy, so an expansive request
-    must fail closed.
-    """
-    operator = os.environ.get(config.CONFIG_OVERLAY_ENV)
-    sources = []
-    if operator:
-        sources.append((config.CONFIG_OVERLAY_ENV, Path(operator).expanduser()))
-    tenant = config.tenant_config_path()
-    if tenant is not None:
-        sources.append(("tenant config", tenant))
-    for owner, path in sources:
-        source = config.load_config(path)
-        if "ekko" not in source:
-            continue
-        section = source.get("ekko")
-        if not isinstance(section, dict) or "enable" in section:
-            return owner
-    return None
-
-
-def set_ekko(enabled: bool, *, actor: str = "local") -> dict:
-    """Set the deployment-global, default-off Ekko request bit.
-
-    The dashboard owns only ``[ekko] enable``.  Capture scope, retention,
-    provider egress, device enrollment, and endpoint permissions remain in the
-    client's higher-authority configuration and enrollment record.
-
-    As with DGM, the durable global audit authorization is written before the
-    atomic overlay commit.  Environment ownership is always rejected.  Before
-    an expansive ON commit, active operator/tenant sources are inspected and
-    an existing ``ekko.enable`` owner is rejected without publishing a latent
-    dashboard ON bit.  A post-commit effective-state check remains as a race
-    defense and rolls back a change superseded while this call was in flight.
-    """
-    from maverick.ekko_control import control_barrier
-
-    # Serialize the complete authorization change with collector commits. A
-    # disable call therefore cannot return while an append authorized under
-    # the previous deployment policy is still in flight.
-    with control_barrier(), _locked():
-        from maverick.config import config_source_errors, get_ekko, reset_config_cache
-
-        before_status = get_ekko()
-        if "MAVERICK_EKKO" in os.environ:
-            raise PermissionError("MAVERICK_EKKO owns the Ekko control")
-        if config_source_errors():
-            raise PermissionError("an active config source is invalid")
-        if enabled:
-            owner = _higher_precedence_ekko_enable_owner()
-            if owner is not None:
-                raise PermissionError(
-                    f"higher-precedence {owner} owns the Ekko control"
-                )
-        before = _load_overlay_for_update()
-        data = json.loads(json.dumps(before))
-        data.setdefault("ekko", {})["enable"] = bool(enabled)
-        from maverick.audit import EventKind, audit_event
-
-        audited = audit_event(
-            EventKind.EKKO_CONTROL_CHANGED,
-            _global=True,
-            control="ekko",
-            enabled=bool(enabled),
-            actor=actor,
-            previous_enabled=bool(before_status.get("enable", False)),
-            phase="authorized",
-        )
-        if not audited:
-            raise RuntimeError("global Ekko control audit could not be persisted")
-
-        _write(data)
-        reset_config_cache()
-        try:
-            after = get_ekko()
-        except Exception:
-            _write(before)
-            reset_config_cache()
-            raise
-        if bool(after.get("enable", False)) != bool(enabled):
-            _write(before)
-            reset_config_cache()
-            raise PermissionError("a higher-precedence deployment policy owns Ekko")
-        return after
 
 
 def set_flow_autonomy(*, auto_evolve: bool | None = None,
@@ -860,58 +594,10 @@ def set_value_assumptions(*, hourly_rate: float | None = None,
         _write(data)
 
 
-def set_channel(name: str, enabled: bool, values: dict | None = None) -> None:
-    """Enable/disable a channel and set its credentials in the overlay. A blank
-    field value is left unchanged (so toggling enabled never wipes a secret you
-    can't see). Writes [channels.<name>] to dashboard-config.toml, which
-    load_config() deep-merges -- so `maverick serve` picks it up with no
-    config.toml edit. Use ``clear_channel`` to remove."""
-    spec = _CHANNELS_BY_NAME.get(name)
-    if spec is None:
-        raise ValueError("unknown channel")
-    values = values or {}
-    with _locked():
-        data = _load_overlay_for_update()
-        ccfg = data.setdefault("channels", {}).setdefault(name, {})
-        ccfg["enabled"] = bool(enabled)
-        for field in spec["fields"]:
-            key = field["key"]
-            raw = values.get(key)
-            val = raw.strip() if isinstance(raw, str) else raw
-            if val in (None, ""):
-                continue  # blank -> keep the stored value (don't wipe a hidden secret)
-            if field.get("type") == "int":
-                try:
-                    ccfg[key] = int(val)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"{field['label']} must be a number") from exc
-            else:
-                ccfg[key] = str(val)
-        _write(data)
-
-
-def clear_channel(name: str) -> None:
-    """Remove a channel's overlay table entirely (reverts to config.toml/env)."""
-    if name not in _CHANNELS_BY_NAME:
-        raise ValueError("unknown channel")
-    with _locked():
-        data = _load_overlay_for_update()
-        (data.get("channels") or {}).pop(name, None)
-        _write(data)
-
-
 def _raw_config_providers() -> dict:
     """Providers from config.toml ONLY (no overlay), to attribute the source."""
     try:
         return config._load_config_file(config.config_path()).get("providers", {}) or {}
-    except Exception:
-        return {}
-
-
-def _raw_config_channels() -> dict:
-    """Channels from config.toml ONLY (no overlay), to attribute the source."""
-    try:
-        return config._load_config_file(config.config_path()).get("channels", {}) or {}
     except Exception:
         return {}
 
@@ -967,47 +653,3 @@ def state() -> dict:
     return {"providers": providers, "capabilities": capabilities, "features": features}
 
 
-def channels_state() -> list[dict]:
-    """Redacted snapshot for the channels page. NEVER returns a raw secret:
-    secret fields are blanked (with a masked hint), non-secret fields prefill so
-    the form shows the current host/port/etc."""
-    overlay = load_overlay()
-    ov_ch = overlay.get("channels") or {}
-    raw_ch = _raw_config_channels()
-    out = []
-    for spec in CHANNELS:
-        name = spec["name"]
-        ov = ov_ch.get(name) or {}
-        raw = raw_ch.get(name) or {}
-        fields = []
-        for f in spec["fields"]:
-            ov_v = ov.get(f["key"])
-            raw_v = raw.get(f["key"])
-            v = ov_v if ov_v not in (None, "") else raw_v
-            configured = v not in (None, "")
-            fields.append({
-                "key": f["key"], "label": f["label"],
-                "secret": bool(f.get("secret")), "type": f.get("type", "text"),
-                "value": "" if f.get("secret") else (str(v) if configured else ""),
-                "hint": _mask(v) if (configured and f.get("secret")) else "",
-                "configured": configured,
-            })
-        out.append({
-            "name": name, "label": spec["label"],
-            "enabled": bool(ov.get("enabled", raw.get("enabled", False))),
-            "fields": fields, "dashboard_set": bool(ov),
-            "via": "dashboard" if ov else ("config.toml" if raw else None),
-        })
-    return out
-
-
-__all__ = [
-    "PROVIDERS", "CAPABILITY_DEFAULTS", "CAPABILITY_INFO",
-    "FEATURE_DEFAULTS", "FEATURE_INFO", "CHANNELS",
-    "LEARNING_SUBSYSTEMS", "load_overlay", "set_provider", "clear_provider",
-    "SecuritySuiteConfigUnavailable", "SecuritySuiteRevisionConflict",
-    "security_suite_revision",
-    "set_dgm", "set_ekko", "set_security_suite",
-    "set_toggle", "set_learning", "set_flow_autonomy", "state", "set_channel", "clear_channel",
-    "channels_state",
-]

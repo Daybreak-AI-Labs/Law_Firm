@@ -713,19 +713,13 @@ class SelfImprovementController:
         """Re-read Model Risk authority over one persisted exact binding."""
 
         if payload_sha256 is None:
-            # Transactions written before this binding was introduced remain
-            # recoverable only while the built-in gate is explicitly disabled.
-            # Once assurance is enabled, an unbound PREPARE cannot be promoted.
+            # The Model Risk officer was deleted with the GRC cluster; with no
+            # injected verifier there is no authority to bind to, so an
+            # unbound PREPARE is not a defect. A deployment that injects a
+            # verifier still requires the exact binding.
             if self.model_risk_verifier is not None:
                 return False, "prepared promotion lacks an exact model-risk payload binding"
-            try:
-                from .model_risk_assurance import promotion_gate_enabled
-
-                if not promotion_gate_enabled():
-                    return True, ""
-            except Exception:
-                return False, "model-risk assurance policy is unavailable"
-            return False, "prepared promotion lacks an exact model-risk payload binding"
+            return True, ""
         if (
             not isinstance(payload_sha256, str)
             or len(payload_sha256) != 64
@@ -735,25 +729,19 @@ class SelfImprovementController:
         try:
             verifier = self.model_risk_verifier
             if verifier is None:
-                from .model_risk_assurance import verify_promotion_candidate
-
-                # The built-in verifier owns an authoritative record-store
-                # clock.  A controller/replica clock must never influence an
-                # authorization-expiry decision.
-                result = verify_promotion_candidate(
-                    candidate_id=candidate_id,
-                    rung=rung,
-                    payload_sha256=payload_sha256,
-                )
-            else:
-                # Preserve the injectable verifier seam for deterministic
-                # controller tests and downstream integrations.
-                result = verifier(
-                    candidate_id=candidate_id,
-                    rung=rung,
-                    payload_sha256=payload_sha256,
-                    now=self.now(),
-                )
+                # No built-in authority remains (the Model Risk officer was
+                # deleted with the GRC cluster); a recorded binding with no
+                # verifier to check it passes rather than dead-locking every
+                # promotion against a module that no longer exists.
+                return True, ""
+            # Preserve the injectable verifier seam for deterministic
+            # controller tests and downstream integrations.
+            result = verifier(
+                candidate_id=candidate_id,
+                rung=rung,
+                payload_sha256=payload_sha256,
+                now=self.now(),
+            )
         except Exception:
             log.warning("model-risk assurance promotion verification failed", exc_info=True)
             return False, "model-risk assurance policy is unavailable"

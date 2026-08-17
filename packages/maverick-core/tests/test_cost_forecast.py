@@ -1,8 +1,6 @@
 """Cost forecasting for `maverick start --dry-cost` (ROADMAP Q4 2026)."""
 from __future__ import annotations
 
-from click.testing import CliRunner
-from maverick.cli import main
 from maverick.cost.forecast import CostForecast, forecast, gather_samples, render
 
 
@@ -65,11 +63,3 @@ def test_render_messages():
     assert "$1.2345" in msg and "3 similar" in msg
 
 
-def test_cli_dry_cost_no_history(tmp_path, monkeypatch):
-    # No LLM key set, empty db -> --dry-cost still works (no key required) and
-    # reports no history, without creating a goal or running the swarm.
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    db = tmp_path / "world.db"
-    r = CliRunner().invoke(main, ["--db", str(db), "start", "hello world", "--dry-cost"])
-    assert r.exit_code == 0, r.output
-    assert "No priced run history" in r.output

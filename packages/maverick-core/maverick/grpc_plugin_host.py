@@ -1,7 +1,6 @@
 """gRPC plugin host: tools served by an external process over gRPC.
 
-``ts_plugin_host`` hosts NDJSON-over-stdio plugins (the TypeScript SDK); this
-module is the same seam for every other language — anything that can serve two
+An out-of-process seam for any language — anything that can serve two
 gRPC methods can ship Maverick tools. The contract lives in
 ``grpc_api/plugin_host.proto``::
 

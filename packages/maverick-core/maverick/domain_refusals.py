@@ -37,7 +37,7 @@ UNIVERSAL: tuple[str, ...] = (
 # controls are all human-approval gates has no entry.
 SUITE_REFUSALS: dict[str, tuple[str, ...]] = {
     "hr": (
-        # EU AI Act Art. 5 prohibitions in the employment context (see ai_act._PROHIBITED).
+        # EU AI Act Art. 5 prohibitions in the employment context (EU AI Act Art. 5).
         "infer, score, or record the emotional state of an employee or candidate "
         "(workplace emotion inference is an EU AI Act Art. 5 prohibited practice)",
         "use biometric data to categorize a person by, or infer, a protected "

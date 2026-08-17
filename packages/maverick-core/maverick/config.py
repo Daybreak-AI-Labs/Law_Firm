@@ -671,7 +671,7 @@ def get_budget_overrides() -> dict:
 
 def get_capabilities() -> dict:
     """Return the [capabilities] section (computer_use / browser / web_search /
-    mobile_tools / ros). These gate the optional high-impact tools in
+    mobile_tools). These gate the optional high-impact tools in
     ``tools.base_registry``; all default off."""
     cfg = load_config().get("capabilities", {}) or {}
     return {
@@ -679,7 +679,6 @@ def get_capabilities() -> dict:
         "browser": bool(cfg.get("browser", False)),
         "web_search": bool(cfg.get("web_search", False)),
         "mobile_tools": bool(cfg.get("mobile_tools", False)),
-        "ros": bool(cfg.get("ros", False)),
         # Programmatic tool calling: a sandboxed Python script that orchestrates
         # declared tool calls (also enableable via MAVERICK_CODE_EXEC).
         "code_exec": bool(cfg.get("code_exec", False)),
@@ -712,8 +711,7 @@ def get_features() -> dict:
     - ``scheduling`` allow arming recurring schedules (cron) from the dashboard
                       workflow builder -- each fire enqueues a ``start_goal`` job
                       run by ``maverick worker``. Off = the schedule endpoints
-                      return 403 and the UI hides; the ``maverick schedule`` CLI
-                      on the host is unaffected.
+                      return 403 and the UI hides.
     - ``triggers`` allow binding a saved template to an inbound webhook (POST
                       /webhook/run) so an external event runs it as a goal. The
                       inbound route is HMAC-signed exactly like /webhook/start
@@ -803,33 +801,55 @@ def get_sandbox() -> dict:
     }
 
 
+#: Per-embedder (model, dim) defaults. A vector dimension that disagrees with
+#: the model that produced it is not a cosmetic mismatch -- the store raises on
+#: a dim mismatch rather than returning garbage, so a wrong default here reads
+#: as a broken knowledge base.
+_EMBEDDER_DEFAULTS: dict[str, tuple[str, int]] = {
+    "hosted": ("voyage-3", 1024),
+    "cohere": ("embed-v4.0", 1024),
+    "local": ("all-MiniLM-L6-v2", 384),
+    "deterministic": ("", 256),
+}
+
+
 def get_knowledge() -> dict:
     """Return the ``[knowledge]`` section (per-domain vector RAG).
 
     Off by default; the agent kernel never requires the maverick-knowledge
-    package. ``embedder`` selects hosted/cohere/local/deterministic; ``store``
-    selects sqlite/pgvector. Provider details (model/base_url/dim/path) are read
-    by maverick_knowledge.build_embedder / build_store.
+    package. ``embedder`` selects hosted/cohere/local/deterministic; the
+    vector store is the embedded SQLite one. Provider details
+    (model/base_url/dim/path) are read by maverick_knowledge.build_embedder /
+    build_store.
 
     ``allow_external_embedding`` is the acknowledgement that the hosted
     providers send document text itself to a third-party vendor -- a different
     exposure from the LLM chokepoint, which sends prompts and has its own
     redaction knob. Off by default; build_embedder refuses hosted/cohere
     without it.
+
+    ``model`` and ``dim`` default PER EMBEDDER. They used to default to
+    ``voyage-3``/1024 whichever embedder was chosen, so ``embedder = "local"``
+    with no explicit model resolved to ``SentenceTransformer("voyage-3")`` --
+    not a model id that exists -- and advertised 1024 dimensions for a 384-dim
+    MiniLM. build_embedder's own ``all-MiniLM-L6-v2`` fallback could never fire
+    because this function had already filled the key in. An explicit
+    ``[knowledge] model``/``dim`` still wins.
     """
     cfg = load_config().get("knowledge", {}) or {}
+    embedder = cfg.get("embedder", "hosted")
+    model_default, dim_default = _EMBEDDER_DEFAULTS.get(
+        str(embedder).lower(), _EMBEDDER_DEFAULTS["hosted"])
     return {
         "enable": bool(cfg.get("enable", False)),
-        "embedder": cfg.get("embedder", "hosted"),
+        "embedder": embedder,
         "allow_external_embedding": _strict_config_bool(
             cfg, "allow_external_embedding", False),
         "store": cfg.get("store", "sqlite"),
-        "model": cfg.get("model", "voyage-3"),
+        "model": cfg.get("model", model_default),
         "base_url": cfg.get("base_url", "https://api.voyageai.com/v1"),
-        "dim": int(cfg.get("dim", 1024)),
+        "dim": int(cfg.get("dim", dim_default)),
         "path": cfg.get("path", ""),
-        # DSN for the pgvector scale backend (falls back to env in build_store).
-        "dsn": cfg.get("dsn", ""),
     }
 
 
@@ -851,209 +871,6 @@ def get_automation_import() -> dict:
     }
 
 
-_EKKO_DEFAULT_BLOCKED_APPS = (
-    "email",
-    "outlook",
-    "gmail",
-    "chat",
-    "teams",
-    "slack",
-    "crm",
-    "salesforce",
-    "erp",
-    "sap",
-    "database",
-)
-
-
-def get_ekko() -> dict:
-    """Return the client-controlled ``[ekko]`` work-discovery policy.
-
-    Ekko observes *application metadata*, not screen, clipboard, keystroke, or
-    document content.  It is deliberately OFF until a client enrolls a device,
-    and it does not inherit the default-on governed-learning posture.  An empty
-    ``allowed_apps`` list is deny-all: the deployment must authorize apps
-    before a device can enroll. ``blocked_apps`` always wins.
-
-    ``MAVERICK_EKKO`` is the only environment override.  It controls only the
-    master switch; an invalid value fails closed instead of falling through to
-    a potentially-enabled config file. Provider egress is reserved and forced
-    off because this release has no reviewed network path for Ekko data.
-    """
-    cfg = load_config().get("ekko", {}) or {}
-    if not isinstance(cfg, dict):
-        cfg = {}
-
-    def _bounded_int(key: str, default: int, low: int, high: int) -> int:
-        try:
-            raw = cfg.get(key, default)
-            # Do not silently treat TOML booleans as integers.
-            value = default if isinstance(raw, bool) else int(raw)
-        except (TypeError, ValueError, OverflowError):
-            value = default
-        return max(low, min(high, value))
-
-    def _app_list(key: str, default: tuple[str, ...] = ()) -> list[str]:
-        from .work_discovery import KNOWN_APPS
-
-        raw = cfg.get(key, list(default))
-        if not isinstance(raw, (list, tuple)):
-            return list(default)
-        result: list[str] = []
-        seen: set[str] = set()
-        invalid = False
-        for item in raw[:128]:
-            if not isinstance(item, str):
-                invalid = True
-                continue
-            name = item.strip().casefold()
-            if (
-                not name
-                or len(name) > 128
-                or any(ord(char) < 32 or ord(char) == 127 for char in name)
-                or name not in KNOWN_APPS
-            ):
-                invalid = True
-                continue
-            if name not in seen:
-                seen.add(name)
-                result.append(name)
-        # A misspelled sensitive-app blocklist must not silently erase the
-        # defense-in-depth defaults. The caller also unions this result with
-        # the immutable sensitive-app floor, including for an explicit [].
-        if key == "blocked_apps" and raw and invalid:
-            return list(default)
-        return result
-
-    retention_days = _bounded_int("retention_days", 14, 2, 30)
-    min_distinct_days = min(
-        retention_days,
-        _bounded_int("min_distinct_days", 2, 2, 30),
-    )
-    capture_level = cfg.get("capture_level", "application_metadata")
-    if capture_level not in {"application_metadata", "guided"}:
-        capture_level = "application_metadata"
-
-    enabled = _strict_config_bool(cfg, "enable", False)
-    if "MAVERICK_EKKO" in os.environ:
-        # Invalid values are not "unset": fail closed even if config says on.
-        enabled = env_flag("MAVERICK_EKKO") is True
-
-    configured_blocks = _app_list("blocked_apps", _EKKO_DEFAULT_BLOCKED_APPS)
-    blocked_apps = list(dict.fromkeys(
-        (*_EKKO_DEFAULT_BLOCKED_APPS, *configured_blocks)
-    ))
-    blocked = set(blocked_apps)
-    allowed_apps = [
-        name for name in _app_list("allowed_apps") if name not in blocked
-    ]
-    return {
-        "enable": enabled,
-        "retention_days": retention_days,
-        "enrollment_days": _bounded_int("enrollment_days", 30, 1, 90),
-        "min_occurrences": _bounded_int("min_occurrences", 3, 2, 100),
-        "min_distinct_days": min_distinct_days,
-        "poll_interval_seconds": _bounded_int(
-            "poll_interval_seconds", 5, 1, 300,
-        ),
-        "capture_level": capture_level,
-        "allowed_apps": allowed_apps,
-        "blocked_apps": blocked_apps,
-        # Reserved for a future separately-audited summary path. The current
-        # local discovery implementation has no provider path, so config may
-        # not arm one pre-emptively.
-        "provider_egress": False,
-    }
-
-
-def get_ekko_policy(*, allowed_apps: list[str] | tuple[str, ...] | None = None):
-    """Build Ekko's canonical :class:`CapturePolicy` under the admin ceiling.
-
-    ``[ekko].allowed_apps`` is the deployment-wide ceiling. Enrollment may
-    narrow it, never widen it; omitting ``allowed_apps`` selects the whole
-    configured ceiling. Unknown canonical IDs are rejected so CLI, dashboard,
-    and daemon compute the exact same policy fingerprint.
-    """
-    from .work_discovery import (
-        ACTION_KINDS,
-        APPLICATION_METADATA_ACTIONS,
-        APPLICATION_METADATA_OBJECT_TYPES,
-        GUIDED_OBJECT_KINDS,
-        KNOWN_APPS,
-        CapturePolicy,
-    )
-
-    cfg = get_ekko()
-    ceiling = frozenset(cfg["allowed_apps"])
-    if allowed_apps is None:
-        selected = ceiling
-    else:
-        normalized = frozenset(str(app).strip().casefold() for app in allowed_apps)
-        unknown = normalized - KNOWN_APPS
-        if unknown:
-            raise ValueError(
-                "unknown canonical application IDs: " + ", ".join(sorted(unknown))
-            )
-        outside = normalized - ceiling
-        if outside:
-            raise ValueError(
-                "applications exceed [ekko].allowed_apps ceiling: "
-                + ", ".join(sorted(outside))
-            )
-        selected = normalized
-    policy = CapturePolicy(
-        enabled=cfg["enable"],
-        capture_level=cfg["capture_level"],
-        allowed_apps=selected,
-        blocked_apps=frozenset(cfg["blocked_apps"]),
-        allowed_actions=(
-            ACTION_KINDS
-            if cfg["capture_level"] == "guided"
-            else APPLICATION_METADATA_ACTIONS
-        ),
-        allowed_object_types=(
-            GUIDED_OBJECT_KINDS
-            if cfg["capture_level"] == "guided"
-            else APPLICATION_METADATA_OBJECT_TYPES
-        ),
-        retention_days=cfg["retention_days"],
-        min_occurrences=cfg["min_occurrences"],
-        min_distinct_days=cfg["min_distinct_days"],
-        poll_interval_seconds=cfg["poll_interval_seconds"],
-        provider_egress=False,
-    )
-    policy.require_valid(require_enabled=True)
-    return policy
-
-
-def validate_ekko_policy_ceiling(policy) -> None:
-    """Fail closed when an enrolled policy no longer fits current config.
-
-    App selection may be a strict subset. Every other capture/retention field
-    and the sensitive-app blocklist must still match the current admin policy;
-    config changes therefore require an explicit re-enrollment.
-    """
-    from .work_discovery import CapturePolicy
-
-    if not isinstance(policy, CapturePolicy):
-        raise TypeError("policy must be a CapturePolicy")
-    ceiling = get_ekko_policy()
-    if not policy.allowed_apps <= ceiling.allowed_apps:
-        raise ValueError("enrolled application scope exceeds the current config ceiling")
-    comparable = (
-        "enabled",
-        "capture_level",
-        "blocked_apps",
-        "allowed_actions",
-        "allowed_object_types",
-        "retention_days",
-        "min_occurrences",
-        "min_distinct_days",
-        "poll_interval_seconds",
-        "provider_egress",
-    )
-    if any(getattr(policy, name) != getattr(ceiling, name) for name in comparable):
-        raise ValueError("Ekko policy config changed; re-enrollment is required")
 
 
 def get_governed_connectors() -> dict:
@@ -1525,7 +1342,7 @@ def get_calibration() -> dict:
 
     The verifier-calibration interlock (``maverick.calibration``) is OFF by
     default: ``enforce`` must be true for a failed assessment to freeze
-    self-improvement (trajectory donation). ``min_samples`` is the minimum
+    self-improvement. ``min_samples`` is the minimum
     labeled samples before an assessment is trusted; ``min_discrimination`` is
     the floor on mean(confidence|correct) - mean(confidence|incorrect) below
     which the verifier is judged to have drifted.
@@ -1619,49 +1436,6 @@ def get_skill_synthesis() -> dict:
     cfg = load_config().get("skill_synthesis", {})
     return {"enable": _strict_config_bool(
         cfg, "enable", governed_learning_default())}
-
-
-def get_fleet_memory() -> dict:
-    """Return the ``[fleet_memory]`` section (agent-agnostic learning plane).
-    OFF by default: exposing governed memory to third-party agents is an
-    explicit trust decision."""
-    cfg = load_config().get("fleet_memory", {})
-    return {"enable": bool(cfg.get("enable", False))}
-
-
-def get_external_agents() -> dict:
-    """Return the ``[external_agents]`` section (bring-your-own-agent gateway:
-    enrollment, run ingest onto the Operating Record, pre-action screening).
-    OFF by default: admitting foreign runtimes is an explicit trust decision,
-    made per-agent in the trust registry once the plane is on. Also honored
-    via ``MAVERICK_EXTERNAL_AGENTS=1``."""
-    cfg = load_config().get("external_agents", {})
-    raw = cfg.get("connectors", [])
-    if isinstance(raw, str):
-        raw = raw.split(",")
-    return {
-        "enable": bool(cfg.get("enable", False)),
-        # Signed-identity enforcement on the gateway: when on, an agent
-        # enrolled with a strong credential (pinned Ed25519 pubkey or JWT
-        # issuer) may no longer authenticate with its minted bearer alone —
-        # it must present that credential. Agents holding only bearers are
-        # unaffected. Strict bool; a malformed value engages the refusal
-        # (fail closed — this is a tightening switch).
-        "require_signed": _strict_config_bool(
-            cfg, "require_signed", False, invalid=True),
-        # Governed-REST connectors external agents may EXECUTE through (the
-        # enforcement tier above screening). Empty = screen-only; naming one
-        # here is the operator's explicit decision to let foreign agents act
-        # through Maverick's egress-guarded, receipted connector path.
-        "connectors": [str(p).strip().lower() for p in raw if str(p).strip()],
-        # Step-up re-auth on credential minting: when on, ``mint_token`` parks
-        # a world approval (dual-control quorum at "high" risk) and refuses to
-        # mint until a decision-maker approves; each approval mints exactly
-        # one credential. Strict bool; a malformed value engages the gate
-        # (fail closed — this is a tightening switch).
-        "mint_approval": _strict_config_bool(
-            cfg, "mint_approval", False, invalid=True),
-    }
 
 
 def get_repl() -> dict:
@@ -1867,9 +1641,6 @@ def get_dreaming() -> dict:
         # Shared promotion is disabled by default: department-scoped failures
         # must not be written into globally recallable insights.
         "promote_shared": bool(cfg.get("promote_shared", False)),
-        # Mine verifier critiques out of donated trajectory records (empty
-        # unless [telemetry] donate_trajectories has produced any).
-        "mine_critiques": bool(cfg.get("mine_critiques", True)),
         # Insights unconfirmed for this many days retire; 0 = never expire.
         "insight_ttl_days": _nonneg_int("insight_ttl_days", 90),
         # Retire a failure insight once this many NEWER similar successes
@@ -1891,7 +1662,7 @@ def get_dreaming() -> dict:
         # cycle mutates it, keeping the last N snapshots.
         "snapshots": bool(cfg.get("snapshots", True)),
         "snapshot_keep_last": _int("snapshot_keep_last", 5),
-        # Dream-time rehearsal (maverick-evolve harness) is a separate trust
+        # Dream-time rehearsal is a separate trust
         # decision from consolidation: it spends real agent runs. Default off.
         "rehearse": bool(cfg.get("rehearse", False)),
         "max_rehearsals": _int("max_rehearsals", 3),
@@ -1973,8 +1744,8 @@ def get_self_improvement() -> dict:
         "min_improvement": min_improvement,
         "promotion_policy_valid": margin_valid,
         "max_auto_rung": str(cfg.get("max_auto_rung", "policy")).strip().lower() or "policy",
-        # Phase-0 capture fuels the default-on flywheel. Raw-text donation and
-        # provider egress remain separate opt-ins.
+        # Phase-0 capture fuels the default-on flywheel. Provider egress
+        # remains a separate opt-in.
         "capture": _strict_config_bool(cfg, "capture", True),
         "prm_guidance": _strict_config_bool(
             cfg, "prm_guidance", governed_learning_default()),
@@ -2072,256 +1843,6 @@ def get_jit_rl() -> dict:
     }
 
 
-def get_self_modify() -> dict:
-    """Return the ``[self_modify]`` section (governed code self-modification).
-
-    OFF by default AND inert until an editable allowlist is set: the engine
-    (maverick.self_modify) refuses any patch outside ``editable_paths`` and every
-    control-plane path unconditionally. ``editable_paths`` is a list of
-    repo-relative fnmatch globs the agent MAY propose changes to; empty (the
-    default) means nothing is editable."""
-    cfg = load_global_config().get("self_modify", {})
-    paths = cfg.get("editable_paths")
-    editable = ([str(p).strip() for p in paths if str(p).strip()]
-                if isinstance(paths, list) else [])
-    return {"enable": cfg.get("enable") is True, "editable_paths": editable}
-
-
-def get_model_improvement() -> dict:
-    """Return fail-closed specialist-model improvement settings.
-
-    This is the control plane for environment exports and training runs, not a
-    runtime model selector. It is inert by default. Hosted execution requires a
-    second opt-in; cross-tenant training is a reserved setting and the v1 data
-    boundary still refuses it. Promotion requires a signed, digest-bound
-    training receipt. Family floors cannot be configured below the shipped
-    anti-leak minimum.
-    """
-    raw = load_config().get("model_improvement", {})
-    cfg = raw if isinstance(raw, dict) else {}
-
-    def _family_floor(key: str) -> int:
-        value = cfg.get(key, 20)
-        if not isinstance(value, int) or isinstance(value, bool):
-            return 20
-        return max(20, min(value, 1_000_000))
-
-    return {
-        "enable": _strict_config_bool(cfg, "enable", False),
-        "allow_hosted": _strict_config_bool(cfg, "allow_hosted", False),
-        "allow_cross_tenant": _strict_config_bool(
-            cfg, "allow_cross_tenant", False,
-        ),
-        "require_signed_receipt": _strict_config_bool(
-            cfg, "require_signed_receipt", True, invalid=True,
-        ),
-        "minimum_train_families": _family_floor("minimum_train_families"),
-        "minimum_holdout_families": _family_floor("minimum_holdout_families"),
-    }
-
-
-class ModelImprovementConfigError(ValueError):
-    """The active model-improvement policy cannot safely authorize mutation."""
-
-
-_MODEL_IMPROVEMENT_BOOL_KEYS = frozenset({
-    "enable",
-    "allow_hosted",
-    "allow_cross_tenant",
-    "require_signed_receipt",
-})
-_MODEL_IMPROVEMENT_FAMILY_KEYS = frozenset({
-    "minimum_train_families",
-    "minimum_holdout_families",
-})
-_MODEL_IMPROVEMENT_KEYS = (
-    _MODEL_IMPROVEMENT_BOOL_KEYS | _MODEL_IMPROVEMENT_FAMILY_KEYS
-)
-_MODEL_IMPROVEMENT_DEFAULTS: dict[str, bool | int] = {
-    "enable": False,
-    "allow_hosted": False,
-    "allow_cross_tenant": False,
-    "require_signed_receipt": True,
-    "minimum_train_families": 20,
-    "minimum_holdout_families": 20,
-}
-
-
-def _strict_model_improvement_section(
-    snapshot: dict,
-    *,
-    source: str,
-) -> dict[str, bool | int]:
-    """Validate one unmerged policy source without silently using fallbacks."""
-    if not isinstance(snapshot, dict):
-        raise ModelImprovementConfigError(
-            f"model-improvement policy source is invalid: {source} must be a table"
-        )
-    raw = snapshot.get("model_improvement", {})
-    if not isinstance(raw, dict):
-        raise ModelImprovementConfigError(
-            "model-improvement policy source is invalid: "
-            f"{source}.model_improvement must be a table"
-        )
-
-    unknown = sorted(
-        str(key) for key in raw if key not in _MODEL_IMPROVEMENT_KEYS
-    )
-    if unknown:
-        raise ModelImprovementConfigError(
-            "model-improvement policy source is invalid: "
-            f"{source}.model_improvement has unknown key(s): "
-            + ", ".join(unknown)
-        )
-
-    policy = dict(_MODEL_IMPROVEMENT_DEFAULTS)
-    for key in _MODEL_IMPROVEMENT_BOOL_KEYS:
-        if key not in raw:
-            continue
-        value = raw[key]
-        if not isinstance(value, bool):
-            raise ModelImprovementConfigError(
-                "model-improvement policy source is invalid: "
-                f"{source}.model_improvement.{key} must be true or false"
-            )
-        policy[key] = value
-
-    for key in _MODEL_IMPROVEMENT_FAMILY_KEYS:
-        if key not in raw:
-            continue
-        value = raw[key]
-        if (
-            not isinstance(value, int)
-            or isinstance(value, bool)
-            or not 20 <= value <= 1_000_000
-        ):
-            raise ModelImprovementConfigError(
-                "model-improvement policy source is invalid: "
-                f"{source}.model_improvement.{key} must be an integer "
-                "between 20 and 1000000"
-            )
-        policy[key] = value
-
-    if policy["allow_cross_tenant"] is True:
-        raise ModelImprovementConfigError(
-            "model-improvement policy source is invalid: "
-            f"{source}.model_improvement.allow_cross_tenant is unsupported "
-            "and must remain false"
-        )
-    return policy
-
-
-def _model_improvement_policy_sources() -> tuple[dict, dict | None]:
-    """Load the global and active-tenant policy snapshots without merging them."""
-    _load_wizard_env()
-    paths = [config_path(), dashboard_overrides_path()]
-    global_snapshot = _load_config_file(paths[0])
-    global_snapshot = _deep_merge_config(
-        global_snapshot,
-        _load_config_file(paths[1]),
-    )
-
-    overlay = os.environ.get(CONFIG_OVERLAY_ENV)
-    if overlay:
-        overlay_path = Path(overlay).expanduser()
-        paths.append(overlay_path)
-        global_snapshot = _deep_merge_config(
-            global_snapshot,
-            _load_config_file(overlay_path),
-        )
-
-    tenant_snapshot: dict | None = None
-    tenant_path = tenant_config_path()
-    if tenant_path is not None:
-        paths.append(tenant_path)
-        # Missing is a valid empty tenant policy. It therefore cannot provide
-        # the explicit opt-in required by the resolver below.
-        tenant_snapshot = _load_config_file(tenant_path)
-
-    errors = _source_errors(paths)
-    if errors:
-        details = "; ".join(
-            f"{path}: {error}" for path, error in sorted(errors.items())
-        )
-        raise ModelImprovementConfigError(
-            "model-improvement policy source is invalid: " + details
-        )
-    return global_snapshot, tenant_snapshot
-
-
-def get_model_improvement_mutation_policy() -> dict[str, bool | int]:
-    """Resolve the strictest effective policy for training or promotion.
-
-    Unlike :func:`get_model_improvement`, this mutation-boundary API never
-    silently normalizes a malformed active source. Global ``enable`` and
-    ``allow_hosted`` are ceilings; an active tenant must independently opt in.
-    Receipt requirements use logical OR, family floors use ``max``, and
-    cross-tenant model improvement is unconditionally unavailable.
-    """
-    global_snapshot, tenant_snapshot = _model_improvement_policy_sources()
-    global_policy = _strict_model_improvement_section(
-        global_snapshot,
-        source="global",
-    )
-
-    if tenant_snapshot is None:
-        enable = bool(global_policy["enable"])
-        if enable and global_policy["require_signed_receipt"] is not True:
-            raise ModelImprovementConfigError(
-                "enabled model improvement requires "
-                "model_improvement.require_signed_receipt = true",
-            )
-        return {
-            "enable": enable,
-            "allow_hosted": (
-                enable and bool(global_policy["allow_hosted"])
-            ),
-            "allow_cross_tenant": False,
-            "require_signed_receipt": bool(
-                global_policy["require_signed_receipt"]
-            ),
-            "minimum_train_families": int(
-                global_policy["minimum_train_families"]
-            ),
-            "minimum_holdout_families": int(
-                global_policy["minimum_holdout_families"]
-            ),
-        }
-
-    tenant_policy = _strict_model_improvement_section(
-        tenant_snapshot,
-        source="tenant",
-    )
-    enable = bool(global_policy["enable"] and tenant_policy["enable"])
-    require_signed_receipt = bool(
-        global_policy["require_signed_receipt"]
-        or tenant_policy["require_signed_receipt"]
-    )
-    if enable and not require_signed_receipt:
-        raise ModelImprovementConfigError(
-            "enabled model improvement requires "
-            "model_improvement.require_signed_receipt = true",
-        )
-    return {
-        "enable": enable,
-        "allow_hosted": bool(
-            enable
-            and global_policy["allow_hosted"]
-            and tenant_policy["allow_hosted"]
-        ),
-        "allow_cross_tenant": False,
-        "require_signed_receipt": require_signed_receipt,
-        "minimum_train_families": max(
-            int(global_policy["minimum_train_families"]),
-            int(tenant_policy["minimum_train_families"]),
-        ),
-        "minimum_holdout_families": max(
-            int(global_policy["minimum_holdout_families"]),
-            int(tenant_policy["minimum_holdout_families"]),
-        ),
-    }
-
-
 def get_rehearsal() -> dict:
     """Return the ``[rehearsal]`` section (pre-execution rehearsal gate).
 
@@ -2350,33 +1871,6 @@ def get_rehearsal() -> dict:
         "max_uncertainty": _num("max_uncertainty", 0.25),
         "horizon": _num("horizon", 8, int),
         "rollouts": _num("rollouts", 200, int),
-    }
-
-
-def get_speculative() -> dict:
-    """Return the ``[speculative]`` section (speculative agent execution).
-
-    Draft a turn with a cheap model when the Operating Twin's world-model is
-    confident the turn is predictable, reserving the frontier model for novel /
-    uncertain turns. OFF by default and fail-open -- when ``enable`` is false (or
-    no ``draft_model`` is configured) the agent always uses its normal model.
-    ``draft_model`` is an operator-chosen cheap model spec (never hard-coded);
-    ``min_confidence``/``min_support`` set how dominant + well-observed an action
-    must be before its turn is drafted.
-    """
-    cfg = load_config().get("speculative", {})
-
-    def _num(key: str, default: float, cast=float):
-        try:
-            return cast(cfg.get(key, default))
-        except (TypeError, ValueError):
-            return default
-
-    return {
-        "enable": bool(cfg.get("enable", False)),
-        "draft_model": (str(cfg.get("draft_model", "")).strip() or None),
-        "min_confidence": _num("min_confidence", 0.85),
-        "min_support": _num("min_support", 8, int),
     }
 
 

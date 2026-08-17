@@ -1,6 +1,6 @@
 """Cookiecutter-style generator for new Maverick plugins.
 
-Driven by ``maverick plugin new <name> --kind tool|channel|persona``,
+Driven by ``maverick plugin new <name> --kind tool|persona``,
 this writes a working plugin skeleton the contributor can `pip install
 -e` and exercise immediately. The pyproject already wires the right
 ``[project.entry-points."maverick.<kind>"]`` block so the kernel
@@ -9,14 +9,14 @@ discovers the plugin without any manual config.
 Skills are NOT a plugin kind here — they ship as standalone SKILL.md
 files installed via ``maverick skill install``. MCP servers aren't a
 plugin kind either — they live in ``[mcp_servers.<name>]`` in
-config.toml. Only tool / channel / persona need a Python package.
+config.toml. Only tool / persona need a Python package.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-VALID_KINDS = ("tool", "channel", "persona")
+VALID_KINDS = ("tool", "persona")
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}[a-z0-9]$")
 
 
@@ -134,44 +134,6 @@ def {factory}():
     )
 '''
 
-_CHANNEL_INIT_TMPL = '''\
-"""Maverick channel plugin: {slug}.
-
-Subclass ``maverick_channels.Channel`` and implement ``start``,
-``send``, ``stop``. ``pyproject.toml`` registers the *class* (not an
-instance) at the ``maverick.channels`` entry point; Maverick passes the
-agent ``handler`` when it instantiates the channel per-deployment.
-"""
-from __future__ import annotations
-
-from maverick_channels import Channel, Handler
-
-
-class {class_name}(Channel):
-    name = "{slug_under}"
-
-    def __init__(self, handler: Handler) -> None:
-        super().__init__(handler)
-        # TODO: pull config from ``[channels.{slug_under}]`` in config.toml.
-
-    async def start(self) -> None:
-        # TODO: open the inbound connection (poller, webhook, websocket),
-        # then dispatch each message to ``self.handler``.
-        pass
-
-    async def send(self, user_id: str, text: str) -> None:
-        # TODO: deliver `text` back to `user_id` on this channel.
-        raise NotImplementedError
-
-    async def stop(self) -> None:
-        # TODO: close connections, flush buffers.
-        pass
-
-
-# Entry-point exports the CLASS — Maverick instantiates per-deployment.
-{factory} = {class_name}
-'''
-
 _PERSONA_INIT_TMPL = '''\
 """Maverick persona plugin: {slug}.
 
@@ -246,8 +208,6 @@ def _factory_call(kind: str) -> str:
 def _kind_assertions(kind: str) -> str:
     if kind == "tool":
         return "from maverick.tools import Tool; assert isinstance(obj, Tool)"
-    if kind == "channel":
-        return "from maverick_channels import Channel; assert isinstance(obj, Channel)"
     return "assert isinstance(obj, str) and obj.strip()"
 
 
@@ -256,13 +216,12 @@ def _files_for(slug: str, kind: str, base: Path) -> list[tuple[Path, str]]:
     module = _slug_to_module(slug)
     factory = {
         "tool": f"{module}_tool",
-        "channel": f"{module}_channel",
         "persona": f"{module}_persona",
     }[kind]
     class_name = "".join(p.capitalize() for p in module.split("_")) + "Channel"
     slug_under = module
     # Reasonable defaults: tools touch network because most do; channels too.
-    needs_net = kind in ("tool", "channel")
+    needs_net = kind == "tool"
     files: list[tuple[Path, str]] = []
     files.append((base / "pyproject.toml", _PYPROJECT_TMPL.format(
         slug=slug, kind=kind, module=module, factory=factory,
@@ -272,7 +231,6 @@ def _files_for(slug: str, kind: str, base: Path) -> list[tuple[Path, str]]:
     )))
     body = {
         "tool": _TOOL_INIT_TMPL,
-        "channel": _CHANNEL_INIT_TMPL,
         "persona": _PERSONA_INIT_TMPL,
     }[kind].format(
         slug=slug, factory=factory, slug_under=slug_under,

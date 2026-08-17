@@ -383,24 +383,5 @@ def test_clock_is_virtual_and_module_never_blocks():
 
 # ------------------------------------------------------------------------ cli
 
-def test_cli_plan_prints_argv(tmp_path):
-    cfgdir = tmp_path / ".maverick"
-    cfgdir.mkdir(parents=True, exist_ok=True)
-    (cfgdir / "config.toml").write_text(
-        '[local_runtime]\nengine = "llamacpp"\nmodel = "/m/q4.gguf"\n',
-        encoding="utf-8",
-    )
-    from click.testing import CliRunner
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["local-runtime", "plan"])
-    assert res.exit_code == 0, res.output
-    assert "llama-server" in res.output and "/m/q4.gguf" in res.output
-    assert "DISABLED" in res.output  # enabled defaults to false: plan is dry
 
 
-def test_cli_plan_without_model_is_polite():
-    from click.testing import CliRunner
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["local-runtime", "plan"])
-    assert res.exit_code != 0
-    assert "model" in res.output

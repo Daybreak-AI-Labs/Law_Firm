@@ -24,12 +24,9 @@ Runs as your user. Stores everything under `~/.maverick/`. The sandbox
 network port unless you enable a channel that needs one (WhatsApp/SMS).
 
 **Artifact status:** reviewed source is the dependable installation route
-today. A successful tagged release is configured to publish three single-file
-PyInstaller binaries, checksums, SBOMs, and Sigstore material; check the
-[release assets](https://github.com/Daybreak-AI-Labs/Law_Firm/releases) for
-the exact operating-system file before relying on one. The Tauri and MSI
-projects are authenticated source-bootstrap/build engineering artifacts, not
-self-contained product installers, and are not attached to product releases.
+today. The Tauri and MSI projects are authenticated source-bootstrap/build
+engineering artifacts, not self-contained product installers, and are not
+attached to product releases.
 
 ## Docker
 
@@ -37,12 +34,15 @@ Isolated, reproducible, easy to nuke.
 
 ```bash
 docker run -it --rm \
+  -p 127.0.0.1:8765:8765 \
   -v ~/maverick-workspace:/workspace \
   -v ~/.maverick/config.toml:/home/maverick/.maverick/config.toml:ro \
   -e ANTHROPIC_API_KEY=... \
   ghcr.io/daybreak-ai-labs/maverick:latest \
-  start "..."
+  dashboard
 ```
+
+Queue goals from the web UI at `http://127.0.0.1:8765`.
 
 For untrusted skills, **do not** mount `~/.maverick/` into the same
 container that runs the agent tools. A local sandbox inside this
@@ -75,10 +75,10 @@ talks to it through one of the channels below. This avoids the cost,
 privacy, and capability tradeoffs of running an agent on the phone
 itself, while keeping parity with the desktop experience.
 
-Start the channel server on whichever machine Maverick runs on:
+Start the service on whichever machine Maverick runs on:
 
 ```bash
-maverick serve
+maverick dashboard
 ```
 
 ### Channel matrix
@@ -104,7 +104,7 @@ Multiple channels can be enabled at once; each runs in its own async task.
 1. Message [@BotFather](https://t.me/BotFather) on Telegram
 2. Run `/newbot`, follow prompts, copy the token
 3. `maverick init` — enable telegram, paste token at the env-var prompt
-4. `maverick serve`
+4. `maverick dashboard`
 5. Find your bot in Telegram and message it
 
 **Discord:**

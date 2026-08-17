@@ -35,6 +35,5 @@ deps).
 
 ## Tips
 
-- Pipe to a file: `maverick start "..." > onboarding.md`.
 - After the brief, ask: *"Now answer my 'open questions' yourself
   by reading more code."* — a follow-up goal often closes most of them.

@@ -163,7 +163,7 @@ def test_dispatch_contract_still_sees_every_known_site() -> None:
     files = {h["file"] for h in hits}
     assert "packages/maverick-core/maverick/agent.py" in files
     assert "packages/maverick-core/maverick/flow/execution.py" in files
-    assert len(hits) >= 4, hits
+    assert len(hits) >= 3, hits
 
 
 def test_dispatch_contract_uses_repository_paths_on_every_os(tmp_path, monkeypatch) -> None:

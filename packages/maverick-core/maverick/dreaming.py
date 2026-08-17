@@ -996,15 +996,14 @@ def load_rehearsals(path: Path | str | None = None) -> list[dict]:
 class RehearsalFrozen(RuntimeError):
     """Raised when rehearsal is refused because verifier calibration froze.
 
-    Mirrors maverick-evolve's interlock: a drifted judge must not grade
-    practice runs, or the system rehearses toward the drift.
+    A drifted judge must not grade practice runs, or the system rehearses
+    toward the drift.
     """
 
 
 def rehearsal_completed(output: str) -> bool:
     """The v1 rehearsal success signal: the previously-failing class of goal
-    now completes (non-empty answer, no failure prefix). Shared with the
-    maverick-evolve rehearsal bridge so both grade identically."""
+    now completes (non-empty answer, no failure prefix)."""
     out = (output or "").strip()
     return bool(out) and not out.startswith(
         ("Stopped", "ERROR", "BLOCKED", "⚠"),
@@ -1022,8 +1021,7 @@ async def rehearse(
     a distrusted grader. With a ``scorer`` (async ``(prompt, output) ->
     confidence``), a case passes only when it completes AND the verifier
     scores it at/above ``min_confidence``; without one, the completion check
-    alone grades (and the maverick-evolve eval harness is used when
-    installed — the kernel never *requires* the evolve package).
+    alone grades.
     """
     check_learning_halt("dreaming", "rehearsal_start")
     try:
@@ -1040,17 +1038,6 @@ async def rehearse(
     if not cases:
         return (0, 0)
 
-    if scorer is None:
-        try:
-            from maverick_evolve.eval_harness import EvalCase, evaluate
-            report = await evaluate(
-                agent,
-                [EvalCase(prompt=c["prompt"], check=rehearsal_completed)
-                 for c in cases],
-            )
-            return (int(report.passed), len(cases))
-        except ImportError:
-            pass
     passed = 0
     for c in cases:
         try:
@@ -1123,93 +1110,6 @@ def _maintenance_phases(
 
 
 # ---------- the dream cycle ----------
-
-def _replay_critiques(
-    outbox: Path | str | None = None, *, max_confidence: float = 0.75,
-    limit: int = 100,
-) -> list[dict]:
-    """Mine donated trajectory records for verifier critiques worth dreaming on.
-
-    ``result.verifier_critique`` is written into donation records and never
-    read again; runs the verifier passed but criticized (confidence under
-    ``max_confidence``) are weak spots worth consolidating. Returns
-    failure-shaped dicts so they flow through the same clustering as
-    reflexions. Empty unless trajectory donation is enabled and has records.
-    """
-    try:
-        from .donation import list_pending
-        paths = list_pending(Path(outbox) if outbox is not None else None)
-    except Exception:  # pragma: no cover -- donations never block a dream
-        return []
-    out: list[dict] = []
-    for p in paths[-limit:]:
-        try:
-            d = json.loads(Path(p).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        critique = str(d.get("verifier_critique", "") or "").strip()
-        brief = str(d.get("task_brief_text", "") or "").strip()
-        try:
-            conf = float(d.get("verifier_confidence", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            conf = 0.0
-        if not critique or not brief or conf >= max_confidence:
-            continue
-        out.append({
-            "ts": float(d.get("ts", 0.0) or 0.0),
-            "goal_text": brief,
-            "failure_class": "verifier_critique",
-            "reflection": critique[:240],
-            "domain": None,
-        })
-    return out
-
-
-def _replay_donations(
-    donations_dir: Path | str, *, limit: int = 200,
-) -> tuple[list[dict], list[dict]]:
-    """Fleet-level aggregation: replay donated trajectory records.
-
-    An org running many Maverick instances points each at the same outbox
-    drop (or syncs them to one central dir); a central ``maverick dream
-    --donations-dir`` then consolidates the whole fleet's experience. Returns
-    ``(successes, failures)`` shaped for the normal cycle phases; selection
-    gating happened at donation time, so only records the donor's gate
-    already passed exist here.
-    """
-    d = Path(donations_dir)
-    if not d.is_dir():
-        return [], []
-    successes: list[dict] = []
-    failures: list[dict] = []
-    for p in sorted(d.glob("*.json"))[-limit:]:
-        try:
-            rec = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        brief = str(rec.get("task_brief_text", "") or "").strip()
-        if not brief:
-            continue  # hash-only donations carry no consolidatable text
-        outcome = str(rec.get("outcome", "") or "").strip().lower()
-        try:
-            ts = float(rec.get("ts", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            ts = 0.0
-        if outcome == "success":
-            successes.append({
-                "goal": brief, "success": True,
-                "tools": list(rec.get("tools_used", []) or []),
-                "t": ts, "domain": None,
-            })
-        elif outcome:
-            failures.append({
-                "ts": ts, "goal_text": brief,
-                "failure_class": f"fleet_{outcome}",
-                "reflection": str(rec.get("verifier_critique", "") or "")[:240],
-                "domain": None,
-            })
-    return successes, failures
-
 
 def _replay_failures(reflexion_path: Path | str | None) -> list[dict]:
     from . import reflexion as _r
@@ -1359,10 +1259,8 @@ def dream_cycle(
     skill_store: Path | str | None = None, now: float | None = None,
     rehearsals_path: Path | str | None = None,
     skill_stats_path: Path | None = None,
-    critiques_outbox: Path | str | None = None,
     user_notes_path: Path | str | None = None,
     settings_override: dict | None = None,
-    donations_dir: Path | str | None = None,
     audit: bool = True,
     llm: Any | None = None,
     budget: Any | None = None,
@@ -1435,17 +1333,6 @@ def dream_cycle(
         except Exception as e:  # pragma: no cover -- world read never blocks
             log.debug("dreaming: goal replay skipped: %s", e)
     failures = _replay_failures(reflexion_path)
-    # Fleet aggregation: a central instance consolidates donated trajectory
-    # records from the whole fleet alongside its own experience.
-    if donations_dir is not None:
-        _fleet_s, _fleet_f = _replay_donations(donations_dir)
-        successes = successes + _fleet_s
-        failures = failures + _fleet_f
-    # Critique mining: verifier critiques from donated trajectories are
-    # weak-spot signals; cluster them like failures. Off-able knob; naturally
-    # empty unless [telemetry] donate_trajectories has produced records.
-    if bool(cfg.get("mine_critiques", True)):
-        failures = failures + _replay_critiques(critiques_outbox)
     report.goals_replayed = len(successes)
     report.failures_replayed = len(failures)
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import types
 
-from click.testing import CliRunner
 from maverick import plugin_lock as pl
 from maverick import plugins as plugins_mod
 
@@ -114,20 +113,6 @@ def test_discovery_skips_drifted_under_enforce(tmp_path, monkeypatch):
     assert plugins_mod.discover_tools() == []
 
 
-def test_cli_lock_and_verify(tmp_path, monkeypatch):
-    from maverick import cli as cli_mod
-    pl.reset_warned()
-    lock = tmp_path / "plugins.lock.json"
-    monkeypatch.setattr(pl, "lock_path", lambda: lock)
-    _fake_eps(monkeypatch, [("t1", "acme-tools", "1.0.0")])
-    r = CliRunner().invoke(cli_mod.main, ["plugin", "lock"])
-    assert r.exit_code == 0, r.output
-    assert "acme-tools == 1.0.0" in r.output
-    r2 = CliRunner().invoke(cli_mod.main, ["plugin", "verify"])
-    assert r2.exit_code == 0 and "plugins.lock OK" in r2.output
-    _fake_eps(monkeypatch, [("t1", "acme-tools", "3.0.0")])
-    r3 = CliRunner().invoke(cli_mod.main, ["plugin", "verify"])
-    assert r3.exit_code == 1 and "DRIFT acme-tools" in r3.output
 
 
 # ---- content-integrity hashing (audit C9) ----

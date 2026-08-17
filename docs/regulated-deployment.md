@@ -6,7 +6,7 @@ controls and deployment-level network containment.**
 The kernel ships fail-open and cloud-capable — right for a personal agent, wrong the
 moment it touches PHI, PII, financial, or otherwise regulated data. This page is the
 single reference for standing Maverick up in a *regulated* posture: one profile, the
-guarantees it gives you, and one command to **prove** they hold.
+guarantees it gives you, and how to **prove** they hold.
 
 ## The guarantee
 
@@ -25,7 +25,7 @@ Enterprise mode alone is not a hard network boundary: raw sockets, subprocess
 clients, and network libraries outside the wrapped set require sandbox and
 deployment controls. For a no-egress requirement, enforce container/sandbox
 network isolation plus host/OS/VPC default-deny egress, and verify those
-controls independently of `maverick enterprise verify`.
+controls independently of the platform's guarantee checks.
 
 ## The profile
 
@@ -57,7 +57,7 @@ audit segments, but the current day-file stays plaintext until it is sealed, so 
 anonymous mode actually redacts PII from the live log. Without it the
 `PII redaction in logs` compliance control reports `action_needed`.
 
-Retention and tamper-evidence are designed to coexist. `maverick retention enforce`
+Retention and tamper-evidence are designed to coexist. Retention enforcement
 deletes expired day-files, but their entries stay in the append-only anchor ledger --
 so the purge is recorded there as a signed `retention_purge` row naming each removed
 day and the exact tip hash and row count it destroyed. `maverick audit verify` reads
@@ -82,22 +82,16 @@ export MAVERICK_ANON=1
 export MAVERICK_ENCRYPTION_KEY=<32-byte key, hex or base64>   # else generated under ~/.maverick/keys
 ```
 
-To seal data that already exists on disk from before encryption was enabled, run
-`maverick encryption migrate` once (see [Encryption at rest](encryption.md)).
+Data that already exists on disk from before encryption was enabled stays
+readable and is sealed as it is rewritten (see [Encryption at rest](encryption.md)).
 
 ## Prove it
 
-Two commands, two audiences:
-
-```bash
-maverick enterprise verify     # ops / CI: actively exercise the guarantees
-maverick compliance --strict   # auditor / gate: map controls to articles, fail if any regress
-```
-
-`maverick enterprise verify` does **not** just read flags — it proves the egress lock
-refuses a real cloud provider and that at-rest sealing round-trips on *this* box (so a
-missing crypto backend or unreadable key fails here, not silently at write time). It
-exits non-zero if any guarantee fails, so it drops straight into a deploy gate:
+Two checks, two audiences, both running inside the platform. The
+regulated-deployment guarantee check (ops-facing) does **not** just read flags —
+it proves the egress lock refuses a real cloud provider and that at-rest sealing
+round-trips on *this* box (so a missing crypto backend or unreadable key fails
+here, not silently at write time):
 
 ```text
 Regulated-deployment guarantees
@@ -107,58 +101,22 @@ Regulated-deployment guarantees
   [PASS]  At-rest encryption    AES-256-GCM seal/unseal round-trips; plaintext absent from ciphertext
   [PASS]  Tamper-evident audit  Ed25519 hash-chain on; verify with 'maverick audit verify'
   [PASS]  Human oversight       consent mode = ask
-  [PASS]  Retention policy      configured; enforce with 'maverick retention enforce'
+  [PASS]  Retention policy      configured; enforced at runtime
 
 5/5 guarantees hold
 ```
 
-`maverick compliance --strict` is the broader GDPR + EU AI Act control map (it also
-covers transparency disclosure, redaction, the kill switch, and the data-subject-rights
-tooling); `--format json` feeds a SIEM or pipeline.
-
-## Records of processing (Art. 30)
-
-GDPR Art. 30 requires the controller to keep a record of processing activities.
-`maverick ropa` generates a **scaffold** of it from the live deployment — pre-filling the
-technical half (the personal-data categories it stores, recipients / international
-transfers derived from the egress lock, retention, and the active Art. 32 security
-measures) and marking the organizational fields (controller identity, DPO, lawful basis,
-purposes) for your DPO to complete:
-
-```bash
-maverick ropa                       # readable scaffold
-maverick ropa --format json -o ropa.json
-```
-
-It's a starting point for a DPO to finish, not a completed record.
-
-## Impact assessment (Art. 35) and AI-Act classification
-
-Two more scaffolds for the rest of the paperwork:
-
-```bash
-maverick dpia      # GDPR Art. 35 Data Protection Impact Assessment scaffold
-maverick ai-act    # EU AI Act risk classification (self-assessment)
-```
-
-`maverick dpia` pre-fills the processing description (consistent with the ROPA) and a
-**risk register** of the agent-on-personal-data risks — data egress to an LLM,
-unsupervised automated action, audit tampering, indefinite retention — each mapped to the
-Maverick control that mitigates it and flagged `OPEN` if that control is currently off.
-Necessity/proportionality and residual-risk sign-off are left to the controller.
-
-`maverick ai-act` reports the live Art. 50 transparency posture and hands you a checklist
-of the prohibited (Art. 5) and high-risk (Annex III) categories. A conversational agent
-that discloses it is AI is **limited-risk by default** — but you must rule out those lists
-for your use case. Both are self-assessment aids, not legal attestations.
+The compliance control map (auditor-facing) is the broader GDPR + EU AI Act view:
+it also covers transparency disclosure, redaction, the kill switch, and the
+data-subject-rights tooling. From the command line, `maverick audit verify` still
+proves the tamper-evident chain end-to-end.
 
 ## What this is *not*
 
 This is **control coverage, not a legal compliance attestation.** Full GDPR / EU AI Act
-compliance also needs organizational and legal measures the software cannot perform — a
-DPA, a completed ROPA (`maverick ropa` scaffolds the Art. 30 record but a DPO must finish
-it), a DPIA, AI-Act risk classification, and review by qualified counsel. The data-subject
-rights (access, portability, erasure) are *available* on demand via `maverick dsar export`,
-`maverick export-user`, and `maverick erase`, not automatic.
+compliance also needs organizational and legal measures the software cannot perform —
+paperwork owned by counsel, not generated by the platform. The data-subject
+rights (access, portability, erasure) are *available* on demand via
+`maverick export-user` and `maverick erase`, not automatic.
 
 See also: [Encryption at rest](encryption.md) · [Safety & enterprise mode](safety.md#enterprise-mode-private-sensitive-data).

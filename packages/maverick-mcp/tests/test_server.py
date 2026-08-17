@@ -202,65 +202,6 @@ class TestProtocol:
         })
         assert "rejected by Shield" in out
 
-    def test_fleet_ingest_passes_server_shield(self, monkeypatch):
-        """MCP fleet ingest must use the server Shield before persisting memory."""
-        from maverick import fleet_memory
-
-        s = MCPServer()
-        shield = SimpleNamespace(scan_input=lambda _text: SimpleNamespace(allowed=True))
-        s._shield = shield
-        captured = {}
-
-        def fake_ingest(record, *, shield=None):
-            captured["record"] = record
-            captured["shield"] = shield
-            return True, "ok"
-
-        monkeypatch.setattr(fleet_memory, "ingest", fake_ingest)
-
-        out = s._tool_fleet_ingest({"agent_id": "agent1", "vendor": "copilot"})
-
-        assert out == '{"ok": true, "reason": "ok"}'
-        assert captured["shield"] is shield
-        assert captured["record"] == {"agent_id": "agent1", "vendor": "copilot"}
-
-    def test_fleet_recall_passes_server_shield(self, monkeypatch):
-        """MCP fleet recall must use Shield for query and context formatting."""
-        from maverick import fleet_memory
-
-        s = MCPServer()
-        shield = SimpleNamespace(scan_input=lambda _text: SimpleNamespace(allowed=True))
-        s._shield = shield
-        captured = {}
-
-        def fake_recall(query, *, agent_id="", vendor="", domain=None, shield=None):
-            captured.update({
-                "query": query,
-                "agent_id": agent_id,
-                "vendor": vendor,
-                "domain": domain,
-                "shield": shield,
-            })
-            return "context", "ok"
-
-        monkeypatch.setattr(fleet_memory, "recall", fake_recall)
-
-        out = s._tool_fleet_recall({
-            "query": "deploy service",
-            "agent_id": "agent1",
-            "vendor": "copilot",
-            "domain": "platform",
-        })
-
-        assert out == '{"context": "context", "reason": "ok"}'
-        assert captured == {
-            "query": "deploy service",
-            "agent_id": "agent1",
-            "vendor": "copilot",
-            "domain": "platform",
-            "shield": shield,
-        }
-
     def test_maverick_start_sanitizes_non_finite_budget_limits(self, monkeypatch):
         """Regression: string NaN limits must not bypass Budget checks."""
         from maverick import llm as llm_mod
@@ -541,50 +482,6 @@ class TestStructuredOutput:
         assert "set k" in out["content"][0]["text"]  # back-compat text
         # the echoed key lets a typed client confirm the write it just made.
         assert out["structuredContent"] == {"key": "k"}
-
-    def test_fleet_tools_return_structured_content(self, monkeypatch):
-        import maverick.fleet_memory as fleet_memory
-
-        monkeypatch.setattr(
-            fleet_memory,
-            "ingest",
-            lambda record, shield: (True, "accepted"),
-        )
-        monkeypatch.setattr(
-            fleet_memory,
-            "recall",
-            lambda query, **kwargs: ("governed context", "matched"),
-        )
-        server = MCPServer()
-        server._shield = None
-        monkeypatch.setattr(server, "_shield_required", lambda: False)
-
-        ingested = server.handle_tools_call({
-            "name": "maverick_fleet_ingest",
-            "arguments": {
-                "agent_id": "agent-1",
-                "vendor": "test",
-                "kind": "lesson",
-                "goal_text": "document the result",
-            },
-        })
-        assert ingested["structuredContent"] == {
-            "ok": True,
-            "reason": "accepted",
-        }
-
-        recalled = server.handle_tools_call({
-            "name": "maverick_fleet_recall",
-            "arguments": {
-                "agent_id": "agent-1",
-                "vendor": "test",
-                "query": "result",
-            },
-        })
-        assert recalled["structuredContent"] == {
-            "context": "governed context",
-            "reason": "matched",
-        }
 
     def test_fact_set_stamps_tool_provenance(self, isolated_wm):
         # An MCP client is an untrusted author, so its fact is tiered TOOL (1),

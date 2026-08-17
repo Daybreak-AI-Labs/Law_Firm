@@ -65,19 +65,6 @@ def readiness_deep_checks() -> tuple[bool, dict[str, str]]:
         checks["shield"] = f"unknown: {type(exc).__name__}"
         ok = False
 
-    try:
-        from maverick.agent_trust import load_trust_state
-
-        enforced, registry = load_trust_state()
-        if enforced and not registry:
-            checks["agent_trust"] = "fail: engaged but registry empty (denies all)"
-            ok = False
-        else:
-            checks["agent_trust"] = "ok"
-    except Exception as exc:  # pragma: no cover - probe must return, not raise
-        checks["agent_trust"] = f"unknown: {type(exc).__name__}"
-        ok = False
-
     # Replica posture is evidence for operators, not a traffic gate.  A process
     # that does not own the lease may be intentionally configured as a reader.
     try:
@@ -295,19 +282,16 @@ def _storage_metrics() -> list[str]:
         import shutil
 
         from maverick.world_model import default_db_path
-        from maverick.world_model_backends import is_postgres_configured
 
         db_path = default_db_path()
         probe = db_path.parent if db_path.parent.exists() else None
         usage = shutil.disk_usage(str(probe) if probe else ".")
-        lines: list[str] = []
-        if not is_postgres_configured():
-            db_bytes = db_path.stat().st_size if db_path.exists() else 0
-            lines += [
-                "# HELP maverick_world_db_bytes Size of the world.db file on disk",
-                "# TYPE maverick_world_db_bytes gauge",
-                f"maverick_world_db_bytes {db_bytes}",
-            ]
+        db_bytes = db_path.stat().st_size if db_path.exists() else 0
+        lines: list[str] = [
+            "# HELP maverick_world_db_bytes Size of the world.db file on disk",
+            "# TYPE maverick_world_db_bytes gauge",
+            f"maverick_world_db_bytes {db_bytes}",
+        ]
         lines += [
             "# HELP maverick_data_disk_free_bytes Free space on the data volume",
             "# TYPE maverick_data_disk_free_bytes gauge",

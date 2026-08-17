@@ -1,10 +1,6 @@
 """Fresh-install operator preflight: stable, offline, and actionable."""
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-
 import pytest
 from click.testing import CliRunner
 
@@ -72,37 +68,6 @@ def _by_id(report):
     return {check.id: check for check in report.checks}
 
 
-def _ed25519_keypair_bytes():
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
-    private = ed25519.Ed25519PrivateKey.generate()
-    return (
-        private.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        ),
-        private.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        ),
-    )
-
-
-def _write_local_audit_keypair(key_dir, private_bytes, public_bytes):
-    from maverick.file_lock import (
-        atomic_write_bytes,
-        ensure_private_directory,
-    )
-
-    ensure_private_directory(key_dir)
-    key_id = hashlib.sha256(public_bytes).hexdigest()[:16]
-    atomic_write_bytes(key_dir / f"{key_id}.key", private_bytes, mode=0o600)
-    atomic_write_bytes(key_dir / f"{key_id}.pub", public_bytes, mode=0o644)
-    return key_id
-
-
 def test_missing_config_has_stable_blocker_and_copyable_next_action(isolated_config):
     from maverick.operator_preflight import collect
 
@@ -150,7 +115,7 @@ def test_run_profile_ready_with_local_provider(monkeypatch, isolated_config):
     assert report.blocker_count == 0
     assert _by_id(report)["provider"].status == "ready"
     # Cockpit-only features are honest attention items, not runtime blockers.
-    assert _by_id(report)["evidence_gateway"].status == "attention"
+    assert _by_id(report)["evidence_graph"].status == "attention"
 
 
 def test_run_profile_accepts_keyless_global_local_route(
@@ -203,8 +168,6 @@ def test_cockpit_profile_requires_all_evidence_dependencies(
     assert report.ready is False
     checks = _by_id(report)
     assert checks["evidence_graph"].status == "blocked"
-    assert checks["evidence_gateway"].status == "blocked"
-    assert checks["model_risk_assurance"].status == "blocked"
 
 
 def test_cockpit_profile_ready_when_dependencies_enabled(
@@ -221,11 +184,6 @@ def test_cockpit_profile_ready_when_dependencies_enabled(
                 'planner = "ollama:test-model"',
                 "[evidence_graph]",
                 "enable = true",
-                "[evidence_gateway]",
-                "enable = true",
-                "[model_risk_assurance]",
-                "enable = true",
-                "gate_promotions = false",
                 "",
             ]
         ),
@@ -252,8 +210,6 @@ def test_cockpit_profile_ready_when_dependencies_enabled(
         for name in (
             "tenant_scope",
             "evidence_graph",
-            "evidence_gateway",
-            "model_risk_assurance",
         )
     )
 
@@ -271,11 +227,6 @@ def test_cockpit_profile_requires_explicit_tenant_scope(
                 'planner = "ollama:test-model"',
                 "[evidence_graph]",
                 "enable = true",
-                "[evidence_gateway]",
-                "enable = true",
-                "[model_risk_assurance]",
-                "enable = true",
-                "gate_promotions = false",
                 "",
             ]
         ),
@@ -300,296 +251,6 @@ def test_cockpit_profile_requires_explicit_tenant_scope(
     tenant = _by_id(report)["tenant_scope"]
     assert tenant.status == "blocked"
     assert tenant.remediation == "maverick config edit"
-
-
-def test_gateway_preflight_is_read_only_on_fresh_writable_home(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-
-    monkeypatch.setenv("MAVERICK_TENANT", "preflight-fresh-company")
-    client.reset_client_cache()
-    state_root = isolated_config.parent / "state"
-    checks = preflight._gateway_evidence_checks(
-        {"evidence_gateway": {"enable": True}}
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "attention"
-    assert by_id["gateway_trust_registry"].status == "attention"
-    assert by_id["gateway_ledgers"].status == "attention"
-    assert not state_root.exists()
-
-
-def test_gateway_preflight_blocks_unwritable_first_use_parent(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-
-    monkeypatch.setenv("MAVERICK_TENANT", "preflight-unwritable-company")
-    client.reset_client_cache()
-    real_access = preflight.os.access
-
-    def denied_write(path, mode):
-        if mode & preflight.os.W_OK:
-            return False
-        return real_access(path, mode)
-
-    monkeypatch.setattr(preflight.os, "access", denied_write)
-    checks = preflight._gateway_evidence_checks(
-        {"evidence_gateway": {"enable": True}}
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "blocked"
-    assert by_id["gateway_ledgers"].status == "blocked"
-
-
-def test_gateway_preflight_rejects_invalid_injected_key_without_consuming_it(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-
-    secret = "not-a-runtime-ed25519-key"  # pragma: allowlist secret
-    monkeypatch.setenv("MAVERICK_TENANT", "invalid-injected-company")
-    monkeypatch.setenv("MAVERICK_AUDIT_REQUIRE_OFFHOST_KEY", "1")
-    monkeypatch.setenv("MAVERICK_AUDIT_SIGNING_KEY", secret)
-    client.reset_client_cache()
-
-    checks = preflight._gateway_evidence_checks(
-        {
-            "audit": {"require_offhost_key": True},
-            "evidence_gateway": {"enable": True},
-        }
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "blocked"
-    assert by_id["gateway_signing"].status == "blocked"
-    assert secret not in " ".join(check.detail for check in checks)
-    assert preflight.os.environ["MAVERICK_AUDIT_SIGNING_KEY"] == secret
-    assert not (isolated_config.parent / "state").exists()
-
-
-def test_gateway_preflight_accepts_valid_injected_key_read_only(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-
-    private_bytes, _ = _ed25519_keypair_bytes()
-    injected = base64.b64encode(private_bytes).decode("ascii")
-    monkeypatch.setenv("MAVERICK_TENANT", "valid-injected-company")
-    monkeypatch.setenv("MAVERICK_AUDIT_REQUIRE_OFFHOST_KEY", "1")
-    monkeypatch.setenv("MAVERICK_AUDIT_SIGNING_KEY", injected)
-    client.reset_client_cache()
-
-    checks = preflight._gateway_evidence_checks(
-        {
-            "audit": {"require_offhost_key": True},
-            "evidence_gateway": {"enable": True},
-        }
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "ready"
-    assert by_id["gateway_signing"].status == "ready"
-    assert preflight.os.environ["MAVERICK_AUDIT_SIGNING_KEY"] == injected
-    assert not (isolated_config.parent / "state").exists()
-
-
-def test_gateway_preflight_rejects_runtime_invalid_wrapped_envelope(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-
-    wrapped = base64.b64encode(b"not-a-vault-runtime-envelope").decode("ascii")
-    monkeypatch.setenv("MAVERICK_TENANT", "invalid-wrapped-company")
-    monkeypatch.setenv("MAVERICK_AUDIT_REQUIRE_OFFHOST_KEY", "1")
-    monkeypatch.setenv("MAVERICK_AUDIT_SIGNING_KEY_WRAPPED", wrapped)
-    client.reset_client_cache()
-
-    checks = preflight._gateway_evidence_checks(
-        {
-            "audit": {"require_offhost_key": True},
-            "evidence_gateway": {"enable": True},
-            "kms": {"provider": "vault", "key_id": "audit-signing"},
-        }
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "blocked"
-    assert by_id["gateway_signing"].status == "blocked"
-    assert wrapped not in " ".join(check.detail for check in checks)
-    assert (
-        preflight.os.environ["MAVERICK_AUDIT_SIGNING_KEY_WRAPPED"] == wrapped
-    )
-    assert not (isolated_config.parent / "state").exists()
-
-
-def test_gateway_preflight_validates_wrapped_envelope_without_unwrapping(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client, kms_backends
-    from maverick import operator_preflight as preflight
-
-    wrapped = base64.b64encode(
-        kms_backends._VAULT_MAGIC + b"vault:v1:ciphertext"
-    ).decode("ascii")
-    monkeypatch.setenv("MAVERICK_TENANT", "valid-wrapped-company")
-    monkeypatch.setenv("MAVERICK_AUDIT_REQUIRE_OFFHOST_KEY", "1")
-    monkeypatch.setenv("MAVERICK_AUDIT_SIGNING_KEY_WRAPPED", wrapped)
-    real_module_available = preflight._module_available
-    monkeypatch.setattr(
-        preflight,
-        "_module_available",
-        lambda name: (
-            True if name == "hvac" else real_module_available(name)
-        ),
-    )
-
-    def unexpected_unwrap(self, value, *, context=None):
-        raise AssertionError("offline preflight must not call KMS unwrap")
-
-    monkeypatch.setattr(
-        kms_backends.VaultTransitKMS,
-        "unwrap",
-        unexpected_unwrap,
-    )
-    client.reset_client_cache()
-
-    checks = preflight._gateway_evidence_checks(
-        {
-            "audit": {"require_offhost_key": True},
-            "evidence_gateway": {"enable": True},
-            "kms": {"provider": "vault", "key_id": "audit-signing"},
-        }
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "ready"
-    assert by_id["gateway_signing"].status == "ready"
-    assert (
-        preflight.os.environ["MAVERICK_AUDIT_SIGNING_KEY_WRAPPED"] == wrapped
-    )
-    assert not (isolated_config.parent / "state").exists()
-
-
-def test_historical_injected_marker_is_not_current_offhost_custody(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-    from maverick.file_lock import atomic_write_bytes, ensure_private_directory
-    from maverick.paths import diagnostic_data_dir
-
-    monkeypatch.setenv("MAVERICK_TENANT", "historical-injected-company")
-    monkeypatch.setenv("MAVERICK_AUDIT_REQUIRE_OFFHOST_KEY", "1")
-    client.reset_client_cache()
-    _, public_bytes = _ed25519_keypair_bytes()
-    key_dir = diagnostic_data_dir("audit", "keys")
-    key_id = hashlib.sha256(public_bytes).hexdigest()[:16]
-
-    ensure_private_directory(key_dir)
-    atomic_write_bytes(key_dir / f"{key_id}.pub", public_bytes, mode=0o644)
-    atomic_write_bytes(key_dir / f"{key_id}.injected", b"", mode=0o600)
-
-    checks = preflight._gateway_evidence_checks(
-        {
-            "audit": {"require_offhost_key": True},
-            "evidence_gateway": {"enable": True},
-        }
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "blocked"
-    assert by_id["gateway_signing"].status == "blocked"
-    assert by_id["gateway_trust_registry"].status == "ready"
-
-
-@pytest.mark.parametrize("invalid_private", ["wrong_length", "mismatched"])
-def test_gateway_preflight_rejects_invalid_local_private_public_keypair(
-    monkeypatch,
-    isolated_config,
-    invalid_private,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-    from maverick.paths import diagnostic_data_dir
-
-    monkeypatch.setenv("MAVERICK_TENANT", f"invalid-local-{invalid_private}")
-    client.reset_client_cache()
-    private_bytes, public_bytes = _ed25519_keypair_bytes()
-    if invalid_private == "wrong_length":
-        private_bytes = private_bytes[:-1]
-    else:
-        private_bytes, _ = _ed25519_keypair_bytes()
-    key_dir = diagnostic_data_dir("audit", "keys")
-    _write_local_audit_keypair(key_dir, private_bytes, public_bytes)
-    before = {
-        path.name: path.read_bytes()
-        for path in key_dir.iterdir()
-        if path.is_file()
-    }
-
-    checks = preflight._gateway_evidence_checks(
-        {"evidence_gateway": {"enable": True}}
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "blocked"
-    assert by_id["gateway_signing"].status == "blocked"
-    assert by_id["gateway_trust_registry"].status == "blocked"
-    assert {
-        path.name: path.read_bytes()
-        for path in key_dir.iterdir()
-        if path.is_file()
-    } == before
-
-
-def test_gateway_preflight_validates_local_keypair_without_mutating_it(
-    monkeypatch,
-    isolated_config,
-):
-    from maverick import client
-    from maverick import operator_preflight as preflight
-    from maverick.paths import diagnostic_data_dir
-
-    monkeypatch.setenv("MAVERICK_TENANT", "valid-local-company")
-    client.reset_client_cache()
-    private_bytes, public_bytes = _ed25519_keypair_bytes()
-    key_dir = diagnostic_data_dir("audit", "keys")
-    _write_local_audit_keypair(key_dir, private_bytes, public_bytes)
-    before = {
-        path.name: path.read_bytes()
-        for path in key_dir.iterdir()
-        if path.is_file()
-    }
-
-    checks = preflight._gateway_evidence_checks(
-        {"evidence_gateway": {"enable": True}}
-    )
-
-    by_id = {check.id: check for check in checks}
-    assert by_id["gateway_key_custody"].status == "attention"
-    assert by_id["gateway_signing"].status == "ready"
-    assert by_id["gateway_trust_registry"].status == "ready"
-    assert {
-        path.name: path.read_bytes()
-        for path in key_dir.iterdir()
-        if path.is_file()
-    } == before
 
 
 def test_default_route_requires_its_own_provider_credential(
@@ -806,22 +467,6 @@ def test_azure_route_honors_config_auth_mode_like_runtime(
     assert _route_configuration_missing("azure", config) == expected
 
 
-def test_cli_json_reports_corrupt_config_instead_of_resolving_world_storage(
-    isolated_config,
-):
-    isolated_config.write_text("[client\ninvalid", encoding="utf-8")
-    from maverick import config
-    from maverick.cli import main
-
-    config.reset_config_cache()
-    result = CliRunner().invoke(main, ["preflight", "--json"])
-
-    assert result.exit_code == 1
-    body = json.loads(result.output)
-    assert body["ready"] is False
-    assert body["checks"][0]["id"] == "config"
-    assert "invalid" in body["checks"][0]["detail"]
-    assert "ClientBindingError" not in result.output
 
 
 def test_preflight_json_never_echoes_provider_secret(isolated_config):

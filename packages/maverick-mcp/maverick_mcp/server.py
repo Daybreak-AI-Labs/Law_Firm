@@ -326,55 +326,6 @@ TOOLS: list[ToolSpec] = [
         },
     },
     {
-        "name": "maverick_fleet_ingest",
-        "description": (
-            "Deposit experience from an EXTERNAL agent into Maverick's "
-            "governed fleet memory (Learning System of Record). The agent "
-            "must be on the fleet roster; records are Shield-scanned, "
-            "provenance-tagged, and audited. Requires [fleet_memory] enable."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-                "vendor": {"type": "string"},
-                "kind": {"type": "string", "enum": ["success", "failure", "lesson"]},
-                "goal_text": {"type": "string"},
-                "reflection": {"type": "string"},
-                "domain": {"type": "string"},
-            },
-            "required": ["agent_id", "vendor", "kind", "goal_text"],
-        },
-        "outputSchema": {
-            "type": "object",
-            "properties": {"ok": {"type": "boolean"}, "reason": {"type": "string"}},
-            "required": ["ok", "reason"],
-        },
-    },
-    {
-        "name": "maverick_fleet_recall",
-        "description": (
-            "Governed memory read for an EXTERNAL fleet agent: department-"
-            "boosted lessons + consolidated insights for a task. Every read "
-            "is audited with the reader's identity."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-                "vendor": {"type": "string"},
-                "query": {"type": "string"},
-                "domain": {"type": "string"},
-            },
-            "required": ["agent_id", "vendor", "query"],
-        },
-        "outputSchema": {
-            "type": "object",
-            "properties": {"context": {"type": "string"}, "reason": {"type": "string"}},
-            "required": ["reason"],
-        },
-    },
-    {
         "name": "maverick_facts_get",
         "description": "Get all known facts.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -1087,13 +1038,13 @@ class MCPServer:
         tool_name: str,
     ) -> None:
         try:
-            from maverick.agent_trust import record_denied
+            from maverick.audit import EventKind, record
 
             principal = self._capability_principal(capability, caller_identity)
-            record_denied(
-                principal,
-                direction="inbound",
-                rule="capability",
+            record(
+                EventKind.CAPABILITY_DENIED,
+                agent=principal,
+                tool=tool_name,
                 reason=f"MCP tool {tool_name!r} is outside the caller capability",
             )
         except Exception:  # pragma: no cover - audit is fail-safe
@@ -1440,33 +1391,11 @@ class MCPServer:
             "maverick_skills_list": lambda a: self._tool_skills_list(),
             "maverick_fact_set": lambda a: self._tool_fact_set(a),
             "maverick_facts_get": lambda a: self._tool_facts_get(),
-            "maverick_fleet_ingest": lambda a: self._tool_fleet_ingest(a),
-            "maverick_fleet_recall": lambda a: self._tool_fleet_recall(a),
         }
         handler = handlers.get(name)
         if handler is None:
             raise _ProtocolError(-32602, f"unknown tool {name!r}")
         return handler(args)
-
-    def _tool_fleet_ingest(self, args: dict) -> str:
-        from maverick import fleet_memory
-        ok, reason = fleet_memory.ingest(dict(args), shield=self._shield)
-        result = {"ok": bool(ok), "reason": reason}
-        self._structured_override = result
-        return json.dumps(result)
-
-    def _tool_fleet_recall(self, args: dict) -> str:
-        from maverick import fleet_memory
-        context, reason = fleet_memory.recall(
-            str(args.get("query", "")),
-            agent_id=str(args.get("agent_id", "")),
-            vendor=str(args.get("vendor", "")),
-            domain=str(args.get("domain", "") or "") or None,
-            shield=self._shield,
-        )
-        result = {"context": context, "reason": reason}
-        self._structured_override = result
-        return json.dumps(result)
 
     def _structured_result(self, name: str) -> dict | None:
         """Structured form of a query tool's result, matching its outputSchema.
@@ -2192,72 +2121,24 @@ class MCPServer:
         """Re-authorize queued network work and return its narrowed grant.
 
         Authentication at task creation is not durable authorization: an
-        operator can revoke/rotate the credential or narrow the registry entry
-        while the request waits in the executor.  Re-read the trust state at
-        worker pickup, verify the credential's keyed fingerprint, and
-        intersect the frozen grant with the current one.  Every error is a
-        denial; a queued task must never execute under stale authority.
+        operator can revoke/rotate the credential while the request waits in
+        the executor.  Verify the credential's keyed fingerprint against the
+        current shared bearer at worker pickup.  Every error is a denial; a
+        queued task must never execute under stale authority.
         """
         if context.credential_kind == "in_process":
             return context.capability
-        if context.credential_kind not in {"agent", "shared"}:
+        if context.credential_kind != "shared":
             raise PermissionError("task authorization is no longer valid")
         try:
-            from maverick import agent_trust
-
-            enforced, registry = agent_trust.load_trust_state()
-            if context.credential_kind == "agent":
-                current_agent = registry.get(context.trust_principal)
-                current_credential = (
-                    current_agent.mcp_token if current_agent is not None else ""
-                )
-                # A per-agent bearer is an explicitly governed credential even
-                # when default-deny admission is currently disengaged.
-                decision = agent_trust.decide_inbound(
-                    context.trust_principal,
-                    registry=registry,
-                    enforced=True,
-                )
-            else:
-                current_credential = os.environ.get("MAVERICK_MCP_TOKEN", "")
-                # The legacy shared bearer remains unscoped in local/dev while
-                # Agent Trust is disengaged. If policy became enforced while
-                # queued, the current `mcp` entry becomes mandatory.
-                decision = agent_trust.decide_inbound(
-                    context.trust_principal,
-                    registry=registry,
-                    enforced=enforced,
-                )
+            current_credential = os.environ.get("MAVERICK_MCP_TOKEN", "")
             credential_matches = bool(current_credential) and hmac.compare_digest(
                 _credential_fingerprint(current_credential),
                 context.credential_fingerprint,
             )
             if not credential_matches:
-                agent_trust.record_denied(
-                    context.trust_principal,
-                    direction="inbound",
-                    rule="credential_rotated",
-                    reason="queued MCP task credential was removed or rotated",
-                )
                 raise PermissionError("task authorization is no longer valid")
-            if decision.denied:
-                agent_trust.record_denied(
-                    context.trust_principal,
-                    decision,
-                    direction="inbound",
-                )
-                raise PermissionError("task authorization is no longer valid")
-
-            frozen = context.capability
-            current = decision.capability
-            if frozen is None:
-                return current
-            if current is None:
-                return frozen
-            # Preserve the authenticated principal while taking the strict
-            # intersection; current policy can narrow but never broaden the
-            # capability accepted at task creation.
-            return frozen.intersect(current, principal=frozen.principal)
+            return context.capability
         except PermissionError:
             raise
         except Exception as e:
@@ -2284,17 +2165,14 @@ class MCPServer:
             self._refresh_task_capability(context)
             if context is not None else None
         )
-        from maverick.fleet_memory import bind_caller
-
-        with bind_caller(caller_identity):
-            return worker.handle_tools_call(
-                {"name": name, "arguments": arguments},
-                caller_identity=caller_identity,
-                caller_trust_principal=(
-                    context.trust_principal if context is not None else None
-                ),
-                capability=capability,
-            )
+        return worker.handle_tools_call(
+            {"name": name, "arguments": arguments},
+            caller_identity=caller_identity,
+            caller_trust_principal=(
+                context.trust_principal if context is not None else None
+            ),
+            capability=capability,
+        )
 
     def _dispatch_stdio_message(self, method, request_id, params, is_notification) -> None:
         """Route one parsed stdio JSON-RPC message to its handler and send the

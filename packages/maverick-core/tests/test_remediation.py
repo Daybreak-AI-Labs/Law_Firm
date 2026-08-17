@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import pytest
-from click.testing import CliRunner
-from maverick.cli import main
 from maverick.file_lock import private_path_is_restricted
 from maverick.remediation import (
     RemediationItem,
@@ -166,14 +164,6 @@ def test_apply_refuses_when_section_already_present(monkeypatch, tmp_path):
     assert res.applied is False and "already present" in res.reason
 
 
-def test_cli_remediate_reports_and_apply_is_gated_by_optin():
-    runner = CliRunner()
-    out = runner.invoke(main, ["remediate"])
-    assert out.exit_code == 0 and "Security remediation plan" in out.output
-
-    applied = runner.invoke(main, ["remediate", "--apply"])
-    assert applied.exit_code == 0
-    assert "auto-fix disabled" in applied.output   # off by default
 
 
 def test_concurrent_applies_do_not_clobber_each_other(monkeypatch, tmp_path):

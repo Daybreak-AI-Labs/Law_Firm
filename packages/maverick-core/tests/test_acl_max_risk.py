@@ -32,17 +32,13 @@ def test_tool_risk_defaults():
     assert tool_risk("shell") == "high"
     assert tool_risk("code_exec") == "high"
     assert tool_risk("memory") == "high"
-    assert tool_risk("obsidian") == "high"
     for mutating_tool in ("github_issues", "gitlab_issues", "anki"):
         assert tool_risk(mutating_tool) == "high"
-    assert tool_risk("ros") == "high"
-    assert tool_risk("serial") == "high"
     for connector in (
         "servicenow",
         "snowflake",
         "databricks",
         "onetrust",
-        "vertex",
     ):
         assert tool_risk(connector) == "high"
     assert tool_risk("read_file") == "low"
@@ -137,8 +133,6 @@ max_risk = "medium"
     reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
     names = {t.name for t in reg.all()}
     assert "memory" not in names
-    assert "obsidian" not in names
-    assert "serial" not in names
     assert "write_file" not in names
     for mutating_tool in ("github_issues", "gitlab_issues", "anki"):
         assert mutating_tool not in names
@@ -161,7 +155,6 @@ max_risk = "medium"
         "snowflake",
         "databricks",
         "onetrust",
-        "vertex",
     ):
         assert connector not in names
     assert "read_file" in names

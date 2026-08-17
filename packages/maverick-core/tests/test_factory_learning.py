@@ -13,10 +13,8 @@ import subprocess
 import sys
 
 import pytest
-from click.testing import CliRunner
 from maverick import factory_learning as fl
 from maverick import self_improvement as si
-from maverick.cli import main
 from maverick.factory_learning import (
     SIGNAL_ENVELOPE_WIDENED,
     SIGNAL_SKILL_GAP,
@@ -111,27 +109,8 @@ def test_disabled_by_default(monkeypatch):
     assert fl.augment_system_prompt("BASE") == "BASE"
 
 
-def test_factory_learn_help_describes_live_v2_contract():
-    result = CliRunner().invoke(main, ["factory-learn", "--help"])
-    assert result.exit_code == 0
-    assert "version-2 JSON" in result.output
-    assert "v1 is dry-run only" in result.output
 
 
-def test_factory_learn_cli_halt_is_generic_and_nonzero(monkeypatch):
-    from maverick import learning_guard
-
-    monkeypatch.setattr(
-        learning_guard,
-        "check_learning_halt",
-        lambda *_: (_ for _ in ()).throw(
-            learning_guard.Halted("secret operator text", "test")),
-    )
-    result = CliRunner().invoke(main, ["factory-learn", "--dry-run"])
-
-    assert result.exit_code != 0
-    assert "global learning HALT is active" in result.output
-    assert "secret operator text" not in result.output
 
 
 def test_record_rejects_unknown_signal(on):

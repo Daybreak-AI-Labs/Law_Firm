@@ -6,7 +6,6 @@ state/sector law alongside the EU/GDPR rows, with a ``--framework`` filter.
 """
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick.compliance import compliance_report
 
 
@@ -43,24 +42,7 @@ def test_us_consumer_notice_tracks_disclosure(monkeypatch):
     assert by["Consumer notice of AI"].status == "action_needed"
 
 
-def test_cli_framework_filter_us_only():
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["compliance", "--framework", "us"])
-    assert res.exit_code == 0, res.output
-    assert "NIST AI RMF" in res.output
-    # An EU-only article row must be filtered out (the header keeps "EU AI Act").
-    assert "EU AI Act Art. 12" not in res.output
 
 
-def test_cli_framework_filter_eu_only():
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["compliance", "--framework", "eu"])
-    assert res.exit_code == 0, res.output
-    assert "NIST AI RMF" not in res.output
 
 
-def test_cli_default_shows_both():
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["compliance"])
-    assert res.exit_code == 0, res.output
-    assert "EU AI Act" in res.output and "NIST AI RMF" in res.output

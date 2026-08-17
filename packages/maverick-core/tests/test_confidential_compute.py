@@ -44,21 +44,5 @@ def test_firmware_sysfs_tdx():
     assert rep["tdx"] is True
 
 
-def test_cli_confidential_compute(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.confidential_compute.detect",
-                        lambda: {"tdx": True, "sev_snp": False,
-                                 "confidential": True, "indicators": ["/dev/tdx_guest"]})
-    res = CliRunner().invoke(main, ["confidential-compute"])
-    assert res.exit_code == 0 and "CONFIDENTIAL VM (Intel TDX)" in res.output
 
 
-def test_cli_exits_nonzero_when_not_confidential(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.confidential_compute.detect",
-                        lambda: {"tdx": False, "sev_snp": False,
-                                 "confidential": False, "indicators": []})
-    res = CliRunner().invoke(main, ["confidential-compute"])
-    assert res.exit_code == 1 and "NOT a confidential VM" in res.output

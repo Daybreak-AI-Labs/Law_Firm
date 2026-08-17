@@ -22,7 +22,8 @@ agent-loop state is never serialized**:
 
 ### Current "resume" is a warm restart, not state restoration
 On crash, `world_model.reclaim_orphan_goals()` flips stuck `active`/`pending`
-goals to `blocked`. `maverick resume <id>` then re-invokes
+goals to `blocked`. Resuming the goal (the dashboard's resume action,
+`POST /api/v1/goals/{id}/resume`) then re-invokes
 `orchestrator.run_goal()`, reconstructing *context* by threading prior
 conversation, answered clarifying questions, and facts back into the
 orchestrator's brief (`orchestrator.py:~330-380`). That closes the
@@ -183,11 +184,12 @@ lands when the durable loop exists to hang it on.
   before building `SwarmContext`, so a fresh-process resume continues the
   crashed episode instead of creating a new episode that cannot match the saved
   checkpoint. Production resume now works without test-only name pinning.
-- **Phase 2 — rewind/fork.** ✅ *Shipped (the rewind/fork half).* `maverick
-  rewind <id> [--to-step N] [--fork] [--list]` over the Phase-1 per-step
-  checkpoints (`maverick/checkpoint.py` `rewind()` +
-  `tests/test_durable_rewind.py`): in-place rewind drops the checkpoints after
-  step N and re-blocks the goal so `maverick resume` continues from there;
+- **Phase 2 — rewind/fork.** ✅ *Shipped (the rewind/fork half).* Rewind/fork
+  over the Phase-1 per-step checkpoints (`maverick/checkpoint.py` `rewind()` +
+  `tests/test_durable_rewind.py`; the original `maverick rewind` CLI entry
+  point was later removed in the CLI reduction): in-place rewind drops the
+  checkpoints after step N and re-blocks the goal so resuming it (the
+  dashboard's resume action) continues from there;
   `--fork` copies the target checkpoint under a NEW child goal (same department,
   so the resumed role keys the same `checkpoint_id`) and leaves the original
   intact. **Still pending:** the swarm-tree case — per-agent records + parent

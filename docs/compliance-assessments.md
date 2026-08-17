@@ -3,9 +3,8 @@
 Maverick can **conduct** structured compliance assessments of a subject — a
 processing activity, an AI system, or a vendor — running a questionnaire, scoring
 each answer, and producing a completed assessment with **findings** and an overall
-**risk rating**. This is distinct from [`maverick ropa` / `dpia` / `ai-act`](regulated-deployment.md#records-of-processing-art-30),
-which scaffold a document from Maverick's *own* deployment config — assessments
-evaluate an arbitrary third-party subject.
+**risk rating**. Assessments evaluate an arbitrary third-party subject — a client's
+vendor, a processing activity, an AI system — not Maverick's own deployment.
 
 ## Built-in assessments
 
@@ -19,16 +18,9 @@ New assessment types are added as data (a list of questions), not code.
 
 ## Conduct one
 
-```bash
-maverick assess templates                       # list the assessment types
-maverick assess questions vendor_risk           # see the questionnaire (--format json for tools)
-maverick assess score vendor_risk \
-    --subject "Acme Corp" --answers answers.json # score it -> findings + risk rating (and save)
-maverick assess list                            # saved assessments, newest first
-maverick assess show <id>                        # a saved result
-```
-
-`answers.json` maps each question id to an answer:
+Assessments are conducted inside the platform: the assessment agent (below)
+drives the questionnaire against a named subject, scores the answers, and saves
+the completed result. The answers map each question id to an answer:
 
 ```json
 {
@@ -61,13 +53,13 @@ Results are saved under `~/.maverick/assessments/<id>.json`.
 
 ## Finding the control for a risk
 
-Every finding should point to the control that closes it. `find_controls` (a tool,
-and `maverick controls <risk>` for people) maps a risk to authoritative controls
+Every finding should point to the control that closes it. The `find_controls`
+agent tool maps a risk to authoritative controls
 with citations across GDPR, the EU AI Act, ISO/IEC 27001, SOC 2, NIST, and HIPAA —
 so recommendations are grounded in a consistent catalog, not model recall:
 
 ```text
-$ maverick controls vendor has no DPA
+find_controls("vendor has no DPA")
 VN-1: Bind processors with a data-processing agreement (DPA)
    references: GDPR Art. 28; ISO 27001 A.5.19; SOC 2 CC9.2
 ```

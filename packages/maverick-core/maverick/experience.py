@@ -2,10 +2,11 @@
 
 SOTA (HERA / "Experience as a Compass", arXiv 2604.00901): an orchestrator that
 conditions on *what worked and what failed* on similar prior tasks outperforms
-one that re-plans from scratch. Maverick already recalls similar prior *goals*
-into the brief (``orchestrator._maybe_recall_prior_work``); this adds the
-missing outcome signal -- a short "N similar tasks: X succeeded, Y failed;
-lean on …, avoid …" guidance distilled from the persistent world model.
+one that re-plans from scratch. This module supplies that outcome signal -- a
+short "N similar tasks: X succeeded, Y failed; lean on …, avoid …" guidance
+distilled from the persistent world model. (Verbatim prior-goal recall was
+removed with semantic_recall: aggregate outcome statistics steer without
+re-injecting one matter's content into another's run.)
 
 Pure core (``summarize_experience``) for testability; ``recall`` is the
 world-backed convenience wrapper. On by default and owner-scoped

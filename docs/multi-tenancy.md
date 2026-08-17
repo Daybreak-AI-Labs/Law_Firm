@@ -25,13 +25,12 @@ single-tenant install and behaves exactly as before.
 | Cross-session memory | per-tenant dir | `tenants/<id>/memory/` |
 | Audit log | per-tenant, signed/hash-chained | `tenants/<id>/audit/` |
 | Knowledge store | per-tenant via Workspace | `tenants/<id>/knowledge.db` |
-| Encryption-at-rest key | distinct DEK per tenant (AEAD-bound); per-tenant BYOK + fleet KEK rotation | `tenant/kms.py`, `tenant/kms_fleet.py`, `maverick tenant kms-rotate` |
+| Encryption-at-rest key | distinct DEK per tenant (AEAD-bound); per-tenant BYOK + fleet KEK rotation | `tenant/kms.py`, `tenant/kms_fleet.py` |
 | **Config & credentials** | per-tenant overlay | `tenants/<id>/config.toml` |
 | **Calibration / learning-freeze** | per-tenant | `tenants/<id>/calibration*` |
 | **Concurrency ceiling** | per-tenant, from plan | `billing.entitlements` |
 | **RBAC role** | per-tenant membership overrides global | `dashboard-tenant-roles.json` |
 | Spend cap | per-tenant `max_daily_dollars` (clamps the per-run budget) | tenant registry |
-| Postgres rows | row-level security; auto-on under enterprise, else opt-in | `MAVERICK_PG_RLS` / `MAVERICK_PROFILE=enterprise` |
 
 ## Per-tenant credentials
 
@@ -58,8 +57,7 @@ issuer = "https://acme.example.com"
 audience = "maverick-acme"
 ```
 
-`maverick tenant create <id>` prints this path; the provisioning API returns it
-as `config_path`. The same overlay drives a tenant's `[channels.*]` bot
+The provisioning API returns this path as `config_path`. The same overlay drives a tenant's `[channels.*]` bot
 identities and `[auth.oidc]` provider — so credentials, models, budget, channel
 bots and IdP are all per-tenant in the one-instance-per-tenant model.
 
@@ -80,12 +78,7 @@ plan is denied.
 
 ## Provisioning
 
-```bash
-# CLI
-maverick tenant create acme --plan enterprise --max-daily-dollars 100
-maverick tenant list
-maverick tenant suspend acme   # / resume / quota / delete --purge
-```
+Tenants are provisioned over the admin REST API:
 
 ```text
 # REST (admin only)
@@ -109,49 +102,15 @@ When tenants need **distinct bot identities** (their own Slack workspace bot,
 their own inbound email address/webhook), run **one Maverick instance per
 tenant**. The Helm chart (`deploy/helm`) plus the per-tenant config overlay make
 this cheap: one release per tenant, each with its own `[channels.*]` and
-credentials. `maverick serve` logs an advisory when it detects a multi-tenant
-deployment using shared global channels.
+credentials. The server logs an advisory at startup when it detects a
+multi-tenant deployment using shared global channels.
 
 For purely API/dashboard-driven tenants (no inbound chat bots), a single
 multi-tenant instance is fine.
 
 ## Scaling
 
-SQLite is single-writer (one control-plane replica per state volume). Postgres
-shares world-model rows and enables database-enforced tenant isolation, but it
-does not yet share every flow, audit, learning, and policy store. Keep one
-dashboard/serve replica and scale remote workers separately — see
-[`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/deploy/postgres/README.md). Row-level security
-(`MAVERICK_PG_RLS=1`) enforces the tenant boundary in the database itself.
+SQLite is single-writer: one control-plane replica per state volume. Scale by
+keeping one dashboard/serve replica per deployment; the app-layer
+`_tenant_scope` predicate isolates tenants.
 
-### Enabling RLS safely (auto-on under enterprise; guided opt-in otherwise)
-
-RLS auto-enables under enterprise mode (`MAVERICK_PROFILE=enterprise`) along with
-strict per-tenant reads (`MAVERICK_STRICT_TENANT_ISOLATION`); an explicit
-`MAVERICK_PG_RLS=0/1` always wins over the enterprise default. Because its policy
-is strict, fail-closed equality (a row is visible/writable only when its
-`tenant_id` equals the active tenant), the **enterprise auto-on path runs a boot
-preflight that refuses to start** if legacy `tenant_id IS NULL` rows are present
-(rather than silently freezing them) — so the sharp edges below must be cleared
-first. An operator who sets `MAVERICK_PG_RLS=1` explicitly keeps the fail-closed
-install path with no boot refusal (a knowing opt-in). The two sharp edges:
-
-- **Pre-tenancy rows have `tenant_id IS NULL`** and would become invisible *and*
-  frozen the moment RLS is forced (`NULL = <tenant>` is never true).
-- **Only the table owner** may install the policy; a non-owner app role fails at
-  startup instead.
-
-So enabling RLS is a sequenced migration, not a config flip:
-
-```
-maverick tenant rls-preflight              # per-table: does this role own it?
-                                           # how many legacy NULL-tenant rows?
-maverick tenant backfill --tenant <id>     # assign those NULL rows to a tenant
-maverick tenant backfill --tenant <id> --dry-run   # preview first
-```
-
-Once `rls-preflight` reports **READY** (every table owned by the app role, no
-NULL-tenant rows left), set `[world_model] rls = true` (or `MAVERICK_PG_RLS=1`).
-The installer's advanced step writes this with the same reminder. RLS is
-defense-in-depth: the app-layer `_tenant_scope` predicate already isolates
-tenants NULL-tolerantly, so single-tenant and SQLite installs need none of this.

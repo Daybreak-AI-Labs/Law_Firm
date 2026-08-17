@@ -88,12 +88,3 @@ def test_healthz_db_fail_is_reported(monkeypatch, tmp_path):
     assert body["checks"]["db"].startswith("fail")
 
 
-def test_metrics_omits_world_db_bytes_under_postgres(monkeypatch, tmp_path):
-    _use_sqlite(monkeypatch, tmp_path)
-    # Simulate a Postgres deployment: the SQLite-file size gauge is meaningless,
-    # so it must be omitted while the disk-free gauge stays.
-    from maverick import world_model_backends
-    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: True)
-    text = client.get("/metrics").text
-    assert "maverick_world_db_bytes" not in text
-    assert "# TYPE maverick_data_disk_free_bytes gauge" in text

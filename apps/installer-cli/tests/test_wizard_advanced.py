@@ -79,16 +79,6 @@ def test_voice_defaults_write_no_voice_table(tmp_path, monkeypatch):
     assert "[voice]" not in cfg
 
 
-def test_pg_rls_writes_world_model_section_with_prep_reminder(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"pg_rls": True})
-    assert "[world_model]" in cfg
-    assert "rls = true" in cfg
-    # The guided opt-in must point at the prep commands, or NULL-tenant rows vanish.
-    assert "rls-preflight" in cfg and "backfill" in cfg
-    parsed = tomllib.loads(cfg)
-    assert parsed["world_model"]["rls"] is True
-
-
 def test_kernel_modules_read_what_the_wizard_writes(tmp_path, monkeypatch):
     """End-to-end: write via the wizard, then the kernel sees each flag."""
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -719,56 +709,6 @@ def test_both_editing_locks_share_one_features_table(tmp_path, monkeypatch):
     assert feats["pack_editing"] is False and feats["role_editing"] is False
 
 
-def test_external_agents_connectors_write_and_are_read(tmp_path, monkeypatch):
-    """Rule-6 loop: the governed-execution follow-up writes [external_agents]
-    connectors, and the kernel's execute allowlist reads it back."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_EXTERNAL_AGENTS", raising=False)
-    monkeypatch.delenv("MAVERICK_EXTERNAL_CONNECTORS", raising=False)
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {
-        "external_agents": True,
-        "external_connectors": ["salesforce", "servicenow"],
-    })
-    assert "[external_agents]" in cfg
-    assert 'connectors = ["salesforce", "servicenow"]' in cfg
-    parsed = tomllib.loads(cfg)
-    assert parsed["external_agents"]["connectors"] == ["salesforce", "servicenow"]
-
-    from maverick.external_agents import execute_connectors
-    assert execute_connectors() == ["salesforce", "servicenow"]
-
-
-def test_external_agents_without_connectors_stays_screen_only(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"external_agents": True})
-    parsed = tomllib.loads(cfg)
-    assert parsed["external_agents"] == {"enable": True}  # no hardening keys
-
-
-def test_external_agents_identity_hardening_flags_write_and_are_read(
-        tmp_path, monkeypatch):
-    """Rule-6 loop: the require_signed / mint_approval follow-ups write
-    [external_agents] keys and the kernel's get_external_agents reads them."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {
-        "external_agents": True,
-        "external_require_signed": True,
-        "external_mint_approval": True,
-    })
-    parsed = tomllib.loads(cfg)
-    assert parsed["external_agents"]["require_signed"] is True
-    assert parsed["external_agents"]["mint_approval"] is True
-
-    from maverick.config import get_external_agents
-    xa = get_external_agents()
-    assert xa["require_signed"] is True and xa["mint_approval"] is True
-
-
 def test_governed_execution_planes_write_and_are_read(tmp_path, monkeypatch):
     """Rule-6 loop: the governed-kernel and self-refinement opt-ins write
     [repl] / [harness_refine] and the kernel's getters read them back."""
@@ -867,29 +807,6 @@ def test_saml_writes_auth_saml_template(tmp_path, monkeypatch):
 def test_saml_off_writes_no_section(tmp_path, monkeypatch):
     cfg = _write(tmp_path, monkeypatch, {"saml": False})
     assert "[auth.saml]" not in cfg
-
-
-def test_donate_trajectories_writes_and_is_read(tmp_path, monkeypatch):
-    """Rule-6 loop: the wizard's donation toggle writes [telemetry]
-    donate_trajectories, and the kernel reads it back -- the entry point to the
-    self-learning training corpus (donation -> ingest -> DPO)."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {"donate_trajectories": True})
-    assert "[telemetry]" in cfg
-    assert "donate_trajectories = true" in cfg
-    # Metadata-only by default: the wizard step does not turn on text egress.
-    assert "donate_text" not in cfg
-
-    from maverick.donation import _donations_enabled
-    assert _donations_enabled() is True
-
-
-def test_donate_trajectories_off_writes_no_section(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"donate_trajectories": False})
-    assert "[telemetry]" not in cfg
 
 
 def test_department_access_writes_dashboard_scoping(tmp_path, monkeypatch):

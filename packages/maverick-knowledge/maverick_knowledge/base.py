@@ -6,7 +6,7 @@ poisoning is precisely what the agent compartments defend against, so the
 knowledge layer scans on the way in rather than only at query time. A configured
 Shield does the heavy lifting; a built-in high-signal injection-marker screen
 ALWAYS runs too, so the common no-Shield default still rejects the obvious
-prompt-injection payloads (mirrors fleet_memory / memory_guard, which screen
+prompt-injection payloads (mirrors memory_guard, which screens
 external writes regardless of whether a Shield is wired).
 """
 from __future__ import annotations

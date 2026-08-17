@@ -160,7 +160,7 @@ def verify_deployment() -> list[GuaranteeCheck]:
     checks.append(GuaranteeCheck(
         "Retention policy",
         retention,
-        "configured; enforce with 'maverick retention enforce'" if retention
+        "configured; enforce via maverick.audit.retention.enforce()" if retention
         else "set [retention] audit_days / episodes_days / events_days",
     ))
 
@@ -187,14 +187,6 @@ def verify_deployment() -> list[GuaranteeCheck]:
     #    this is only a *gate* under a required enterprise deployment: there, a
     #    silently-absent or disabled shield means the boundary does not hold.
     checks.append(_verify_shield())
-
-    # 8. Data residency -- region pin coherence (#41). Passes (informational)
-    #    when residency strict mode is off, so this never breaks an enterprise
-    #    deployment that doesn't pin a region; only a strict + misconfigured pin
-    #    fails the guarantee (and aborts a required boot).
-    from .residency import check_residency
-    res_ok, res_detail = check_residency()
-    checks.append(GuaranteeCheck("Data residency", res_ok, res_detail))
 
     return checks
 

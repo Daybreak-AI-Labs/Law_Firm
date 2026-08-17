@@ -717,22 +717,6 @@ class TestInsightLifecycle:
         assert dreaming.resolve_contradictions(successes, path) == 0
 
 
-class TestCritiqueMining:
-    def test_low_confidence_critiques_become_failures(self, tmp_path):
-        import json
-        rec = {"ts": 1.0, "task_brief_text": "summarize the 10-K filing",
-               "verifier_critique": "missed the segment data",
-               "verifier_confidence": 0.4}
-        (tmp_path / "d1.json").write_text(json.dumps(rec), encoding="utf-8")
-        confident = dict(rec, verifier_confidence=0.95)
-        (tmp_path / "d2.json").write_text(json.dumps(confident),
-                                          encoding="utf-8")
-        out = dreaming._replay_critiques(tmp_path)
-        assert len(out) == 1
-        assert out[0]["failure_class"] == "verifier_critique"
-        assert "segment" in out[0]["reflection"]
-
-
 class TestFactConsolidation:
     class _World:
         def __init__(self):

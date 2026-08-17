@@ -27,8 +27,8 @@ def _setup_all(monkeypatch, tmp_path):
     gid = world_model.WorldModel(db).create_goal("g", "d")
     paths = [
         "/", "/chat", "/goals", "/skills", "/store", "/facts", "/spend",
-        "/providers", "/tools", "/permissions", "/channels", "/plugins",
-        "/mcp", "/audit", "/cache", "/ekko",
+        "/providers", "/tools", "/permissions", "/plugins",
+        "/mcp", "/audit", "/cache",
         f"/chat/goal/{gid}", f"/goals/{gid}/plan", f"/goals/{gid}/trajectory",
     ]
     return _client(), paths

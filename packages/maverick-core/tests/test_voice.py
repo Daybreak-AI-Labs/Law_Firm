@@ -260,7 +260,7 @@ def test_local_error_mentions_voice_setup(monkeypatch, tmp_path):
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFFfake")
     out = voice_mod._run_transcribe({"source": str(audio), "backend": "local"})
-    assert out.startswith("ERROR:") and "maverick voice setup" in out
+    assert out.startswith("ERROR:") and "auto_fetch_model" in out
 
 
 def test_no_backend_error_mentions_builtin_path(monkeypatch, tmp_path):
@@ -274,7 +274,7 @@ def test_no_backend_error_mentions_builtin_path(monkeypatch, tmp_path):
     audio.write_bytes(b"RIFFfake")
     out = voice_mod._run_transcribe({"source": str(audio)})
     assert out.startswith("ERROR: no voice backend available")
-    assert "maverick voice setup" in out
+    assert "auto_fetch_model" in out
 
 
 def test_temp_wav_cleaned_up_after_run(monkeypatch, tmp_path):

@@ -73,10 +73,6 @@ def test_feed_circuit_success_keeps_closed():
 
 # ---- diag CLI surfaces the read-only utilities ------------------------------
 
-def test_diag_cli_group_registered():
-    from maverick.cli import main
-    names = main.commands["diag"].commands
-    assert {"circuits", "ratelimits", "health", "cost-by-tag"} <= set(names)
 
 
 # ---- approval delegation reachable from the consent path --------------------

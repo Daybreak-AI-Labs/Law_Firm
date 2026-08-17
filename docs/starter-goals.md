@@ -3,7 +3,7 @@
 Ten curated, runnable goals to bootstrap new users. Each is ~3 minutes
 of agent runtime on Claude Sonnet 4.6 with a sensible budget.
 
-Use any of these via `maverick start "<paste-the-goal>"`.
+Paste any of these as a new goal in the dashboard (`maverick dashboard`).
 
 ---
 

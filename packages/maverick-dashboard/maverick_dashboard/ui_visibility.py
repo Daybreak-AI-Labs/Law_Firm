@@ -61,14 +61,11 @@ PAGES: tuple[dict, ...] = (
      "floor": "view", "default": "operate"},
     {"path": "/workforce", "label": "Workforce", "group": "Operate", "icon": "agents",
      "floor": "view", "default": "view"},
-    # Flows: the redesigned builder (/flows/designer) is the primary sidebar
-    # entry. The saved-workflows index and the older NL builder are reached from
-    # the Flows builder / Automations / Agents pages rather than the sidebar, so
-    # the nav shows one clear "Flows" job instead of three near-duplicates.
-    {"path": "/flows/designer", "label": "Flows", "group": "Operate", "icon": "workflow",
-     "floor": "view", "default": "operate"},
+    # Flows: the visual designer was removed; the saved-workflows index is the
+    # primary sidebar entry and the flow engine stays reachable from
+    # Automations.
     {"path": "/workflows", "label": "Workflows", "group": "Operate", "icon": "workflow",
-     "floor": "view", "default": "operate", "in_nav": False},
+     "floor": "view", "default": "operate"},
     {"path": "/workflow-builder", "label": "Workflow Builder", "group": "Operate",
      "icon": "workflow", "floor": "view", "default": "operate", "in_nav": False},
     {"path": "/automations", "label": "Automations", "group": "Operate", "icon": "clock",
@@ -78,8 +75,6 @@ PAGES: tuple[dict, ...] = (
     # -- Observe --------------------------------------------------------------
     {"path": "/overview", "label": "Overview", "group": "Observe", "icon": "overview",
      "floor": "view", "default": "view"},
-    {"path": "/ekko", "label": "Ekko", "group": "Observe", "icon": "eye",
-     "floor": "operate", "default": "operate"},
     {"path": "/oversight", "label": "Oversight", "group": "Observe", "icon": "eye",
      "floor": "view", "default": "view"},
     {"path": "/discovery", "label": "Discovery", "group": "Observe", "icon": "overview",
@@ -122,8 +117,6 @@ PAGES: tuple[dict, ...] = (
     # Security is the department workspace. The two hunter consoles are
     # governed child surfaces linked from it, so the sidebar keeps one clear
     # entry while role visibility still protects every direct URL.
-    {"path": "/security", "label": "Security & GRC", "group": "Govern",
-     "icon": "shield", "floor": "operate", "default": "operate"},
     # Permissions is deployment plumbing, not day-to-day governance work --
     # it lives with the rest of administration.
     {"path": "/permissions", "label": "Permissions", "group": "Admin",
@@ -149,13 +142,6 @@ PAGES: tuple[dict, ...] = (
      "floor": "audit", "default": "audit"},
     {"path": "/replay", "label": "Replay", "group": "Govern", "icon": "audit",
      "floor": "view", "default": "audit"},
-    {"path": "/trust", "label": "Agent Trust", "group": "Govern", "icon": "agents",
-     "floor": "view", "default": "view"},
-    # Bring-your-own-agent console: enroll + credential + govern agents built
-    # on other platforms. Reading the roster is a governance view; every
-    # mutation (enroll / mint / revoke) is admin-gated at the API.
-    {"path": "/external-agents", "label": "External Agents", "group": "Govern",
-     "icon": "agents", "floor": "view", "default": "view"},
     # -- Extend ---------------------------------------------------------------
     {"path": "/skills", "label": "Skills", "group": "Extend", "icon": "skills",
      "floor": "view", "default": "operate"},
@@ -178,8 +164,6 @@ PAGES: tuple[dict, ...] = (
     {"path": "/styles", "label": "Response Styles", "group": "Extend", "icon": "roles",
      "floor": "view", "default": "operate"},
     {"path": "/mcp", "label": "Tool Servers", "group": "Extend", "icon": "mcp",
-     "floor": "admin", "default": "admin"},
-    {"path": "/channels", "label": "Channels", "group": "Extend", "icon": "channels",
      "floor": "admin", "default": "admin"},
     # -- Admin ----------------------------------------------------------------
     {"path": "/settings", "label": "Settings", "group": "Admin", "icon": "settings",
@@ -206,7 +190,7 @@ _NAV_FOLD: frozenset[str] = frozenset({
     "/discovery", "/providers", "/flows/analytics",
     "/walkthroughs", "/facts", "/plan-tree-3d",
     # Govern — advanced governance surfaces
-    "/simulate", "/compartments", "/replay", "/trust",
+    "/simulate", "/compartments", "/replay",
     # Extend — secondary catalogs
     "/store", "/templates", "/tools", "/styles",
     # Admin — rarely-touched plumbing

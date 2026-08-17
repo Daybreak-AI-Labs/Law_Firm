@@ -24,7 +24,6 @@ def _prep(monkeypatch, tmp_path):
     ("/overview", "Overview"),
     ("/goals", "Goals"),
     ("/agents", "Agent Factory"),
-    ("/ekko", "Ekko"),
     ("/skills", "Skills"),
     ("/spend", "Spend"),
 ])
@@ -89,7 +88,7 @@ def test_chat_can_handoff_an_unsaved_flow_or_agent_draft(monkeypatch, tmp_path):
     ui = _client().get("/static/maverick-ui.js").text
     assert "maverick.authoring-handoff" in ui
     assert "sessionStorage.setItem" in ui
-    assert "kind === 'flow' ? '/flows/designer' : '/workflow-builder'" in ui
+    assert "'/workflow-builder'" in ui
 
 
 def test_overview_first_run_form_has_inline_error_region(monkeypatch, tmp_path):

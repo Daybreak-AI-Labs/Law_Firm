@@ -6,9 +6,8 @@
 ## Project
 
 - **Stack:** Python uv-workspace monorepo (8 pip packages under `packages/` +
-  `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps, one TypeScript
-  plugin SDK (`sdks/plugin-ts`, Node 22). pip editable installs; npm only for
-  that SDK. CI runs **3.12 only** — the 3.10/3.11/3.12 matrix was for
+  `apps/installer-cli`), FastAPI dashboard, Tauri desktop apps. pip editable
+  installs. CI runs **3.12 only** — the 3.10/3.11/3.12 matrix was for
   strangers' interpreters. Manifests still say `requires-python = ">=3.10"`
   (an installability floor, not a tested promise), so the tomllib try/except
   shim and its lint gate stay.
@@ -35,7 +34,6 @@
 - **Lint:** `python -m ruff check .` and `python -m vulture` (no args).
 - **Build:** `python3 -m build --wheel` per package dir (setup installs build).
 - **CLI smoke:** `maverick version`, `maverick doctor`.
-- **TS SDK:** `cd sdks/plugin-ts && npm install && npm test` (tsc + node --test).
 
 ## Rules
 
@@ -209,14 +207,42 @@ What changed from upstream, and why:
   steps; the enterprise sales + SOC2/ISO certification docs; the five
   third-party language SDKs (TypeScript, Go, Rust, C#, Java) and their five CI
   jobs; `a2a`/`federation`/`channel_federation` (cross-organization agent
-  interop) and the marketplace ecosystem backend.
+  interop) and the marketplace ecosystem backend; the GRC self-certification
+  cluster (security_ops, evidence gateway, Model Risk officer, soc2/ropa/
+  dpia/ai-act scaffolds); the whole external-agent cluster — `agent_trust`,
+  `external_agents`, `external_identity`, `external_gateway`,
+  `federation_envelope`, `fleet_memory`, `memory_plane`, `agent_edr`, and the
+  LangChain/AutoGen/CrewAI adapters (operator decision, superseding the
+  fork-time retention of `federation_envelope.py`).
+- **Confirmed-orphan sweep (dead-weight audit):** 29 core modules with no
+  live consumer (attestation/proof_pack/proof_guarantees, donation +
+  insight_exchange, predictive_approvals, budget_tuner, perf_sla + glance +
+  offline_bundle + keymap, plugin_ca/plugin_telemetry/plugin_reliability +
+  ts_plugin_host, residency, speculative_exec, tiered_storage,
+  duckdb_analytics, compounding_metric, quorum, model_cards, chaos_gameday,
+  shield_updates, release_update, reliability_cert, trace_pin,
+  voice_personas, audio_analysis) and 12 hardware/media tools (ros, serial,
+  embedded_device, hardware_sensors, audio_understanding, ios_sim, obsidian,
+  replicate, vertex, image_edit, chaos/tiered wrappers). Kept:
+  `operations_scientist` (flywheel imports it), `entitlements`,
+  `speculative.py` (the async overlap primitive — distinct from the deleted
+  speculative_exec), `tools/data_residency.py`, `tools/quorum_approval.py`,
+  the `android` tool.
+- **CLI reduced 110 -> 17 commands.** Everything user-facing happens in the
+  dashboard; the CLI that remains is the operational surface: launchers
+  (`dashboard` / `mcp` / `worker`), setup + health (`doctor`, `migrate`,
+  `config-lint`), the audit + privacy record (`audit`, `erase`,
+  `erase-verify`, `export-user`), the emergency stop (`halt` / `unhalt`),
+  `knowledge`, `domains-lint`, the nightly `dream` beat, and `tax`
+  (operator-rescued). Eight CLI group modules deleted outright; modules whose
+  only production consumer was a deleted command flipped to TEST_ONLY in the
+  reachability lock (follow-up cascade candidates, not yet deleted).
 - **Retained deliberately:** `agent-shield`; the multi-tenant/`tenant` layer
   (load-bearing — 227 source references, 163 test files, single-tenant is its
-  default path); `federation_envelope.py` (the Ed25519 primitive `agent_trust`
-  and the external-agent path share); `marketplace/storefront.py` +
+  default path); `marketplace/storefront.py` +
   `ratings.py` + `stats.py` (the pack/connector browser and YOUR OWN star
   ratings on goal templates — despite the package name, these are local, not
-  ecosystem); the Rust audit verifier and native scanner; the Go model proxy.
+  ecosystem); the Rust audit verifier and native scanner.
 
 ## Kernel rules (pre-existing, still enforced)
 

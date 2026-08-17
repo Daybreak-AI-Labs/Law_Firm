@@ -252,25 +252,12 @@ def purge_world_events(
 def _purge_canonical_world(
     method_name: str, cutoff_ts: float, *, dry_run: bool,
 ) -> int:
-    """Run a portable retention primitive on the configured world backend.
-
-    An unbound Postgres connection represents an administrator-wide view.  A
-    retention job must never interpret that as permission to delete every
-    tenant's rows, so callers must either bind a tenant (the fleet coordinator
-    below does this) or provide an explicit SQLite ``db_path``.
-    """
-    from ..paths import current_tenant_id
+    """Run a portable retention primitive on the SQLite world backend."""
     from ..world_model import close_world_if_owned, default_db_path, open_world
-    from ..world_model_backends import is_postgres_configured
 
-    if is_postgres_configured() and current_tenant_id() is None:
-        raise RetentionScopeError(
-            "refusing unscoped Postgres retention; bind a tenant or provision "
-            "the tenant registry so each tenant is pruned explicitly"
-        )
     # Do not create an empty SQLite database merely because a scheduled
     # retention job ran before the world was initialized.
-    if not is_postgres_configured() and not default_db_path().exists():
+    if not default_db_path().exists():
         return 0
     world = open_world()
     try:

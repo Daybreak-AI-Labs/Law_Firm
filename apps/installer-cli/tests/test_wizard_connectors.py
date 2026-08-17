@@ -81,9 +81,15 @@ def test_catalog_is_the_source_of_truth():
     cat = connector_catalog()
     names = [e["name"] for e in cat]
     assert len(names) == len(set(names)), "connector names must be unique"
-    assert len(cat) >= 150
-    for headline in ("servicenow", "salesforce", "snowflake", "sap", "workday",
-                     "datadog", "stripe"):
+    # Floor guarding against an empty/one-entry catalog, not a headcount --
+    # the roster is scoped to legal practice, not the upstream SaaS catalogue.
+    assert len(cat) >= 100
+    # The systems a firm actually runs. The dedicated-module connectors for
+    # enterprise systems (salesforce, servicenow, snowflake, sap, workday, ...)
+    # are still in tools/ and still in this catalog, but they are not something
+    # this fork guarantees, so they are not asserted here.
+    for headline in ("clio", "westlaw", "pacer", "docusign", "ironclad",
+                     "imanage", "quickbooks"):
         assert headline in names, headline
     # Shape: each entry has a label and (env_name, is_secret) pairs.
     for e in cat:

@@ -9,7 +9,7 @@ open-source project and takes no outside contributions.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ./packages/maverick-core
-for p in maverick-shield maverick-channels maverick-evolve \
+for p in maverick-shield \
          maverick-dashboard maverick-mcp maverick-knowledge; do
   pip install --no-deps -e "./packages/$p"
 done

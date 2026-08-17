@@ -823,7 +823,9 @@ def _department_memory(profile: DomainProfile, task: str, *,
     blocks: list[str] = []
     try:
         from . import reflexion
-        if reflexion.enabled():
+        # Off by default: recall re-injects another goal's lessons; see
+        # reflexion.recall_enabled for the matter-scoping rationale.
+        if reflexion.recall_enabled():
             recalled = reflexion.recall(
                 task, k=2, domain=profile.name,
                 channel=channel, user_id=user_id,

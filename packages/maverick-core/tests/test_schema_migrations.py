@@ -83,20 +83,8 @@ def test_render():
     assert "MAINTENANCE WINDOW" in render(offline)
 
 
-def test_schema_plan_command_registered():
-    from maverick.cli import main
-    assert "schema-plan" in main.commands
 
 
-def test_schema_plan_command_runs(tmp_path, monkeypatch):
-    from click.testing import CliRunner
-    from maverick import world_model
-    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
-    from maverick import cli as cli_mod
-    r = CliRunner().invoke(cli_mod.main, ["schema-plan"])
-    assert r.exit_code == 0, r.output
-    # A fresh DB opens already-current -> nothing pending.
-    assert "current" in r.output or "pending" in r.output
 
 
 def test_ci_gate_passes_on_the_shipped_table():

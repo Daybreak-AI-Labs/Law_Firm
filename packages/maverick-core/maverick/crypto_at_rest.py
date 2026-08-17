@@ -424,19 +424,7 @@ def shared_authority_key_identity_required() -> bool:
             or "auto"
         )
         backend = str(configured).strip().lower()
-        if backend not in {"auto", "local", "postgres"}:
-            return True
-        world_backend = str(
-            os.environ.get("MAVERICK_WORLD_BACKEND")
-            or world.get("backend")
-            or "sqlite"
-        ).strip().lower()
-        # Postgres is shared process authority even for an explicitly declared
-        # single replica. Its encrypted rows must never depend on a node-local
-        # rotation keyring that another process cannot resolve.
-        if backend == "postgres" or (
-            backend != "local" and world_backend == "postgres"
-        ):
+        if backend not in {"auto", "local"}:
             return True
         return deployment_enterprise_enabled(
             config=config,
@@ -599,8 +587,9 @@ def _load_or_create_key() -> bytes:
     log.warning(
         "at-rest encryption generated a new key at %s. This key is the only way "
         "to decrypt sealed data; if it is lost, that data is unrecoverable. Back "
-        "it up now to a secure location: `maverick encryption backup-key --to "
-        "<dir>` (or inject your own via MAVERICK_ENCRYPTION_KEY).",
+        "it up now to a secure location (copy the key file, or call "
+        "maverick.crypto_at_rest.backup_key_material(<dir>); or inject your own "
+        "via MAVERICK_ENCRYPTION_KEY).",
         _KEY_PATH,
     )
     return key

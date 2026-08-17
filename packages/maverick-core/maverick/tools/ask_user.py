@@ -2,7 +2,7 @@
 
 The agent queues a question into the world model and gets a sentinel back.
 The orchestrator decides whether to keep going (with other independent
-sub-tasks) or pause. The user answers later via `maverick answer`.
+sub-tasks) or pause. The user answers later in the dashboard.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from . import Tool
 
 def ask_user(world, goal_id: int | None = None) -> Tool:
     """Build the ask_user tool, scoped to a goal so /goals/<id> can list
-    its open questions and `maverick answer` resolves them correctly."""
+    its open questions and answers resolve them correctly."""
 
     def fn(args: dict) -> str:
         qid = world.ask(args["question"], goal_id=goal_id)

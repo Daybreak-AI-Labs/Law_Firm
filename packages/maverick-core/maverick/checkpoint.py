@@ -336,7 +336,7 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
     """Restart a goal from an earlier checkpoint (spec §4, G2).
 
     Without ``fork``: drop the checkpoints after ``to_step`` and re-block the
-    goal so ``maverick resume`` continues from there. With ``fork``: copy the
+    goal so resuming it continues from there. With ``fork``: copy the
     target checkpoint under a NEW child goal (same department, so the resumed
     role keys the same ``checkpoint_id``), leaving the original intact — "go back
     to step N and try a different branch."
@@ -370,7 +370,7 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
         return RewindResult(
             True,
             f"forked goal #{goal_id} -> new goal #{new_goal} at step {target.step_seq}; "
-            f"resume it with `maverick resume {new_goal}`",
+            f"resume goal {new_goal} from the dashboard",
             target_step=target.step_seq, forked_goal_id=new_goal)
     removed = ck.truncate_after(goal_id, agent_id, target.step_seq, episode_id)
     try:
@@ -380,8 +380,8 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
     return RewindResult(
         True,
         f"rewound goal #{goal_id} to step {target.step_seq} "
-        f"({removed} later checkpoint(s) dropped); continue with "
-        f"`maverick resume {goal_id}`",
+        f"({removed} later checkpoint(s) dropped); continue by resuming "
+        f"goal {goal_id} from the dashboard",
         target_step=target.step_seq)
 
 

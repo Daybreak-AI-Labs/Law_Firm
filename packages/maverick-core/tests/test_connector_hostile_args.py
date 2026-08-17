@@ -34,7 +34,11 @@ _HOSTILE_ARGS = (
 
 def test_every_connector_returns_a_string_on_hostile_args():
     tools = enterprise_connectors()
-    assert len(tools) > 300
+    # Floor, not a target: the roster is scoped to a law firm (practice
+    # management, research, e-discovery, CLM, firm books) rather than the
+    # upstream SaaS catalogue, so this guards against the list coming back
+    # EMPTY and the loop below passing vacuously -- it is not a headcount.
+    assert len(tools) > 100
     failures = []
     for t in tools:
         for args in _HOSTILE_ARGS:
@@ -52,6 +56,6 @@ def test_non_string_op_yields_error_not_crash():
     # Regression for the specific bug: a non-string op must produce an ERROR
     # string, never AttributeError.
     by_name = {t.name: t for t in enterprise_connectors()}
-    for name in ("zendesk", "sec_edgar", "fred", "okta"):
+    for name in ("clio", "sec_edgar", "fred", "pacer"):
         out = by_name[name].fn({"op": 123})
         assert isinstance(out, str) and out.startswith("ERROR"), (name, out)

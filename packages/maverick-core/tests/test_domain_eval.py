@@ -6,7 +6,6 @@ and the lint that keeps the golden suite valid against the roster.
 """
 from __future__ import annotations
 
-from click.testing import CliRunner
 from maverick.domain_eval import (
     GOLDEN_CASES,
     EvalCase,
@@ -88,9 +87,3 @@ def test_check_suite_flags_unknown_pack_and_empty_rubric():
     assert any("empty task or rubric" in p for p in problems)
 
 
-def test_cli_check_passes_and_lists_cases():
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["domains-eval", "--check"])
-    assert res.exit_code == 0, res.output
-    assert "golden eval case" in res.output
-    assert "finance_ap" in res.output

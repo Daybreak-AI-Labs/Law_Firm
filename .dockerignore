@@ -13,8 +13,6 @@
 !packages/maverick-core/**
 !packages/maverick-shield/
 !packages/maverick-shield/**
-!packages/maverick-channels/
-!packages/maverick-channels/**
 !packages/maverick-evolve/
 !packages/maverick-evolve/**
 !packages/maverick-dashboard/

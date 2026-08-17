@@ -77,25 +77,6 @@ def test_model_risk_literal_sections_are_known_to_config_lint():
     assert not missing, f"model-risk sections config-lint will false-flag: {missing}"
 
 
-# ---------- new CHANNELS entries ----------
-
-def test_new_channels_added():
-    from maverick_installer.wizard import CHANNELS
-    ids = {c[0] for c in CHANNELS}
-    assert "bluesky" in ids
-    assert "mastodon" in ids
-    assert "voice" in ids
-
-
-def test_bluesky_channel_env_vars():
-    from maverick_installer.wizard import CHANNELS
-    spec = next(c for c in CHANNELS if c[0] == "bluesky")
-    assert "BLUESKY_HANDLE" in spec[2]
-    assert "BLUESKY_PASSWORD" in spec[2]
-
-
-# ---------- new pick_*() functions exist ----------
-
 @pytest.mark.parametrize("name", [
     "pick_web_search",
     "pick_mcp_servers",
@@ -107,7 +88,6 @@ def test_bluesky_channel_env_vars():
     "pick_notifications",
     "pick_webhooks",
     "pick_self_learning",
-    "pick_ekko",
     "pick_automation_import",
     "pick_event_triggers",
 ])
@@ -249,10 +229,8 @@ def test_knowledge_defaults_refuse_external_embedding(monkeypatch):
 def test_write_config_emits_regulated_scalars(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
-        advanced={"residency_region": "eu",
-                  "compliance_disclosure_text": "AI assistant in use."},
+        advanced={"compliance_disclosure_text": "AI assistant in use."},
     )
-    assert parsed["residency"]["region"] == "eu"
     assert parsed["compliance"]["disclosure_text"] == "AI assistant in use."
 
 
@@ -385,33 +363,6 @@ def test_write_config_emits_self_learning(tmp_path: Path, monkeypatch):
     assert parsed["self_learning"]["max_acquisitions"] == 3
     # The retired add_mcp_servers knob is no longer written.
     assert "add_mcp_servers" not in parsed["self_learning"]
-
-
-def test_write_config_emits_explicit_ekko_policy(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        ekko={
-            "enable": True,
-            "retention_days": 14,
-            "capture_level": "application_metadata",
-            "allowed_apps": ["excel", "powerpoint"],
-            "provider_egress": False,
-        },
-    )
-    assert parsed["ekko"] == {
-        "enable": True,
-        "retention_days": 14,
-        "capture_level": "application_metadata",
-        "allowed_apps": ["excel", "powerpoint"],
-        "provider_egress": False,
-    }
-
-
-def test_write_config_can_record_explicit_ekko_opt_out(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, ekko={"enable": False},
-    )
-    assert parsed["ekko"] == {"enable": False}
 
 
 def test_write_config_emits_durable_when_enabled(tmp_path: Path, monkeypatch):
@@ -647,18 +598,16 @@ def test_write_config_emits_tools_output_cache(tmp_path: Path, monkeypatch):
 
 
 def test_write_config_tools_block_coexists(tmp_path: Path, monkeypatch):
-    # deferred_loading + output_cache + hardware_sensors share a single [tools] table.
+    # deferred_loading + output_cache share a single [tools] table.
     parsed = _write_full_config(
         tmp_path, monkeypatch,
         advanced={
             "deferred_tools": True,
             "output_cache": True,
-            "hardware_sensors": True,
         },
     )
     assert parsed["tools"]["deferred_loading"] is True
     assert parsed["tools"]["output_cache"] is True
-    assert parsed["tools"]["hardware_sensors"] is True
 
 
 def test_write_config_emits_consequence_when_enabled(tmp_path: Path, monkeypatch):
@@ -720,7 +669,7 @@ def test_pick_advanced_includes_new_toggles(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_advanced
     adv = pick_advanced()
-    for key in ("output_cache", "local_first", "energy_aware", "hardware_sensors"):
+    for key in ("output_cache", "local_first", "energy_aware"):
         assert key in adv, f"{key} missing from pick_advanced()"
 
 
@@ -754,50 +703,6 @@ def test_pick_self_learning_defaults_to_safe_governed_learning(monkeypatch):
         "max_acquisitions": 5,
     }
 
-
-def test_pick_ekko_defaults_off_without_follow_up_prompts(monkeypatch):
-    from maverick_installer import wizard
-
-    prompts: list[str] = []
-
-    def _confirm(prompt, *args, default=False, **kwargs):
-        prompts.append(prompt)
-        return default
-
-    monkeypatch.setattr(wizard, "_q_confirm", _confirm)
-    monkeypatch.setattr(
-        wizard, "_q_text",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected follow-up")),
-    )
-
-    assert wizard.pick_ekko() == {"enable": False}
-    assert len(prompts) == 1
-
-
-def test_pick_ekko_enabled_branch_is_bounded_and_local_first(monkeypatch):
-    from maverick_installer import wizard
-
-    confirms = iter([True])  # enable
-    answers = iter(["Excel, PowerPoint, mystery.exe", "999", "1", "999"])
-    monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **k: next(confirms))
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(answers))
-    monkeypatch.setattr(
-        wizard, "_q_select",
-        lambda *a, **k: "application_metadata - application identity + timing only",
-    )
-
-    result = wizard.pick_ekko()
-
-    assert result["enable"] is True
-    assert result["allowed_apps"] == ["excel", "powerpoint"]
-    assert result["retention_days"] == 30
-    assert result["enrollment_days"] == 30
-    assert result["min_occurrences"] == 2
-    assert result["min_distinct_days"] == 30
-    assert result["provider_egress"] is False
-
-
-# ---------- finance suite wizard step (finance-agent-suite §8) ----------
 
 def test_pick_finance_skipped(monkeypatch):
     _StubQ(monkeypatch)
@@ -917,49 +822,6 @@ def test_pick_advanced_includes_learning_toggles(monkeypatch):
         assert key in adv, f"{key} missing from pick_advanced()"
 
 
-def test_pick_advanced_defaults_governed_learning_on_but_dgm_off(monkeypatch):
-    """The advanced wizard's Enter path keeps DGM as a separate opt-in."""
-    from maverick_installer import wizard
-
-    monkeypatch.setattr(
-        wizard,
-        "_q_confirm",
-        lambda *a, default=False, **kw: default,
-    )
-    monkeypatch.setattr(
-        wizard,
-        "_q_select",
-        lambda *a, default=None, **kw: default,
-    )
-    monkeypatch.setattr(
-        wizard,
-        "_q_text",
-        lambda *a, default="", **kw: default,
-    )
-
-    advanced = wizard.pick_advanced()
-
-    governed_learning = {
-        "reflexion",
-        "self_harness",
-        "dreaming",
-        "skill_synthesis",
-        "experience_guidance",
-        "credit_assignment",
-        "causal_promotion",
-        "factory_learning",
-        "evaluator_evolution",
-        "rehearsal",
-        "data_engine",
-        "operations_scientist",
-        "consequence",
-    }
-    assert all(advanced[key] is True for key in governed_learning)
-    assert advanced["structured_verifier_off"] is False
-    assert advanced["jit_rl_off"] is False
-    assert advanced["self_modify"] is False
-
-
 def test_write_config_disables_reasoning_reward(tmp_path: Path, monkeypatch):
     # The rubric verifier is on by default; the wizard opt-out writes enable=false.
     parsed = _write_full_config(
@@ -1026,33 +888,9 @@ def test_write_config_reasoning_reward_both_keys_one_table(tmp_path: Path, monke
     assert parsed["reasoning_reward"]["audit_rewards"] is True
 
 
-def test_pick_advanced_includes_self_modify(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_advanced
-    assert "self_modify" in pick_advanced()
-
-
-def test_write_config_emits_self_modify(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced={"self_modify": True})
-    assert parsed["self_modify"]["enable"] is True
-    from maverick import config
-    monkeypatch.setattr(config, "load_global_config", lambda *a, **k: parsed)
-    resolved = config.get_self_modify()
-    assert resolved["enable"] is True
-    assert resolved["editable_paths"] == []  # allowlist stays commented -> inert
-    body = (tmp_path / "config.toml").read_text(encoding="utf-8")
-    assert "Research-only DGM cycles" in body
-    assert "runner NEVER applies or promotes code" in body
-    assert "two discriminating eval_tests" in body
-    assert "require_container=true" in body
-    assert '# eval_tests = ["path/test_feature.py::case_a",' in body
-
-
-@pytest.mark.parametrize("advanced", [{}, {"self_modify": False}])
-def test_write_config_omits_self_modify_when_off(
-    tmp_path: Path, monkeypatch, advanced,
-):
-    parsed = _write_full_config(tmp_path, monkeypatch, advanced=advanced)
+def test_write_config_never_emits_self_modify(tmp_path: Path, monkeypatch):
+    """The DGM rung is deleted; no wizard path may write its section back."""
+    parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
     assert "self_modify" not in parsed
 
 

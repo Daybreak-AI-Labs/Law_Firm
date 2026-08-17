@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 # [security] "silently do nothing" -- advice that would delete live config).
 # When adding a new config section, add it here or migrate will lint it.
 KNOWN_SECTIONS = frozenset({
-    "a2a", "adaptive_compute", "agent", "agent_factory", "agent_trust",
+    "a2a", "adaptive_compute", "agent", "agent_factory",
     "analytics", "approval", "assessments", "automation_import",
     "approval_delegation", "attachments", "audit", "auth", "autonomy",
     "deployment",
@@ -44,9 +44,9 @@ KNOWN_SECTIONS = frozenset({
     "capabilities", "catalogs", "channels", "client", "coding", "compaction",
     "compliance", "computer_use", "connections", "consequence", "containment",
     "context", "credit", "data_engine",
-    "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress", "ekko",
+    "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress",
     "emergent_codec", "emergent_protocol",
-    "email", "embedded", "encryption", "energy", "enterprise", "entity_graph",
+    "email", "encryption", "energy", "enterprise", "entity_graph",
     "erp",
     "experience", "features", "federation", "finance", "finance_operations", "flows", "github",
     "governance", "governed_connectors", "governed_records", "grpc", "grpc_dispatch", "intake",
@@ -55,41 +55,33 @@ KNOWN_SECTIONS = frozenset({
     "logging", "lsp", "mcp_registries", "mcp_servers", "memory",
     "model_cost_tiers", "model_proxy", "models", "notifications", "oauth", "observability",
     "paper_review",
-    "obsidian", "operations_scientist",
+    "operations_scientist",
     "perf", "persona", "planning", "plugins", "privacy",
     "privacy_ops", "provider_failover", "providers", "queue", "quotas", "reflexion",
     "repl", "harness_refine", "session_tree",
     "retention", "role_assignments", "roles", "routing", "safety",
     "sandbox", "screening", "search", "security", "self_learning",
-    "sharing", "shield", "skill_synthesis", "skills", "security_ops",
+    "sharing", "shield", "skill_synthesis", "skills",
     "system", "telemetry", "template_registries", "tenancy", "thinking",
     "tools", "tui", "value", "verification", "voice", "webhooks", "workforce",
-    "workspace", "world_model", "threat_hunt", "env_hunt",
-    "evidence_gateway", "evidence_graph", "model_risk_assurance", "model_improvement",
+    "workspace", "world_model", "threat_hunt",
+    "evidence_graph",
     # Registry drift, again: these are all read by real load_config() call sites
     # AND written by the installer wizard, yet were missing here -- so an operator
     # who enabled a documented, wizard-offered feature got a false "unknown
     # config section" warning from config-lint (which sources this set), some
     # with actively-wrong suggestions ("self_harness -> did you mean
     # self_learning?", which is a *different* feature). The self-learning
-    # lifecycle (self_harness/self_improvement/dreaming/fleet_memory/rehearsal/
-    # memory_guard) plus actions/domains/fairness_monitor/speculative/tax.
+    # lifecycle (self_harness/self_improvement/dreaming/rehearsal/
+    # memory_guard) plus actions/domains/fairness_monitor/tax.
     # Guarded against future drift by test_wizard_parity's wizard-section check.
     "actions", "domains", "dreaming", "earned_autonomy", "fairness_monitor",
-    "external_agents", "fleet_memory", "memory_guard", "rehearsal",
-    "self_harness", "self_improvement", "speculative", "tax",
+    "memory_guard", "rehearsal",
+    "self_harness", "self_improvement", "tax",
     # Structured rubric verifier + JitRL test-time adaptation: read by
     # load_config (config.get_reasoning_reward / get_jit_rl) and written by the
     # wizard's advanced opt-out steps.
     "reasoning_reward", "jit_rl",
-    # Governed code self-modification (maverick.self_modify): editable-surface
-    # allowlist for the DGM-style code rung. Read by config.get_self_modify,
-    # written by the wizard's advanced opt-in step.
-    "self_modify",
-    # Data-residency region pinning (maverick.residency): read by real
-    # load_config() call sites and written by the wizard's regulated-posture
-    # step, yet was missing here -- a false "unknown section" for [residency].
-    "residency",
 })
 
 
@@ -111,21 +103,6 @@ class MigrationReport:
     @property
     def clean(self) -> bool:
         return not self.findings
-
-
-def _advisory_whatsapp_cloud(cfg: dict) -> Finding | None:
-    channels = cfg.get("channels") or {}
-    wa = channels.get("whatsapp") or {}
-    if wa.get("enabled") and not (channels.get("whatsapp_cloud") or {}).get("enabled"):
-        return Finding(
-            "advisory", "whatsapp-twilio-to-cloud",
-            "[channels.whatsapp] rides Twilio's Business API (per-message cost, "
-            "third-party webhooks). The first-party Meta Cloud API adapter "
-            "([channels.whatsapp_cloud]) has no middleman; see "
-            "maverick_channels/whatsapp_cloud.py for the four credentials it "
-            "needs. The Twilio adapter keeps working — migrate when ready.",
-        )
-    return None
 
 
 def _lint_unknown_sections(cfg: dict) -> list[Finding]:
@@ -200,9 +177,6 @@ def migrate(config_path: Path | None = None, *, apply: bool = False) -> Migratio
         report.findings.append(Finding("lint", "unparseable", f"cannot parse config: {e}"))
         return report
 
-    adv = _advisory_whatsapp_cloud(cfg)
-    if adv:
-        report.findings.append(adv)
     report.findings.extend(_lint_unknown_sections(cfg))
 
     rewrites = _apply_rewrites(cfg) if apply else []

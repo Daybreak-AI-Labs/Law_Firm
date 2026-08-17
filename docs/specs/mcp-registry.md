@@ -1,6 +1,6 @@
 # Design Spec: MCP Server Registry
 
-**Status:** Shipped (discovery + install + config write + CLI; OAuth deferred)· **Related:** [`catalog.md`](./catalog.md), [`skill-index.md`](./skill-index.md) · **Date:** June 2026
+**Status:** Shipped (discovery + install + config write; OAuth deferred; the `mcp-registry` CLI group has since been removed in the CLI reduction)· **Related:** [`catalog.md`](./catalog.md), [`skill-index.md`](./skill-index.md) · **Date:** June 2026
 
 ## 1. Problem
 
@@ -8,8 +8,8 @@ Maverick can *consume* external MCP servers once they're in
 `[mcp_servers.<name>]` (stdio via `MCPClient`, remote HTTP via
 `StreamableHttpMCPClient`). What was missing (roadmap B2) is **discovery +
 install**: a user shouldn't have to hand-write a server's command/args/url. A
-registry gives `maverick mcp-registry browse` / `add <name>` so servers install
-by name, the same way `maverick skill add` works for skills.
+registry gave `maverick mcp-registry browse` / `add <name>` so servers install
+by name, the same way skills install by name from the catalog.
 
 OAuth 2.1 (the other half of B2) is out of scope here — it needs real accounts
 to validate. Static-bearer remote servers already work via `auth_token`.
@@ -101,16 +101,15 @@ leave it empty and keep fetching `source`.
 `MCPServerSpec.to_dict()` (in `mcp_client.py`) is the inverse of `from_config`,
 used to serialize a resolved spec into config.
 
-## 6. CLI
+## 6. CLI (removed)
 
-`maverick mcp-registry` (a group distinct from `maverick mcp`, which starts
-Maverick's *own* server):
-
-- `browse` — list registry servers (name, version, transport, verified badge).
-- `add <name>` — resolve + validate + write `[mcp_servers.<name>]`; loads on the
-  next run. Refuses to overwrite an existing entry.
-- `remove <name>` — drop the table from config.
-- `list` — show the MCP servers currently configured (via the kernel's loader).
+The spec originally shipped a `maverick mcp-registry` command group (`browse` /
+`add <name>` / `remove <name>` / `list` — a group distinct from `maverick mcp`,
+which starts Maverick's *own* server). That group was removed in the CLI
+reduction: registry discovery now surfaces in the dashboard (the control plane
+lists registry servers with their pin status), and the §5 helpers —
+`install_mcp_from_registry(name)` plus `add_mcp_server_to_config` /
+`remove_mcp_server_from_config` — remain the supported install path.
 
 ## 7. Config knob + wizard (CLAUDE.md #5/#6)
 

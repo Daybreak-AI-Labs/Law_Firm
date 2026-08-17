@@ -69,11 +69,9 @@ _HTTP_CALLS = {
 #: wrap. Each one is a live hole in the enterprise boundary: a request from
 #: here is NOT checked against [enterprise] allowed_hosts. Shrink this list by
 #: migrating the module to httpx; do not grow it.
-KNOWN_UNCOVERED: dict[str, str] = {
-    "packages/maverick-channels/maverick_channels/slack.py":
-        "aiohttp ClientSession in the Socket Mode listener; migrating it means "
-        "reworking the websocket loop, so it is recorded rather than rushed",
-}
+#: (Empty since the channel adapters went — the one recorded hole was the
+#: Slack Socket Mode listener's aiohttp session, deleted with the package.)
+KNOWN_UNCOVERED: dict[str, str] = {}
 
 
 def _rel(path: Path) -> str:

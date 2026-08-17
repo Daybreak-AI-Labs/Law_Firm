@@ -73,7 +73,7 @@ Each control, where it lives, and how to confirm it's active.
 | Shield injection detection | `maverick-shield/` | `test_builtin_rules.py`, `test_cascade.py`, `test_deobfuscation.py`, `test_injection_corpus.py` |
 | Audit Ed25519 hash-chain + anchors | `maverick/audit/` | `test_audit_anchor.py`, `test_audit_reanchor.py`, `test_audit_durability.py` |
 | Fail-closed auth (dashboard/MCP) | dashboard `app.py`, `mcp/http_transport.py` | `test_tier0_security.py`, MCP test suites |
-| Webhook HMAC + atomic dedup | `maverick/webhooks.py`, `maverick_channels/` | `test_security_invariants.py`, channel test suites |
+| Webhook HMAC + atomic dedup | `maverick/webhooks.py` | `test_security_invariants.py`, channel test suites |
 | Plugin default-deny | `maverick/plugins.py` | `test_tier0_security.py` |
 | Budget caps | `maverick/budget.py` | budget test suites |
 | Static-analysis gates (SAST, secrets, CVEs) | `.github/workflows/ci.yml` | see §4 |
@@ -90,7 +90,6 @@ same battery CI runs on every PR, plus the manual sweeps.
 ```bash
 pip install -e ./packages/maverick-core
 pip install --no-deps -e ./packages/maverick-shield \
-                      -e ./packages/maverick-channels \
                       -e ./packages/maverick-dashboard \
                       -e ./packages/maverick-mcp
 pip install pytest pytest-asyncio

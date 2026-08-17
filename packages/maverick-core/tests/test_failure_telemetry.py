@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import json
 
-from click.testing import CliRunner
 from maverick import failure_telemetry as ft
 from maverick.budget import BudgetExceeded
-from maverick.cli import main
 from maverick.file_lock import private_path_is_restricted
 
 
@@ -130,23 +128,5 @@ def test_summarize_missing_and_malformed(tmp_path):
     assert s["total"] == 2  # the malformed line is skipped
 
 
-def test_cli_failures_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("MAVERICK_FAILURE_TELEMETRY", "0")
-    monkeypatch.setattr("maverick.config.load_config", dict)
-    res = CliRunner().invoke(main, ["failures"])
-    assert res.exit_code == 0
-    assert "no recorded failures" in res.output and "telemetry is off" in res.output
 
 
-def test_cli_failures_reports(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("MAVERICK_FAILURE_TELEMETRY", "1")
-    from maverick.failure_telemetry import record
-    record("budget")
-    record("budget")
-    record("auth")
-    res = CliRunner().invoke(main, ["failures"])
-    assert res.exit_code == 0
-    assert "Failure modes (3 recorded)" in res.output
-    assert "budget" in res.output

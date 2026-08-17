@@ -81,8 +81,6 @@ Prove the roster's safety properties:
 
 ```bash
 maverick domains-lint     # 0 errors across all 125 packs
-maverick domains-audit    # no drafting agent can reach a state-mutating tool
-maverick domains-eval     # behavioral golden cases, including "never invent authority"
 ```
 
 ## Setup
@@ -93,7 +91,7 @@ git clone https://github.com/Daybreak-AI-Labs/Law_Firm && cd Law_Firm
 python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -e ./packages/maverick-core                 # kernel, with deps
-for p in maverick-shield maverick-channels maverick-evolve \
+for p in maverick-shield \
          maverick-dashboard maverick-mcp maverick-knowledge; do
   pip install --no-deps -e "./packages/$p"
 done
@@ -109,19 +107,22 @@ debian-packaged `cryptography` and the script will stop there.
 
 ## Commands
 
+Day to day, everything user-facing happens in the dashboard — goals are created,
+watched, and answered there. The CLI is the operational surface:
+
 | Command | What |
 |---|---|
-| `maverick init` | Setup wizard with preflight and API-key validation |
+| `maverick init` | Setup wizard with API-key validation |
 | `maverick doctor` | Health check with remediation hints |
-| `maverick start TITLE` | Run one goal |
-| `maverick chat` | Interactive REPL |
-| `maverick dashboard` | Local web UI and REST API |
+| `maverick dashboard` | Local web UI and REST API — where goals are created and run |
+| `maverick worker` | Background job worker that executes queued goals |
 | `maverick mcp` | MCP server, for driving the platform from Claude Code or Cursor |
-| `maverick logs / status / resume` | Inspect and control running work |
-| `maverick schedule` | Recurring autonomous goals via cron |
-| `maverick budget` / `spend` | Cost history, per goal and per tag |
+| `maverick migrate` / `config-lint` / `domains-lint` | Setup and health checks |
 | `maverick audit verify` | Verify the hash-chained audit log |
-| `maverick template list` | Starter goals |
+| `maverick erase` / `erase-verify` / `export-user` | The privacy record |
+| `maverick halt` / `unhalt` | Emergency stop |
+| `maverick dream` | Nightly learning consolidation |
+| `maverick knowledge` / `tax` | Knowledge base and tax tooling |
 
 The CLI is `maverick` and settings are `MAVERICK_*`. That is the internal package
 name, kept because renaming 394k lines of source buys nothing; the upstream product
@@ -134,10 +135,8 @@ packages/
   maverick-core/       Kernel: orchestration, world model (SQLite/Postgres),
                        providers, sandboxes, the 125 domain packs, budget caps
   maverick-shield/     Prompt/tool/output screening
-  maverick-channels/   Channel adapters (email, Slack, Signal, …)
   maverick-dashboard/  FastAPI web UI + REST API at /api/v1
   maverick-mcp/        MCP server
-  maverick-evolve/     Self-improvement loop
   maverick-knowledge/  Document parsing, chunking, embedding, retrieval
 apps/
   desktop/             Tauri shell

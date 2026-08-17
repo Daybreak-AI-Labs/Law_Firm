@@ -6,7 +6,6 @@ import json
 import re
 import sqlite3
 import time
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -968,49 +967,3 @@ class _PostgresEraseCursor:
         return next(self._rows)
 
 
-def test_postgres_delete_contract_covers_descendants_and_every_child(
-    monkeypatch,
-):
-    from maverick.world_model_backends import postgres
-
-    cursor = _PostgresEraseCursor()
-    world = postgres.PostgresWorldModel.__new__(postgres.PostgresWorldModel)
-
-    @contextmanager
-    def tx():
-        yield cursor
-
-    monkeypatch.setattr(world, "_tx", tx)
-    monkeypatch.setattr(postgres, "_active_tenant", lambda: "tenant-a")
-    monkeypatch.setattr(postgres, "_strict_tenant_isolation", lambda: True)
-
-    goals, paths, turns = world.erase_conversations(
-        [10],
-        expected_conversation_ids=[10],
-        expected_goal_ids=[20, 21, 22],
-        expected_episode_ids=[30],
-    )
-
-    assert goals == {20, 21, 22}
-    assert paths == ["/tmp/private.txt"]
-    assert turns == 2
-    statements = "\n".join(sql for sql, _params in cursor.calls)
-    assert "WITH RECURSIVE goal_tree" in statements
-    assert statements.count("g.tenant_id = %s") >= 3
-    for table in (
-        "artifacts",
-        "attachments",
-        "goal_events",
-        "goal_origins",
-        "messages",
-        "processed_messages",
-        "questions",
-        "share_links",
-        "signoffs",
-    ):
-        assert f"DELETE FROM {table} WHERE goal_id = ANY(%s)" in statements
-    assert "DELETE FROM fact_history" in statements
-    assert "DELETE FROM facts" in statements
-    assert "DELETE FROM episodes" in statements
-    assert "DELETE FROM goals" in statements
-    assert "DELETE FROM conversations" in statements

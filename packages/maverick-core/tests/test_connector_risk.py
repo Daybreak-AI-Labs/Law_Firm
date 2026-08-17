@@ -49,7 +49,7 @@ def test_every_enterprise_connector_is_high(_home):
 
 def test_sample_enterprise_connectors_high(_home):
     from maverick.safety.tool_risk import tool_risk
-    for n in ("okta", "paypal", "kubernetes", "vault", "workday", "zendesk"):
+    for n in ("clio", "docusign", "ironclad", "quickbooks", "lawpay", "netsuite"):
         assert tool_risk(n) == "high", n
 
 
@@ -98,7 +98,7 @@ def test_override_relaxes_connector(monkeypatch, tmp_path):
     _write_config(tmp_path, '\n'.join([
         "[security.tool_risk]",
         'salesforce = "low"',   # dedicated-module connector relaxed
-        'okta = "medium"',      # long-tail enterprise connector relaxed
+        'clio = "medium"',      # long-tail enterprise connector relaxed
     ]))
     from maverick.safety.tool_risk import tool_risk
     assert tool_risk("salesforce") == "low"

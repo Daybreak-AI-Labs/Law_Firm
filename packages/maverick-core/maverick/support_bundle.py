@@ -48,7 +48,6 @@ def _versions() -> dict:
     pkgs = {
         "maverick-agent": ("maverick-agent", "maverick"),
         "maverick-shield": ("maverick-shield",),
-        "maverick-channels": ("maverick-channels",),
         "maverick-dashboard": ("maverick-dashboard",),
         "maverick-mcp-server": ("maverick-mcp-server",),
         "maverick-installer": ("maverick-installer",),
@@ -103,14 +102,6 @@ def _readiness() -> dict:
             if shield_required() and not shield_available() else "ok")
     except Exception as e:  # pragma: no cover
         checks["shield"] = f"unknown: {type(e).__name__}"
-    try:
-        from .agent_trust import load_trust_state
-        enforced, registry = load_trust_state()
-        checks["agent_trust"] = (
-            "fail: engaged but registry empty"
-            if enforced and not registry else "ok")
-    except Exception as e:  # pragma: no cover
-        checks["agent_trust"] = f"unknown: {type(e).__name__}"
     return checks
 
 

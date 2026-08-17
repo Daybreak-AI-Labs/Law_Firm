@@ -1,6 +1,6 @@
 """Enforcement wiring for the product-operations layer: the opt-in gate
-(default off), the require() chokepoint, the fleet_memory integration, and the
-support-bundle export. See maverick/entitlements.py + fleet_memory.py."""
+(default off), the require() chokepoint, and the support-bundle export.
+See maverick/entitlements.py."""
 from __future__ import annotations
 
 import json
@@ -72,15 +72,6 @@ def test_config_knob_supplies_trust_and_enforce(monkeypatch):
     assert E.enforcing() is True
     ent = E.resolve(_gold(priv), now=NOW)   # trust comes from config, not explicit
     assert ent.status == E.LICENSED and ent.allows("fleet_governance")
-
-
-def test_fleet_memory_respects_entitlement(monkeypatch):
-    from maverick import fleet_memory as FM
-    monkeypatch.setenv("MAVERICK_FLEET_MEMORY", "1")   # base-enabled
-    monkeypatch.setattr("maverick.entitlements.require", lambda f: False)
-    assert FM.enabled() is False                        # gated off
-    monkeypatch.setattr("maverick.entitlements.require", lambda f: True)
-    assert FM.enabled() is True                         # granted
 
 
 def test_support_export_writes_redacted_bundle(tmp_path):
@@ -257,20 +248,6 @@ def test_multi_tenant_gates_named_tenant_provisioning_only(monkeypatch):
         registry.create_tenant("acme")
 
 
-def test_support_export_emits_a_redacted_audit_event(monkeypatch, tmp_path):
-    import maverick.cli as C
-    from click.testing import CliRunner
-    calls = []
-    monkeypatch.setattr("maverick.audit.record",
-                        lambda kind, **kw: calls.append((kind, kw)) or True)
-    out = tmp_path / "bundle.json"
-    res = CliRunner().invoke(C.main, ["support", "-o", str(out)])
-    assert res.exit_code == 0, res.output
-    assert out.exists()
-    ev = [kw for kind, kw in calls if kind == "support_bundle_exported"]
-    assert len(ev) == 1                                    # exactly one export event
-    assert ev[0].get("correlation_id", "").startswith("sup_")
-    assert ev[0].get("filename") == "bundle.json"          # basename only, no path
 
 
 def test_ticket_summary_is_redacted_and_routable():

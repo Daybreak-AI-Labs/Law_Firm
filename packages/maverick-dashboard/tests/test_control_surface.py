@@ -160,14 +160,6 @@ def test_list_mcp_servers(monkeypatch, tmp_path: Path):
     assert "servers" in r.json()
 
 
-def test_list_channels(monkeypatch, tmp_path: Path):
-    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
-    client = _client()
-    r = client.get("/api/v1/channels")
-    assert r.status_code == 200
-    assert "channels" in r.json()
-
-
 def test_audit_tail_empty(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
     # AuditLog's default arg was bound at class-def time, so patching
@@ -222,43 +214,6 @@ def test_tools_page_renders(monkeypatch, tmp_path):
     assert "tool" in r.text.lower()
 
 
-def test_channels_page_renders(monkeypatch):
-    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
-    client = _client()
-    r = client.get("/channels")
-    assert r.status_code == 200
-    assert "channel" in r.text.lower()
-
-
-def test_channels_page_redacts_sensitive_values(monkeypatch):
-    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
-    import maverick.config as _cfg
-    monkeypatch.setattr(
-        _cfg,
-        "load_config",
-        lambda: {
-            "channels": {
-                "slack": {
-                    "enabled": True,
-                    "bot_token": "xoxb-real-secret",
-                    "app_token": "xapp-real-secret",
-                    "workspace": "ops",
-                }
-            }
-        },
-    )
-    client = _client()
-    r = client.get("/channels")
-    assert r.status_code == 200
-    assert "workspace=ops" in r.text
-    assert "bot_token=[redacted]" in r.text
-    assert "app_token=[redacted]" in r.text
-    assert "xoxb-real-secret" not in r.text
-    assert "xapp-real-secret" not in r.text
-
-
-# ---------- nav + halt UI present in base.html ----------
-
 def test_base_nav_includes_new_pages(monkeypatch, tmp_path):
     """Every new page is reachable via the header nav."""
     from maverick import world_model
@@ -269,7 +224,7 @@ def test_base_nav_includes_new_pages(monkeypatch, tmp_path):
     text = r.text
     # /tools is folded out of the sidebar in the moderate declutter (reached
     # in-page); the rest remain first-class nav entries.
-    for href in ("/audit", "/plugins", "/mcp", "/channels"):
+    for href in ("/audit", "/plugins", "/mcp"):
         assert href in text, f'nav missing link to {href}'
 
 

@@ -5,7 +5,7 @@ reach a third-party API"* -- and documented the mechanism as
 ``enterprise_egress_denial`` applied *"at each tool's request"*. A census found
 **94 production modules making direct outbound HTTP and 87 with no egress gate
 at all**, including ``gmail_tool``, ``salesforce_tool``, ``slack_bot``,
-``replicate_tool``, and ``maverick_knowledge/embed.py``.
+and ``maverick_knowledge/embed.py``.
 
 The reason it drifted that far unnoticed is visible in the old tests, and it is
 the thing this file is written against. Every existing egress test is one of

@@ -76,65 +76,14 @@ def test_worker_run_once_rearms_recurring_job(tmp_path):
 
 # ---------- CLI: maverick schedule / worker ----------
 
-def test_cli_registers_worker_and_schedule():
-    from maverick.cli import main
-    assert "worker" in main.commands
-    assert "schedule" in main.commands
-    assert set(main.commands["schedule"].commands) >= {"add", "list", "rm"}
 
 
-def test_schedule_add_list_rm_roundtrip(tmp_path, monkeypatch):
-    import re
-
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-    r = CliRunner()
-
-    add = r.invoke(main, ["schedule", "add", "*/5 * * * *", "run_goal",
-                          "--payload", '{"goal_id": 5}'])
-    assert add.exit_code == 0, add.output
-    assert "scheduled job" in add.output
-
-    listed = r.invoke(main, ["schedule", "list"])
-    assert listed.exit_code == 0
-    assert "run_goal" in listed.output and "*/5 * * * *" in listed.output
-
-    jid = re.search(r"scheduled job (\d+)", add.output).group(1)
-    rm = r.invoke(main, ["schedule", "rm", jid])
-    assert rm.exit_code == 0 and "cancelled" in rm.output
-
-    empty = r.invoke(main, ["schedule", "list"])
-    assert "no scheduled jobs" in empty.output
 
 
-def test_schedule_add_rejects_bad_cron(tmp_path, monkeypatch):
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-    res = CliRunner().invoke(main, ["schedule", "add", "not a cron", "run_goal"])
-    assert res.exit_code == 2
-    assert "bad cron" in res.output
 
 
-def test_schedule_add_warns_unknown_kind_but_still_schedules(tmp_path, monkeypatch):
-    # A typo'd kind has no handler; without a warning it would sit in the queue
-    # and fail terminally only at worker time (visible only in logs). Warn, but
-    # still schedule -- embedders register custom kinds via Worker.register().
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-    res = CliRunner().invoke(main, ["schedule", "add", "*/5 * * * *", "run_gaol",
-                                    "--payload", '{"goal_id": 5}'])
-    assert res.exit_code == 0, res.output
-    assert "WARNING" in res.output and "run_gaol" in res.output
-    assert "scheduled job" in res.output
 
 
-def test_schedule_add_builtin_kind_does_not_warn(tmp_path, monkeypatch):
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-    res = CliRunner().invoke(main, ["schedule", "add", "*/5 * * * *", "run_goal",
-                                    "--payload", '{"goal_id": 5}'])
-    assert res.exit_code == 0, res.output
-    assert "WARNING" not in res.output
 
 
 def test_builtin_job_kinds_matches_worker_handlers(tmp_path):
@@ -311,39 +260,8 @@ def test_start_goal_recurs_with_same_prompt(tmp_path, monkeypatch):
     assert nxt[0].payload["title"] == "Digest"
 
 
-def test_schedule_goal_cli_enqueues_recurring_start_goal(tmp_path, monkeypatch):
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-
-    res = CliRunner().invoke(main, [
-        "schedule", "goal", "0 9 * * 1-5",
-        "Summarize my overnight emails", "--title", "Digest",
-    ])
-    assert res.exit_code == 0, res.output
-    assert "scheduled goal job" in res.output
-
-    from maverick.job_queue import JobQueue
-    jobs = JobQueue(db_path=tmp_path / "jobs.db").list(status="pending")
-    assert len(jobs) == 1
-    j = jobs[0]
-    assert j.kind == "start_goal"
-    assert j.payload["text"] == "Summarize my overnight emails"
-    assert j.payload["title"] == "Digest"
-    assert j.payload["__cron__"] == "0 9 * * 1-5"
-    # It's a normal cron job, so `schedule list` shows it.
-    listed = CliRunner().invoke(main, ["schedule", "list"])
-    assert "start_goal" in listed.output
 
 
-def test_schedule_goal_cli_rejects_bad_cron_and_empty_text(tmp_path, monkeypatch):
-    from maverick.cli import main
-    monkeypatch.setattr("maverick.job_queue.DEFAULT_DB", tmp_path / "jobs.db")
-    bad_cron = CliRunner().invoke(
-        main, ["schedule", "goal", "not a cron", "do a thing"]
-    )
-    assert bad_cron.exit_code == 2 and "bad cron" in bad_cron.output
-    empty = CliRunner().invoke(main, ["schedule", "goal", "*/5 * * * *", "   "])
-    assert empty.exit_code == 2 and "must not be empty" in empty.output
 
 
 # ---------- worker drain (one-shot, cron-friendly) ----------

@@ -66,6 +66,7 @@ class TestSpawnIntegration:
 
     def test_department_memory_reaches_the_brief(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
         monkeypatch.setattr(reflexion, "default_path",
                             lambda: tmp_path / "reflexions.ndjson")
         reflexion.record(
@@ -87,6 +88,7 @@ class TestSpawnIntegration:
 
     def test_department_memory_uses_run_scope_and_shield(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAVERICK_REFLEXION", "1")
+        monkeypatch.setenv("MAVERICK_REFLEXION_RECALL", "1")
         monkeypatch.setattr(reflexion, "default_path",
                             lambda: tmp_path / "reflexions.ndjson")
         reflexion.record(

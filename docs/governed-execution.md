@@ -10,9 +10,9 @@ shipped.
 
 | Plane | Module | Config | Default | Where you see it |
 | --- | --- | --- | --- | --- |
-| Session kernel | `governed_repl.py` | `[repl]` | **off** | `repl_exec` agent tool; `maverick repl`; `repl_executed` audit rows |
-| Self-refinement | `harness_refine.py` | `[harness_refine]` | **off** | Approval queue (`/approvals`); `maverick refine`; the standing brief; signed learning audit |
-| Run forking | `session_tree.py` | `[session_tree]` | **on** | **Run Tree** page (`/run-tree`); `maverick run-tree` |
+| Session kernel | `governed_repl.py` | `[repl]` | **off** | `repl_exec` agent tool; `repl_executed` audit rows |
+| Self-refinement | `harness_refine.py` | `[harness_refine]` | **off** | Approval queue (`/approvals`); the standing brief; signed learning audit |
+| Run forking | `session_tree.py` | `[session_tree]` | **on** | **Run Tree** page (`/run-tree`) |
 
 All three are asked in the installer wizard's advanced flow (**Governed
 session kernel?**, **Governed self-refinement?**, **Run forking?**), and
@@ -74,7 +74,7 @@ refuses.
 
 ### Using it
 
-Three ways in, all through the same governed path.
+Two ways in, both through the same governed path.
 
 **The agent.** When `[repl] enable` is on, the tool registry gains a
 `repl_exec` tool and the agent can write Python instead of composing tool
@@ -83,16 +83,6 @@ so state built in one call is still bound in the next. The tool is registered
 only when the knob is on — while it is off the tool does not appear in the
 catalog at all, so it costs no prompt tokens and cannot be called. It is
 classified `high` risk alongside `shell`, and it is never parallel-safe.
-
-**The CLI**, for operators and for trying it by hand:
-
-```console
-$ maverick repl exec 'rows = [1, 2, 3]'
-$ maverick repl exec 'print(sum(rows))' --session <id>
-6
-$ maverick repl transcript <id>     # the append-only statement ledger
-$ maverick repl close <id>
-```
 
 **The module API**, for embedding:
 
@@ -209,19 +199,6 @@ block is bounded like every other standing section: the newest 20 entries,
 500 characters each. An unreadable overlay yields an empty block rather than
 failing the run.
 
-The whole lifecycle is also available as CLI verbs, so a headless install can
-drive it:
-
-```console
-$ maverick refine propose --failure "cited no sources" \
-    --change "Always cite the source file for a claim."
-proposal 7f3c… · pending
-awaiting approval #128 (decide it in the dashboard queue)
-$ maverick refine apply 7f3c… --approval-id 128
-$ maverick refine show      # what the agent is actually being told
-$ maverick refine revert 7f3c…
-```
-
 In the approvals queue a refinement is labelled **self-refinement · changes
 the agent's instructions**, so an approver can see at a glance that this is
 the agent asking to rewrite its own guidance rather than an ordinary task.
@@ -335,9 +312,8 @@ session_tree.tree(42)         # the nested branch tree under a root
 session_tree.roots(limit=50)  # runs that have been forked, newest fork first
 ```
 
-The same three operations exist as CLI verbs — `maverick run-tree fork
-<goal> --at-event <id> --label "…"`, `maverick run-tree show <goal>`, and
-`maverick run-tree list` — alongside the read-only **/run-tree** dashboard page.
+The read-only **/run-tree** dashboard page (below) is the operator's view of the
+same lineage.
 
 `at_event` is an absolute **`goal_events.id`**, not an offset: `goal_events.id`
 is a global autoincrement with no per-goal sequence column, so an offset would
@@ -385,12 +361,10 @@ turn it off.
 
 These planes write to the same evidence surfaces every other governed action
 uses — lineage receipts, world-model approvals, the signed audit chain. What
-that machinery costs is measured, not asserted:
-`benchmarks/eval_harness_overhead.py` runs identical task steps with the
-controls engaged and disengaged and reports the difference — zero extra model
+that machinery costs is measured, not asserted: identical task steps run with
+the controls engaged and disengaged showed zero extra model
 calls and zero extra tokens (the controls are deterministic code, not an LLM
 critic), against a measured wall-clock overhead per durable evidence artifact.
-See the benchmark suite's README for the numbers and how to reproduce them.
 
 ## Troubleshooting
 
@@ -438,5 +412,3 @@ Every refusal below is deliberate and leaves the system in a defined state.
 - [Configuration](configuration.md) — every section and knob in one place.
 - [Safety](safety.md) — the sandbox backends, approval floors, and Shield.
 - [Operations](operations.md) — running the dashboard and the audit surfaces.
-- [External agents](external-agents.md) — the same governance seam applied to
-  agents built on other platforms.

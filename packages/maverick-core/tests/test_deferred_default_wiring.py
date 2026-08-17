@@ -46,7 +46,11 @@ def _agent(ctx):
 def test_connector_long_tail_marked_deferrable(ctx):
     agent = _agent(ctx)
     deferrable = agent.tools.deferrable_names
-    assert len(deferrable) > 300, len(deferrable)
+    # Floor, not a headcount: the connector roster is scoped to a law firm,
+    # so this guards against the deferrable set collapsing to empty (which
+    # would silently put every schema back on the wire), not against a
+    # particular catalogue size.
+    assert len(deferrable) > 100, len(deferrable)
     assert "read_file" not in deferrable
     assert "spawn_swarm" not in deferrable
 
@@ -60,29 +64,30 @@ def test_default_offer_is_lean_but_execution_unrestricted(ctx, monkeypatch):
     # at introduction (was 601 on the wire) -- lower it as more of the
     # catalog earns deferral, never raise it.
     assert len(offered) < 250, len(offered)
-    assert len(registered) > 500, len(registered)
+    # Floor guarding against an empty registry, not a catalogue size.
+    assert len(registered) > 300, len(registered)
     assert "find_tools" in offered
     # Kernel tools the swarm depends on stay visible.
     for core in ("read_file", "write_file", "list_dir", "spawn_swarm",
                  "spawn_subagent", "ask_user"):
         assert core in offered, core
     # A known long-tail connector: hidden from the catalog, still registered.
-    assert "acumatica" not in offered
-    assert "acumatica" in registered
+    assert "clio" not in offered
+    assert "clio" in registered
 
 
 def test_find_tools_activates_hidden_connector(ctx, monkeypatch):
     monkeypatch.delenv("MAVERICK_DEFERRED_TOOLS", raising=False)
     agent = _agent(ctx)
     ft = agent.tools.get("find_tools")
-    out = ft.fn({"query": "acumatica erp"})
-    assert "acumatica" in out
-    assert "acumatica" in {t["name"] for t in agent.tools.to_anthropic()}
+    out = ft.fn({"query": "clio practice management"})
+    assert "clio" in out
+    assert "clio" in {t["name"] for t in agent.tools.to_anthropic()}
 
 
 def test_knob_off_restores_identity_catalog(ctx, monkeypatch):
     monkeypatch.setenv("MAVERICK_DEFERRED_TOOLS", "0")
     agent = _agent(ctx)
     offered = {t["name"] for t in agent.tools.to_anthropic()}
-    assert "acumatica" in offered
+    assert "clio" in offered
     assert "find_tools" not in offered

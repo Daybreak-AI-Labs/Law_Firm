@@ -5,7 +5,7 @@
 #            -v $HOME/.maverick:/home/maverick/.maverick \
 #            -v $HOME/maverick-workspace:/workspace \
 #            -e ANTHROPIC_API_KEY \
-#            maverick:latest start "..."
+#            maverick:latest dashboard
 #
 # Runs as the unprivileged "maverick" user (uid/gid 1000), not root.
 #
@@ -31,8 +31,6 @@ COPY requirements/ci.txt ./requirements/ci.txt
 COPY scripts/install_release_cohort.py ./scripts/install_release_cohort.py
 COPY packages/maverick-core ./packages/maverick-core
 COPY packages/maverick-shield ./packages/maverick-shield
-COPY packages/maverick-channels ./packages/maverick-channels
-COPY packages/maverick-evolve ./packages/maverick-evolve
 COPY packages/maverick-dashboard ./packages/maverick-dashboard
 COPY packages/maverick-mcp ./packages/maverick-mcp
 COPY packages/maverick-knowledge ./packages/maverick-knowledge
@@ -72,8 +70,8 @@ RUN python -m pip install --upgrade 'pip==26.1.2' \
         --constraint /tmp/requirements/ci.txt \
         --requirement /wheelhouse/cohort-requirements.txt \
     && python -m pip check \
-    && python -c "import maverick, maverick_shield, maverick_channels, maverick_evolve, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer" \
-    && maverick release-runtime-check \
+    && python -c "import maverick, maverick_shield, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer" \
+    && python -c "from maverick.providers import verify_release_runtime; verify_release_runtime()" \
     && rm -rf /wheelhouse /tmp/requirements/ci.txt
 
 # Run as an unprivileged user. Enterprise container policies (and most

@@ -1,5 +1,4 @@
-"""Practice-operations CLI: the dream/self-harness beat, the forward ledger,
-the tax group, and the value reports.
+"""Practice-operations CLI: the dream beat and the tax group.
 
 These lived in the finance CLI module upstream. The finance-agent-suite group
 went with that subsystem; everything here is independent of it and is the
@@ -18,7 +17,7 @@ from typing import TypeVar
 
 import click
 
-from . import _strip_terminal_control, harness, main, open_world
+from . import main, open_world
 
 _T = TypeVar("_T")
 
@@ -105,14 +104,9 @@ def _run_self_harness_nightly(world) -> None:
 @click.option("--rollback", default=None, metavar="SNAPSHOT",
               help="Restore every learned store from a snapshot "
                    "('latest' or a name from --list-snapshots), then exit.")
-@click.option("--donations-dir", default=None, type=click.Path(),
-              help="Also replay donated trajectory records from this "
-                   "directory (fleet-level aggregation on a central "
-                   "instance).")
 @click.pass_context
 def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
-          dry_run: bool, list_snaps: bool, rollback: str | None,
-          donations_dir: str | None) -> None:
+          dry_run: bool, list_snaps: bool, rollback: str | None) -> None:
     """Run one offline dreaming cycle (experience consolidation).
 
     Replays recent successes and failure reflexions, groups them by
@@ -158,9 +152,7 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
     world = open_world(ctx.obj["db"])
     if dry_run:
         report = _run_dreaming_guarded(
-            lambda: dreaming.dream_cycle_dry(
-                world, max_goals=max_goals, donations_dir=donations_dir,
-            ),
+            lambda: dreaming.dream_cycle_dry(world, max_goals=max_goals),
         )
         click.echo("(dry run -- nothing written) " + report.summary())
         return
@@ -193,7 +185,7 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
             dream_shield = None
     report = _run_dreaming_guarded(
         lambda: dreaming.dream_cycle(
-            world, max_goals=max_goals, donations_dir=donations_dir,
+            world, max_goals=max_goals,
             llm=dream_llm, budget=dream_budget, shield=dream_shield,
         ),
     )
@@ -262,100 +254,8 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
                "now complete (verifier-scored).")
 
 
-@harness.command("preview")
-@click.option("--model", "model_id", default=None,
-              help="Model to mine weaknesses for (default: the configured "
-                   "orchestrator model).")
-@click.option("--min-support", default=3, show_default=True,
-              help="Minimum recurring failures before a weakness is a pattern.")
-@click.option("--limit", default=500, show_default=True,
-              help="How many recent reflexions to scan.")
-def self_harness_cmd(model_id: str | None, min_support: int, limit: int) -> None:
-    """Inspect the harness weaknesses self-harness would target (dry run).
-
-    Mines this model's recurring failure reflexions into weakness signatures
-    and shows the minimal operating-guidance line it would PROPOSE for each --
-    it writes nothing. Promotion needs a live held-in/held-out A/B scorer and
-    the self-improvement gate ([self_improvement] enable); this command is the
-    operator's read-only view of what the loop sees. Requires [self_harness]
-    enable = true or MAVERICK_SELF_HARNESS=1.
-    """
-    from .. import reflexion, self_harness
-    if not self_harness.enabled():
-        raise click.ClickException(
-            "self-harness is off. Set [self_harness] enable = true or "
-            "MAVERICK_SELF_HARNESS=1.")
-    if min_support < 1:
-        # mine_failures treats min_support < 1 as "disabled" and returns nothing;
-        # without this guard the command would silently print "No recurring
-        # weaknesses", which reads as "your model has none" rather than "you
-        # turned mining off". Fail loudly instead.
-        raise click.ClickException(
-            "--min-support must be >= 1 (a weakness needs at least one recurring "
-            "failure to be a pattern).")
-    if not model_id:
-        from ..llm import model_for_role
-        model_id = model_for_role("orchestrator")
-    records = [r.to_dict() for r in reflexion.list_recent(limit=limit)]
-    eligible = self_harness.count_eligible(records, model_id=model_id)
-    sigs = self_harness.mine_failures(
-        records, model_id=model_id, min_support=min_support)
-    if not sigs:
-        click.echo(f"No recurring weaknesses for {model_id!r} "
-                   f"(scanned {len(records)} reflexions, {eligible} eligible "
-                   f"for this model, min-support {min_support}).")
-        # Distinguish "nothing recurs" from "everything was excluded": only
-        # unscoped, model-tagged failures are mined, so an operator whose
-        # failures are all scoped/remote (or under another model) would
-        # otherwise read this as "this model never fails".
-        if records and eligible == 0:
-            click.echo("  Note: self-harness mines only UNSCOPED, model-tagged "
-                       "failures; scoped (channel/user) failures are excluded "
-                       "by design.")
-        return
-    click.echo(f"Weaknesses for {model_id!r} ({len(sigs)} pattern(s)):")
-    for sig in sigs:
-        proposal = self_harness.propose_addendum(sig)
-        line = proposal.addendum_line if proposal else "(no minimal proposal)"
-        click.echo(f"\n  [{sig.support}x {sig.failure_class}] {sig.signature}")
-        click.echo(f"    would add: {line}")
 
 
-@main.command("forward")
-@click.option("--days", default=30, show_default=True,
-              help="Horizon: obligations due within N days.")
-@click.pass_context
-def forward_cmd(ctx, days: int) -> None:
-    """The forward ledger (v1): every known upcoming obligation, pre-staged.
-
-    Lists pending/active goals with deadlines inside the horizon -- overdue
-    first -- with the blockers a human will be asked for (open questions),
-    so decisions arrive prepared instead of discovered late.
-    """
-    import time as _time
-    world = open_world(ctx.obj["db"])
-    now = _time.time()
-    horizon = now + days * 86400.0
-    rows = []
-    for g in world.list_goals(limit=2000):
-        if g.status not in ("pending", "active"):
-            continue
-        if not g.deadline or g.deadline > horizon:
-            continue
-        qs = world.open_questions(g.id)
-        rows.append((g.deadline, g, len(qs)))
-    if not rows:
-        click.echo(f"No goal deadlines within {days} day(s). "
-                   "(Set deadlines on goals to populate the forward ledger.)")
-        return
-    rows.sort(key=lambda r: r[0])
-    for deadline, g, nq in rows:
-        delta = (deadline - now) / 86400.0
-        when = f"OVERDUE {-delta:.1f}d" if delta < 0 else f"due in {delta:.1f}d"
-        title = _strip_terminal_control(g.title)[:70]
-        dept = f" [{_strip_terminal_control(g.domain)}]" if g.domain else ""
-        blocked = f"  ({nq} question(s) awaiting you)" if nq else ""
-        click.echo(f"#{g.id:<5} {when:<16} {title}{dept}{blocked}")
 
 
 @main.group("tax")
@@ -555,84 +455,7 @@ def tax_update(bundle_file: str | None, url: str | None,
     click.echo(f"{status}: {detail}")
 
 
-@main.command("proof")
-@click.option("--days", default=90, show_default=True,
-              help="Window to report over.")
-@click.option("--human-cost", default=None, type=float,
-              help="Your fully-loaded cost of one comparable human "
-                   "deliverable (defaults conservative).")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--fleet", is_flag=True,
-              help="Also break down ingested fleet experience per vendor.")
-@click.pass_context
-def proof(ctx, days: int, human_cost, as_json: bool, fleet: bool) -> None:
-    """The workforce value report: did the AI workforce pay for itself AND
-    get better?
-
-    Assembles throughput (deliverables), economics (agent cost vs your
-    human-baseline -> cost avoided + ROI), the capability improvement curve
-    (from `maverick hindsight --ledger` runs), and governance (signed audit
-    chain) into one read-only report -- per department. The artifact a POC
-    ends on and a diligence team runs. Measures only; changes nothing.
-    """
-    from .. import workforce_value
-    world = open_world(ctx.obj["db"])
-    v = workforce_value.compute(world, window_days=days, human_cost=human_cost)
-    if as_json:
-        import json as _json
-        click.echo(_json.dumps(workforce_value.to_dict(v), indent=2))
-    else:
-        click.echo(workforce_value.format_report(v))
-    if fleet:
-        by_vendor = workforce_value.fleet_breakdown()
-        if not by_vendor:
-            click.echo("\n(fleet: no ingested external experience yet)")
-        else:
-            click.echo("\nBy vendor (fleet-ingested):")
-            for vendor, c in sorted(by_vendor.items()):
-                click.echo(f"  {vendor:<20} {c['deliverables']} deliverable(s), "
-                           f"{c['failures']} failure(s)")
 
 
-@main.command("savings")
-@click.option("--days", default=90, show_default=True,
-              help="Window to report over.")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.pass_context
-def savings_cmd(ctx, days: int, as_json: bool) -> None:
-    """Money saved vs the typical human cost, from real completed work.
-
-    Uses YOUR cost assumptions ([value] in config, or the dashboard Savings
-    page): fully-loaded human hourly rate x human hours per task, compared
-    against actual agent spend. Read-only; reports zeros (never invents a
-    number) until goals have run.
-    """
-    from .. import savings as savings_mod
-    world = open_world(ctx.obj["db"])
-    r = savings_mod.compute(world, window_days=max(1, min(days, 730)))
-    if as_json:
-        import json as _json
-        click.echo(_json.dumps(savings_mod.to_dict(r), indent=2))
-        return
-    click.echo(f"Savings — last {r.window_days} days ({r.currency})")
-    click.echo("=" * 44)
-    click.echo(f"Deliverables completed : {r.deliverables}")
-    click.echo(f"Human hours given back : {r.human_hours:,.1f}h")
-    click.echo(f"Typical human cost     : ${r.human_cost:,.2f}  "
-               f"(${r.hourly_rate:,.2f}/h x {r.hours_per_task:g}h/task)")
-    click.echo(f"Actual agent spend     : ${r.agent_cost:,.2f}")
-    click.echo(f"Saved                  : ${r.saved:,.2f}")
-    if r.agent_cost:
-        click.echo(f"ROI                    : {r.roi_multiple:.1f}x")
-    if r.by_department:
-        click.echo("\nBy department (saved):")
-        for d in r.by_department[:12]:
-            if not d.deliverables and d.agent_cost == 0:
-                continue
-            click.echo(f"  {d.department:<22} {d.deliverables:>4} done  "
-                       f"${d.saved:>10,.2f} saved  "
-                       f"(${d.hourly_rate:,.2f}/h x {d.hours_per_task:g}h)")
-    click.echo("\nTune your rate/hours on the dashboard Savings page or "
-               "[value] in config.toml.")
 
 

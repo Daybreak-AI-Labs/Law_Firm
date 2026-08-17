@@ -63,7 +63,6 @@ def test_mobile_topbar_cannot_widen_the_document(monkeypatch, tmp_path):
     ("/tools", "Tools · Bjerken and Day"),
     ("/spend", "Spend · Bjerken and Day"),
     ("/plugins", "Plugins · Bjerken and Day"),
-    ("/channels", "Channels · Bjerken and Day"),
     ("/audit", "Audit log · Bjerken and Day"),
     ("/mcp", "Tool servers · Bjerken and Day"),
 ])

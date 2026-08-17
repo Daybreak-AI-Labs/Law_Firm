@@ -11,27 +11,42 @@ connector follows the same house rules:
 - **Fail closed, fail loud.** Missing config or an API error returns an
   `ERROR:`-prefixed message; it never silently half-succeeds.
 
-There are **2,877 write-capable long-tail enterprise connectors** in the
-catalog below, plus dedicated-module connectors (Salesforce, HubSpot, Stripe,
-ServiceNow, Snowflake, Notion, Gmail, Microsoft Graph (Outlook/Teams/
-OneDrive), Google Drive, Jira, Confluence, ...), part of **286 built-in tool
-modules** in the kernel. They span nearly every category of enterprise and
-SMB software: ITSM/ESM, CRM & sales, ERP & finance, HCM & payroll,
-observability & APM, security/IAM/GRC, cloud & infra, DevOps/CI/CD, data/BI/
-ETL/CMS, collaboration & content, marketing/commerce/CX, contact center,
-e-commerce & payments, healthcare, real estate, legal, insurance,
-manufacturing & supply chain, education, nonprofit & government, hospitality
-& fitness, media & creative, telecom & messaging, no-code/AI platforms,
-fintech & crypto, and region-specific SaaS (EU/UK, India, Japan, China,
-LatAm, MENA, Africa, SE Asia).
+There are **95 write-capable connectors** in the catalog below, scoped to what
+a law firm actually runs:
 
-Automation/iPaaS platforms are first-class: **Zapier**, **n8n**, **Microsoft
-Power Automate**, **Make (Integromat)**, and **Workato** all have their own
-connector for driving the platform's REST API directly (list/run/activate
-workflows), on top of the automation-import pipeline (`maverick.automation_import`)
-that turns an *existing* Zap/n8n workflow/Flow/Make scenario/Workato recipe
-definition into a runnable Maverick template — see the Workflow Builder's
-"Import" flow in the dashboard.
+- **Practice management, time & billing** — Clio, MyCase, PracticePanther,
+  Smokeball, Filevine, CosmoLex, Rocket Matter, Zola Suite, Lawcus, Actionstep,
+  AbacusLaw, Amicus Attorney, LEAP, ProLaw, Tabs3, Aderant, TR Elite, TimeSolv,
+  Bill4Time, LeanLaw, Chrometa, Intapp, Litify
+- **Legal research** — Westlaw, LexisNexis, Casetext, Fastcase, vLex
+- **Court records & litigation analytics** — PACER, UniCourt, Docket Alarm,
+  Trellis
+- **E-discovery & legal hold** — Everlaw, Logikcull, Relativity, DISCO, Reveal,
+  Casepoint, Nuix, Exterro, Onna, Zapproved
+- **Document management & assembly** — iManage, NetDocuments, Litera, HotDocs,
+  HighQ, Luminance, LawDepot, Rocket Lawyer, LegalZoom
+- **Contract lifecycle** — Ironclad, Contractbook, Agiloft, Concord, Juro,
+  SirionLabs, Onit, LawGeex
+- **Matter intake, deadlines & spend** — Lawmatics, LawToolBox, Mitratech,
+  SimpleLegal, Brightflag, Corridor, LegalTrek
+- **Documents, e-signature & storage** — DocuSign, Adobe Sign, HelloSign,
+  Dropbox Sign, PandaDoc, Box, OneDrive, SharePoint
+- **Firm books, billing, payments & tax** — QuickBooks, Xero, FreshBooks,
+  Bill.com, LawPay, Square, CCH Axcess, GoSystem Tax, Avalara
+- **Firm comms, calendar & HR** — Google Calendar, Slack, Gusto
+
+The upstream catalogue this forked from carried 2,877 connectors spanning
+ITSM, CRM, ERP, observability, security/SIEM, DevOps/CI, data/ETL, marketing,
+commerce, supply chain and a long tail of vertical SaaS. None of that is a law
+firm, so it is gone. Adding one back is a one-line edit in
+`maverick/tools/_connector_specs.py` — the REST/GraphQL machinery that drives
+them is untouched.
+
+A handful of the connectors above (ADP, Carta, Chargebee, Concur, Coupa,
+Modern Treasury, NetSuite, Ramp) are kept because a surviving domain pack names
+them in its `allow_tools` envelope. A pack naming a tool that no longer exists
+surfaces as a **409 from the dashboard** rather than a clean error, so they stay
+until the packs themselves are revisited.
 
 Alongside these write-capable systems, the kernel ships **37 read-only
 primary-source / public-data connectors** (SEC EDGAR, FRED, Treasury, World
@@ -2168,7 +2183,6 @@ operations.
 | Rentvine property management | `rentvine` | `RENTVINE_BASE_URL` *(url)*, `RENTVINE_TOKEN` |
 | Reonomy commercial property data | `reonomy` | `REONOMY_BASE_URL` *(url)*, `REONOMY_TOKEN` |
 | Replicant AI contact center | `replicant` | `REPLICANT_BASE_URL` *(url)*, `REPLICANT_TOKEN` |
-| Replicate | `replicate` | `REPLICATE_API_TOKEN` |
 | Replicate REST API | `replicate_ai` | `REPLICATE_AI_BASE_URL` *(url)*, `REPLICATE_AI_TOKEN` |
 | Replicon time/expense tracking | `replicon` | `REPLICON_BASE_URL` *(url)*, `REPLICON_TOKEN` |
 | Replit REST/GraphQL API | `replit` | `REPLIT_BASE_URL` *(url)*, `REPLIT_TOKEN` |
@@ -2797,7 +2811,6 @@ operations.
 | Verizon Connect fleet-management REST API | `verizon_connect` | `VERIZON_CONNECT_BASE_URL` *(url)*, `VERIZON_CONNECT_TOKEN` |
 | Verloop.io chatbot REST API | `verloop` | `VERLOOP_BASE_URL` *(url)*, `VERLOOP_TOKEN` |
 | Vertafore (AMS360) insurance REST API | `vertafore` | `VERTAFORE_BASE_URL` *(url)*, `VERTAFORE_TOKEN` |
-| Google Vertex AI | `vertex` | `VERTEX_PROJECT` *(url)*, `VERTEX_LOCATION` *(url)*, `VERTEX_ACCESS_TOKEN` |
 | Vertex O Series tax REST (calculation/returns; distinct from the Vertex AI tool) | `vertex_tax` | `VERTEX_TAX_BASE_URL` *(url)*, `VERTEX_TAX_TOKEN` |
 | Vertica REST API (management/query) | `vertica` | `VERTICA_BASE_URL` *(url)*, `VERTICA_TOKEN` |
 | Vespa.ai REST API (search/vector engine) | `vespa_ai` | `VESPA_AI_BASE_URL` *(url)*, `VESPA_AI_TOKEN` |

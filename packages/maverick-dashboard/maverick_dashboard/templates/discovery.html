@@ -2,7 +2,7 @@
 {% block title %}Discovery · Bjerken and Day{% endblock %}
 {% block content %}
   <h1 class="page-title">Discovery</h1>
-  <p class="page-subtitle">Everything this deployment exposes and can govern — tools, MCP servers, model providers, channels, and external agents. You can't govern what you can't see.</p>
+  <p class="page-subtitle">Everything this deployment exposes and can govern — tools, MCP servers, model providers, and channels. You can't govern what you can't see.</p>
 
   <p><a class="btn btn--primary" href="/api/v1/compliance/packet">&#8595; Download compliance packet (JSON)</a></p>
 
@@ -56,14 +56,6 @@
       <div class="section-head"><h2>Channels</h2></div>
       {% if discovery.channels %}<p>{% for c in discovery.channels %}<span class="badge">{{ c }}</span> {% endfor %}</p>
       {% else %}<p class="muted">No channels installed.</p>{% endif %}
-    </div>
-    <div class="panel">
-      <div class="section-head"><h2>External agents</h2></div>
-      <p>
-        <strong>{{ discovery.agents.count }}</strong> registered ·
-        {% if discovery.agents.enforced %}<span class="badge active">enforced</span>{% else %}<span class="badge">advisory</span>{% endif %}
-        · <a href="/trust">view graph &#8594;</a>
-      </p>
     </div>
   </div>
 {% endblock %}

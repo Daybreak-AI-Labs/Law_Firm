@@ -8,19 +8,16 @@ Two read-only surfaces over primitives that already exist in the kernel:
   covering the run verify (:func:`maverick.audit.verify_chain`,
   :func:`maverick.audit.verify_anchors`). This is the "flight recorder" view, and
   :func:`evidence_packet` wraps it into a one-click, exportable evidence bundle.
-* :func:`trust_overview` -- enumerates the configured external agents from the
-  Agent Trust Plane (:func:`maverick.agent_trust.load_trust_state`) with their
-  tool/risk/budget ceilings and lifecycle status: the cross-agent permission
-  graph.
+* :func:`discovery_overview` -- inventories the governable surfaces this
+  deployment exposes (tools by risk, MCP servers, providers, channels).
 
 Both are pure reads; neither mutates state. Everything degrades fail-soft -- a
-missing audit dir, an unreadable day-file, or an absent trust registry yields an
-empty/neutral view rather than an error, so the pages never 500 on a fresh box.
+missing audit dir or an unreadable day-file yields an empty/neutral view
+rather than an error, so the pages never 500 on a fresh box.
 """
 from __future__ import annotations
 
 import datetime
-import math
 from typing import Any
 
 # ---- replay / flight recorder ----------------------------------------------
@@ -42,7 +39,6 @@ _KIND_LABELS: dict[str, tuple[str, str]] = {
     "capability_denied": ("Capability denied", "block"),
     "governance_denied": ("Governance denied", "block"),
     "egress_blocked": ("Egress blocked", "block"),
-    "agent_trust_denied": ("Agent-trust denied", "block"),
     "memory_guard": ("Memory guard", "block"),
     "secret_redacted": ("Secret redacted", "redaction"),
     "evidence_capture": ("Evidence captured", "evidence"),
@@ -54,7 +50,7 @@ _SKIP_KINDS = frozenset({"episode_start", "episode_end"})
 # Kinds that represent a governance *block* (for the run summary counters).
 _BLOCK_KINDS = frozenset({
     "shield_block", "capability_denied", "governance_denied", "egress_blocked",
-    "agent_trust_denied", "memory_guard", "halt",
+    "memory_guard", "halt",
 })
 _MAX_WINDOW_DAYS = 32
 
@@ -113,8 +109,6 @@ def _summarize(ev: dict[str, Any]) -> str:
         return f"{ev.get('stage', '')}: {ev.get('reason', '')}".strip(": ")
     if kind in ("capability_denied", "governance_denied"):
         return ev.get("reason") or ev.get("tool") or ev.get("rule") or ""
-    if kind == "agent_trust_denied":
-        return f"{ev.get('peer', '?')} {ev.get('direction', '')}: {ev.get('reason', '')}".strip()
     if kind == "egress_blocked":
         return ev.get("host") or ev.get("provider") or ev.get("reason") or "egress denied"
     if kind == "evidence_capture":
@@ -268,86 +262,6 @@ def evidence_packet(goal: Any, replay: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ---- agent trust plane / permission graph ----------------------------------
-
-def _trust_graph(
-    agents: list[dict[str, Any]], *, width: int = 760, height: int = 360,
-) -> dict[str, Any]:
-    """Radial layout for the permission graph: this deployment at the centre,
-    each external agent on a ring, edges directed by who may initiate.
-
-    Colour encodes posture: red = revoked/expired, amber = high tool-risk
-    ceiling, blue = active and bounded. Pure geometry so it is unit-testable.
-    """
-    cx, cy = width / 2, height / 2
-    radius = min(width, height) / 2 - 70
-    n = len(agents)
-    nodes: list[dict[str, Any]] = []
-    for i, a in enumerate(agents):
-        angle = (2 * math.pi * i / n - math.pi / 2) if n else 0.0
-        if a["revoked"] or not a["active"]:
-            color = "#dc2626"
-        elif a["max_risk"] == "high":
-            color = "#d97706"
-        else:
-            color = "#2563eb"
-        direction = a["direction"]
-        nodes.append({
-            "id": a["id"],
-            "x": round(cx + radius * math.cos(angle), 1),
-            "y": round(cy + radius * math.sin(angle), 1),
-            "color": color,
-            "inbound": direction in ("inbound", "both"),
-            "outbound": direction in ("outbound", "both"),
-        })
-    return {"width": width, "height": height, "cx": cx, "cy": cy, "nodes": nodes}
-
-
-def trust_overview() -> dict[str, Any]:
-    """Enumerate configured external agents with their ceilings + lifecycle.
-
-    Reads the Agent Trust Plane registry. Fail-soft: an unconfigured/unreadable
-    registry yields ``enforced=False`` and an empty list, so the page renders an
-    empty-state rather than erroring on a fresh deployment.
-    """
-    try:
-        from maverick.agent_trust import load_trust_state
-        enforced, registry = load_trust_state()
-    except Exception:
-        return {"enforced": False, "agents": [], "available": False}
-
-    agents: list[dict[str, Any]] = []
-    for _id, a in sorted(registry.items()):
-        try:
-            active, reason = a.is_active()
-        except Exception:
-            # A broken lifecycle check is not evidence that an external agent
-            # remains authorized.  Keep the overview available, but represent
-            # the indeterminate state conservatively instead of rendering the
-            # agent as healthy.
-            active, reason = False, "unknown (lifecycle check failed)"
-        agents.append({
-            "id": getattr(a, "id", _id),
-            "direction": getattr(a, "direction", "both"),
-            "allow_tools": sorted(a.allow_tools) if getattr(a, "allow_tools", None) else ["*"],
-            "deny_tools": sorted(getattr(a, "deny_tools", []) or []),
-            "max_risk": getattr(a, "max_risk", None) or "unbounded",
-            "max_dollars": getattr(a, "max_dollars", None),
-            "max_wall_seconds": getattr(a, "max_wall_seconds", None),
-            "data_scopes": sorted(getattr(a, "data_scopes", []) or []),
-            "active": bool(active),
-            "status": reason,
-            "expires_at": getattr(a, "expires_at", None),
-            "revoked": bool(getattr(a, "revoked", False)),
-        })
-    return {
-        "enforced": bool(enforced),
-        "agents": agents,
-        "available": True,
-        "graph": _trust_graph(agents),
-    }
-
-
 # ---- discovery (what this deployment exposes) ------------------------------
 
 def _discover_tools() -> dict[str, Any]:
@@ -405,15 +319,13 @@ def _discover_channels() -> list[str]:
 def discovery_overview() -> dict[str, Any]:
     """Inventory the governable surfaces this deployment exposes: tools (by
     risk), MCP servers (with supply-chain pins), configured LLM providers (names
-    only, never keys), channels, and external agents. Fail-soft per section so a
-    missing optional registry yields an empty list, never a 500."""
-    agents = trust_overview()
+    only, never keys), and channels. Fail-soft per section so a missing
+    optional registry yields an empty list, never a 500."""
     return {
         "tools": _discover_tools(),
         "mcp_servers": _discover_mcp(),
         "providers": _discover_providers(),
         "channels": _discover_channels(),
-        "agents": {"enforced": agents["enforced"], "count": len(agents["agents"])},
     }
 
 
@@ -487,8 +399,8 @@ def compliance_packet() -> dict[str, Any]:
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     try:
-        from maverick.soc2 import collect_soc2_evidence
-        packet["soc2"] = collect_soc2_evidence()
+        # SOC 2 self-certification was deleted with the GRC cluster.
+        packet["soc2"] = {"removed": True}
     except Exception as e:  # noqa: BLE001 -- evidence is fail-soft
         packet["soc2"] = {"error": str(e)}
     try:
@@ -505,7 +417,6 @@ def compliance_packet() -> dict[str, Any]:
 __all__ = [
     "build_replay",
     "evidence_packet",
-    "trust_overview",
     "discovery_overview",
     "simulate_action",
     "compliance_packet",

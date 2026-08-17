@@ -3,8 +3,7 @@
 > **Scope note:** this page covers *capability acquisition* (installing
 > skills/tools on demand). The broader learning system — experience
 > consolidation (`maverick dream`), department memory, hindsight
-> regression detection, learning snapshots/rollback, and the fleet memory
-> plane — ships today.
+> regression detection, and learning snapshots/rollback — ships today.
 
 When you ask Maverick to do something it doesn't yet have the capability
 for, it can **acquire the capability itself** — install a skill, drive a
@@ -55,9 +54,9 @@ secret-redacted catalog match and never calls a model. Enabling the egress knob
 permits the richer summarizer needs analysis, task-skill synthesis, and
 counterfactual credit verification; their inputs are redacted before the call.
 
-The environment variable wins over config: use
-`MAVERICK_SELF_LEARNING=0 maverick start "..."` for a one-off opt-out, or `=1`
-to force it on when policy permits.
+The environment variable wins over config: set `MAVERICK_SELF_LEARNING=0` in
+the process environment for a one-off opt-out, or `=1` to force it on when
+policy permits.
 
 ## How it works
 
@@ -94,8 +93,8 @@ agent discovering a capability hole mid-task, the
 approval `provision.apply_plan` reuses the **same governed paths** —
 `self_learning.acquire_skill` for catalog skills (hash-pinned) and
 `self_learning.write_generated_tool` for the missing declared tools
-(stdlib-only, import-validated out-of-host, consent-gated). Wired into
-`maverick onboard` and the `maverick learn-demo` (programming-by-demonstration)
+(stdlib-only, import-validated out-of-host, consent-gated). Wired into pack
+onboarding and the programming-by-demonstration
 flow. Provisioning **never widens** the pack's already-clamped envelope: it
 only satisfies tools already inside `allow_tools` and installs skills (which
 carry no tool grant of their own). It's gated by the same `[self_learning]
@@ -113,11 +112,7 @@ is accepted) and the same human approval `save_profile` requires.
   When self-learning is enabled, the kernel loads them as first-class
   tools at the start of every run.
 - A ledger of everything learned is appended to
-  `~/.maverick/learned.ndjson`. List it with:
-
-  ```bash
-  maverick learned
-  ```
+  `~/.maverick/learned.ndjson`.
 
 ## Safety
 
@@ -201,13 +196,10 @@ nothing, and `augment_system_prompt` returns the base prompt unchanged. The
 ledger is bounded
 (oldest rows roll off), outcome text is secret-redacted before it's persisted,
 and — like provisioning — a correction is never a tool grant, so it widens no
-pack's envelope. Mine and preview the corrections without applying them:
+pack's envelope. Mining and promotion run inside the governed learning
+lifecycle.
 
-```bash
-maverick factory-learn --dry-run
-```
-
-Live promotion additionally requires `--evidence` in strict version 2 format:
+Live promotion additionally requires evidence in strict version 2 format:
 unique paired held-out case IDs and normalized baseline/candidate scores, frozen
 dataset/split/evaluator/model/prompt SHA-256 identifiers, run provenance, and a
 canonical payload digest. The gate uses a family-wise-corrected, one-sided
@@ -248,8 +240,7 @@ addition with `--regen`), exactly as released world-model migrations are.
 
 On by default with governed self-improvement and a no-op when explicitly
 paused: it runs only under `[self_improvement] enable` **and** the
-`evaluator_evolution` sub-knob. Full design in
-[`docs/proposals/evaluator-co-evolution.md`](./proposals/evaluator-co-evolution.md).
+`evaluator_evolution` sub-knob.
 
 ## MCP-server acquisition
 
@@ -268,7 +259,7 @@ the *capability* without re-opening the hole, by closing two gaps at once —
    proposal goes through the same consent queue as other risky actions
    (`require_consent`), but silent `auto-approve` mode is not accepted for this
    high-trust path. Use a prior ledger grant, `MAVERICK_CONSENT_MODE=dashboard`
-   (parks in the approvals queue for `maverick approve`), or `ask` mode on a
+   (parks in the dashboard approvals queue), or `ask` mode on a
    TTY. Denied, auto-deny, default auto-approve without a ledger grant, or a
    non-interactive context → **not persisted, not started**.
 3. **Existing spec defenses.** The pinned command still goes through

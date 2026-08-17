@@ -2,8 +2,7 @@
 
 A catalog lets users browse and install community content — skills
 today, plugins / MCP servers / personas next — without editing config
-or running install-by-URL. It's the dashboard **Store** tab and the
-`maverick skill browse` / `maverick skill add` commands.
+or running install-by-URL. It's the dashboard **Store** tab (`/store`).
 
 ## Index format
 
@@ -73,7 +72,6 @@ dashboard) and serves a stale cache if one exists.
 
 - Dashboard: `/store` (Store tab) + `GET /api/v1/catalog/{kind}` +
   `POST /api/v1/catalog/skills/install`
-- CLI: `maverick skill browse`, `maverick skill add <name>`
 
 ## Roadmap
 

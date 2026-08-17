@@ -76,25 +76,7 @@ def _run(*args):
     return CliRunner().invoke(main, list(args))
 
 
-def test_cli_erase_requires_confirm():
-    _seed()
-    r = _run("client", "erase")
-    assert r.exit_code != 0 and "--confirm" in r.output
-    from maverick.paths import data_dir
-    assert (data_dir() / "world.db").exists()  # nothing erased without --confirm
 
 
-def test_cli_status_and_erase_confirm():
-    _seed()
-    r = _run("client", "status")
-    assert r.exit_code == 0 and "acme" in r.output
-    r = _run("client", "erase", "--confirm")
-    assert r.exit_code == 0 and "erased client" in r.output
-    from maverick.paths import data_dir
-    assert not (data_dir() / "world.db").exists()
 
 
-def test_cli_export():
-    _seed()
-    r = _run("client", "export")
-    assert r.exit_code == 0 and "client export written" in r.output

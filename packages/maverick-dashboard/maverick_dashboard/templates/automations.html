@@ -140,7 +140,6 @@
   <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" hidden>
     <div class="section-head">
       <h2 id="auto-flows-h" tabindex="-1">Flows</h2>
-      <a class="btn btn--primary" href="/flows/designer" id="fd-new">✨ Design a flow</a>
     </div>
     <p class="auto__hint">A flow is a deterministic skeleton — branch, loop, parallel, approval, delay — over steps that are either a fixed tool call or a full agentic goal. Describe one in plain English and the designer drafts it; run one and it pauses at any approval for a human decision; each node’s outcome trains which steps should be deterministic vs. agentic. <span class="muted" id="auto-flows-count"></span></p>
     <div class="auto__insights" id="flow-insights" role="status" aria-live="polite" hidden
@@ -410,7 +409,7 @@
         if (it.flow) {
           var fl = el('div', 'auto__runs');
           var fa = document.createElement('a');
-          fa.href = '/flows/designer/' + encodeURIComponent(it.flow);
+          fa.href = '/automations';
           fa.textContent = 'flow ‘' + it.flow + '’' + (out.dry_run ? ' (preview)' : ' — open in designer');
           fl.appendChild(document.createTextNode('↳ '));
           fl.appendChild(fa); li.appendChild(fl);
@@ -707,13 +706,12 @@
         var main = el('div', 'mv-row__main');
         var title = el('div', 'mv-row__title');
         var a = document.createElement('a');
-        a.href = '/flows/designer/' + encodeURIComponent(f.id);
+        a.href = '/automations';
         a.textContent = f.name || f.id;                 // edit in the visual designer
         title.appendChild(a); main.appendChild(title);
         main.appendChild(el('div', 'mv-row__sub', f.nodes + (f.nodes === 1 ? ' node' : ' nodes')
           + (f.single_agent ? ' · single agent' : '')));
         li.appendChild(main);
-        li.appendChild(mkBtn('Edit', function () { location.href = '/flows/designer/' + encodeURIComponent(f.id); }));
         li.appendChild(mkBtn('Run', function () { runFlow(f.id, f.inputs || []); }));
         flowsList.appendChild(li);
       });
@@ -822,7 +820,7 @@
         var main = el('div', 'mv-row__main');
         var title = el('div', 'mv-row__title');
         var a = document.createElement('a');
-        a.href = '/flows/designer/' + encodeURIComponent(f.flow_id);
+        a.href = '/automations';
         a.textContent = f.name || f.flow_id;
         title.appendChild(a); main.appendChild(title);
         (f.proposals || []).forEach(function (p) {

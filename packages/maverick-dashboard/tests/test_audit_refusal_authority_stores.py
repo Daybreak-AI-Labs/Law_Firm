@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import pytest
-from fastapi import HTTPException
 from maverick.audit import AuditRefused, AuditWriteRefused
 
 
@@ -113,66 +110,3 @@ def test_learning_control_refusal_happens_before_overlay_write(monkeypatch):
     assert writes == []
 
 
-def test_dgm_control_refusal_happens_before_overlay_write(monkeypatch):
-    from maverick import self_modify
-    from maverick_dashboard import settings_store
-
-    status = {
-        "control_managed": False,
-        "blockers": [],
-        "requested": False,
-        "effective": False,
-        "state": "disabled",
-    }
-    writes = []
-    monkeypatch.setattr(self_modify, "production_status", lambda: status)
-    monkeypatch.setattr(settings_store, "_write", writes.append)
-    _audit_refuses(monkeypatch)
-
-    with pytest.raises(AuditRefused):
-        settings_store.set_dgm(
-            True,
-            actor="user:admin",
-            acknowledged=True,
-        )
-
-    assert writes == []
-
-
-def test_ekko_control_refusal_happens_before_overlay_write(monkeypatch):
-    from maverick import config, ekko_control
-    from maverick_dashboard import settings_store
-
-    writes = []
-    monkeypatch.setattr(ekko_control, "control_barrier", nullcontext)
-    monkeypatch.setattr(config, "get_ekko", lambda: {"enable": False})
-    monkeypatch.setattr(config, "config_source_errors", list)
-    monkeypatch.setattr(
-        settings_store,
-        "_higher_precedence_ekko_enable_owner",
-        lambda: None,
-    )
-    monkeypatch.setattr(settings_store, "_write", writes.append)
-    _audit_refuses(monkeypatch)
-
-    with pytest.raises(AuditRefused):
-        settings_store.set_ekko(True, actor="user:admin")
-
-    assert writes == []
-
-
-def test_ekko_route_refusal_never_returns_false_success(monkeypatch):
-    from maverick_dashboard import ekko_routes
-
-    _audit_refuses(monkeypatch)
-
-    with pytest.raises(AuditRefused):
-        ekko_routes._audit("ekko_session", state="paused")
-    with pytest.raises(HTTPException) as exc:
-        ekko_routes._audit(
-            "ekko_session",
-            required=True,
-            state="start_authorized",
-        )
-
-    assert exc.value.status_code == 503

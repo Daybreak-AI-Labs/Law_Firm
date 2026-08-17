@@ -80,10 +80,13 @@ def test_board_payloads_survive_empty_world(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     c = _client()
     for board in ("overview", "spend", "workforce", "savings", "oversight",
-                  "privacy", "finance", "security"):
+                  "privacy", "finance"):
         r = c.get(f"/api/v1/dashboards/{board}")
         assert r.status_code == 200, board
         assert r.json()["days"] == 90
+    # The security records workspace went with the GRC cluster; its board
+    # must refuse rather than serve an orphaned payload.
+    assert c.get("/api/v1/dashboards/security").status_code == 404
 
 
 def test_pages_ship_the_board_skeleton(monkeypatch, tmp_path):

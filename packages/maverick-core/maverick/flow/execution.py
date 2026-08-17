@@ -640,8 +640,8 @@ def default_action_runner(
             # automation_queue) and reaches every registered connector including
             # stripe, gmail, s3, salesforce, sap and workday.
             #
-            # The missing audit row was the worst of it: the attestation's
-            # policy_envelope claims "no RECORDED action violated the envelope",
+            # The missing audit row was the worst of it: the audit record's
+            # policy envelope claims "no RECORDED action violated the envelope",
             # so an unrecorded dispatch satisfied it trivially and made the
             # claim unfalsifiable rather than merely incomplete.
             from ..tool_authz import authorize

@@ -29,17 +29,17 @@ Quick triage for the alerts in `prometheus-rules.yaml`. Pair with
 - A single tenant should NOT be able to starve others — per-tenant ceilings come
   from each tenant's plan (`max_concurrent_goals`). If one tenant is hot, check
   its plan/quota rather than raising the global cap.
-- Do not add dashboard/serve replicas: Postgres shares the world model, but not
+- Do not add dashboard replicas: Postgres shares the world model, but not
   every durable control-plane store. To add goal-processing capacity, move the
   world model to Postgres and scale remote workers while keeping exactly one
   control-plane replica. See `deploy/postgres/README.md`.
 
 ## Alert: MaverickSpendSpike
 
-1. `maverick billing invoice <tenant>` / check `maverick_cost_dollars_total` by
-   tenant to find the source.
-2. Tighten caps: global `[budget] max_dollars`, or per-tenant
-   `maverick tenant quota <id> <dollars/day>`.
+1. Check `maverick_cost_dollars_total` by tenant to find the source; the
+   dashboard's spend page has the per-goal breakdown.
+2. Tighten caps: global `[budget] max_dollars`, or the tenant's plan ceilings
+   in its per-tenant `config.toml`.
 3. A runaway loop usually shows as high `maverick_tokens_total` with few
    `maverick_goals_total{status="done"}` — inspect recent goals.
 
@@ -61,8 +61,8 @@ Quick triage for the alerts in `prometheus-rules.yaml`. Pair with
 
 ## Tenant lifecycle
 
-- Provision: `maverick tenant create <id> --plan <free|pro|enterprise>`.
-- Per-tenant credentials/models: drop a `config.toml` at
+- Per-tenant data lives under `~/.maverick/tenants/<id>/`; per-tenant
+  credentials/models: drop a `config.toml` at
   `~/.maverick/tenants/<id>/config.toml`.
-- Export (GDPR portability): `maverick client export`.
-- Erase: `maverick tenant delete <id> --purge`.
+- Export (GDPR portability): `maverick export-user`.
+- Erase: `maverick erase` (verify with `maverick erase-verify`).

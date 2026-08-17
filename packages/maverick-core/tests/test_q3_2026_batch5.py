@@ -3,7 +3,6 @@ spend report tool, replay export."""
 from __future__ import annotations
 
 import json
-import platform
 from unittest.mock import MagicMock
 
 # ---------- Android tool ----------
@@ -92,61 +91,6 @@ def test_android_install_requires_apk():
     assert "requires apk_path" in out or "adb not found" in out
 
 
-# ---------- iOS Sim tool ----------
-
-def test_ios_only_macos(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "Linux")
-    from maverick.tools.ios_sim import ios_sim
-    out = ios_sim().fn({"op": "list_devices"})
-    assert "macOS" in out
-
-
-def test_ios_missing_xcrun(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
-    monkeypatch.setattr("shutil.which", lambda b: None)
-    from maverick.tools.ios_sim import ios_sim
-    out = ios_sim().fn({"op": "list_devices"})
-    assert "xcrun not found" in out
-
-
-def test_ios_list_devices(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/xcrun")
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **k: MagicMock(
-            returncode=0,
-            stdout="-- iOS 17.0 --\n  iPhone 15 (ABC-123) (Booted)\n",
-            stderr="",
-        ),
-    )
-    from maverick.tools.ios_sim import ios_sim
-    out = ios_sim().fn({"op": "list_devices", "state": "booted"})
-    assert "iPhone 15" in out
-
-
-def test_ios_install_requires_app(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/xcrun")
-    from maverick.tools.ios_sim import ios_sim
-    out = ios_sim().fn({"op": "install", "device_id": "ABC"})
-    assert "requires" in out and "app_path" in out
-
-
-def test_ios_boot_calls_simctl(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "Darwin")
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/xcrun")
-    captured = {"cmd": None}
-
-    def _run(cmd, *a, **k):
-        captured["cmd"] = cmd
-        return MagicMock(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    from maverick.tools.ios_sim import ios_sim
-    out = ios_sim().fn({"op": "boot", "device_id": "ABC-123"})
-    assert "booted ABC-123" in out
-    assert "simctl" in captured["cmd"] and "boot" in captured["cmd"]
 
 
 # ---------- Spend report tool ----------
@@ -308,7 +252,6 @@ def test_new_tools_register_opt_in(tmp_path):
     reg_default = base_registry(_W(), LocalBackend(workdir=tmp_path))
     names_default = {t.name for t in reg_default.all()}
     assert "android" not in names_default
-    assert "ios_sim" not in names_default
     assert "spend_report" in names_default
 
     reg_mobile = base_registry(
@@ -318,4 +261,3 @@ def test_new_tools_register_opt_in(tmp_path):
     )
     names_mobile = {t.name for t in reg_mobile.all()}
     assert "android" in names_mobile
-    assert "ios_sim" in names_mobile

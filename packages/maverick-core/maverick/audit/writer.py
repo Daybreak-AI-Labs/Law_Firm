@@ -212,10 +212,7 @@ def _audit_idempotency_identity(
         EventKind.ACCESS_GRANT_CHANGED: "scim_group_event_id",
         EventKind.LEARNING_UPDATE: "event_id",
         EventKind.PRIVACY_RECORD_CHANGED: "event_id",
-        EventKind.SECURITY_RECORD_CHANGED: "event_id",
-        EventKind.PLATFORM_HUNT_CUSTODY_INITIALIZED: "event_id",
         EventKind.THREAT_HUNT_RECORD_CHANGED: "event_id",
-        EventKind.ENV_HUNT_RECORD_CHANGED: "event_id",
     }
     field = field_by_kind.get(payload.get("kind"))
     if field is None:

@@ -222,13 +222,14 @@ def test_run_consumer_docker_mode_keeps_host_mutation_tools_enabled(monkeypatch,
     assert "write_file" not in denied
 
 
-def test_run_consumer_demo_command_uses_haiku(monkeypatch, tmp_path: Path, capsys):
-    """Council perf seat: first-goal demo must route to Haiku for sub-2s TTFT."""
+def test_run_consumer_demo_panel_points_at_dashboard(monkeypatch, tmp_path: Path, capsys):
+    """The closing panel points at the dashboard with the curated starter goal
+    (the `maverick start` demo command went with the CLI reduction)."""
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     wizard.run_consumer()
     out = capsys.readouterr().out
-    # The closing panel prints the demo command.
-    assert "claude-haiku-4-5" in out
+    # The closing panel prints the next step + the curated demo prompt.
+    assert "maverick dashboard" in out
     assert "haiku about Tuesday" in out  # the curated demo prompt
 
 

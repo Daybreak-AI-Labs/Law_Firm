@@ -1,4 +1,4 @@
-"""Strategic-fit connectors: ServiceNow, Snowflake, Databricks, OneTrust, Vertex.
+"""Strategic-fit connectors: ServiceNow, Snowflake, Databricks, OneTrust.
 
 Network-free: ``httpx`` is faked so we exercise registration, auth-config
 errors, the confirm gate, request routing, and response shaping with no real
@@ -38,7 +38,7 @@ def test_connectors_register(tmp_path):
             return []
 
     names = {t.name for t in base_registry(_W(), LocalBackend(workdir=tmp_path)).all()}
-    for n in ("servicenow", "snowflake", "databricks", "onetrust", "vertex"):
+    for n in ("servicenow", "snowflake", "databricks", "onetrust"):
         assert n in names, n
 
 
@@ -176,27 +176,3 @@ def test_onetrust_post_needs_confirm(monkeypatch):
     out = onetrust_tool().fn({"op": "post", "path": "/api/x", "body": {"a": 1}})
     assert "DRY RUN" in out
     post.assert_not_called()
-
-
-# ----------------------------------- Vertex --------------------------------
-
-def test_vertex_requires_config(monkeypatch):
-    monkeypatch.delenv("VERTEX_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("VERTEX_PROJECT", raising=False)
-    _fake_httpx(monkeypatch)
-    from maverick.tools.vertex_tool import vertex_tool
-    out = vertex_tool().fn({"op": "generate", "prompt": "hi"})
-    assert "ERROR" in out and "VERTEX" in out
-
-
-def test_vertex_generate(monkeypatch):
-    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("VERTEX_PROJECT", "proj")
-    post = MagicMock(return_value=_resp(200, {
-        "candidates": [{"content": {"parts": [{"text": "hello from vertex"}]}}]
-    }))
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.vertex_tool import vertex_tool
-    out = vertex_tool().fn({"op": "generate", "model": "gemini-2.5-pro", "prompt": "hi"})
-    assert out == "hello from vertex"
-    assert ":generateContent" in post.call_args.args[0]

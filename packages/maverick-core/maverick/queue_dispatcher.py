@@ -127,13 +127,13 @@ def _require_network_signing_key() -> str:
 
 
 def _require_network_claim_store_configured() -> None:
-    from .world_model_backends import is_postgres_configured
-
-    if not is_postgres_configured():
-        raise QueueSecurityError(
-            "network queue dispatch requires the shared Postgres world model "
-            "for fleet-wide at-most-once claims"
-        )
+    # The shared Postgres world backend is gone (SQLite is the only world
+    # store), so no store can provide fleet-wide at-most-once claims for
+    # cross-network dispatch. Local (same-host) queue dispatch is unaffected.
+    raise QueueSecurityError(
+        "network queue dispatch requires a shared world store for "
+        "fleet-wide at-most-once claims; this deployment is SQLite-only"
+    )
 
 
 def _configured_envelope_ttl_seconds() -> int:

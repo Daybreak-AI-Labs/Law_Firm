@@ -152,10 +152,9 @@ class TestErrorMessageVoice:
         )
         assert "Stopped" in out
         assert "couldn't finish" in out
-        # Positional id, no leading '#': `maverick resume <id>` is copy-pasteable
-        # (resume now takes a positional GOAL_ID, and a bare '#' is a shell comment).
-        assert f"maverick resume {gid}" in out
-        assert f"maverick resume #{gid}" not in out
+        # The resume hint names the goal id and points at the dashboard
+        # (the `maverick resume` CLI was removed in the CLI reduction).
+        assert f"resuming goal {gid} from the dashboard" in out
 
     @pytest.mark.asyncio
     async def test_paused_with_no_questions_is_friendly(
@@ -196,7 +195,7 @@ class TestErrorMessageVoice:
         assert "Paused" in out
         assert "1 question" in out
         assert "What's your timezone?" in out
-        assert "maverick answer" in out
+        assert "Answer in the dashboard" in out
 
 
 class TestProgressSanitization:

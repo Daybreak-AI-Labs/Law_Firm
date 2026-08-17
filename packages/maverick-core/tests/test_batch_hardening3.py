@@ -26,12 +26,6 @@ def test_half_open_clears_flag_on_failure():
     assert cb._probe_in_flight is False
 
 
-def test_replicate_rejects_traversal_model():
-    from maverick.tools.replicate_tool import _op_run
-    assert "invalid model" in _op_run({"model": "../predictions/x"})
-    assert "invalid model" in _op_run({"model": "noslash"})
-
-
 def test_home_assistant_safe_seg():
     from maverick.tools.home_assistant_tool import _safe_seg
     assert _safe_seg("light.living_room")

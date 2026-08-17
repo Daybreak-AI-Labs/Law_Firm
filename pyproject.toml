@@ -6,8 +6,6 @@
 members = [
     "packages/maverick-core",
     "packages/maverick-shield",
-    "packages/maverick-channels",
-    "packages/maverick-evolve",
     "packages/maverick-dashboard",
     "packages/maverick-mcp",
     "packages/maverick-knowledge",
@@ -17,8 +15,6 @@ members = [
 [tool.uv.sources]
 maverick-agent = { workspace = true }
 maverick-shield = { workspace = true }
-maverick-channels = { workspace = true }
-maverick-evolve = { workspace = true }
 maverick-dashboard = { workspace = true }
 maverick-mcp-server = { workspace = true }
 maverick-knowledge = { workspace = true }

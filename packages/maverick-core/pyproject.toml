@@ -57,7 +57,6 @@ vllm       = ["openai>=1.30"]
 chroma     = ["chromadb>=0.4"]
 qdrant     = ["qdrant-client>=1.6", "fastembed>=0.3"]
 weaviate   = ["weaviate-client>=4.5"]
-postgres   = ["psycopg[binary,pool]>=3.1"]
 saml       = ["pysaml2>=7.3"]
 grpc       = ["grpcio>=1.60", "grpcio-tools>=1.60"]
 queue      = ["arq>=0.25"]
@@ -112,8 +111,6 @@ observability   = [
 sentry          = ["sentry-sdk>=2.0"]
 shield          = ["maverick-shield>=0.1.7"]
 installer  = ["maverick-installer>=0.1.7"]
-channels   = ["maverick-channels>=0.1.7"]
-evolve     = ["maverick-evolve>=0.1.7"]
 dashboard  = ["maverick-dashboard>=0.1.7"]
 mcp        = ["maverick-mcp-server>=0.1.7"]
 knowledge  = ["maverick-knowledge>=0.1.7"]
@@ -147,8 +144,6 @@ all        = [
     "fastembed>=0.3",
     "maverick-shield>=0.1.7",
     "maverick-installer>=0.1.7",
-    "maverick-channels>=0.1.7",
-    "maverick-evolve>=0.1.7",
     "maverick-dashboard>=0.1.7",
     "maverick-mcp-server>=0.1.7",
     "maverick-knowledge>=0.1.7",

@@ -1,9 +1,6 @@
 """A clean-home install reaches activation and evidence-visible cockpit pages."""
 from __future__ import annotations
 
-import json
-
-from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 
@@ -20,11 +17,6 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
                 'backend = "local"',
                 "[evidence_graph]",
                 "enable = true",
-                "[evidence_gateway]",
-                "enable = true",
-                "[model_risk_assurance]",
-                "enable = true",
-                "gate_promotions = false",
                 "",
             ]
         ),
@@ -45,14 +37,11 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(name, raising=False)
 
+    from click.testing import CliRunner
     from maverick import config, providers, world_model
     from maverick.cli import main
 
     config.reset_config_cache()
-    before = CliRunner().invoke(main, ["preflight", "--json"])
-    assert before.exit_code == 1
-    assert json.loads(before.output)["checks"][0]["id"] == "config"
-
     installed_result = CliRunner().invoke(
         main,
         ["init", "--from-file", str(source)],
@@ -61,15 +50,6 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
     assert "installed config" in installed_result.output
     config.reset_config_cache()
     monkeypatch.setattr(providers, "missing_sdks", lambda _specs: [])
-
-    ready = CliRunner().invoke(
-        main,
-        ["preflight", "--profile", "cockpit", "--json"],
-    )
-    assert ready.exit_code == 0, ready.output
-    report = json.loads(ready.output)
-    assert report["ready"] is True
-    assert report["blocker_count"] == 0
 
     from maverick_dashboard import app as dashboard
 
@@ -84,13 +64,3 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
     assert started.status_code == 200, started.text
     assert "ready to run" in started.text
     assert "Offline install preflight" in started.text
-
-    from maverick import ai_evidence_gateway
-
-    gateway_summary = ai_evidence_gateway.summary()
-    assert gateway_summary["current_policy_count"] == 0
-    assurance = client.get("/security/assurance")
-    assert assurance.status_code == 200, assurance.text
-    assert "Not started" in assurance.text
-    assert "Load synthetic no-network demo" in assurance.text
-    assert "production policy" in assurance.text

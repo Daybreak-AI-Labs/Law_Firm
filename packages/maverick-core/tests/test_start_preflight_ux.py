@@ -17,7 +17,6 @@ Platform-test findings, round 2 fixes:
 from __future__ import annotations
 
 import pytest
-from click.testing import CliRunner
 from maverick.budget import Budget, UnpricedModelError
 
 
@@ -42,84 +41,10 @@ def _isolate(monkeypatch, tmp_path):
     ks.clear()
 
 
-def test_halted_start_exits_3_and_creates_no_goal(tmp_path, monkeypatch):
-    _isolate(monkeypatch, tmp_path)
-    halt = tmp_path / ".maverick" / "HALT"
-    halt.parent.mkdir(parents=True, exist_ok=True)
-    halt.write_text("operator\n", encoding="utf-8")
-
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["start", "blocked goal"])
-
-    assert res.exit_code == 3, res.output
-    assert "unhalt" in res.output
-    assert _goal_count(tmp_path) == 0
 
 
-def test_missing_sdk_exits_2_and_creates_no_goal(tmp_path, monkeypatch):
-    _isolate(monkeypatch, tmp_path)
-    import maverick.providers as providers
-    monkeypatch.setattr(
-        providers, "missing_sdks",
-        lambda specs: ["openai SDK not installed. Run: pip install 'maverick-agent[openai]'"],
-    )
-
-    from maverick.cli import main
-    res = CliRunner().invoke(main, ["start", "sdk-less goal"])
-
-    assert res.exit_code == 2, res.output
-    assert "openai SDK not installed" in res.output
-    assert _goal_count(tmp_path) == 0
 
 
-def test_sdk_gate_uses_effective_local_routes_not_anthropic_default(
-    tmp_path, monkeypatch,
-):
-    _isolate(monkeypatch, tmp_path)
-    from maverick import config
-    from maverick.llm import ROLE_MODELS
-
-    cfg_path = tmp_path / "config.toml"
-    cfg_path.write_text(
-        "[models]\n"
-        + "\n".join(f'{role} = "ollama:qwen3"' for role in ROLE_MODELS)
-        + "\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg_path))
-    monkeypatch.setenv("MAVERICK_ROLES_FILE", str(tmp_path / "roles.toml"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE", raising=False)
-    for role in ROLE_MODELS:
-        monkeypatch.delenv(
-            f"MAVERICK_MODEL_OVERRIDE_{role.upper()}",
-            raising=False,
-        )
-    import maverick.runtime_overrides as runtime_overrides
-
-    monkeypatch.setattr(
-        runtime_overrides,
-        "OVERRIDES_PATH",
-        tmp_path / "runtime-overrides.toml",
-    )
-    config.reset_config_cache()
-    import maverick.cli as cli_mod
-    import maverick.providers as providers
-
-    monkeypatch.setattr(cli_mod, "_require_llm_key", lambda *args: "config")
-    seen: list[str] = []
-
-    def capture(specs):
-        seen.extend(specs)
-        return ["stop after route capture"]
-
-    monkeypatch.setattr(providers, "missing_sdks", capture)
-    result = CliRunner().invoke(cli_mod.main, ["start", "local-only goal"])
-
-    assert result.exit_code == 2, result.output
-    assert seen == ["ollama:qwen3"]
-    assert "stop after route capture" in result.output
-    assert _goal_count(tmp_path) == 0
 
 
 def test_missing_sdks_helper_detects_absent_module(monkeypatch):
@@ -177,17 +102,3 @@ def test_known_model_via_local_prefix_still_priced():
     assert b.dollars > 0
 
 
-def test_debate_and_plan_reflect_refuse_cleanly_when_unconfigured(tmp_path, monkeypatch):
-    """Round-3 finding: both commands skipped the provider preflight and an
-    unconfigured install got a raw anthropic-SDK TypeError traceback. They
-    must refuse like `start` does: friendly message, exit 2, no traceback."""
-    _isolate(monkeypatch, tmp_path)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "none.toml"))
-
-    from maverick.cli import main
-    for argv in (["debate", "tabs or spaces?"], ["plan-reflect", "make tea"]):
-        res = CliRunner().invoke(main, argv)
-        assert res.exit_code == 2, (argv, res.output)
-        assert "can't reach an LLM" in res.output
-        assert "TypeError" not in res.output

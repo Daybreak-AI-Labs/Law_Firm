@@ -6,8 +6,8 @@
 # First run:
 #   docker compose -f deploy/docker/docker-compose.yml run --rm maverick init
 #
-# Subsequent runs:
-#   docker compose -f deploy/docker/docker-compose.yml run --rm maverick start "..."
+# Subsequent runs (the platform runs in the dashboard):
+#   docker compose -f deploy/docker/docker-compose.yml up maverick
 
 services:
   maverick:

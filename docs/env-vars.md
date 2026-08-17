@@ -16,7 +16,7 @@ for false unless noted otherwise.
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_CONFIG` | `~/.maverick/config.toml` | Path to an alternate config file. |
-| `MAVERICK_CODING_MODE` | unset | When `1`/`true`/`yes`, switches the agent into coding mode (set by `maverick start --coding-mode`); affects prompts, fs/shell tool defaults, and cache TTL. |
+| `MAVERICK_CODING_MODE` | unset | When `1`/`true`/`yes`, switches the agent into coding mode; affects prompts, fs/shell tool defaults, and cache TTL. |
 | `MAVERICK_LANGUAGE` | unset | Primary project language hint (e.g. `python`, `go`). Feeds sandbox/toolchain selection and coding mode. |
 | `MAVERICK_MAX_STEPS` | `25` | Global cap on agent loop steps per goal. |
 | `MAVERICK_STEP_BUDGET_WARNING` | `3` | When this many tool-using turns remain before `MAVERICK_MAX_STEPS`, the loop nudges the agent to give its FINAL answer (so a long run isn't cut off mid-work). `0` disables. |
@@ -48,7 +48,7 @@ for false unless noted otherwise.
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `MAVERICK_MODEL_OVERRIDE` | unset | Global run-wide model override (`provider:model-id`); set by `maverick --model`. Beats config for every role. |
+| `MAVERICK_MODEL_OVERRIDE` | unset | Global run-wide model override (`provider:model-id`). Beats config for every role. |
 | `MAVERICK_MODEL_OVERRIDE_<ROLE>` | unset | Per-role override, e.g. `MAVERICK_MODEL_OVERRIDE_CODER`. Beats the global override for that role. |
 | `MAVERICK_TEMPERATURE` | provider default | Sampling temperature for LLM calls. |
 | `MAVERICK_VISION_MODEL` | `anthropic:claude-sonnet-4-6` | Model used by the image/video viewing tools (`provider:model-id`). |
@@ -77,18 +77,16 @@ for false unless noted otherwise.
 | `MAVERICK_TOT_CANDIDATES` | built-in | Number of candidate plans tree-of-thought forks. |
 | `MAVERICK_REFLEXION` | config `[reflexion] enable` (on) | Override the default-on reflexion self-critique loop; set `0` to opt out. |
 | `MAVERICK_DREAMING` | config `[dreaming] enable` (on) | Override default-on offline experience consolidation (`maverick dream`); set `0` to opt out. |
-| `MAVERICK_SELF_HARNESS` | config `[self_harness] enable` (on) | Override the default-on conservative self-harness loop (`maverick self-harness`; promotion also needs `[self_improvement] enable`). |
+| `MAVERICK_SELF_HARNESS` | config `[self_harness] enable` (on) | Override the default-on conservative self-harness loop (runs on the dream beat; promotion also needs `[self_improvement] enable`). |
 | `MAVERICK_FACTORY_LEARNING` | config `[self_improvement] factory_learning` (on when the master is on) | Override the factory loop directly: `0` disables it and `1` force-enables it even if the self-improvement master is off. |
-| `MAVERICK_DATA_ENGINE` | config `[data_engine] enable` (on) | Override the default-on Cognitive Data Engine flywheel: causal failure triage → guardrails → habits (`maverick flywheel`). |
+| `MAVERICK_DATA_ENGINE` | config `[data_engine] enable` (on) | Override the default-on Cognitive Data Engine flywheel: causal failure triage → guardrails → habits. |
 | `MAVERICK_OPERATIONS_SCIENTIST` | config `[operations_scientist] enable` (on) | Override the default-on Operations Scientist: propose + simulate a better process before a real experiment. |
-| `MAVERICK_CONSEQUENCE` | config `[consequence] enable` (on) | Override default-on grounding in real downstream outcomes (`maverick record-outcome`). |
-| `MAVERICK_SELF_MODIFY` | config `[self_modify] enable` (off) | Arm/disarm the research-only DGM gate. Setting this env var makes the deployment environment authoritative, so the dashboard control is read-only. Arming never starts a cycle or permits live code adoption. |
-| `MAVERICK_FLOWS` | config `[flows] enable` (off) | Enable the visual flow-automation engine (deterministic graph of agent/action/branch/… nodes; the dashboard designer + triggers). |
+| `MAVERICK_CONSEQUENCE` | config `[consequence] enable` (on) | Override default-on grounding in real downstream outcomes (fed via POST /api/v1/outcomes). |
+| `MAVERICK_FLOWS` | config `[flows] enable` (off) | Enable the flow-automation engine (deterministic graph of agent/action/branch/… nodes; triggers). |
 | `MAVERICK_FLOWS_AUTO` | config `[flows] auto_evolve` (off) | Let the flow self-rewrite loop act autonomously: revert a node rewrite it measures as a regression. Pairs with `[flows] auto_apply` (apply an improvement forward) — both are also toggleable from the dashboard Learning page. |
-| `MAVERICK_EMERGENT_PROTOCOL` | config `[emergent_protocol] enable` (off) | Enable the auditable coordination codec (sentinel form; `maverick codebook`). |
-| `MAVERICK_EMERGENT_CODEC` | config `[emergent_codec] enable` (off) | Measure the token-aware codec on the live coordination stream (telemetry only; `maverick codec-learn`). |
+| `MAVERICK_EMERGENT_PROTOCOL` | config `[emergent_protocol] enable` (off) | Enable the auditable coordination codec (sentinel form). |
+| `MAVERICK_EMERGENT_CODEC` | config `[emergent_codec] enable` (off) | Measure the token-aware codec on the live coordination stream (telemetry only; GET /api/v1/codec). |
 | `MAVERICK_DOMAIN_DISCIPLINE` | config `[domains] discipline` (on) | Append suite operating discipline to specialist personas at spawn. |
-| `MAVERICK_FLEET_MEMORY` | config `[fleet_memory] enable` (off) | Allow registered external agents to use the governed memory plane. |
 | `MAVERICK_PRM` | `null` | Process reward model: `null`, `heuristic`, `remote`, `learned`, or `linear`. A linear backend reconciles durable verifier-promotion authority before serving and falls back to the heuristic for an in-doubt, unrecognized, or out-of-band artifact. |
 | `MAVERICK_PRM_PATH` | unset | Learned-model directory (`learned`) or stable serving artifact (`linear`). Relative linear paths are pinned to an absolute startup path before recovery and serving. |
 | `MAVERICK_PRM_BOOTSTRAP_SHA256` | unset | Explicit SHA-256 trust root for an initially provisioned `linear` artifact. Required when `MAVERICK_PRM_PATH` already exists but has no committed promotion chain; later hot reloads must match the durable ledger exactly. |
@@ -112,13 +110,10 @@ for false unless noted otherwise.
 | `MAVERICK_EKKO` | config `[ekko] enable` (off) | Controls only Ekko's master policy switch. It never enrolls a device, grants an application, starts a collector, or enables provider egress. Invalid values fail closed. |
 | `MAVERICK_SKILL_DECAY` | `1` (on) | Set `0` to disable time-decay of skill usefulness stats. |
 | `MAVERICK_ALLOW_SKILL_INSTALL` | unset (off) | Opt in to installing skills from free-text URLs. |
-| `MAVERICK_VECTOR_STORE` | config `[memory] backend` | Semantic-recall backend: `chroma`, `qdrant`, `weaviate`, `pgvector`, or unset/`none` to disable. |
 | `MAVERICK_CHROMA_PATH` | `~/.maverick/...` default | On-disk path for the Chroma vector store. |
 | `MAVERICK_QDRANT_URL` | unset | Qdrant server URL (remote mode). |
 | `MAVERICK_QDRANT_PATH` | default path | Qdrant local on-disk path (embedded mode). |
 | `MAVERICK_QDRANT_API_KEY` | unset | API key for a remote Qdrant server. |
-| `MAVERICK_WORLD_BACKEND` | config-driven | Set `postgres` to use the Postgres world-model backend. |
-| `MAVERICK_PG_DSN` | unset | Postgres DSN for the Postgres world model (e.g. `postgres://user@host:5432/maverick`; prefer `PGSERVICE`, `~/.pgpass`, peer auth, or a secret manager over embedding passwords). |
 | `MAVERICK_ORPHAN_RECLAIM_SECONDS` | code default | Seconds before orphaned world-model goal locks are reclaimed. |
 | `MAVERICK_BLACKBOARD_MAX_ENTRIES` | `5000` (min 100) | Max entries retained in the shared blackboard. |
 
@@ -126,10 +121,8 @@ for false unless noted otherwise.
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `MAVERICK_STRICT_TENANT_ISOLATION` | config `[world_model] strict_tenant_isolation`; **auto-on under enterprise mode** | Postgres reads return ONLY the active tenant's rows (drop NULL-legacy tolerance). Enable after backfilling `tenant_id`. Env wins over config wins over enterprise default. |
-| `MAVERICK_PG_RLS` | config `[world_model] rls`; **auto-on under enterprise mode** | DB-native Postgres Row-Level Security on the tenant tables (defense-in-depth over the app predicate). When auto-enabled by enterprise mode, a boot preflight refuses to start on legacy `tenant_id IS NULL` rows (run `maverick tenant backfill`); explicit `=1` keeps the fail-closed opt-in path. |
 | `MAVERICK_KMS_KEK` | derived from the at-rest key | The per-tenant-DEK Key Encryption Key (32 bytes, hex/base64) for `tenant/kms.py`. |
-| `MAVERICK_KMS_DEK_CACHE_TTL` | config `[kms] dek_cache_ttl` (`0` = process lifetime) | Seconds a tenant DEK stays cached before it must be re-unwrapped by the KMS. A positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data (the next access re-hits the KMS and fails closed). Per-tenant **BYOK** is configured in each tenant's own `tenants/<id>/config.toml` `[kms]` section (provider/key_id/region), resolved deterministically by `get_kms(tenant_id)`. **Rolling the local KEK** across the fleet: `maverick tenant kms-rotate --old-kek-file /run/secrets/old-kek --new-kek-file /run/secrets/new-kek` (re-wrap only, idempotent/resumable, `--dry-run` to preview; omit file options to use hidden prompts). Avoid passing KEKs in command-line arguments; set `MAVERICK_KMS_KEK` to the new value live only after rotation reports 0 failed. Cloud/BYOK rotation uses `tenant.kms.rotate_kek_fleet` with per-tenant resolvers. |
+| `MAVERICK_KMS_DEK_CACHE_TTL` | config `[kms] dek_cache_ttl` (`0` = process lifetime) | Seconds a tenant DEK stays cached before it must be re-unwrapped by the KMS. A positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data (the next access re-hits the KMS and fails closed). Per-tenant **BYOK** is configured in each tenant's own `tenants/<id>/config.toml` `[kms]` section (provider/key_id/region), resolved deterministically by `get_kms(tenant_id)`. **Rolling the local KEK** across the fleet is a re-wrap-only, idempotent/resumable operation (`tenant/kms_fleet.py`). Avoid passing KEKs in command-line arguments; set `MAVERICK_KMS_KEK` to the new value live only after rotation reports 0 failed. Cloud/BYOK rotation uses `tenant.kms.rotate_kek_fleet` with per-tenant resolvers. |
 | `MAVERICK_MCP_ANALYTICS` | config `[analytics] mcp_client_language` (off) | Opt-in, consent-gated tally of MCP-client language (feeds the language-bindings gate). |
 | `IRC_ALLOWED_ACCOUNTS` | — | Comma-separated allowlist of authenticated IRC account names that may drive the agent over the IRC channel. Requires an IRC server that provides the IRCv3 `account-tag` capability. |
 | `GLASSES_ALLOWED_USER_IDS` | — | Allowlist for the glasses/wearable channel. |
@@ -158,9 +151,9 @@ arq maverick.arq_worker.WorkerSettings
 Use a dedicated Redis database and ACL identity per Maverick deployment. ARQ
 stores job bodies under global Redis key prefixes even when its ready queue is
 namespaced, so a dedicated database/ACL is defense in depth against accidental
-cross-fleet access. Network workers also require the same Postgres world-model
-backend for durable, tenant-aware replay claims. The worker refuses to poll if
-the HMAC key or shared claim store is unavailable. The unsafe
+cross-fleet access. Network workers additionally require a shared world store
+for durable, tenant-aware replay claims, which this SQLite-only deployment
+does not provide — network queue dispatch is refused. The unsafe
 `MAVERICK_ALLOW_INSECURE_QUEUE_REDIS=1` escape hatch is only for isolated local
 development networks.
 
@@ -172,8 +165,9 @@ the HMAC value in your secret manager, and keep it out of process arguments,
 logs, and repository configuration.
 
 Other config-only knobs: `[billing.plans]` (override plan entitlements), `[egress]` /
-`[tenancy.egress.<t>]` (per-tenant egress plane). Tenants are managed with
-`maverick tenant …`; invoices/entitlements with `maverick billing …`.
+`[tenancy.egress.<t>]` (per-tenant egress plane). Tenants are managed over the
+admin REST API (`/api/v1/admin/tenants` — see
+[multi-tenancy.md](multi-tenancy.md)); invoices/entitlements under `[billing.plans]`.
 
 ## LLM cost & latency
 
@@ -271,15 +265,12 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_AI_DISCLOSURE` | config `[compliance] disclosure_text` | AI-disclosure text appended to outputs; empty string opts out. |
 | `MAVERICK_STRIPE_ENABLE_REFUNDS` | unset (off) | Required to allow the Stripe tool to issue real refunds. |
 
-## Secrets, residency & audit forwarding
+## Secrets & audit forwarding
 
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_SECRETS_BACKEND` | config `[secrets] backend` (`env`) | Where deployment secrets are read from. `env` = process environment (default, unchanged). `file` = mounted secret files (Vault Agent / Secrets Store CSI / Docker/podman secrets), one secret per file, with env fallback. Applies to OIDC client/session secrets, the inbound webhook secret, and the SCIM bearer. |
 | `MAVERICK_SECRETS_DIR` | config `[secrets] dir` | Directory the `file` backend reads (`<dir>/MAVERICK_OIDC_CLIENT_SECRET`, etc.; trailing newline trimmed). |
-| `MAVERICK_RESIDENCY_STRICT` | config `[residency] strict` (off) | Refuse to boot when the declared data region is missing or outside the allowed set (`require_residency_or_die`). Off = informational only. |
-| `MAVERICK_DATA_REGION` | config `[residency] region` | The deployment's declared data region (ISO code or group, e.g. `DE`, `EU`). |
-| `MAVERICK_RESIDENCY_ALLOWED` | config `[residency] allowed_regions` | Comma-separated permitted storage regions; `EU`/`EEA` groups expand to members. Empty = region unconstrained. |
 | `MAVERICK_SIEM_DEST` | config `[audit] siem_dest` | Destination for `maverick audit forward`: `tcp://host:port` / `udp://host:port` (syslog) or `http(s)://host/path` (Splunk HEC `/raw`, etc.). |
 | `MAVERICK_SIEM_TOKEN` | — | Bearer sent on HTTP(S) audit forwarding (read via the secret provider). |
 
@@ -292,7 +283,6 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_LOG_TURNS` | unset | Set to log full LLM turns (verbose). |
 | `MAVERICK_OTEL_EXPORTER` | unset (off) | Set to enable the OpenTelemetry trace exporter. |
 | `MAVERICK_OTEL_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP collector endpoint. |
-| `MAVERICK_RESIDENCY_REGION` | config `[residency] region` (unset) | Declare a data-residency requirement (e.g. `eu`). `maverick doctor` then warns about any residency-sensitive feature still defaulting to a US region (`AWS_REGION`→us-east-1, `VERTEX_LOCATION`→us-central1). No effect unset. |
 | `MAVERICK_PROMETHEUS_PORT` | unset (off) | Set a port to expose Prometheus metrics. |
 | `MAVERICK_PROMETHEUS_ADDR` | `127.0.0.1` | Bind address for the Prometheus metrics server. |
 | `MAVERICK_ALERTS` | config `[alerts] enabled` (off) | Enable OPERATIONAL alerts — page the operator (via the configured notification backends) on infrastructure events like a killswitch trip or a deployment-wide provider cost-cap exhaustion. Distinct from agent-task notifications. |

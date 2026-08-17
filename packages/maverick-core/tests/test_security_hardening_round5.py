@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from click.testing import CliRunner
-from maverick.cli import main
 
 
 @pytest.fixture(autouse=True)
@@ -25,14 +23,6 @@ def _isolate(monkeypatch, tmp_path):
 
 # ---- tenant quota: non-finite caps -----------------------------------------
 
-@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
-def test_tenant_quota_rejects_non_finite(bad):
-    from maverick.tenant import registry as tr
-    tr.create_tenant("acme")
-    res = CliRunner().invoke(main, ["tenant", "quota", "acme", "--", bad])
-    assert res.exit_code == 2, res.output
-    assert "finite" in res.output
-    assert tr.get_tenant("acme").max_daily_dollars == 0.0  # unchanged
 
 
 # ---- audit redaction: depth-64 guard ---------------------------------------
@@ -89,20 +79,6 @@ def test_config_lint_accepts_huge_integer_cap_without_crashing():
 
 # ---- CLI start refuses a suspended tenant ----------------------------------
 
-def test_cli_start_refuses_suspended_tenant(monkeypatch):
-    # The server path enforced assert_tenant_active; the CLI start path did not,
-    # so a suspended tenant ran goals freely (user-testing finding). The guard
-    # fires before goal creation / the kernel, so no provider key is needed.
-    from maverick.tenant import registry as tr
-    tr.create_tenant("acme")
-    tr.suspend_tenant("acme")
-    monkeypatch.setenv("MAVERICK_TENANT", "acme")
-    # A present (not necessarily valid) key gets past start's provider preflight
-    # so execution reaches the tenant-active guard.
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-dummy")
-    res = CliRunner().invoke(main, ["start", "do something", "--sandbox", "local"])
-    assert res.exit_code == 3, res.output
-    assert "suspended" in res.output.lower()
 
 
 # ---- MCP tool shadow -------------------------------------------------------

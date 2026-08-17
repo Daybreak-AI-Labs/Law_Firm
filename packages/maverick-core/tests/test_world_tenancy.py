@@ -10,7 +10,6 @@ fixture, so these are hermetic (no real ``~/.maverick`` touched, no network).
 """
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,47 +178,6 @@ def _build_server(monkeypatch):
     return server_mod, srv, shared
 
 
-def test_handle_message_routes_goal_to_user_tenant(monkeypatch):
-    monkeypatch.setenv("MAVERICK_TENANT_BY_USER", "1")
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    server_mod, srv, shared = _build_server(monkeypatch)
-
-    captured = {}
-
-    async def _fake_dispatch(goal_id, **kwargs):
-        # The signed submission is created while the per-tenant context is
-        # active, and its goal/result remain in that isolated world.
-        tenant_world = world_for_tenant("tg:X")
-        captured["world"] = tenant_world
-        captured["goal_id"] = goal_id
-        captured.update(kwargs)
-        tenant_world.set_goal_status(goal_id, "done", result="done")
-        return "done"
-
-    monkeypatch.setattr(
-        "maverick.runner.run_goal_in_background_async", _fake_dispatch,
-    )
-
-    msg = _Msg(text="hello from X", channel="tg", user_id="X")
-    out = asyncio.run(srv._handle_message(msg))
-    assert "done" in out  # disclosure may be prepended on the first turn
-
-    tenant_world = world_for_tenant("tg:X")
-    # The goal landed in user X's tenant world...
-    assert captured["world"] is tenant_world
-    assert tenant_world.get_goal(captured["goal_id"]) is not None
-    assert tenant_world.get_goal(captured["goal_id"]).title == "hello from X"
-    # ...and the conversation + user turn did too.
-    convs = tenant_world.list_conversations()
-    assert [(c.channel, c.user_id) for c in convs] == [("tg", "X")]
-    turns = tenant_world.recent_turns(convs[0].id)
-    assert [(t.role, t.content) for t in turns] == [("user", "hello from X")]
-
-    # The shared default world is untouched -- nothing leaked there.
-    assert shared.list_goals() == []
-    assert shared.list_conversations() == []
-
-
 def test_world_for_tenant_rejects_overlong_tenant(monkeypatch):
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
 
@@ -269,103 +227,7 @@ def test_evicted_cache_owned_world_is_not_closed_by_borrower(monkeypatch):
         first.close()
 
 
-def test_handle_message_rejects_tenant_resolution_failure(monkeypatch):
-    monkeypatch.setenv("MAVERICK_TENANT_BY_USER", "1")
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    server_mod, srv, shared = _build_server(monkeypatch)
-
-    async def _dispatch_must_not_run(*args, **kwargs):
-        raise AssertionError("dispatch must not run without an isolated tenant")
-
-    monkeypatch.setattr(
-        "maverick.runner.run_goal_in_background_async", _dispatch_must_not_run,
-    )
-
-    msg = _Msg(text="do not fall back", channel="tg", user_id="X" * 201)
-    out = asyncio.run(srv._handle_message(msg))
-
-    assert "Tenant isolation is unavailable" in out
-    assert shared.list_goals() == []
-    assert shared.list_conversations() == []
 
 
-def test_handle_message_uses_shared_world_when_tenancy_off(monkeypatch):
-    monkeypatch.delenv("MAVERICK_TENANT_BY_USER", raising=False)
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    server_mod, srv, shared = _build_server(monkeypatch)
-
-    captured = {}
-
-    async def _fake_dispatch(goal_id, **kwargs):
-        captured["world"] = shared
-        captured.update(kwargs)
-        shared.set_goal_status(goal_id, "done", result="ok")
-        return "done"
-
-    monkeypatch.setattr(
-        "maverick.runner.run_goal_in_background_async", _fake_dispatch,
-    )
-
-    msg = _Msg(text="hi", channel="tg", user_id="Y")
-    asyncio.run(srv._handle_message(msg))
-
-    # Tenancy off: the message-scoped world IS the server's shared self.world
-    # instance (``world is self.world``), and the goal lives there -- legacy
-    # single-tenant behaviour, unchanged, no second connection opened.
-    assert captured["world"] is shared
-    assert len(shared.list_goals()) == 1
-    # No per-tenant dir was created.
-    assert not (maverick_home() / "tenants").exists()
 
 
-# --- CLI routing (the actual wiring) ---------------------------------------
-# The channel server isolates world.db per tenant via world_for_tenant; the CLI
-# must too, or `MAVERICK_TENANT=acme maverick start ...` would pool one
-# business's run history into the shared world.db. The `--db` default resolves
-# to Workspace.current().db_path (== the legacy path when no tenant is set).
-
-def test_cli_defaults_world_db_to_active_tenant(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.setenv("MAVERICK_TENANT", "acme")
-
-    # `status` opens the world at the resolved default db (no --db passed).
-    result = CliRunner().invoke(main, ["status"])
-    assert result.exit_code == 0, result.output
-
-    # The run history landed in acme's OWN world.db, not the shared default.
-    assert (maverick_home() / "tenants" / "acme" / "world.db").exists()
-    assert not (maverick_home() / "world.db").exists()
-
-
-def test_cli_no_tenant_uses_legacy_world_db(monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-
-    result = CliRunner().invoke(main, ["status"])
-    assert result.exit_code == 0, result.output
-
-    # Single-tenant unchanged: the legacy shared world.db, no per-tenant dir.
-    assert (maverick_home() / "world.db").exists()
-    assert not (maverick_home() / "tenants").exists()
-
-
-def test_cli_explicit_db_overrides_tenant(tmp_path, monkeypatch):
-    from click.testing import CliRunner
-    from maverick.cli import main
-
-    monkeypatch.delenv("MAVERICK_HOME", raising=False)
-    monkeypatch.setenv("MAVERICK_TENANT", "acme")
-    explicit = tmp_path / "explicit" / "world.db"
-
-    result = CliRunner().invoke(main, ["--db", str(explicit), "status"])
-    assert result.exit_code == 0, result.output
-
-    # An explicit --db always wins over the tenant default.
-    assert explicit.exists()
-    assert not (maverick_home() / "tenants" / "acme" / "world.db").exists()

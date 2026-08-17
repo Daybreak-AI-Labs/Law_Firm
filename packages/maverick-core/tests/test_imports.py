@@ -13,7 +13,6 @@ def test_top_level_imports():
     import maverick.orchestrator  # noqa: F401
     import maverick.sandbox  # noqa: F401
     import maverick.sandbox.local  # noqa: F401
-    import maverick.server  # noqa: F401
     import maverick.skills  # noqa: F401
     import maverick.swarm  # noqa: F401
     import maverick.tools  # noqa: F401
