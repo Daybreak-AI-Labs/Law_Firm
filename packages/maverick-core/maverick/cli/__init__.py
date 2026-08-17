@@ -456,6 +456,95 @@ def _install_config_from_file(src: str) -> None:
 
 
 
+def _install_config_from_file(src: str) -> None:
+    """Headless provisioning: validate SRC and install it as config.toml (0600)."""
+    from pathlib import Path as _P
+
+    from ..config import config_path
+    src_path = _P(src).expanduser()
+    if not src_path.is_file():
+        raise click.ClickException(f"no such config file: {src}")
+    try:
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # 3.10
+            import tomli as tomllib  # type: ignore
+        with open(src_path, "rb") as f:
+            cfg = tomllib.load(f)
+    except Exception as e:
+        raise click.ClickException(f"invalid TOML in {src}: {e}") from e
+    # Surface unknown-section / type problems, but don't block (operators may use
+    # newer keys than this build knows).
+    try:
+        from ..config_lint import lint_config
+        for finding in lint_config(cfg):
+            click.echo(click.style(f"  ! {finding.section}: {finding.message}",
+                                   fg="yellow"), err=True)
+    except Exception:
+        pass
+    dst = config_path()
+    from ..file_lock import (
+        atomic_write_bytes,
+        ensure_private_directory,
+        ensure_private_file,
+    )
+
+    # A provisioned config may contain inline provider keys. Tighten the
+    # directory with a protected Windows DACL and publish the bytes from a
+    # create-time protected temp; POSIX mode bits passed to os.open do not
+    # provide the equivalent Windows custody boundary.
+    ensure_private_directory(dst.parent)
+    data = src_path.read_bytes()
+    try:
+        installed = dst.read_bytes() if dst.is_file() else b""
+        unchanged = (
+            dst.is_file()
+            and installed.replace(b"\r\n", b"\n")
+            == data.replace(b"\r\n", b"\n")
+        )
+    except OSError:
+        unchanged = False
+    if unchanged:
+        # A retried deployment should be a true no-op: do not rotate the inode,
+        # mtime, or watcher state when the same logical TOML is installed,
+        # including when a cross-platform checkout changed line endings.
+        # Still repair/verify custody in case an older release left wide perms.
+        ensure_private_file(dst, 0o600)
+        click.echo(click.style(f"config unchanged -> {dst} (0600)", fg="green"))
+        return
+    atomic_write_bytes(dst, data, mode=0o600)
+    click.echo(click.style(f"installed config -> {dst} (0600)", fg="green"))
+
+
+@main.command()
+@click.option("--fast", is_flag=True,
+              help="Skip every prompt; use recommended defaults.")
+@click.option("--resume", is_flag=True,
+              help="Resume from the last unanswered wizard question.")
+@click.option("--from-file", "from_file", default=None,
+              help="Headless: install this config.toml (validated) — no prompts.")
+def init(fast: bool, resume: bool, from_file: str | None) -> None:
+    """Run the interactive setup wizard (or --from-file for headless provisioning)."""
+    if from_file:
+        _install_config_from_file(from_file)
+        return
+    try:
+        from maverick_installer.wizard import run as run_wizard
+    except ImportError:
+        # The wizard must come from the same reviewed source checkout as the
+        # kernel. The first-party public namespaces are not yet reserved, so
+        # suggesting an index lookup here would create a dependency-confusion
+        # path from an otherwise trusted local install.
+        click.echo(
+            "Install the installer component from the same reviewed Maverick "
+            "checkout; public-index lookup is disabled. See "
+            "docs/getting-started.md.",
+            err=True,
+        )
+        sys.exit(2)
+    sys.exit(run_wizard(fast=fast, resume=resume))
+
+
 @main.command()
 def doctor() -> None:
     """Diagnose your Maverick installation."""

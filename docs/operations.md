@@ -42,7 +42,7 @@ curl -sS http://127.0.0.1:8765/metrics | grep maverick_concurrent_goals
 ```
 
 If `/healthz` says `db: fail: ... database is locked`, a long-running
-write transaction is blocking. Restart `maverick serve` to release.
+write transaction is blocking. Restart the maverick service to release.
 
 ## Process died
 
@@ -66,8 +66,8 @@ and burning API credits.
 
 ## Goals stuck in `active` after a crash
 
-This is now handled automatically: on every `maverick serve` and
-`maverick dashboard` startup, `reclaim_orphan_goals()` flips rows
+This is now handled automatically: on every `maverick dashboard`
+startup, `reclaim_orphan_goals()` flips rows
 from `active`/`pending` to `blocked` with result
 `[process restarted mid-run]`.
 
@@ -149,49 +149,10 @@ learned-skills/, *_stats.json). Operational handles:
 - **Roll back**: `maverick dream --list-snapshots` then
   `maverick dream --rollback latest|<name>` restores all learned stores
   wholesale (including removing skills learned after the snapshot).
-- **Detect regressions**: `maverick hindsight --strict` exits non-zero if the
-  forgetting loops cost coverage on past goals — suitable as a CI/cron gate.
 - **Audit**: every dream cycle writes a `learning_update` row to the signed
   audit log; `maverick audit verify` covers learned state like tool calls.
 - **Tenant note**: with an active tenant, all learned stores live under that
   tenant's data dir — back up per tenant.
-
-## Retention / garbage collection
-
-Conversations + goal_events accumulate forever by default. Manual:
-
-```sh
-maverick gc --days 90 --events-days 30
-```
-
-Scheduled (systemd timer, recommended on VPS):
-
-```ini
-# /etc/systemd/system/maverick-gc.timer
-[Unit]
-Description=Maverick weekly garbage collection
-
-[Timer]
-OnCalendar=weekly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```ini
-# /etc/systemd/system/maverick-gc.service
-[Unit]
-Description=Maverick GC
-After=maverick.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/maverick gc --yes
-User=maverick
-```
-
-`systemctl enable --now maverick-gc.timer`.
 
 ## Rotating API keys without downtime
 
@@ -212,7 +173,7 @@ Plain text by default. Set `MAVERICK_LOG_FORMAT=json` for structured
 output suitable for Loki / CloudWatch / Datadog:
 
 ```sh
-MAVERICK_LOG_FORMAT=json MAVERICK_LOG_LEVEL=DEBUG maverick serve
+MAVERICK_LOG_FORMAT=json MAVERICK_LOG_LEVEL=DEBUG maverick dashboard
 ```
 
 Every log line emitted during a goal run carries `goal_id` and

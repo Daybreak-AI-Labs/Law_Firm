@@ -26,8 +26,8 @@ at_rest = false
   (see the security and compliance overview (`docs/security-hardening.md`)).
 
 Existing installs are safe to leave on: reads are plaintext-tolerant, so rows
-written before it was enabled are returned unchanged until rewritten (run
-`maverick encryption migrate` to seal them eagerly).
+written before it was enabled are returned unchanged until rewritten — and are
+sealed as they are rewritten.
 
 ## What gets sealed
 
@@ -48,30 +48,6 @@ application behaviour is unchanged. A value written **before** encryption was en
 carries no seal marker and is read back as-is, so enabling encryption is a gradual
 migration, not a flag-day re-encrypt.
 
-## Seal existing data
-
-To seal data written *before* encryption was enabled (instead of waiting for it
-to be rewritten), run:
-
-```
-maverick encryption migrate           # seal existing turns/facts/messages/questions
-maverick encryption migrate --dry-run # report how much would be sealed
-maverick encryption migrate --backup  # opt in to a plaintext rollback snapshot
-```
-
-It is **idempotent** (already-sealed values are skipped, so it is safe to re-run)
-and requires at-rest encryption to be enabled first.
-
-**Backups are opt-in:** the reseal happens *in place* and shreds the
-pre-encryption plaintext residue (`secure_delete` + VACUUM). By default the
-command does **not** leave a plaintext rollback copy on disk. If your rollback
-plan requires one, pass `--backup` to write a transactionally-consistent snapshot
-of the DB next to it — `world.db.pre-encrypt-<timestamp>.bak`, mode `0600`. That
-snapshot is a **plaintext** copy (it predates the seal), so store and delete it
-according to your data-retention policy once you have verified the migration.
-The backup is skipped on `--dry-run` and when there is nothing left to seal (so
-idempotent re-runs don't litter copies).
-
 ## Key management
 
 Key resolution (first match wins):
@@ -87,11 +63,9 @@ unavailable, a write *errors* rather than silently storing plaintext.
 **Back up the key — losing it loses the data.** The key file is the only way to
 read data sealed under it; if it is lost, that data is unrecoverable. At-rest is
 on by default, so the key auto-generates on first use (with a one-time warning).
-Escrow it immediately into a secrets manager / offline vault:
-
-```
-maverick encryption backup-key --to /secure/escrow   # copies at_rest.key + keyring keys (0600)
-```
+Escrow it immediately into a secrets manager / offline vault: copy
+`~/.maverick/keys/at_rest.key` (and the other keyring keys under
+`~/.maverick/keys/`) to the escrow location, preserving the `0600` mode.
 
 Store the copies at least as well-protected as the originals, and not next to the
 data they unlock. Operators who inject `MAVERICK_ENCRYPTION_KEY` already hold the
@@ -126,4 +100,5 @@ key matches still work.
 
 ## Verify
 
-`maverick compliance` reports the at-rest control under **GDPR Art. 32**.
+The platform's compliance control map reports the at-rest control under
+**GDPR Art. 32**.

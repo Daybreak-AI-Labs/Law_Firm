@@ -30,54 +30,11 @@ byte-for-byte equivalent (ignoring platform line endings), the installer
 verifies their private custody and leaves their inode, modification time, and
 watcher state unchanged. A changed file is still backed up before replacement.
 
-`init`, `preflight`, `doctor`, `version`, and `config-lint` do not resolve or
+`init`, `doctor`, `version`, and `config-lint` do not resolve or
 open the world database. They therefore remain usable when a malformed client
 binding or config file is the problem you need to repair.
 
-## 2. Run the offline deployment gate
-
-For a normal agent run:
-
-```bash
-maverick preflight
-```
-
-For the dashboard, AI Evidence-Ready Gateway, evidence graph, and Model Risk &
-AI Assurance Officer:
-
-```bash
-maverick preflight --profile cockpit
-```
-
-The cockpit profile also requires an explicit company boundary. Set
-`MAVERICK_TENANT` for a selected tenant, or configure `[client] id` for a
-single-company deployment. The gateway never falls back to unscoped evidence
-storage.
-
-For CI, an installer, or an infrastructure pipeline:
-
-```bash
-maverick preflight --profile cockpit --json
-```
-
-The command has stable check ordering and no generated timestamp. It makes no
-network request and creates no runtime state. It exits non-zero when the
-selected profile has a blocker. Each blocker carries one copyable remediation.
-The JSON schema is `maverick.operator-preflight.v1`.
-
-Offline preflight verifies configuration, routed provider dependencies, local
-storage permissions, package presence, and the selected feature dependency
-chain. It cannot prove that a provider API, Postgres server, proxy, or container
-daemon is reachable.
-
-The cockpit profile also performs a secret-free, read-only gateway custody and
-integrity check. It does not create keys, directories, lock files, indexes, or
-ledger state. A fresh writable parent is first-use attention; an unwritable
-parent is a blocker. If receipt or packet ledgers already exist, their signed
-state, physical rows, read-only index, and public trust registry must verify.
-Preflight reports corruption rather than repairing it.
-
-## 3. Verify live dependencies
+## 2. Verify live dependencies
 
 ```bash
 maverick doctor

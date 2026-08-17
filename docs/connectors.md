@@ -2183,7 +2183,6 @@ operations.
 | Rentvine property management | `rentvine` | `RENTVINE_BASE_URL` *(url)*, `RENTVINE_TOKEN` |
 | Reonomy commercial property data | `reonomy` | `REONOMY_BASE_URL` *(url)*, `REONOMY_TOKEN` |
 | Replicant AI contact center | `replicant` | `REPLICANT_BASE_URL` *(url)*, `REPLICANT_TOKEN` |
-| Replicate | `replicate` | `REPLICATE_API_TOKEN` |
 | Replicate REST API | `replicate_ai` | `REPLICATE_AI_BASE_URL` *(url)*, `REPLICATE_AI_TOKEN` |
 | Replicon time/expense tracking | `replicon` | `REPLICON_BASE_URL` *(url)*, `REPLICON_TOKEN` |
 | Replit REST/GraphQL API | `replit` | `REPLIT_BASE_URL` *(url)*, `REPLIT_TOKEN` |
@@ -2812,7 +2811,6 @@ operations.
 | Verizon Connect fleet-management REST API | `verizon_connect` | `VERIZON_CONNECT_BASE_URL` *(url)*, `VERIZON_CONNECT_TOKEN` |
 | Verloop.io chatbot REST API | `verloop` | `VERLOOP_BASE_URL` *(url)*, `VERLOOP_TOKEN` |
 | Vertafore (AMS360) insurance REST API | `vertafore` | `VERTAFORE_BASE_URL` *(url)*, `VERTAFORE_TOKEN` |
-| Google Vertex AI | `vertex` | `VERTEX_PROJECT` *(url)*, `VERTEX_LOCATION` *(url)*, `VERTEX_ACCESS_TOKEN` |
 | Vertex O Series tax REST (calculation/returns; distinct from the Vertex AI tool) | `vertex_tax` | `VERTEX_TAX_BASE_URL` *(url)*, `VERTEX_TAX_TOKEN` |
 | Vertica REST API (management/query) | `vertica` | `VERTICA_BASE_URL` *(url)*, `VERTICA_TOKEN` |
 | Vespa.ai REST API (search/vector engine) | `vespa_ai` | `VESPA_AI_BASE_URL` *(url)*, `VESPA_AI_TOKEN` |

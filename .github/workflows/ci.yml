@@ -455,7 +455,7 @@ jobs:
             --core-extra release-runtime
           "$SBOM_ENV/bin/python" -I -m pip check
           "$SBOM_ENV/bin/python" -I scripts/verify_constraint_closure.py
-          "$SBOM_ENV/bin/maverick" release-runtime-check
+          "$SBOM_ENV/bin/python" -c "from maverick.providers import verify_release_runtime; verify_release_runtime()"
           cyclonedx-py environment "$SBOM_ENV/bin/python" \
             --pyproject packages/maverick-core/pyproject.toml \
             -o sbom.release-runtime.cyclonedx.json

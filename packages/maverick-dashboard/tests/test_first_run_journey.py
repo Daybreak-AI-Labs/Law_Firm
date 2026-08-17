@@ -37,12 +37,17 @@ def test_headless_first_run_journey(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(name, raising=False)
 
+    from click.testing import CliRunner
     from maverick import config, providers, world_model
+    from maverick.cli import main
 
-    # The reviewed config is installed by copying it into place (the operator
-    # installs config out of band; the CLI installer surface was removed).
-    installed.parent.mkdir(parents=True, exist_ok=True)
-    installed.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    config.reset_config_cache()
+    installed_result = CliRunner().invoke(
+        main,
+        ["init", "--from-file", str(source)],
+    )
+    assert installed_result.exit_code == 0, installed_result.output
+    assert "installed config" in installed_result.output
     config.reset_config_cache()
     monkeypatch.setattr(providers, "missing_sdks", lambda _specs: [])
 

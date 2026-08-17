@@ -111,12 +111,8 @@ keep_last = 5
 # language bucket from each client's User-Agent (typescript/go/rust/c#/java/
 # python) into a local counts file — no request content, no identifiers,
 # nothing uploaded. Feeds the language-bindings decision gate.
-# The wizard asks for consent in its Analytics step (`maverick init`).
+# The installer wizard asks for consent in its Analytics step.
 mcp_client_language = false
-
-[channels.telegram]
-enabled   = false
-bot_token = "${TELEGRAM_BOT_TOKEN}"
 
 [dashboard]
 # Optional bearer token. Required for VPS deploys reachable from the open

@@ -5,7 +5,7 @@
 #            -v $HOME/.maverick:/home/maverick/.maverick \
 #            -v $HOME/maverick-workspace:/workspace \
 #            -e ANTHROPIC_API_KEY \
-#            maverick:latest start "..."
+#            maverick:latest dashboard
 #
 # Runs as the unprivileged "maverick" user (uid/gid 1000), not root.
 #
@@ -71,7 +71,7 @@ RUN python -m pip install --upgrade 'pip==26.1.2' \
         --requirement /wheelhouse/cohort-requirements.txt \
     && python -m pip check \
     && python -c "import maverick, maverick_shield, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer" \
-    && maverick release-runtime-check \
+    && python -c "from maverick.providers import verify_release_runtime; verify_release_runtime()" \
     && rm -rf /wheelhouse /tmp/requirements/ci.txt
 
 # Run as an unprivileged user. Enterprise container policies (and most

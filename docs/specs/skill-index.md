@@ -1,8 +1,8 @@
 # Skill marketplace index (spec)
 
 A static JSON manifest hosted at `https://skills.maverick.dev/index.json`
-that the `maverick skills search` / `maverick skills install` flow
-reads. Federated: users can configure additional index URLs in
+that the skill search / install client flow reads (originally a CLI flow;
+skills now install through the dashboard). Federated: users can configure additional index URLs in
 `~/.maverick/config.toml` under `[skills.indexes]`.
 
 This doc is the **schema spec**. Tooling on the publisher side and the
@@ -71,14 +71,14 @@ Each skill entry MUST have:
 
 ## Client behavior
 
-`maverick skills search <q>`:
+Search (`<q>`):
 
 1. Fetch each configured index URL (default: `skills.maverick.dev/index.json`).
 2. Filter by substring match on `name`, `summary`, `tags`, `triggers`.
 3. Sort: trusted publisher first, then by stars desc, then install_count desc.
 4. Display: `name  v<version>  ✓<trusted-badge>  <summary>  (<stars>★)`
 
-`maverick skills install <name>[@<version>]`:
+Install (`<name>[@<version>]`):
 
 1. Resolve the entry from the index.
 2. Verify `signature` if present and `require_signed = true`.

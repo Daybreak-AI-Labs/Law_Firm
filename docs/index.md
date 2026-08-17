@@ -42,13 +42,6 @@ Private software for one firm, proprietary and not for distribution (see
   (property-fuzzed up to 5,000 iterations),
   plus hostile-argument fuzzing of every connector and tool.
   Email, Matrix, WhatsApp, SMS, iMessage — one config, all channels.
-- **Build an agent from a demonstration**: record a reviewed example of the job,
-  then synthesize the agent that does it — `maverick learn-demo <file>`
-  ingests that transcript, induces a profile through the same
-  intake clamp + review gate, and provisions the skills/tools it needs.
-  The factory also improves itself: `maverick factory-learn` mines
-  provisioning/approval gaps back into future pack generation
-  (off by default, never widens an envelope).
 
 ## Quick start
 
@@ -58,7 +51,7 @@ git checkout --detach <reviewed-full-40-character-commit-sha>
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
 maverick init                # interactive wizard (3 minutes)
-maverick start "review my latest commit"
+maverick dashboard           # web UI at http://127.0.0.1:8765
 ```
 
 Or skip the prompts:
@@ -67,13 +60,9 @@ Or skip the prompts:
 maverick init --fast         # defaults: Anthropic + local sandbox + $5 cap
 ```
 
-## Watch it work
-
-```bash
-maverick monitor             # live plan-tree TUI in another terminal
-maverick logs                # audit log
-maverick cost                # spend summary
-```
+Queue your first goal from the dashboard; `maverick worker` executes queued
+goals in the background. The dashboard streams each goal's plan tree live and
+shows the audit log and spend.
 
 ## Licensing & access
 

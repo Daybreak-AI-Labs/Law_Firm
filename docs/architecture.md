@@ -54,7 +54,7 @@ spine:
 
 1. **Describe** — conversational intake interviews the operator and proposes a
    draft (`run_intake`); or
-2. **Demonstrate** — `maverick learn-demo <file>` consumes a reviewed record of
+2. **Demonstrate** — the demonstration pipeline consumes a reviewed record of
    a person doing the job and induces a draft from that transcript (`demonstration.py`:
    `parse_demonstration` ingests JSONL or prefixed text, secret-redacted and
    input-bounded at the door; `induce_profile` reuses the intake pipeline

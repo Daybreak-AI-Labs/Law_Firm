@@ -85,10 +85,7 @@ pydantic==2.13.4
 pydantic-core==2.46.4
 pygments==2.20.0
 pyjwt==2.13.0
-pyinstaller==6.21.0
-pyinstaller-hooks-contrib==2026.6
 pywhispercpp==1.5.0
-pywin32-ctypes==0.2.3
 pyparsing==3.3.2
 pyproject-hooks==1.2.0
 pypdf==6.15.0

@@ -72,32 +72,6 @@ def _repository_files(
                 yield Path(directory) / candidate
 
 
-def test_composite_action_installs_first_party_packages_from_its_checkout():
-    text = _read("deploy/github-action/action.yml")
-
-    assert "GITHUB_ACTION_PATH" in text
-    assert "scripts/install_release_cohort.py" in text
-    assert "--source-root" in text
-    assert "--core-extra release-runtime" in text
-    assert "release-cohort.toml" in text
-
-    assert not re.search(
-        r"python\s+-m\s+pip\s+install\s+['\"]?maverick-agent",
-        text,
-    )
-
-
-def test_reusable_pr_workflow_requires_immutable_runtime_source():
-    text = _read(".github/workflows/agent-on-pr.yml")
-
-    assert "maverick_ref:" in text
-    assert "Full 40-character commit SHA" in text
-    assert "repository: Daybreak-AI-Labs/Law_Firm" in text
-    assert "persist-credentials: false" in text
-    assert '"$source_root/packages/maverick-core[all]"' in text
-    assert "pip install 'maverick-agent[all]'" not in text
-
-
 def test_vps_installer_requires_a_clean_immutable_checkout():
     text = _read("deploy/vps/install.sh")
 
@@ -161,7 +135,6 @@ def test_go_java_and_standalone_demo_security_floors_are_explicit():
 
 def test_external_github_actions_are_pinned_to_full_commits():
     files = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
-    files.append(REPO_ROOT / "deploy" / "github-action" / "action.yml")
 
     mutable: list[str] = []
     for path in files:

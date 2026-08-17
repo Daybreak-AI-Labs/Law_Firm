@@ -119,7 +119,7 @@ or unknown caller is refused before any work is done.
 | Threat                                       | Mitigation                                                              |
 |----------------------------------------------|--------------------------------------------------------------------------|
 | Audit log entries get edited or deleted after the fact | Daily-rotated NDJSON, chmod 600. Audit-log signing (Q3 26) adds an Ed25519 chain. |
-| Skill/plugin code is modified on disk between installs | Hash-pinned via `maverick skills install`. Signed skills (Q2 26).        |
+| Skill/plugin code is modified on disk between installs | Hash-pinned on catalog install (sha256 verified before write). Signed skills (Q2 26). |
 | Browser session cookie is replayed by a third process | chmod 600 + 0o700 parent dir. Encrypted at rest (Q1 27).                 |
 | World model gets corrupted mid-write       | SQLite WAL mode + autocheckpoint + `PRAGMA wal_checkpoint(TRUNCATE)` on close. |
 

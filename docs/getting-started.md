@@ -35,21 +35,22 @@ maverick init
 
 ```bash
 maverick init
-maverick preflight
 maverick doctor
 ```
 
 The wizard takes ~2 minutes. It writes `~/.maverick/config.toml` and `~/.maverick/.env`.
 
-Then:
+Then start the dashboard and queue your first goal from the web UI:
 
 ```bash
-maverick start "Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"
+maverick dashboard
 ```
+
+Open `http://127.0.0.1:8765` and create a goal, e.g. *"Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"*. Background execution is `maverick worker`.
 
 ## Watch the swarm decompose
 
-Run `maverick monitor` in a second terminal. The orchestrator plans the goal, then spawns specialist sub-agents that work in parallel — here a researcher pins down the API, a coder writes the tool, and a verifier runs it:
+Open the goal's page in the dashboard — it streams live. The orchestrator plans the goal, then spawns specialist sub-agents that work in parallel — here a researcher pins down the API, a coder writes the tool, and a verifier runs it:
 
 ```
 Goal #1 active  2m elapsed
@@ -71,67 +72,18 @@ Recent activity
 Cumulative spend on this DB: $0.21
 ```
 
-When done:
-
-```bash
-maverick status      # what's currently active or blocked
-maverick skills      # what the swarm distilled from this run
-maverick facts       # what it learned about you
-```
+When done, the dashboard's Goals, Skills, and Facts pages show what's
+currently active or blocked, what the swarm distilled from the run, and what
+it learned about you.
 
 ## Pausing / resuming
 
-If the swarm needs something only you can answer, it pauses and queues a question:
-
-```bash
-maverick status
-# shows: open questions: #3 (goal 1): Which dates are you traveling?
-
-maverick answer 3 "May 15-29"
-maverick resume
-```
+If the swarm needs something only you can answer, it pauses and queues a
+question — the goal's dashboard page shows the open question (e.g. *"Which
+dates are you traveling?"*) and takes your answer inline; the goal resumes
+from there.
 
 Goals survive restarts. You can shut your laptop and come back tomorrow.
-
-## Building your own specialist from a watched task
-
-You don't have to describe a job in words — you can show it. Capture an ordered
-record of someone doing the work (the actions they took and any narration of why)
-as JSONL or simple prefixed text, then hand the file to Maverick:
-
-```
-ACTION[gmail]: send the morning digest -> ops@acme.com
-NOTE: only the top 5 stories, with one-line summaries
-SEE: digest looks right, ops confirmed receipt
-```
-
-```bash
-maverick learn-demo demo.txt
-```
-
-This parses the demonstration, induces a draft specialist, shows you the derived
-workflow, and waits for your approval before saving. Secrets are redacted at the
-door, and the draft inherits the same capability clamp and persona scan a
-described pack gets — nothing activates without your yes. Useful flags:
-
-```bash
-maverick learn-demo demo.txt --name "Morning Digest" --no-llm --yes
-```
-
-`--no-llm` mirrors the observed steps deterministically (tools = what the person
-used); drop it to let the model propose from the transcript.
-
-The same agent-factory flow runs when you build a pack conversationally:
-
-```bash
-maverick onboard
-```
-
-On approval, `onboard` now provisions the pack — it installs the catalog skills
-its workflow needs and synthesizes any declared tools that aren't built in, so a
-freshly approved specialist is equipped to do its job from the first run. (This
-step honors the `[self_learning]` / `provision_packs` config and never widens the
-pack's clamped envelope.)
 
 ## Voice input (built-in, offline)
 
@@ -139,13 +91,7 @@ The dashboard's mic button and the `transcribe_audio` tool work with no
 provider key: the local Whisper engine ships with the dashboard package, and
 the checksum-verified model is fetched automatically when the dashboard
 first starts (skipped on egress-locked deployments, or with
-`[voice] auto_fetch_model = false`). The CLI covers the details:
-
-```bash
-maverick voice setup    # fetch the checksum-verified model (~148 MB)
-maverick voice status   # see which speech-to-text backends are usable
-maverick voice transcribe clip.wav   # smoke-test the pipeline
-```
+`[voice] auto_fetch_model = false`).
 
 Prefer a system engine instead? A `whisper.cpp` binary on PATH (`brew
 install whisper-cpp`) or faster-whisper both plug into the same chain. Set
@@ -176,9 +122,6 @@ Or edit `~/.maverick/config.toml` directly. The `[models]` section maps each age
 
 All local. Nothing is uploaded except your prompts to the cloud LLM you chose.
 
-Once you have a few runs behind you, the learning surface is four commands:
-`maverick dream` (consolidate experience), `maverick hindsight` (did learning
-help or regress?), `maverick proof` (deliverables, cost avoided, ROI), and
-`maverick domains-lint` (audit the 2,020-agent specialist catalog), plus
-`maverick domains-audit` (governance posture: what each agent can reach, denies,
-and refuses) and `maverick domains-eval --check` (behavioral golden cases).
+Once you have a few runs behind you, the learning surface is two commands:
+`maverick dream` (consolidate experience) and `maverick domains-lint` (audit
+the specialist pack catalog).
