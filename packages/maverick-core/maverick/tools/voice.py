@@ -6,8 +6,8 @@ Speech-to-text backends (tried in order):
   3. local faster-whisper if installed
   4. local pywhispercpp (whisper.cpp wheels; a maverick-dashboard dependency,
      so dashboard installs transcribe OUT OF THE BOX) — model file managed by
-     ``maverick.voice_models`` (auto-fetched by default; ``maverick voice
-     setup`` prefetches)
+     ``maverick.voice_models`` (auto-fetched by default;
+     ``maverick.voice_models.download_model()`` prefetches)
   5. local whisper.cpp CLI binary + the same GGML model (for installs that
      prefer a system binary over the wheel)
 
@@ -195,8 +195,9 @@ def _whisper_pywhispercpp(audio_path: Path, language: str | None) -> str | None:
     from ..voice_models import locate_model
     model_file = locate_model()
     if model_file is None:
-        log.warning("pywhispercpp installed but no GGML model; "
-                    "run `maverick voice setup` (or enable auto_fetch_model)")
+        log.warning("pywhispercpp installed but no GGML model; enable "
+                    "`[voice] auto_fetch_model` (or prefetch via "
+                    "maverick.voice_models.download_model())")
         return None
     # pywhispercpp decodes WAV itself but needs ffmpeg for webm/ogg/mp3; the
     # dashboard mic uploads 16 kHz WAV (client-side encode), other callers
@@ -302,8 +303,9 @@ def _whisper_cpp(audio_path: Path, language: str | None) -> str | None:
     model = locate_model()
     if model is None:
         log.warning(
-            "whisper.cpp found (%s) but no GGML model installed; "
-            "run `maverick voice setup`", binary)
+            "whisper.cpp found (%s) but no GGML model installed; enable "
+            "`[voice] auto_fetch_model` or prefetch via "
+            "maverick.voice_models.download_model()", binary)
         return None
     wav = _to_wav16k(audio_path)
     if wav is None:
@@ -440,15 +442,15 @@ def _run_transcribe(args: dict[str, Any], sandbox: Any = None) -> str:
             return out
         if backend == "local":
             return (
-                "ERROR: no local STT engine available. Run `maverick voice "
-                "setup` (fetches the model; the pywhispercpp engine ships "
-                "with maverick-dashboard), or install faster-whisper "
+                "ERROR: no local STT engine available. Enable `[voice] "
+                "auto_fetch_model` to fetch the model (the pywhispercpp engine "
+                "ships with maverick-dashboard), or install faster-whisper "
                 "(python -m pip install -e './packages/maverick-core[voice]')."
             )
     return (
         "ERROR: no voice backend available. Set OPENAI_API_KEY / GROQ_API_KEY, "
-        "or set up the built-in local engine: install whisper.cpp and run "
-        "`maverick voice setup`."
+        "or set up the built-in local engine: install whisper.cpp and enable "
+        "`[voice] auto_fetch_model`."
     )
 
 
@@ -576,7 +578,8 @@ def transcribe_audio(sandbox: Any = None) -> Tool:
             "Transcribe an audio file via Whisper. Backends tried in order: "
             "OpenAI (OPENAI_API_KEY), Groq (GROQ_API_KEY, fast+cheap), local "
             "faster-whisper, local whisper.cpp (built-in offline path — "
-            "`maverick voice setup`). Accepts mp3/wav/m4a/flac/ogg/webm. "
+            "model auto-fetched per `[voice] auto_fetch_model`). "
+            "Accepts mp3/wav/m4a/flac/ogg/webm. "
             "Set `language='en'` to skip auto-detect."
         ),
         input_schema=_TRANSCRIBE_SCHEMA,

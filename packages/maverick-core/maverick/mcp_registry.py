@@ -294,7 +294,8 @@ def add_mcp_server_to_config(name: str, spec_dict: dict, *, path=None) -> None:
     if name in existing:
         raise ValueError(
             f"MCP server {name!r} is already in config; remove it first "
-            f"(maverick mcp-registry remove {name})")
+            f"(delete the [mcp_servers.{name}] table from config.toml, or call "
+            f"maverick.mcp_registry.remove_mcp_server_from_config({name!r}))")
     p.parent.mkdir(parents=True, exist_ok=True)
     block = _emit_server_block(name, spec_dict)
     if p.exists():

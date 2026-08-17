@@ -100,7 +100,7 @@ def _require_llm_key(model_spec: str | None = None) -> str:
         f"Missing: {detail}.\n"
         "\n"
         "Configure that route with:  maverick init\n"
-        "Then verify it with:       maverick preflight",
+        "Then verify it with:       maverick doctor",
         err=True,
     )
     sys.exit(2)
@@ -1222,8 +1222,9 @@ def migrate_cmd(do_apply: bool, config_path: str | None) -> None:
 def worker(idle_sleep: float, once: bool) -> None:
     """Run the background job worker.
 
-    Drains the job queue (``~/.maverick/jobs.db``) and runs jobs armed with
-    ``maverick schedule add``. Runs until interrupted (Ctrl-C / SIGTERM).
+    Drains the job queue (``~/.maverick/jobs.db``) and runs jobs armed by the
+    dashboard's schedules and automations. Runs until interrupted (Ctrl-C /
+    SIGTERM).
 
     With ``--once``, run all currently-ready jobs and exit instead of staying
     resident -- run it from system cron or a systemd timer for scheduling

@@ -3516,8 +3516,8 @@ async def skills_validate(request: Request) -> JSONResponse:
     """Skill validator service: lint a SKILL.md body without installing it.
 
     POST the raw SKILL.md text (text/plain or markdown); responds
-    ``{ok, errors, warnings}`` from the same linter `maverick skill validate`
-    runs locally — so a marketplace author can validate from CI or an editor
+    ``{ok, errors, warnings}`` from the kernel's skill linter
+    — so a marketplace author can validate from CI or an editor
     against a self-hosted instance. Size-capped; nothing is persisted."""
     import tempfile as _tempfile
     from pathlib import Path as _Path
@@ -3803,7 +3803,8 @@ async def cost_by_tag_api(
 
     Buckets the priced episodes by their tag (episode field, else the goal's
     metadata/tags) via ``maverick.cost.by_tag`` and returns
-    ``{buckets: [{tag, cost, in_tok, out_tok, runs}, ...]}`` sorted by spend. The JSON face of ``maverick status --cost``'s tag split,
+    ``{buckets: [{tag, cost, in_tok, out_tok, runs}, ...]}`` sorted by spend
+    (the tag split the old ``maverick status --cost`` CLI printed),
     for chargeback exports and BI pulls. Behind the dashboard's normal auth."""
     from maverick.cost.by_tag import gather, split_by_tag
 

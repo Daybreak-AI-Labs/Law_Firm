@@ -99,7 +99,7 @@ def require_provider_or_400(*, role: str | None = None) -> None:
         detail=(
             "The selected AI model route is incomplete "
             f"({missing_detail}). An administrator can run 'maverick init' and "
-            "'maverick preflight' before this operation."
+            "'maverick doctor' before this operation."
         ),
     )
 

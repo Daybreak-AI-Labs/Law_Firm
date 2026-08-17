@@ -711,8 +711,7 @@ def get_features() -> dict:
     - ``scheduling`` allow arming recurring schedules (cron) from the dashboard
                       workflow builder -- each fire enqueues a ``start_goal`` job
                       run by ``maverick worker``. Off = the schedule endpoints
-                      return 403 and the UI hides; the ``maverick schedule`` CLI
-                      on the host is unaffected.
+                      return 403 and the UI hides.
     - ``triggers`` allow binding a saved template to an inbound webhook (POST
                       /webhook/run) so an external event runs it as a goal. The
                       inbound route is HMAC-signed exactly like /webhook/start

@@ -203,7 +203,7 @@ def compliance_report() -> list[ControlCheck]:
     checks.append(ControlCheck(
         "Storage limitation (retention)", "GDPR Art. 5(1)(e)",
         "active" if retention_on else "action_needed",
-        "retention configured; run 'maverick retention enforce'" if retention_on
+        "retention configured; enforce via maverick.audit.retention.enforce()" if retention_on
         else "set [retention] audit_days / episodes_days / events_days",
     ))
 

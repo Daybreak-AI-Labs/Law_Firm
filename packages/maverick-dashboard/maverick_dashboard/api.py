@@ -4999,9 +4999,8 @@ def _require_skill_install_opt_in() -> None:
             status_code=403,
             detail=(
                 "Installing skills from the dashboard is disabled on this "
-                "server — an administrator can opt in (set "
-                "MAVERICK_ALLOW_SKILL_INSTALL=1, or run "
-                "`maverick skill install` on the host)."
+                "server — an administrator can opt in by setting "
+                "MAVERICK_ALLOW_SKILL_INSTALL=1."
             ),
         )
 
@@ -5014,8 +5013,8 @@ async def install_skill_endpoint(request: Request, payload: SkillInstallIn) -> S
     endpoint is gated behind ``MAVERICK_ALLOW_SKILL_INSTALL=1`` so a
     compromised dashboard token can't be turned into one-shot RCE; an
     operator opting in is taking explicit ownership of the supply
-    chain. CLI ``maverick skill install`` remains available without
-    the flag because it requires shell access on the host.
+    chain. (Hash-verified catalog installs — ``/catalog/skills/install``
+    — do not need the flag.)
 
     RBAC: this is a control-plane change to the code the agent loads, so it
     requires ``admin`` -- matching ``/plugins/install``. The opt-in flag is
@@ -5150,7 +5149,8 @@ async def voice_transcribe(
     here; the transcript goes back into the goal field so the user can review
     before submitting (speech never starts a goal unreviewed). Reuses the
     kernel STT backends (OpenAI / Groq Whisper, local faster-whisper, local
-    whisper.cpp — the built-in offline path, `maverick voice setup`) via
+    whisper.cpp — the built-in offline path, auto-fetched per `[voice]
+    auto_fetch_model`) via
     ``maverick.tools.voice``; 503 with a setup hint when none is configured,
     which the client treats as "fall back to browser speech recognition".
     """
@@ -5222,8 +5222,9 @@ async def voice_transcribe(
         raise HTTPException(
             status_code=503,
             detail=(
-                "no speech-to-text backend available. Run `maverick voice "
-                "setup` for the built-in local engine (whisper.cpp), set "
+                "no speech-to-text backend available. Enable `[voice] "
+                "auto_fetch_model` for the built-in local engine "
+                "(whisper.cpp), set "
                 "OPENAI_API_KEY / GROQ_API_KEY, or install faster-whisper "
                 "(python -m pip install -e './packages/maverick-core[voice]')."
             ),
@@ -5471,7 +5472,8 @@ def _harness_guidance() -> tuple[list[dict], bool]:
     Returns ``([{model_id, lines, provenance, conflicts}], enabled)``. This is
     the self-harness loop's most prompt-impacting output, yet the /learned page
     surfaced only the capability ledger -- an operator could see it ONLY via
-    `maverick self-harness show`. Read-only; ``list_learned`` reads the store
+    the old `maverick self-harness show` CLI (since removed). Read-only;
+    ``list_learned`` reads the store
     regardless of the toggle (so paused guidance is still inspectable), so we
     return the ``enabled`` flag too -- stored guidance is NOT recalled into
     prompts until the feature is on. Kept in its own try so a self-harness
@@ -5609,7 +5611,8 @@ async def remove_generated_tool(request: Request, name: str) -> None:
 @router.post("/harness-corpus/review")
 async def review_harness_corpus(request: Request, payload: dict) -> dict:
     """Resolve staged corpus candidates from the dashboard -- the same
-    accept/reject verdicts as ``maverick self-harness corpus review``, so
+    accept/reject verdicts the old ``maverick self-harness corpus review``
+    CLI took, so
     staged ground truth can be reviewed where it is displayed. Mutating the
     loop's ground truth is an ``admin`` action (same rung as pulling a
     generated tool); bearer/same-origin is enforced centrally by the
@@ -6395,7 +6398,7 @@ def _require_scheduling() -> None:
         raise HTTPException(
             status_code=403,
             detail=("scheduling is disabled ([features] scheduling = false). "
-                    "Re-enable it in config, or use `maverick schedule` on the host."),
+                    "Re-enable it in config."),
         )
 
 
@@ -9234,9 +9237,10 @@ async def export_walkthrough(request: Request, goal_id: int) -> dict:
 async def resume_goal(goal_id: int, request: Request, bg: BackgroundTasks) -> None:
     """Resume a blocked / cancelled goal.
 
-    Capabilities-seat finding: the CLI has ``maverick resume`` but the
+    Capabilities-seat finding: the old CLI had ``maverick resume`` but the
     dashboard's only way to flip a cancelled goal back was to start a
-    brand-new one. This route flips status back to 'pending' and
+    brand-new one. This route (now the only resume surface) flips status
+    back to 'pending' and
     re-queues the runner, so the next goal-event poll picks it back up.
     """
     require_permission(request, "operate")

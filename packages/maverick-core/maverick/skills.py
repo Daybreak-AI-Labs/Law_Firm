@@ -707,9 +707,9 @@ def _validate_and_write(
             if existing_name is not None and existing_name != parsed.name:
                 raise ValueError(
                     f"a different skill already occupies {target.name!r} "
-                    f"(installed as {existing_name!r}); remove it with "
-                    f"`maverick skill remove {name}` or rename your skill "
-                    "before installing."
+                    f"(installed as {existing_name!r}); remove the installed "
+                    "skill from the dashboard's skills page or rename your "
+                    "skill before installing."
                 )
         # Autonomous acquisition can spend seconds fetching, verifying, and
         # scanning a catalog item. Give that caller a final privileged-transition

@@ -81,8 +81,6 @@
         <code>{{ preflight.next_action }}</code>
       </p>
     {% endif %}
-    <p><code>maverick preflight --json</code>
-      <span class="muted">— copyable output for deployment automation</span></p>
     <details>
       <summary>View {{ preflight.checks|length }} readiness checks</summary>
       <ul class="gs__checks">
@@ -119,7 +117,6 @@
         <code>{{ assurance_preflight.next_action }}</code>
       </p>
     {% endif %}
-    <p><code>maverick preflight --profile cockpit --json</code></p>
     <details>
       <summary>View {{ assurance_preflight.checks|length }} assurance checks</summary>
       <ul class="gs__checks">

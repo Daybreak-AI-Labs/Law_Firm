@@ -194,8 +194,7 @@ def _budget_exceeded_message(budget: Any, goal_id: Any) -> str:
         f"Stopped: this goal hit your spending or time limit "
         f"(${budget.dollars:.2f} of ${budget.max_dollars:.2f} cap, "
         f"{budget.elapsed():.0f}s of {budget.max_wall_seconds:.0f}s).\n"
-        f"Resume with a higher cap: "
-        f"maverick resume {goal_id} --max-dollars <higher>"
+        f"Raise the cap and resume goal {goal_id} from the dashboard."
     )
 
 
@@ -1335,15 +1334,15 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
             if not qs:
                 return (
                     "Paused: the assistant said it needs more information, "
-                    "but no question was filed. You can resume with "
-                    f"`maverick resume {goal_id}` or send a follow-up message."
+                    "but no question was filed. You can resume goal "
+                    f"{goal_id} from the dashboard or send a follow-up message."
                 )
             lines = [f"  #{q.id}: {q.question}" for q in qs]
             return (
                 f"Paused: waiting for you to answer "
                 f"{len(qs)} question{'s' if len(qs) != 1 else ''}.\n"
                 + "\n".join(lines)
-                + "\n\nAnswer with: maverick answer <id> \"<your answer>\""
+                + "\n\nAnswer in the dashboard (the goal's open questions)."
             )
 
         if result.error:
@@ -1411,7 +1410,8 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
                 })
                 return (
                     "Stopped: Maverick was halted mid-run (a HALT file is present).\n"
-                    f"Run `maverick unhalt` to clear it, then `maverick resume {goal_id}`."
+                    f"Run `maverick unhalt` to clear it, then resume goal {goal_id} "
+                    "from the dashboard."
                 )
             _end_episode_with_spend(world, episode_id, result.error, "failure", budget, goal_id)
             _record_quota_usage()
@@ -1453,7 +1453,7 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
             return (
                 f"Stopped: the assistant ran into an error and couldn't finish.\n"
                 f"Detail: {result.error}\n"
-                f"You can try again with: maverick resume {goal_id}\n"
+                f"You can try again by resuming goal {goal_id} from the dashboard.\n"
                 f"[{budget.summary()}]"
             )
 

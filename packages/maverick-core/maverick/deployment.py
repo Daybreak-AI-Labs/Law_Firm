@@ -160,7 +160,7 @@ def verify_deployment() -> list[GuaranteeCheck]:
     checks.append(GuaranteeCheck(
         "Retention policy",
         retention,
-        "configured; enforce with 'maverick retention enforce'" if retention
+        "configured; enforce via maverick.audit.retention.enforce()" if retention
         else "set [retention] audit_days / episodes_days / events_days",
     ))
 

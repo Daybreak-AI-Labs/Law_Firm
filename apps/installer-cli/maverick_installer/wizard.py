@@ -1426,7 +1426,7 @@ def pick_advanced() -> dict[str, Any]:
             "recurring failures -- mined, validated on held-out cases, and gated "
             "through the same promotion ladder as every other learned change -- "
             "then recalled into that model's system prompt. Inspect or roll it "
-            "back any time with `maverick self-harness`. ON by default.",
+            "back any time from the dashboard. ON by default.",
             default=True,
         ),
         "repl": _q_confirm(
@@ -1806,7 +1806,7 @@ def pick_advanced() -> dict[str, Any]:
         ),
         "security_autofix": _q_confirm(
             "Let the security assessor auto-fix low-risk gaps? With enterprise mode "
-            "on, `maverick remediate --apply` may auto-apply reversible, in-boundary "
+            "on, the assessor may auto-apply reversible, in-boundary "
             "config fixes (enable audit signing, set retention); anything "
             "behaviour-changing stays gated for a human. Off by default; every fix "
             "is audited and reversible.",
@@ -1834,7 +1834,7 @@ def pick_advanced() -> dict[str, Any]:
         ),
         "local_runtime": _q_confirm(
             "Manage a local model server (vLLM / TGI / llama.cpp)? Writes "
-            "[local_runtime] so `maverick local-runtime plan` composes the "
+            "[local_runtime] so the local-runtime planner composes the "
             "right batching / KV-cache / precision flags for your engine; "
             "configure the engine + model in config.toml after the wizard. "
             "Off by default.",
@@ -1961,8 +1961,7 @@ def pick_advanced() -> dict[str, Any]:
                 or harvest_mode in ("propose", "auto")):
             console.print(
                 "    [yellow]Note: nightly transfer/harvesting only run when "
-                "auto-run is on -- enable it above (or run them manually via "
-                "`maverick self-harness transfer` / `corpus harvest`).[/yellow]")
+                "auto-run is on -- enable it above.[/yellow]")
         if harvest_mode in ("propose", "auto") and not corpus:
             console.print(
                 "    [yellow]Note: corpus bootstrapping needs the eval-corpus "
@@ -3490,7 +3489,7 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("[local_runtime]")
         lines.append("enabled = true")
         lines.append('# engine = "vllm"  # vllm | tgi | llamacpp')
-        lines.append('# model  = "..."   # REQUIRED before `maverick local-runtime plan`')
+        lines.append('# model  = "..."   # REQUIRED for the local-runtime planner')
     if advanced.get("local_first"):
         lines.append("")
         lines.append("[system]")
@@ -4033,7 +4032,7 @@ def run_fast() -> int:
     console.print()
     console.print(Panel.fit(
         "[bold green]Fast setup finished.[/bold green]\n\n"
-        "Try: [bold]maverick start \"hello\"[/bold]\n"
+        "Try: [bold]maverick dashboard[/bold]  # then compose your first goal in the web UI\n"
         "(If ANTHROPIC_API_KEY wasn't set, edit ~/.maverick/.env first.)\n",
         border_style="green",
     ))
@@ -4248,10 +4247,9 @@ def run_consumer() -> int:
     if keys:
         console.print(Panel.fit(
             f"[bold green]Setup complete, {user_name}.[/bold green]\n\n"
-            "Try your first goal:\n"
-            f"  [bold]maverick start \"{CONSUMER_DEMO_GOAL}\" --model {CONSUMER_DEMO_MODEL}[/bold]\n\n"
-            "Then:\n"
-            "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n",
+            "Try your first goal in the web UI:\n"
+            "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n"
+            f"  (a good starter goal: \"{CONSUMER_DEMO_GOAL}\")\n\n",
             border_style="green",
         ))
     else:
@@ -4556,19 +4554,17 @@ def run_express() -> int:
     return 0
 
 
-# (command, one-line description) surfaced after a regulated-posture setup, so a
+# (surface, one-line description) shown after a regulated-posture setup, so a
 # non-technical operator discovers the verification + GDPR/EU AI Act
-# documentation commands they'd otherwise never find. Defined as data so a test
-# can assert the set without rendering the Rich panel.
+# documentation surfaces they'd otherwise never find. Dashboard pages (start the
+# dashboard with `maverick dashboard`) plus the audit CLI. Defined as data so a
+# test can assert the set without rendering the Rich panel.
 _COMPLIANCE_COMMANDS: list[tuple[str, str]] = [
-    ("maverick enterprise verify", "prove the data boundary holds"),
-    ("maverick compliance", "GDPR + EU AI Act control coverage"),
-    ("maverick ropa", "GDPR Art. 30 record-of-processing scaffold"),
-    ("maverick dpia", "GDPR Art. 35 impact-assessment scaffold"),
-    ("maverick ai-act", "EU AI Act risk classification"),
-    ("maverick assess", "run a PIA / AIRA / vendor-risk assessment"),
-    ("maverick hunt", "hunt the audit trail for agent attacks"),
-    ("maverick remediate", "assess security posture + fix low-risk gaps"),
+    ("/compliance", "GDPR + EU AI Act control coverage"),
+    ("/safety", "live safety + governance posture"),
+    ("/assessments", "run a PIA / AIRA / vendor-risk assessment"),
+    ("/audit/binder", "auditor-ready evidence binder"),
+    ("maverick audit verify", "verify the tamper-evident audit log"),
 ]
 
 
@@ -4601,7 +4597,8 @@ def show_compliance_commands(advanced: dict[str, Any]) -> None:
     )
     console.print()
     console.print(Panel.fit(
-        "[bold]You enabled a regulated-data posture.[/bold] Prove and document it:\n\n"
+        "[bold]You enabled a regulated-data posture.[/bold] Prove and document it\n"
+        "in the dashboard (`maverick dashboard`):\n\n"
         f"{rows}\n\n"
         "[dim]See docs/regulated-deployment.md. Control coverage, not legal advice.[/dim]",
         border_style="cyan",
@@ -5031,13 +5028,11 @@ def run(fast: bool = False, resume: bool = False) -> int:
     ok = smoke_test()
     if ok:
         console.print()
-        next_step = "maverick serve" if channels else 'maverick start "hello"'
         console.print(Panel.fit(
             "[bold green]Setup complete.[/bold green]\n\n"
             "Try:\n"
-            f"  [bold]{next_step}[/bold]\n"
-            "  [bold]maverick status[/bold]\n"
-            "  [bold]maverick dashboard[/bold]    # web UI at http://127.0.0.1:8765\n\n",
+            "  [bold]maverick dashboard[/bold]    # web UI at http://127.0.0.1:8765\n"
+            "  [bold]maverick doctor[/bold]       # health check\n\n",
             border_style="green",
         ))
         show_compliance_commands(advanced)

@@ -14,7 +14,8 @@ Built-in handlers:
     maverick.runner.run_goal_in_thread (with a sync wait).
   - ``start_goal`` — payload {"text": str, "title"?: str} -> creates a FRESH
     goal from the prompt on each run, then runs it. This is the kind to pair
-    with cron for a recurring autonomous task (``maverick schedule goal``).
+    with cron for a recurring autonomous task (armed from the dashboard's
+    schedule endpoints).
 
 Custom handlers are registered via :meth:`Worker.register`.
 
@@ -42,7 +43,7 @@ Handler = Callable[[Job], None]
 
 # Job kinds the worker handles out of the box. Embedders add more at runtime
 # via Worker.register(); this is the set the bare ``maverick worker`` knows.
-# Exposed so ``maverick schedule add`` can warn on a likely-typo'd kind that
+# Exposed so schedule-arming surfaces can warn on a likely-typo'd kind that
 # would otherwise sit in the queue and fail terminally only at worker time.
 BUILTIN_JOB_KINDS = frozenset({"run_goal", "start_goal"})
 
@@ -179,7 +180,7 @@ class Worker:
             # A recurring autonomous task creates a FRESH goal from the prompt
             # on every fire -- unlike run_goal, which re-runs one fixed goal_id
             # (re-executing the same world-model row). Pair with cron via
-            # `maverick schedule goal "<cron>" "<prompt>"`; _maybe_rearm carries
+            # the dashboard's schedule endpoints; _maybe_rearm carries
             # the prompt forward in the payload so each occurrence is new.
             text = (job.payload.get("text") or "").strip()
             if not text:
@@ -229,7 +230,7 @@ class Worker:
     def _maybe_rearm(self, job: Job) -> None:
         """Re-arm a recurring (cron) job's next occurrence -- durably.
 
-        ``maverick schedule add`` stores the cron expression in
+        Schedule arming stores the cron expression in
         ``payload['__cron__']``. Re-arm is IDEMPOTENT and RETRYABLE, not
         best-effort-once: the old code armed only on the first claim
         (``attempts == 1``) and swallowed any enqueue error, so a single

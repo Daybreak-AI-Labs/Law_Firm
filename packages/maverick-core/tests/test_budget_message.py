@@ -4,7 +4,7 @@ message, not a generic 'ran into an error'.
 The agent swallows BudgetExceeded into result.error (so spawned children
 return gracefully), which meant the orchestrator's nice budget message was
 unreachable for the common case -- the user saw a generic error with no hint
-to raise --max-dollars.
+to raise the cap.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ async def test_budget_exhaustion_gives_helpful_message(tmp_path: Path, fake_llm)
     )
 
     assert "hit your spending or time limit" in out
-    assert "--max-dollars" in out
+    assert "Raise the cap" in out
     assert "ran into an error" not in out
     # The message reports spend AGAINST the configured cap, not spend alone, so
     # the user can see how far over they went and what the limit was (#598).

@@ -6,7 +6,8 @@ locked-down enterprise deployment: it needs **write access to the install dir**
 (read-only/immutable container filesystems fail) and it means the running code
 isn't the audited build artifact (SBOM / reproducibility).
 
-For an image/VM build, pre-generate the stubs with ``maverick gen-stubs`` and set
+For an image/VM build, pre-generate the stubs with
+``maverick.grpc_stubs.generate_all()`` and set
 ``MAVERICK_NO_RUNTIME_PROTOC=1`` in the runtime so a *missing* stub fails fast
 with a clear message instead of silently invoking ``protoc`` at request time.
 """
@@ -31,7 +32,7 @@ def guard_runtime_generation(proto: str) -> None:
         raise RuntimeError(
             f"gRPC stubs for {proto} are not present and runtime protoc "
             "generation is disabled (MAVERICK_NO_RUNTIME_PROTOC). Pre-generate "
-            "them at build time with `maverick gen-stubs`."
+            "them at build time with maverick.grpc_stubs.generate_all()."
         )
 
 

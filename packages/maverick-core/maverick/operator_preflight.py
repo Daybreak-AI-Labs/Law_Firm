@@ -633,7 +633,7 @@ def collect(profile: Profile = "run") -> Report:
     if blockers:
         next_action = blockers[0].remediation
     elif profile == "run":
-        next_action = 'maverick start "hello"'
+        next_action = "maverick dashboard  # compose your first goal there"
     elif attention:
         next_action = attention[0].remediation
     else:

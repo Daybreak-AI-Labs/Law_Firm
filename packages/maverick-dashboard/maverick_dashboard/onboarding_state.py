@@ -62,12 +62,12 @@ def build(world: Any) -> dict[str, Any]:
             "title": "Connect a model provider",
             "done": provider_ok,
             "body": (
-                "Add a credential or self-hosted endpoint, then run the offline "
-                "preflight before the first task."
+                "Add a credential or self-hosted endpoint, then run the "
+                "health check before the first task."
             ),
             "cta": "/settings",
             "cta_label": "Open Settings",
-            "command": "maverick preflight",
+            "command": "maverick doctor",
         },
         {
             "title": "Build a workflow or agent",

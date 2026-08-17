@@ -17,7 +17,7 @@ def test_runtime_protoc_disabled_env(monkeypatch):
 
 def test_guard_raises_when_disabled(monkeypatch):
     monkeypatch.setenv("MAVERICK_NO_RUNTIME_PROTOC", "1")
-    with pytest.raises(RuntimeError, match="gen-stubs"):
+    with pytest.raises(RuntimeError, match="generate_all"):
         grpc_stubs.guard_runtime_generation("federation.proto")
 
 

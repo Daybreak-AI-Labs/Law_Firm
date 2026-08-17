@@ -30,7 +30,9 @@ def test_fresh_workspace_nothing_done(monkeypatch, tmp_path):
     assert "Connect a model provider" in t and "Build a workflow or agent" in t
     assert "0 of 3 done" in t and 'role="progressbar"' in t
     assert "Offline install preflight" in t
-    assert "maverick preflight --json" in t
+    # The `maverick preflight` CLI was removed in the CLI reduction; the page
+    # must not advertise it.
+    assert "maverick preflight" not in t
     # The Assurance Cockpit synthetic demo went with the GRC cluster.
     assert "SYNTHETIC DEMO DATA" not in t
     assert "/security/assurance" not in t
