@@ -58,14 +58,10 @@ ruleset; treat them as a coverage target, not as shipped coverage:
 
 ## Checking your posture
 
-`maverick safety` prints the live safety posture — shield status (installed +
-backend, or the fail-open fallback), the sandbox backend and whether it is
-container-isolated, and the egress policy (locked vs cloud-capable) — so you can
-**assert deployment safety in CI** without the dashboard. Use `maverick safety
---json` and gate a pipeline on the fields (e.g. fail the build if
-`sandbox.isolated` is false in production, or if `egress.locked` is false on a
-regulated deployment). The dashboard's `/safety` page shows the same posture
-interactively.
+The dashboard's `/safety` page shows the live safety posture — shield status
+(installed + backend, or the fail-open fallback), the sandbox backend and
+whether it is container-isolated, and the egress policy (locked vs
+cloud-capable).
 
 ## When the shield is missing
 
@@ -140,11 +136,10 @@ host/OS/VPC default-deny egress policy. Application interception cannot contain
 raw sockets, subprocess network clients, unwrapped libraries, or untrusted code
 running in the Maverick process.
 
-## Compliance posture (`maverick compliance`)
+## Compliance posture
 
-`maverick compliance` reports which GDPR + EU AI Act controls are active for your
-deployment, mapped to the article each supports, and flags the opt-in controls that are
-still off — with the exact knob to enable each:
+These are the GDPR + EU AI Act controls the deployment can run, mapped to the
+article each supports — with the exact knob to enable each:
 
 | Control | Article(s) | Status / enable with |
 |---|---|---|
@@ -155,12 +150,12 @@ still off — with the exact knob to enable each:
 | Kill switch | EU AI Act Art. 14 | `~/.maverick/HALT` |
 | Data-subject access & portability | GDPR Art. 15 & 20 | `maverick export-user` |
 | Right to erasure | GDPR Art. 17 | `maverick erase` |
-| Storage limitation (retention) | GDPR Art. 5(1)(e) | `[retention]` + `maverick retention enforce` |
+| Storage limitation (retention) | GDPR Art. 5(1)(e) | `[retention]` |
 | Data-egress control | GDPR Art. 32 / AI Act Art. 15 | `[enterprise] mode = true` |
 | Secret/PII redaction in logs | GDPR Art. 25 & 32 | always on |
 | Encryption at rest (memory + world-DB content) | GDPR Art. 32 | `[encryption] at_rest = true` (implied by enterprise mode) — see [encryption.md](encryption.md) |
 | Log data minimization | GDPR Art. 5(1)(c) | `[privacy] anonymous = true` |
 
-`--format json` emits the same for pipelines/SIEM. **This is control coverage, not a
+**This is control coverage, not a
 legal attestation** — full GDPR / EU AI Act compliance also requires a DPA, ROPA (Art. 30
 records), a DPIA, AI-Act risk classification, and review by qualified counsel.

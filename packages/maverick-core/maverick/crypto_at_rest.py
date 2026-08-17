@@ -587,8 +587,9 @@ def _load_or_create_key() -> bytes:
     log.warning(
         "at-rest encryption generated a new key at %s. This key is the only way "
         "to decrypt sealed data; if it is lost, that data is unrecoverable. Back "
-        "it up now to a secure location: `maverick encryption backup-key --to "
-        "<dir>` (or inject your own via MAVERICK_ENCRYPTION_KEY).",
+        "it up now to a secure location (copy the key file, or call "
+        "maverick.crypto_at_rest.backup_key_material(<dir>); or inject your own "
+        "via MAVERICK_ENCRYPTION_KEY).",
         _KEY_PATH,
     )
     return key

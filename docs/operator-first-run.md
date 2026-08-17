@@ -53,7 +53,7 @@ After starting the dashboard, deployment probes have distinct meanings:
 
 Do not use liveness as a readiness gate.
 
-## 4. Reach first value
+## 3. Reach first value
 
 ```bash
 maverick dashboard
@@ -71,13 +71,10 @@ results. Completing the three workspace steps is reported as runtime-ready
 only when the normal `run` profile is ready. Runtime readiness never implies
 that the stricter cockpit/assurance profile is ready, and an assurance blocker
 does not contradict an otherwise runnable workspace.
-Run a first task from the UI or:
+Run a first task from the UI — for example, *"Summarize the deployment
+controls and list unresolved gaps."*
 
-```bash
-maverick start "Summarize the deployment controls and list unresolved gaps."
-```
-
-## 5. Make AI evidence visible
+## 4. Make AI evidence visible
 
 Open `http://127.0.0.1:8765/security/assurance`.
 
@@ -111,25 +108,13 @@ reviews remain reachable beyond the first 500 records. Retrying packet issuance
 with the same tenant, actor, profile, and `Idempotency-Key` returns the exact
 original bytes and does not append a second attestation.
 
+The cockpit and packet are evidence surfaces, not legal certification. A
+qualified human remains responsible for regulatory classification, impact
+disposition, and reliance on exported evidence.
+
 ### Synthetic demo safety
 
 The no-network demo is available only when the tenant is empty or already
 contains the same deterministic demo scenario. Use an empty or dedicated demo
 tenant. Every demo record is labeled synthetic, the cockpit reports “Synthetic
 demo only,” and no production assurance conclusion is shown.
-
-## 6. When something still fails
-
-Create a locally inspectable, secret-redacted support bundle:
-
-```bash
-maverick support
-```
-
-Review the JSON before sharing it. Provider credentials are never included.
-The offline preflight likewise reports only presence and dependency state, not
-credential values.
-
-The cockpit and packet are evidence surfaces, not legal certification. A
-qualified human remains responsible for regulatory classification, impact
-disposition, and reliance on exported evidence.

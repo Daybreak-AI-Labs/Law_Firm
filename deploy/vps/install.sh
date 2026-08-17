@@ -12,7 +12,7 @@
 #   2. Installs the complete eight-package Maverick release cohort into one
 #      pipx venv
 #   3. Runs `maverick init` interactively
-#   4. Drops a systemd unit so maverick serve runs at boot
+#   4. Drops a systemd unit so the Maverick service runs at boot
 #   5. Optionally configures Caddy for HTTPS (see Caddyfile next to this script)
 
 set -euo pipefail

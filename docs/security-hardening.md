@@ -16,9 +16,9 @@ and how to confirm it's actually on.
 > controls (capabilities, encryption-at-rest) are additionally **implied by
 > enterprise mode** — see [Enterprise mode](#enterprise-mode-the-umbrella-switch).
 
-> **Verify what's on.** `maverick compliance` prints a control-coverage report
-> (which controls are active vs. need action), and `maverick enterprise verify`
-> actively exercises the load-bearing guarantees. Use them after any change. See
+> **Verify what's on.** The compliance control map (which controls are active
+> vs. need action) and the regulated-deployment guarantee checks run inside the
+> platform; each section below also gives an observable per-control signal. See
 > [Verifying your posture](#verifying-your-posture).
 
 ## Contents
@@ -106,9 +106,9 @@ secure_defaults = false
   always wins, and HIPAA-mode at-rest can't be turned off by `secure_defaults = false`.
 
 **Existing installs are safe.** Sealed reads are plaintext-tolerant, so data
-written before the flip is returned unchanged until rewritten; run
-`maverick encryption migrate` to seal it eagerly (and **back up the auto-generated
-key** — `maverick encryption backup-key --to <dir>` — losing it loses the data).
+written before the flip is returned unchanged until rewritten, and is sealed as
+it is rewritten (**back up the auto-generated key** under `~/.maverick/keys/` —
+losing it loses the data).
 
 ---
 
@@ -133,7 +133,7 @@ security posture by name:
   - **Plugin isolation = subprocess.** Third-party plugins run out-of-process by
     default instead of in-process (`[plugins] isolation`).
   - **Plugin lock = enforce.** The version/content lockfile is enforced (a no-op
-    until you run `maverick plugin lock`, then drifted/unpinned plugins are
+    until a plugin lockfile has been generated, then drifted/unpinned plugins are
     refused) (`[plugins] lock_policy`).
 
   This is what the Helm chart and the reference server deployments set.
@@ -252,8 +252,9 @@ that *require* verification must check for crypto first.
   still gives identity + least-privilege-on-spawn (children still attenuate).
 - **Enterprise mode forces this on** regardless of `[capabilities] enforce`.
 
-**Verify it's on:** `maverick compliance` reports the capability-enforcement
-control as active; grep the audit log for `capability_denied` to see it bite.
+**Verify it's on:** the platform's compliance control map reports the
+capability-enforcement control as active; grep the audit log for
+`capability_denied` to see it bite.
 
 ---
 
@@ -357,8 +358,8 @@ a path segment. The active tenant is resolved in order:
   your version which stores are routed through `maverick.paths.data_dir` before
   relying on isolation for a specific store.
 
-**Verify it's on:** `maverick compliance` reports the tenant-isolation control
-as active.
+**Verify it's on:** the platform's compliance control map reports the
+tenant-isolation control as active.
 
 ---
 
@@ -402,15 +403,15 @@ writes starter caps of `25.0` dollars and `5000000` tokens).
   collected.
 - The day window is **UTC**, so it doesn't shift with the host timezone/DST.
 
-**Verify it's on:** `maverick compliance` reports the usage-quota control as
-active.
+**Verify it's on:** the platform's compliance control map reports the
+usage-quota control as active.
 
 ---
 
 ## OIDC SSO authentication
 
 **What it does.** Verifies an OpenID-Connect **ID token** (a JWT) for the
-`maverick serve` / dashboard HTTP surface against a configured issuer and
+dashboard HTTP surface against a configured issuer and
 audience, mapping a verified subject to the principal `user:<sub>` (which slots
 straight into the capability/tenant model). When enabled, **every gated request
 must carry a valid `Authorization: Bearer <jwt>` header**; a missing/invalid
@@ -465,8 +466,8 @@ so OIDC does not 401 inbound webhooks.
   is a rejection (no fallback key). There is **no fail-open-to-authenticated**
   path — any failure raises and yields a `401`.
 
-**Verify it's on:** `maverick compliance` reports the OIDC/SSO control as
-active (or flags it if the optional module/extra isn't installed).
+**Verify it's on:** the platform's compliance control map reports the OIDC/SSO
+control as active (or flags it if the optional module/extra isn't installed).
 
 **Session/token revocation + SCIM deprovisioning.** A leaked session cookie or a
 still-valid bearer is force-invalidated by a per-principal **revocation epoch**
@@ -745,14 +746,14 @@ export MAVERICK_ENCRYPT_AT_REST=0     # 1 to force-enable; 0 to force-disable
 
 - **Scope.** Sealed: the **memory store**, the sensitive **world-DB content
   columns** (goal title/description/result, facts, turns/messages, questions,
-  goal events, episode summaries/outcomes, parked approvals). Run
-  `maverick encryption migrate` to seal rows written before it was on. Not sealed:
+  goal events, episode summaries/outcomes, parked approvals). Rows written
+  before it was on stay readable and are sealed as they are rewritten. Not sealed:
   the live audit day-file (seal closed ones with `maverick audit seal`)
   — see [encryption.md](encryption.md) for the
   full map.
 - **Back up the key.** The auto-generated `~/.maverick/keys/at_rest.key` is the
-  only way to read sealed data — escrow it with `maverick encryption backup-key
-  --to <dir>`; if it's lost, the data is unrecoverable.
+  only way to read sealed data — escrow a copy in a secrets manager / offline
+  vault; if it's lost, the data is unrecoverable.
 - **Requires `cryptography`.** With at-rest enabled but the package missing,
   `seal()` **fails closed** (raises `EncryptionUnavailable`) rather than writing
   plaintext. From the reviewed checkout, run
@@ -766,8 +767,8 @@ export MAVERICK_ENCRYPT_AT_REST=0     # 1 to force-enable; 0 to force-disable
 - Precedence: `MAVERICK_ENCRYPT_AT_REST` (non-empty) wins over `[encryption]
   at_rest`, which wins over enterprise mode (which **implies** at-rest on).
 
-**Verify it's on:** `maverick enterprise verify` proves the at-rest seal
-round-trips on this box (enterprise mode implies the control on).
+**Verify it's on:** the platform's regulated-deployment guarantee check proves
+the at-rest seal round-trips on this box (enterprise mode implies the control on).
 
 ---
 
@@ -944,12 +945,16 @@ returns **403** (vs **404** for an unknown approval).
 
 ## Compliance commands
 
+The control-coverage report (GDPR / EU AI Act / US frameworks: each active
+control mapped to the article it supports, opt-in controls that are off
+flagged) and the regulated-deployment guarantee checks (egress lock, at-rest
+seal round-trip, audit chain, consent, retention) run inside the platform. The
+CLI keeps the audit and privacy record:
+
 | Command | Purpose |
 | --- | --- |
-| `maverick compliance [--strict]` | Report control coverage (GDPR / EU AI Act / US frameworks): each active control mapped to the article it supports, opt-in controls that are off flagged. `--strict` exits non-zero on any `action_needed`, so it gates CI/deploys. |
-| `maverick enterprise verify` | Actively exercise the regulated-deployment guarantees (egress lock, at-rest seal round-trip, audit chain, consent, retention); exits non-zero if any fail. |
 | `maverick audit verify` | Verify the Ed25519 hash-chain (+ cross-file tip-ledger) of a signed audit log. Exits non-zero if the chain is not intact, so it can gate CI/cron. |
-| `maverick dsar export --user <id>` | GDPR Art. 15/20 (access / portability): export everything Maverick holds for a subject as a JSON bundle. |
+| `maverick export-user` | GDPR Art. 15/20 (access / portability): export everything Maverick holds for a subject as a JSON bundle. |
 | `maverick erase --channel <c> --user <id>` | GDPR Art. 17 (right to erasure): erase everything Maverick knows about a `(channel, user_id)` pair. |
 
 **`maverick audit verify` flags:**
@@ -975,15 +980,6 @@ maverick audit verify --pubkey <ed25519-hex>     # trusted external key for real
 > at all, which is treated as a verification break and exits 1 — so automation
 > can't pass unverifiable evidence as clean.
 
-**`maverick dsar export` flags:**
-
-```bash
-maverick dsar export --user <user_id> \
-    [--tenant <t>] \         # default: active tenant
-    [--output bundle.json] \ # -o; default stdout. Written 0o600.
-    [--json]                 # compact single-line JSON
-```
-
 **`maverick erase` flags:**
 
 ```bash
@@ -999,21 +995,20 @@ maverick erase --channel telegram --user <user_id> [--yes]
 
 ## Verifying your posture
 
-After enabling anything, run:
-
-```bash
-maverick compliance --strict   # control coverage; non-zero exit on any regression
-maverick enterprise verify     # actively exercise the load-bearing guarantees
-```
-
-`maverick compliance` prints one row per control (capability enforcement,
-tenant isolation, quotas, OIDC, encryption at rest, DSAR tooling, audit
-signing, ...) with its status and the regulation it supports; `--format json`
-feeds a pipeline. `maverick enterprise verify` goes further than reading
+Posture verification runs inside the platform. The compliance control map
+lists one row per control (capability enforcement,
+tenant isolation, quotas, OIDC, encryption at rest, data-subject tooling, audit
+signing, ...) with its status and the regulation it supports. The
+regulated-deployment guarantee check goes further than reading
 flags — it proves the egress lock refuses a real cloud provider and that the
 at-rest seal round-trips on *this* box.
 
-Then confirm tamper-evidence end-to-end with `maverick audit verify`.
+From the command line, after editing anything:
+
+```bash
+maverick config-lint   # confirm the security/cost-critical knobs read back as intended
+maverick audit verify  # confirm tamper-evidence end-to-end
+```
 
 ---
 
@@ -1053,7 +1048,7 @@ sign = true
 [encryption]
 at_rest = true
 
-# SSO for `maverick serve` / dashboard. From the reviewed checkout, install:
+# SSO for the dashboard. From the reviewed checkout, install:
 # python -m pip install -e './packages/maverick-core[oidc]'
 [auth.oidc]
 enabled = true
@@ -1078,7 +1073,7 @@ export MAVERICK_ENCRYPTION_KEY="$(your-kms-fetch | xxd -p -c 32)"   # 32 bytes, 
 Then verify:
 
 ```bash
-maverick compliance --strict
+maverick config-lint
 maverick audit verify
 ```
 

@@ -49,15 +49,10 @@ two opt-in layers apply:
 
 ### Verify
 
-```bash
-maverick start "Summarize the README in this directory" --max-dollars 0.25
-maverick status --cost        # spend attributed to the run's models
-maverick budget               # total + per-run cost history
-```
-
-The cost report attributes spend to the model spec you routed, so an
-`openrouter:*` line confirms the calls went through OpenRouter. For a
-pre-flight estimate without spending, use `maverick start ... --dry-cost`.
+Run a small goal from the dashboard (`maverick dashboard`) with a low dollar
+cap, then check the run's cost record. The cost report attributes spend to the
+model spec you routed, so an `openrouter:*` line confirms the calls went
+through OpenRouter.
 
 ## Tracing into LangSmith
 
@@ -81,7 +76,7 @@ export MAVERICK_OTEL_ENDPOINT="https://<your-backend-otlp-endpoint>/v1/traces"
 # documents (LangSmith, Honeycomb, Datadog, Grafana Cloud, ...):
 export MAVERICK_OTEL_HEADERS="<header-name>=<value>"
 
-maverick start "..." 
+maverick dashboard   # or `maverick worker`; the exporter wires up at startup
 ```
 
 ### Verify
@@ -98,7 +93,7 @@ token/cost attributes. To rule out backend-side auth issues first, run a local
 spans arrive there. The Prometheus side works the same way:
 
 ```bash
-MAVERICK_PROMETHEUS_PORT=9100 maverick start "..."
+MAVERICK_PROMETHEUS_PORT=9100 maverick dashboard
 curl -s http://127.0.0.1:9100/metrics | grep maverick_llm
 # maverick_llm_calls_total, maverick_llm_tokens_total,
 # maverick_llm_cache_tokens_total, maverick_budget_dollars_spent, ...
@@ -135,12 +130,9 @@ Two honest constraints:
 
 ### Verify
 
-```bash
-maverick start "Summarize the README in this directory" --max-dollars 0.25
-```
-
-Confirm the request shows up in the gateway's own request log/dashboard, then
-cross-check the local view: `maverick status --cost` attributes the spend to
+Run a small goal from the dashboard with a low dollar cap. Confirm the request
+shows up in the gateway's own request log/dashboard, then
+cross-check the local view: the run's cost record attributes the spend to
 the `openai_compatible:*` model spec, and (with
 `MAVERICK_PROMETHEUS_PORT` set) the `maverick_llm_calls_total` counter
 increments.

@@ -83,7 +83,7 @@ skills      = true   # inject distilled/installed skills into agent prompts
 world_model = true   # inject persisted facts (cross-run memory) into runs;
                      #   false = run without prior stored facts. The goal/event/
                      #   checkpoint store (world.db) still works regardless.
-streaming   = true   # stream live progress to the terminal during `maverick start`
+streaming   = true   # stream live progress to the terminal
                      #   (MAVERICK_NO_PROGRESS or non-TTY output still suppress it)
 pack_editing = true  # allow editing/overriding agents (domain packs) from the
                      #   dashboard editor at /agents; false = the editor is
@@ -100,8 +100,8 @@ triggers    = true   # allow binding a saved template to an inbound webhook;
                      #   false = the /api/v1/triggers editor + /webhook/run 404/403.
 
 [durable]
-# Crash-resume: checkpoint a goal's loop state each step so `maverick resume`
-# continues from where a crash left off instead of starting over. Off by
+# Crash-resume: checkpoint a goal's loop state each step so a crashed goal
+# continues from where it left off instead of starting over. Off by
 # default (a small write per step). keep_last bounds retained checkpoints.
 enabled   = false
 keep_last = 5
@@ -268,18 +268,18 @@ user_notes = false         # separate privacy opt-in: verbatim cross-chat prefer
 
 [data_engine]              # Cognitive Data Engine flywheel (default on)
 enable = true              # causal failure triage -> guardrails -> habits
-# Reads the trajectory store; mutates nothing until enabled. `maverick flywheel`.
+# Reads the trajectory store; mutates nothing until enabled.
 
 [operations_scientist]     # discover + prove a better process (default on)
 enable = true              # propose a swap, validate it in the world-model first
 
 [consequence]              # reality is the reward (default on)
 enable = true              # a recorded outcome overrides the verifier proxy
-# Feed outcomes via `maverick record-outcome` or POST /api/v1/outcomes.
+# Feed outcomes via POST /api/v1/outcomes.
 
 [emergent_protocol]        # auditable coordination shorthand (default off)
 enable = true              # learn short codes for repeated boilerplate; every
-                           # code decodes EXACTLY back to English. `maverick codebook`.
+                           # code decodes EXACTLY back to English.
 
 [emergent_codec]           # token-aware codec, live measurement (default off)
 enable = true              # measure (never apply) the codec's token savings on
@@ -291,13 +291,11 @@ enable = true
 [self_harness]             # conservative harness learning (default on)
 enable = true              # mine failures -> propose -> regression-validate ->
                            #   gate. Promotion ALSO needs [self_improvement]
-                           #   enable. Operator commands: `maverick self-harness
-                           #   show` (what was learned), `preview` (dry-run of
-                           #   what it would propose), `log` (audit trail), and
-                           #   `forget` (roll a learned line back).
+                           #   enable. What was learned, proposed, and rolled
+                           #   back is recorded in the signed learning audit.
 # A clean install uses the conservative unattended profile below. Existing
 # partial [self_harness] tables retain their explicitly configured lifecycle
-# settings during upgrade. Details: docs/proposals/self-harness.md.
+# settings during upgrade.
 risk_limited = true              # require >=8 held-out
 #                                cases, 2% effect floor, two-arm 95% confidence
 #                                floor, sealed best-of-3, 3 judge votes, recent
@@ -310,8 +308,8 @@ risk_limited = true              # require >=8 held-out
 #                                either `enable` flag on.
 #   holdout_ledger = "/protected/self-harness-holdout.db"
 #                                durable cross-cycle query/alpha accounting;
-#                                provision with `maverick self-harness holdout
-#                                provision --path <path>` before risk-limited use
+#                                must be explicitly provisioned before
+#                                risk-limited use
 #   eval_corpus = "/path.json"   {model|domain: [{goal, expected}]} — enables
 #                                the auto-built live A/B on scheduled runs
 #   eval_budget_dollars = 5.0    spend cap per auto-evaluated cycle (fail-closed)
@@ -327,9 +325,7 @@ auto_run = true                  # run the fleet cycle as part of `maverick drea
 #   mine_bucket_by = ["domain"]  scope mining/recall per domain / role / tool
 #   store = "world"              learning stores AND the eval-corpus family in the
 #                                shared world database so a multi-host fleet learns
-#                                as one (default "files"; import a host's files with
-#                                `maverick self-harness migrate-store`; hand-edit via
-#                                `corpus export` / `corpus import`)
+#                                as one (default "files")
 
 [self_learning]            # governed local learning (default on)
 enable = true
@@ -346,7 +342,7 @@ provision_packs = true     # equip a freshly-approved pack with the skills + too
                            #   Read-only analysis is always safe; applying it is
                            #   gated on the same human approval `save_profile`
                            #   requires and never widens the clamped envelope.
-                           #   Wired into `maverick onboard`. See FEATURES.md.
+                           #   See FEATURES.md.
 
 [ekko]                     # client-controlled work discovery (default OFF)
 enable = false             # independent of self-learning and DGM
@@ -362,7 +358,6 @@ blocked_apps = ["email", "outlook", "gmail", "chat", "teams", "slack",
 provider_egress = false    # reserved/unsupported; true fails closed
 # Enabling policy does not enroll a device, start a service, request OS
 # monitoring permissions, save a generated flow, or activate automation.
-# See ekko-work-discovery.md and `maverick ekko --help`.
 
 [self_improvement]         # promotion ladder for learned guidance (default on)
 enable = true
@@ -372,7 +367,7 @@ factory_learning = true    # close the loop onto generation quality: attribute
                            #   `prompt` rung, and fold into future pack generation.
                            #   Default on once self-improvement is enabled; the
                            #   wizard sets it. Force-enable via MAVERICK_FACTORY_LEARNING.
-                           #   `maverick factory-learn [--dry-run]`. See FEATURES.md.
+                           #   See FEATURES.md.
 evaluator_evolution = true  # promote a BETTER judge instead of only freezing when
                            #   the evaluator drifts: a challenger evaluator replaces
                            #   the incumbent only when its agreement with a fixed,
@@ -459,7 +454,7 @@ The installer keeps these separated automatically.
 ## Overriding the config path
 
 ```bash
-MAVERICK_CONFIG=/etc/maverick/config.toml maverick start "..."
+MAVERICK_CONFIG=/etc/maverick/config.toml maverick dashboard
 ```
 
 Useful for VPS deployments where you want the config under `/etc/`.

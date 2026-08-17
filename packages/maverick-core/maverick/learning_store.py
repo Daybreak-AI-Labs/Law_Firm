@@ -227,7 +227,8 @@ def _decode_corpus_row(kind: str, row: str) -> object:
             else:
                 log.warning(
                     "at-rest: unsealed harness_corpus.%s row "
-                    "(pre-migration legacy or tampering); run 'maverick encryption migrate'",
+                    "(pre-migration legacy or tampering); seal legacy rows via "
+                    "maverick.encryption_migrate",
                     kind,
                 )
     return json.loads(row)

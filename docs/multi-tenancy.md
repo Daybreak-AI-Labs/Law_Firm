@@ -25,7 +25,7 @@ single-tenant install and behaves exactly as before.
 | Cross-session memory | per-tenant dir | `tenants/<id>/memory/` |
 | Audit log | per-tenant, signed/hash-chained | `tenants/<id>/audit/` |
 | Knowledge store | per-tenant via Workspace | `tenants/<id>/knowledge.db` |
-| Encryption-at-rest key | distinct DEK per tenant (AEAD-bound); per-tenant BYOK + fleet KEK rotation | `tenant/kms.py`, `tenant/kms_fleet.py`, `maverick tenant kms-rotate` |
+| Encryption-at-rest key | distinct DEK per tenant (AEAD-bound); per-tenant BYOK + fleet KEK rotation | `tenant/kms.py`, `tenant/kms_fleet.py` |
 | **Config & credentials** | per-tenant overlay | `tenants/<id>/config.toml` |
 | **Calibration / learning-freeze** | per-tenant | `tenants/<id>/calibration*` |
 | **Concurrency ceiling** | per-tenant, from plan | `billing.entitlements` |
@@ -57,8 +57,7 @@ issuer = "https://acme.example.com"
 audience = "maverick-acme"
 ```
 
-`maverick tenant create <id>` prints this path; the provisioning API returns it
-as `config_path`. The same overlay drives a tenant's `[channels.*]` bot
+The provisioning API returns this path as `config_path`. The same overlay drives a tenant's `[channels.*]` bot
 identities and `[auth.oidc]` provider — so credentials, models, budget, channel
 bots and IdP are all per-tenant in the one-instance-per-tenant model.
 
@@ -79,12 +78,7 @@ plan is denied.
 
 ## Provisioning
 
-```bash
-# CLI
-maverick tenant create acme --plan enterprise --max-daily-dollars 100
-maverick tenant list
-maverick tenant suspend acme   # / resume / quota / delete --purge
-```
+Tenants are provisioned over the admin REST API:
 
 ```text
 # REST (admin only)
@@ -108,8 +102,8 @@ When tenants need **distinct bot identities** (their own Slack workspace bot,
 their own inbound email address/webhook), run **one Maverick instance per
 tenant**. The Helm chart (`deploy/helm`) plus the per-tenant config overlay make
 this cheap: one release per tenant, each with its own `[channels.*]` and
-credentials. `maverick serve` logs an advisory when it detects a multi-tenant
-deployment using shared global channels.
+credentials. The server logs an advisory at startup when it detects a
+multi-tenant deployment using shared global channels.
 
 For purely API/dashboard-driven tenants (no inbound chat bots), a single
 multi-tenant instance is fine.

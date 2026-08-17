@@ -1,7 +1,7 @@
 # Maverick cookbook
 
-End-to-end recipes you can paste into `maverick start "..."` (or into a
-GitHub issue body when using the `agent-on-pr` reusable workflow).
+End-to-end recipes you can paste as a goal into the dashboard
+(`maverick dashboard`).
 
 Each recipe is:
 

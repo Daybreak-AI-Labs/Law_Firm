@@ -823,10 +823,11 @@ def _dec_field(text: str | None) -> str | None:
         return unseal_from_str(text)
     if strict_at_rest():
         log.error("at-rest strict: withholding an unsealed value in a sealed column "
-                  "(run 'maverick encryption migrate'; tampering if already migrated)")
+                  "(seal legacy rows via maverick.encryption_migrate; tampering if "
+                  "already migrated)")
         return _UNSEALED_WITHHELD
     log.warning("at-rest: unsealed value in a sealed column (pre-migration legacy or "
-                "tampering); run 'maverick encryption migrate'")
+                "tampering); seal legacy rows via maverick.encryption_migrate")
     return text
 
 
@@ -859,14 +860,15 @@ def _dec_fields(texts: list[str | None]) -> list[str | None]:
             if strict:
                 log.error(
                     "at-rest strict: withholding an unsealed value in a sealed "
-                    "column (run 'maverick encryption migrate'; tampering if "
-                    "already migrated)"
+                    "column (seal legacy rows via maverick.encryption_migrate; "
+                    "tampering if already migrated)"
                 )
                 decoded = _UNSEALED_WITHHELD
             else:
                 log.warning(
                     "at-rest: unsealed value in a sealed column (pre-migration "
-                    "legacy or tampering); run 'maverick encryption migrate'"
+                    "legacy or tampering); seal legacy rows via "
+                    "maverick.encryption_migrate"
                 )
         out.append(decoded)
     return out

@@ -19,8 +19,8 @@ User=%i
 WorkingDirectory=/home/%i/maverick-workspace
 EnvironmentFile=/home/%i/.maverick/.env
 Environment=MAVERICK_CONFIG=/home/%i/.maverick/config.toml
-# Idle by default — channels (telegram etc.) wake it.
-ExecStart=/home/%i/.local/bin/maverick serve
+# The dashboard is the platform's front door; the worker drains queued goals.
+ExecStart=/home/%i/.local/bin/maverick dashboard
 Restart=on-failure
 RestartSec=5s
 # Give in-flight goals 30s to wind down on stop/restart.

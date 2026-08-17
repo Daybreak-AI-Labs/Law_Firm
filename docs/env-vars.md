@@ -16,7 +16,7 @@ for false unless noted otherwise.
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_CONFIG` | `~/.maverick/config.toml` | Path to an alternate config file. |
-| `MAVERICK_CODING_MODE` | unset | When `1`/`true`/`yes`, switches the agent into coding mode (set by `maverick start --coding-mode`); affects prompts, fs/shell tool defaults, and cache TTL. |
+| `MAVERICK_CODING_MODE` | unset | When `1`/`true`/`yes`, switches the agent into coding mode; affects prompts, fs/shell tool defaults, and cache TTL. |
 | `MAVERICK_LANGUAGE` | unset | Primary project language hint (e.g. `python`, `go`). Feeds sandbox/toolchain selection and coding mode. |
 | `MAVERICK_MAX_STEPS` | `25` | Global cap on agent loop steps per goal. |
 | `MAVERICK_STEP_BUDGET_WARNING` | `3` | When this many tool-using turns remain before `MAVERICK_MAX_STEPS`, the loop nudges the agent to give its FINAL answer (so a long run isn't cut off mid-work). `0` disables. |
@@ -48,7 +48,7 @@ for false unless noted otherwise.
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `MAVERICK_MODEL_OVERRIDE` | unset | Global run-wide model override (`provider:model-id`); set by `maverick --model`. Beats config for every role. |
+| `MAVERICK_MODEL_OVERRIDE` | unset | Global run-wide model override (`provider:model-id`). Beats config for every role. |
 | `MAVERICK_MODEL_OVERRIDE_<ROLE>` | unset | Per-role override, e.g. `MAVERICK_MODEL_OVERRIDE_CODER`. Beats the global override for that role. |
 | `MAVERICK_TEMPERATURE` | provider default | Sampling temperature for LLM calls. |
 | `MAVERICK_VISION_MODEL` | `anthropic:claude-sonnet-4-6` | Model used by the image/video viewing tools (`provider:model-id`). |
@@ -77,15 +77,15 @@ for false unless noted otherwise.
 | `MAVERICK_TOT_CANDIDATES` | built-in | Number of candidate plans tree-of-thought forks. |
 | `MAVERICK_REFLEXION` | config `[reflexion] enable` (on) | Override the default-on reflexion self-critique loop; set `0` to opt out. |
 | `MAVERICK_DREAMING` | config `[dreaming] enable` (on) | Override default-on offline experience consolidation (`maverick dream`); set `0` to opt out. |
-| `MAVERICK_SELF_HARNESS` | config `[self_harness] enable` (on) | Override the default-on conservative self-harness loop (`maverick self-harness`; promotion also needs `[self_improvement] enable`). |
+| `MAVERICK_SELF_HARNESS` | config `[self_harness] enable` (on) | Override the default-on conservative self-harness loop (runs on the dream beat; promotion also needs `[self_improvement] enable`). |
 | `MAVERICK_FACTORY_LEARNING` | config `[self_improvement] factory_learning` (on when the master is on) | Override the factory loop directly: `0` disables it and `1` force-enables it even if the self-improvement master is off. |
-| `MAVERICK_DATA_ENGINE` | config `[data_engine] enable` (on) | Override the default-on Cognitive Data Engine flywheel: causal failure triage → guardrails → habits (`maverick flywheel`). |
+| `MAVERICK_DATA_ENGINE` | config `[data_engine] enable` (on) | Override the default-on Cognitive Data Engine flywheel: causal failure triage → guardrails → habits. |
 | `MAVERICK_OPERATIONS_SCIENTIST` | config `[operations_scientist] enable` (on) | Override the default-on Operations Scientist: propose + simulate a better process before a real experiment. |
-| `MAVERICK_CONSEQUENCE` | config `[consequence] enable` (on) | Override default-on grounding in real downstream outcomes (`maverick record-outcome`). |
+| `MAVERICK_CONSEQUENCE` | config `[consequence] enable` (on) | Override default-on grounding in real downstream outcomes (fed via POST /api/v1/outcomes). |
 | `MAVERICK_FLOWS` | config `[flows] enable` (off) | Enable the flow-automation engine (deterministic graph of agent/action/branch/… nodes; triggers). |
 | `MAVERICK_FLOWS_AUTO` | config `[flows] auto_evolve` (off) | Let the flow self-rewrite loop act autonomously: revert a node rewrite it measures as a regression. Pairs with `[flows] auto_apply` (apply an improvement forward) — both are also toggleable from the dashboard Learning page. |
-| `MAVERICK_EMERGENT_PROTOCOL` | config `[emergent_protocol] enable` (off) | Enable the auditable coordination codec (sentinel form; `maverick codebook`). |
-| `MAVERICK_EMERGENT_CODEC` | config `[emergent_codec] enable` (off) | Measure the token-aware codec on the live coordination stream (telemetry only; `maverick codec-learn`). |
+| `MAVERICK_EMERGENT_PROTOCOL` | config `[emergent_protocol] enable` (off) | Enable the auditable coordination codec (sentinel form). |
+| `MAVERICK_EMERGENT_CODEC` | config `[emergent_codec] enable` (off) | Measure the token-aware codec on the live coordination stream (telemetry only; GET /api/v1/codec). |
 | `MAVERICK_DOMAIN_DISCIPLINE` | config `[domains] discipline` (on) | Append suite operating discipline to specialist personas at spawn. |
 | `MAVERICK_PRM` | `null` | Process reward model: `null`, `heuristic`, `remote`, `learned`, or `linear`. A linear backend reconciles durable verifier-promotion authority before serving and falls back to the heuristic for an in-doubt, unrecognized, or out-of-band artifact. |
 | `MAVERICK_PRM_PATH` | unset | Learned-model directory (`learned`) or stable serving artifact (`linear`). Relative linear paths are pinned to an absolute startup path before recovery and serving. |
@@ -122,7 +122,7 @@ for false unless noted otherwise.
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_KMS_KEK` | derived from the at-rest key | The per-tenant-DEK Key Encryption Key (32 bytes, hex/base64) for `tenant/kms.py`. |
-| `MAVERICK_KMS_DEK_CACHE_TTL` | config `[kms] dek_cache_ttl` (`0` = process lifetime) | Seconds a tenant DEK stays cached before it must be re-unwrapped by the KMS. A positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data (the next access re-hits the KMS and fails closed). Per-tenant **BYOK** is configured in each tenant's own `tenants/<id>/config.toml` `[kms]` section (provider/key_id/region), resolved deterministically by `get_kms(tenant_id)`. **Rolling the local KEK** across the fleet: `maverick tenant kms-rotate --old-kek-file /run/secrets/old-kek --new-kek-file /run/secrets/new-kek` (re-wrap only, idempotent/resumable, `--dry-run` to preview; omit file options to use hidden prompts). Avoid passing KEKs in command-line arguments; set `MAVERICK_KMS_KEK` to the new value live only after rotation reports 0 failed. Cloud/BYOK rotation uses `tenant.kms.rotate_kek_fleet` with per-tenant resolvers. |
+| `MAVERICK_KMS_DEK_CACHE_TTL` | config `[kms] dek_cache_ttl` (`0` = process lifetime) | Seconds a tenant DEK stays cached before it must be re-unwrapped by the KMS. A positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data (the next access re-hits the KMS and fails closed). Per-tenant **BYOK** is configured in each tenant's own `tenants/<id>/config.toml` `[kms]` section (provider/key_id/region), resolved deterministically by `get_kms(tenant_id)`. **Rolling the local KEK** across the fleet is a re-wrap-only, idempotent/resumable operation (`tenant/kms_fleet.py`). Avoid passing KEKs in command-line arguments; set `MAVERICK_KMS_KEK` to the new value live only after rotation reports 0 failed. Cloud/BYOK rotation uses `tenant.kms.rotate_kek_fleet` with per-tenant resolvers. |
 | `MAVERICK_MCP_ANALYTICS` | config `[analytics] mcp_client_language` (off) | Opt-in, consent-gated tally of MCP-client language (feeds the language-bindings gate). |
 | `IRC_ALLOWED_ACCOUNTS` | — | Comma-separated allowlist of authenticated IRC account names that may drive the agent over the IRC channel. Requires an IRC server that provides the IRCv3 `account-tag` capability. |
 | `GLASSES_ALLOWED_USER_IDS` | — | Allowlist for the glasses/wearable channel. |
@@ -165,8 +165,9 @@ the HMAC value in your secret manager, and keep it out of process arguments,
 logs, and repository configuration.
 
 Other config-only knobs: `[billing.plans]` (override plan entitlements), `[egress]` /
-`[tenancy.egress.<t>]` (per-tenant egress plane). Tenants are managed with
-`maverick tenant …`; invoices/entitlements with `maverick billing …`.
+`[tenancy.egress.<t>]` (per-tenant egress plane). Tenants are managed over the
+admin REST API (`/api/v1/admin/tenants` — see
+[multi-tenancy.md](multi-tenancy.md)); invoices/entitlements under `[billing.plans]`.
 
 ## LLM cost & latency
 
