@@ -23,6 +23,19 @@ from urllib.parse import quote
 log = logging.getLogger(__name__)
 
 
+def _ingestion_shield() -> Any | None:
+    """Build the scanner used by every persistent admin/intake ingest path."""
+    try:
+        from maverick_shield import Shield
+
+        return Shield.from_config()
+    except Exception as exc:
+        # Reads/erasure may still open the authenticated store. KnowledgeBase
+        # itself refuses every persistent ingest while this remains None.
+        log.error("knowledge admin: ingestion Shield unavailable: %s", exc)
+        return None
+
+
 def subject_key(channel: str, user_id: str) -> str:
     """The provenance ``subject`` stamped on a data subject's ingested chunks.
 
@@ -49,7 +62,11 @@ def open_knowledge_base(*, tenant: str | None = None) -> Any | None:
             from .workspace import Workspace
             kcfg = {**kcfg, "path": str(Workspace.current().knowledge_path)}
         from maverick_knowledge import KnowledgeBase, build_embedder, build_store
-        return KnowledgeBase(store=build_store(kcfg), embedder=build_embedder(kcfg))
+        return KnowledgeBase(
+            store=build_store(kcfg),
+            embedder=build_embedder(kcfg),
+            shield=_ingestion_shield(),
+        )
     except Exception as e:  # pragma: no cover -- knowledge is optional
         log.warning("knowledge admin: base unavailable (fail-open): %s", e)
         return None

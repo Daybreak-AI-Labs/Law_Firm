@@ -24,12 +24,16 @@ class TestBearerAuth:
         resp = client.get("/")
         assert resp.status_code == 401
 
-    def test_token_allows_bearer_header(self, monkeypatch, tmp_path):
+    def test_static_token_is_rejected_in_secure_firm_mode(self, monkeypatch, tmp_path):
         monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", "s3cr3t")
+        monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
         from maverick import world_model
         monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
-        resp = client.get("/", headers={"Authorization": "Bearer s3cr3t"})
-        assert resp.status_code == 200
+        resp = client.get(
+            "/api/v1/halt",
+            headers={"Authorization": "Bearer s3cr3t"},
+        )
+        assert resp.status_code == 401
 
     def test_query_token_no_longer_allowed(self, monkeypatch, tmp_path):
         """Council security pass: query-token auth was removed (leaked via Referer)."""
@@ -64,7 +68,7 @@ class TestGoalEvents:
         w.append_event(gid, "orchestrator-0", "plan", "thinking about it")
         w.append_event(gid, "researcher-1", "finding", "discovered X")
 
-        resp = client.get(f"/api/goal/{gid}/events")
+        resp = client.get(f"/api/v1/goals/{gid}/events")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "pending"
@@ -81,11 +85,11 @@ class TestGoalEvents:
         e1 = w.append_event(gid, "a", "plan", "first")
         w.append_event(gid, "a", "plan", "second")
 
-        resp = client.get(f"/api/goal/{gid}/events?since={e1}")
+        resp = client.get(f"/api/v1/goals/{gid}/events?since={e1}")
         data = resp.json()
         assert len(data["events"]) == 1
         assert data["events"][0]["content"] == "second"
 
     def test_events_for_unknown_goal_404(self):
-        resp = client.get("/api/goal/9999999/events")
+        resp = client.get("/api/v1/goals/9999999/events")
         assert resp.status_code == 404

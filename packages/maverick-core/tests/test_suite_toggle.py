@@ -15,7 +15,7 @@ def test_suite_for_prefix_mapping():
     assert suite_for("legal_research") == "legal"
     assert suite_for("finance_gl_close") == "finance"
     # Legacy/generic packs have no suite prefix and are never toggled off.
-    assert suite_for("legal") is None
+    assert suite_for("legal") == "legal"  # canonical pre-prefix legal base
     assert suite_for("finance") is None
     assert suite_for("generic") is None
 
@@ -44,6 +44,6 @@ def test_enabled_true_is_a_noop_and_toggles_are_independent():
         assert any(n.startswith("ops_") for n in out)
     if any(n.startswith("legal_") for n in alld):
         assert not any(n.startswith("legal_") for n in out)
-    # the legacy 'legal' pack (no legal_ prefix) is unaffected by the suite toggle
+    # The canonical pre-prefix legal base follows the same legal toggle.
     if "legal" in alld:
-        assert "legal" in out
+        assert "legal" not in out

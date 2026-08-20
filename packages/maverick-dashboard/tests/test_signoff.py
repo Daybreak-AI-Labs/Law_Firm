@@ -16,13 +16,43 @@ _TABLE = "| Week | Net |\n| --- | ---: |\n| W1 | 300 |\n| W2 | 100 |\n"
 def _world(tmp_path, monkeypatch):
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    # These tests exercise sign-off semantics rather than audit transport
+    # failure (covered adversarially in test_legal_signoff_audit.py).
+    monkeypatch.setattr("maverick.audit.audit_event", lambda *a, **k: True)
     return world_model.WorldModel(tmp_path / "world.db")
 
 
 def _forecast_goal(w):
-    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
+    gid = w.create_goal("Refresh the cash forecast", "", domain="legal_obligations")
+    _attach_matter(w, gid)
     w.set_goal_status(gid, "done", result=_TABLE)
     return gid
+
+
+def _attach_matter(w, gid, *, name="Client matter"):
+    goal = w.get_goal(gid)
+    # Auth-off API decisions are attributed to ``operator``; direct fixture
+    # sign-offs below use ``user:alice``. Keep both as explicit attorneys so
+    # the release policy exercises a real matter roster rather than an ambient
+    # local-mode exception.
+    owner = goal.owner or "operator"
+    project_id = w.create_client_matter(
+        name,
+        principal=owner,
+        domain="legal_obligations",
+        matter_number=f"SIGN-{gid}",
+        jurisdiction="Tennessee",
+        client_name=f"Signoff Client {gid}",
+    )
+    for principal in {"operator", "user:alice"} - {owner}:
+        w.add_project_member(
+            project_id,
+            principal,
+            "attorney",
+            added_by=owner,
+        )
+    w.set_goal_project(gid, project_id)
+    return project_id
 
 
 def _decision(w, gid, decision, *, note=None, expected_updated_at=None):
@@ -37,6 +67,54 @@ def _decision(w, gid, decision, *, note=None, expected_updated_at=None):
 
 
 class TestSignoffApi:
+    def test_operator_cannot_sign_off_but_qualified_attorney_can(
+        self, tmp_path, monkeypatch,
+    ):
+        from maverick_dashboard import auth, rbac
+
+        w = _world(tmp_path, monkeypatch)
+        operator_goal = w.create_goal(
+            "Operator draft",
+            "",
+            domain="legal_obligations",
+            owner="user:operator",
+        )
+        _attach_matter(w, operator_goal)
+        w.set_goal_status(operator_goal, "done", result=_TABLE)
+        rbac.set_role("user:operator", "operator")
+        monkeypatch.setattr(
+            auth, "caller_principal", lambda _request: "user:operator"
+        )
+
+        denied = client.post(
+            f"/api/v1/goals/{operator_goal}/signoff",
+            json=_decision(w, operator_goal, "approved"),
+        )
+
+        assert denied.status_code == 403
+        assert w.signoff_for(operator_goal) is None
+
+        attorney_goal = w.create_goal(
+            "Attorney draft",
+            "",
+            domain="legal_obligations",
+            owner="user:counsel",
+        )
+        _attach_matter(w, attorney_goal)
+        w.set_goal_status(attorney_goal, "done", result=_TABLE)
+        rbac.set_role("user:counsel", "attorney")
+        monkeypatch.setattr(
+            auth, "caller_principal", lambda _request: "user:counsel"
+        )
+
+        approved = client.post(
+            f"/api/v1/goals/{attorney_goal}/signoff",
+            json=_decision(w, attorney_goal, "approved"),
+        )
+
+        assert approved.status_code == 200
+        assert approved.json()["signoff"]["decided_by"] == "user:counsel"
+
     def test_record_then_read_signoff(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
         gid = _forecast_goal(w)
@@ -64,7 +142,7 @@ class TestSignoffApi:
 
     def test_signoff_before_deliverable_is_finished_is_rejected(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("forecast", "", domain="finance_cashflow")
+        gid = w.create_goal("forecast", "", domain="legal_obligations")
         r = client.post(
             f"/api/v1/goals/{gid}/signoff",
             json=_decision(w, gid, "approved"),
@@ -77,8 +155,8 @@ class TestSignoffApi:
     ):
         domains = tmp_path / "domains"
         domains.mkdir()
-        (domains / "generated_gate.toml").write_text(
-            'name = "generated_gate"\n'
+        (domains / "legal_generated_gate.toml").write_text(
+            'name = "legal_generated_gate"\n'
             'description = "Generated approval-gated specialist"\n'
             f'persona = "{"x" * 240}"\n'
             'allow_tools = ["read_file"]\n'
@@ -97,7 +175,8 @@ class TestSignoffApi:
         )
         monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(domains))
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("generated", "", domain="generated_gate")
+        gid = w.create_goal("generated", "", domain="legal_generated_gate")
+        _attach_matter(w, gid)
         w.set_goal_status(gid, "done", result=_TABLE)
 
         state = client.get(f"/api/v1/goals/{gid}/signoff")
@@ -154,14 +233,10 @@ class TestSignoffApi:
         assert r.status_code == 409
         assert w.signoff_for(gid) is None
 
-    def test_approval_fires_handoff_rejection_does_not(self, tmp_path, monkeypatch):
-        import maverick.webhooks as webhooks
+    def test_signoff_is_internal_and_records_outcome_once(self, tmp_path, monkeypatch):
         import maverick_dashboard.api as dashboard_api
         w = _world(tmp_path, monkeypatch)
-        calls = []
         outcomes = []
-        monkeypatch.setattr(webhooks, "fire_deliverable_handoff",
-                            lambda payload: calls.append(payload) or 1)
         monkeypatch.setattr(
             dashboard_api,
             "_record_signoff_outcome",
@@ -174,45 +249,14 @@ class TestSignoffApi:
         retry = client.post(f"/api/v1/goals/{gid}/signoff", json=payload)
         assert first.json()["changed"] is True
         assert retry.json()["changed"] is False
-        assert len(calls) == 1
         assert outcomes == [(gid, "approved")]
-        assert calls[0]["goal_id"] == gid
-        assert calls[0]["domain"] == "finance_cashflow"
-        assert calls[0]["table"]["headers"] == ["Week", "Net"]  # parsed deliverable rides along
-        assert calls[0]["result"] == ""  # no raw table text outside the reviewed artifact
 
         gid2 = _forecast_goal(w)
         client.post(
             f"/api/v1/goals/{gid2}/signoff",
             json=_decision(w, gid2, "rejected"),
         )
-        assert len(calls) == 1  # rejection does not hand off downstream
         assert outcomes == [(gid, "approved"), (gid2, "rejected")]
-
-    def test_handoff_omits_unreviewed_raw_text_for_table(self, tmp_path, monkeypatch):
-        import maverick.webhooks as webhooks
-        w = _world(tmp_path, monkeypatch)
-        calls = []
-        monkeypatch.setattr(webhooks, "fire_deliverable_handoff",
-                            lambda payload: calls.append(payload) or 1)
-
-        raw = "HIDDEN_PREFACE\n" + _TABLE + "\nHIDDEN_TRAILER"
-        gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
-        w.set_goal_status(gid, "done", result=raw)
-
-        r = client.post(
-            f"/api/v1/goals/{gid}/signoff",
-            json=_decision(w, gid, "approved"),
-        )
-
-        assert r.status_code == 200
-        assert len(calls) == 1
-        assert calls[0]["table"] == {
-            "headers": ["Week", "Net"],
-            "rows": [["W1", "300"], ["W2", "100"]],
-        }
-        assert calls[0]["result"] == ""
-        assert "HIDDEN" not in str(calls[0])
 
 
 class TestSignoffGroundsLearning:
@@ -313,7 +357,8 @@ class TestDeliverableExport:
 
     def test_gated_table_export_requires_approved_signoff(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("Prepare payment batch", "", domain="finance_ap")
+        gid = w.create_goal("Prepare payment batch", "", domain="legal_obligations")
+        _attach_matter(w, gid)
         w.set_goal_status(gid, "done", result=_TABLE)
 
         r = client.get(f"/api/v1/goals/{gid}/deliverable.csv")
@@ -330,6 +375,7 @@ class TestDeliverableExport:
     def test_export_neutralizes_spreadsheet_formulas(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
         gid = w.create_goal("Review AML alerts", "", domain="legal_investigations")
+        _attach_matter(w, gid)
         w.set_goal_status(
             gid,
             "done",
@@ -358,8 +404,10 @@ class TestDeliverableExport:
 
     def test_no_table_is_404(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)
-        gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
+        gid = w.create_goal("Refresh forecast", "", domain="legal_obligations")
+        _attach_matter(w, gid)
         w.set_goal_status(gid, "done", result="No grid here, just narrative.")
+        w.record_signoff(gid, "approved", decided_by="user:alice", note="ok")
         assert client.get(f"/api/v1/goals/{gid}/deliverable.csv").status_code == 404
 
 
@@ -368,8 +416,9 @@ class TestSignoffUi:
         w = _world(tmp_path, monkeypatch)
         gid = _forecast_goal(w)
         t = client.get(f"/chat/goal/{gid}").text
-        assert 'id="signoff-approve"' in t
-        assert 'id="signoff-reject"' in t
+        assert 'id="review-panel"' in t
+        assert 'data-decision="approved"' in t
+        assert 'data-decision="rejected"' in t
         assert "expected_updated_at" in t
 
     def test_terminal_gated_prose_playbook_has_review_controls(
@@ -400,8 +449,8 @@ class TestSignoffUi:
 
         assert page.status_code == 200
         assert "first-pass prose" in page.text
-        assert 'id="signoff-approve"' in page.text
-        assert 'id="signoff-reject"' in page.text
+        assert 'data-decision="approved"' in page.text
+        assert 'data-decision="rejected"' in page.text
 
     def test_signed_off_goal_shows_decision_and_handoff(self, tmp_path, monkeypatch):
         w = _world(tmp_path, monkeypatch)

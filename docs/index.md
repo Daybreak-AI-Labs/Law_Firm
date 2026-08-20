@@ -2,7 +2,7 @@
 
 > The firm's practice platform. One kernel, every model.
 
-A governed AI workforce of 125 specialist packs — 77 of them legal — that
+A governed roster of 31 legal profiles that
 drafts, researches and keeps the file straight, running in the firm's own
 environment with an attorney reviewing everything before it leaves the
 office. It drives any LLM (Claude, GPT, Kimi, Grok, Gemini, DeepSeek, Ollama,
@@ -13,40 +13,24 @@ Private software for one firm, proprietary and not for distribution (see
 
 ## What you can do with it
 
-- **Long-horizon software work**: recursive agent-spawns-agent
-  orchestration with shared world model, budgets, and audit log.
-- **Use your existing chat subscriptions**: ChatGPT Plus, Claude Pro,
-  Kimi, X Premium, Gemini Advanced — drive them from the agent via
-  captured browser sessions, no extra API spend. Note: session providers
-  have no native function-calling, so Maverick gives them tools through a
-  **simulated** markdown tool-call protocol — it works for tool-using
-  roles, but reliability is model-dependent and weaker than an API-key
-  provider's native tool use.
-- **Computer use & web browser**: Anthropic-spec computer-use tool +
-  Playwright-driven browser tool, with kill switches and an audit
-  trail for every action.
-- **Multi-channel deployment**: Telegram, Discord, Slack, Signal,
-- **Primary-source data grounding**: analyst packs are auto-granted 37
-  read-only public-data connectors (SEC EDGAR, FRED, Treasury, World Bank,
-  FDIC, Census, BLS, EIA, openFDA, NPPES, ClinicalTrials, USAspending,
-  SAM.gov, CourtListener, Federal Register, GLEIF, OpenCorporates,
-  NWS/NOAA, EPA, Climatiq, …) so they cite authoritative sources instead of
-  model recall. On by default; kill-switch via `[workforce] data_grounding
-  = false`. Alongside 95 write-capable connectors scoped to legal practice
-  (Clio, Westlaw, PACER, Everlaw, iManage, DocuSign, Ironclad, QuickBooks, …)
-  and dedicated tool modules.
-- **Proven governance**: a roster-wide invariant test suite checks six
-  governance invariants (tool-reachability, autonomy dial, capability
-  attenuation, compartment isolation, unstrippable hard refusals, budget
-  caps) across all 125 packs with a non-vacuous fault-injection control
-  (property-fuzzed up to 5,000 iterations),
-  plus hostile-argument fuzzing of every connector and tool.
-  Email, Matrix, WhatsApp, SMS, iMessage — one config, all channels.
+- **Matter-bound legal work**: reviewed specialist profiles operate only inside
+  an exact client matter, with budgets, audit, and attorney release gates.
+- **Research and evidence**: matter-scoped attachments, local knowledge search,
+  single-vendor guarded web research, citation checking, spreadsheets, and
+  permanently read-only bounded SQL.
+- **Five legal-system connectors**: GET-only access to Carta, Clio,
+  Contractbook, DocuSign, and Ironclad. No connector is granted suite-wide.
+- **Local improvement without fleet learning**: matter-scoped reflexion,
+  dreaming, rehearsal, and skill distillation feed an offline candidate/eval
+  loop; runtime agents cannot acquire tools or auto-promote code.
+- **Fail-closed governance**: secure registries require the exact matter/profile
+  context, refuse cross-matter reuse and shadow registration, and expose only
+  two pure context-free helpers when no matter is bound.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/Daybreak-AI-Labs/Law_Firm && cd Maverick
+git clone https://github.com/Daybreak-AI-Labs/Law_Firm && cd Law_Firm
 git checkout --detach <reviewed-full-40-character-commit-sha>
 pip install -e ./packages/maverick-core
 pip install -e ./apps/installer-cli
@@ -64,27 +48,20 @@ Queue your first goal from the dashboard; `maverick worker` executes queued
 goals in the background. The dashboard streams each goal's plan tree live and
 shows the audit log and spend.
 
-## Licensing & access
+## Internal use
 
-Maverick is **proprietary, commercially licensed** software (see
-[`LICENSE`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/LICENSE)). It is self-hostable — the runtime executes entirely
-in your own environment — and use requires a license. Pricing is handled
-per engagement; [contact us](https://github.com/Daybreak-AI-Labs/Law_Firm) for
-evaluation or enterprise access.
-
-A deliberately stripped-down **open-source "lite" edition** may be released
-later as a community on-ramp; the full runtime and the governance/compliance
-platform remain proprietary.
+This repository is private, proprietary software for Bjerken and Day. It is
+not a commercial distribution, public package, or community edition. See
+[`LICENSE`](https://github.com/Daybreak-AI-Labs/Law_Firm/blob/main/LICENSE).
 
 ## Where to go next
 
 - [Getting started](getting-started.md) — install + first goal
-- Architecture (`docs/architecture.md`) — the governed agent runtime (OS-style primitives)
-- [Configuration](configuration.md) — providers, channels, budgets
-- [Deployment](deployment.md) — desktop / docker / VPS / phone modes
+- [Architecture](architecture.md) — the exact-matter governed runtime
+- [Configuration](configuration.md) — providers, budgets, and firm controls
+- [Deployment](deployment.md) — reviewed checkout, Docker, and VPS modes
 - [Safety](safety.md) — shield, audit log, kill switches, consent
 - [Threat model](security/threat-model.md) — trust boundaries, capabilities, tenancy, and security controls
-- Security & compliance overview (`docs/security-hardening.md`) — application egress controls, deployment boundaries, identity, audit/evidence
-- [Plugins](plugins.md) — extending the tool / channel / skill surface
-- [Starter goals](starter-goals.md) — ready-to-run examples for common workflows
+- [Security hardening](security-hardening.md) — identity, egress, keys, audit, and recovery
+- [Tool inventory](specs/tool-inventory.md) — the fixed firm runtime ceiling
 - [Working on this repo](CONTRIBUTING.md)

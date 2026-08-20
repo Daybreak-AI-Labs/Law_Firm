@@ -1,15 +1,7 @@
-"""Tool subprocesses must run with secrets scrubbed and freeform media args
-filtered.
-
-Council (Security seat, findings #1-#3): ~10 tools shelled out directly with
-the full os.environ (leaking provider keys to the child) and several appended
-a model-controlled freeform args[] to argv (pandoc --lua-filter = code exec,
-ffmpeg -i /etc/passwd = arbitrary file read). PR3 adds:
-  - tools.scrub_child_env(): child env via sandbox.local.scrub_env (no secrets)
-  - tools.safe_media_args(): drop dangerous flags from freeform args by
-    default; MAVERICK_ALLOW_RAW_MEDIA_ARGS=1 opts back in.
-"""
+"""Retained offline/media subprocess helpers stay confined and scrub secrets."""
 from __future__ import annotations
+
+import importlib
 
 import pytest
 from maverick.tools import safe_media_args, scrub_child_env
@@ -17,297 +9,70 @@ from maverick.tools import safe_media_args, scrub_child_env
 
 def test_scrub_child_env_strips_secrets(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_x")
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_x")
+    monkeypatch.setenv("CLIO_TOKEN", "clio-secret")
     monkeypatch.setenv("PATH", "/usr/bin")
     env = scrub_child_env()
     assert "ANTHROPIC_API_KEY" not in env
-    assert "STRIPE_API_KEY" not in env
-    assert "GITHUB_TOKEN" not in env
-    assert "PATH" in env  # benign infra var preserved
+    assert "CLIO_TOKEN" not in env
+    assert "PATH" in env
 
 
-@pytest.mark.parametrize("bad", [
-    "--lua-filter=/tmp/evil.lua",
-    "--template=/tmp/t.html",
-    "--pdf-engine=weasyprint",
-    "concat:/etc/passwd|/etc/shadow",
-    "--metadata-file=/tmp/m.yaml",
-    "--include-in-header=/tmp/h",
-    "--resource-path=/etc",
-    "--extract-media=/tmp",
-])
-def test_safe_media_args_drops_selfcontained_dangerous_flags(bad, monkeypatch):
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "--lua-filter=/tmp/evil.lua",
+        "--template=/tmp/t.html",
+        "--pdf-engine=weasyprint",
+        "concat:/etc/passwd|/etc/shadow",
+        "--resource-path=/etc",
+    ],
+)
+def test_safe_media_args_drops_self_contained_dangerous_flags(bad, monkeypatch):
     monkeypatch.delenv("MAVERICK_ALLOW_RAW_MEDIA_ARGS", raising=False)
     out = safe_media_args(["-quality", "90", bad])
     assert bad not in out
-    assert "-quality" in out and "90" in out  # benign survive
+    assert out == ["-quality", "90"]
 
 
-@pytest.mark.parametrize("flag,value", [
-    ("-i", "/etc/passwd"),
-    ("--input", "/etc/shadow"),
-    ("--lua-filter", "/tmp/evil.lua"),
-    ("-filter_complex", "movie=/etc/passwd"),
-    ("--template", "/tmp/t.html"),
-])
-def test_safe_media_args_drops_flag_AND_its_value(flag, value, monkeypatch):
-    """A bare dangerous flag takes the next token as its value -- both must go,
-    or the path it points at is still smuggled onto argv."""
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("-i", "/etc/passwd"),
+        ("--input", "/etc/shadow"),
+        ("-filter_complex", "movie=/etc/passwd"),
+    ],
+)
+def test_safe_media_args_drops_flag_and_value(flag, value, monkeypatch):
     monkeypatch.delenv("MAVERICK_ALLOW_RAW_MEDIA_ARGS", raising=False)
-    out = safe_media_args(["-strip", flag, value, "-quality", "80"])
-    assert flag not in out
-    assert value not in out
-    assert "-strip" in out and "-quality" in out and "80" in out
+    assert safe_media_args(["-strip", flag, value, "-quality", "80"]) == [
+        "-strip",
+        "-quality",
+        "80",
+    ]
 
 
-def test_safe_media_args_passthrough_when_opted_in(monkeypatch):
+def test_safe_media_args_passthrough_requires_explicit_operator_opt_in(monkeypatch):
     monkeypatch.setenv("MAVERICK_ALLOW_RAW_MEDIA_ARGS", "1")
     raw = ["-i", "/etc/passwd", "--lua-filter=x.lua"]
     assert safe_media_args(raw) == raw
 
 
-def test_safe_media_args_handles_none_and_empty():
-    assert safe_media_args(None) == []
-    assert safe_media_args([]) == []
-
-
-def test_benign_resize_args_survive(monkeypatch):
-    monkeypatch.delenv("MAVERICK_ALLOW_RAW_MEDIA_ARGS", raising=False)
-    # A normal imagemagick operator chain must pass through untouched.
-    out = safe_media_args(["-resize", "50%", "-rotate", "90", "-strip"])
-    assert out == ["-resize", "50%", "-rotate", "90", "-strip"]
-
-
-def test_subprocess_tools_import_scrub_helper():
-    """Every shell-out tool must keep the child env scrubbed of secrets.
-
-    Two acceptable ways now: (a) route through the sandbox chokepoint via
-    ``sandbox_run`` (which scrubs the env / mediates exec), or (b) for tools
-    that still shell out directly, reference the scrub helper. No tool may
-    reintroduce raw ``os.environ`` inheritance."""
+def test_retained_shell_out_modules_use_the_shared_chokepoint():
     import pathlib
 
-    import maverick.tools as T
-    tdir = pathlib.Path(T.__file__).parent
-    for name in ["git_advanced", "preview_diff", "apply_patch", "ffmpeg_tool",
-                 "imagemagick_tool", "pandoc_tool", "ocr", "a11y", "android"]:
-        src = (tdir / f"{name}.py").read_text()
-        assert (
-            "sandbox_run" in src
-            or "scrub_child_env" in src
-            or "scrub_env" in src
-            or "sandbox.exec" in src
-        ), f"{name} no longer scrubs the child env nor routes through the sandbox"
+    import maverick.tools as tools_package
+
+    tool_dir = pathlib.Path(tools_package.__file__).parent
+    expectations = {
+        "apply_patch": "scrub_child_env",
+        "ffmpeg_tool": "sandbox_run",
+    }
+    for module, seam in expectations.items():
+        assert seam in (tool_dir / f"{module}.py").read_text(encoding="utf-8")
 
 
-class _RecordingSandbox:
-    """Minimal sandbox stub: records exec() commands, returns a canned result."""
-
-    def __init__(self, workdir, stdout="", exit_code=0):
-        from pathlib import Path
-        self.workdir = Path(workdir)
-        self.commands: list[str] = []
-        self._stdout = stdout
-        self._exit = exit_code
-
-    def exec(self, cmd, timeout=None):
-        from maverick.sandbox.local import ExecResult
-        self.commands.append(cmd)
-        return ExecResult(stdout=self._stdout, stderr="", exit_code=self._exit)
-
-
-def test_imagemagick_routes_command_through_sandbox_exec(tmp_path, monkeypatch):
-    """With a sandbox wired in, the tool must drive sandbox.exec, not the host."""
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/magick" if b == "magick" else None)
-
-    def _boom(*a, **k):
-        raise AssertionError("subprocess.run must not be called when a sandbox is wired in")
-
-    monkeypatch.setattr("subprocess.run", _boom)
-    from maverick.tools.imagemagick_tool import imagemagick_tool
-
-    sb = _RecordingSandbox(tmp_path)
-    out = imagemagick_tool(sb).fn({
-        "op": "resize", "input_path": "a.png", "output_path": "b.png", "width": 800,
-    })
-    assert "wrote" in out
-    assert len(sb.commands) == 1
-    assert "magick" in sb.commands[0] and "-resize" in sb.commands[0]
-
-
-def test_pandoc_string_op_feeds_stdin_through_sandbox(tmp_path, monkeypatch):
-    """markdown_to_html feeds text via the base64 stdin pipe, through the sandbox."""
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/pandoc")
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("must route through sandbox.exec")))
-    from maverick.tools.pandoc_tool import pandoc_tool
-
-    sb = _RecordingSandbox(tmp_path, stdout="<p>Hello</p>\n")
-    out = pandoc_tool(sb).fn({"op": "markdown_to_html", "text": "Hello"})
-    assert "<p>Hello</p>" in out
-    assert sb.commands and "base64 -d" in sb.commands[0] and "pandoc" in sb.commands[0]
-
-
-def test_media_tools_route_through_sandbox_chokepoint():
-    """The sandboxable media tools must mediate shell via ``sandbox_run``,
-    not call subprocess directly (CLAUDE.md rule #4). The host-local tools
-    (clipboard/android) are intentionally excluded — they drive
-    host-only resources and cannot run inside the sandbox."""
-    import pathlib
-
-    import maverick.tools as T
-    tdir = pathlib.Path(T.__file__).parent
-    for name in ["ffmpeg_tool", "imagemagick_tool", "pandoc_tool", "ocr", "a11y"]:
-        src = (tdir / f"{name}.py").read_text()
-        assert "sandbox_run" in src, f"{name} must route shell through sandbox_run"
-        # No leftover direct host subprocess invocation.
-        assert "subprocess.run(" not in src, (
-            f"{name} still calls subprocess.run directly; route via sandbox_run"
-        )
-
-
-# ---------- host_exec: explicit host-bound (NOT sandbox-mediated) path ----------
-# Issue #437: device/clipboard tools act on host hardware (USB adb device, iOS
-# simulator, desktop clipboard) that the sandbox container can't reach, so they
-# are intentionally direct. host_exec makes that choice auditable + scrubs env.
-
-def test_host_exec_scrubs_env(monkeypatch):
-    import sys
-
-    from maverick.tools import host_exec
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    # Print whether the secret leaked into the child env.
-    code, out, err = host_exec(
-        [sys.executable, "-c",
-         "import os; print('LEAK' if os.environ.get('ANTHROPIC_API_KEY') else 'clean')"],
-        timeout=15,
-    )
-    assert code == 0
-    assert "clean" in out and "LEAK" not in out
-
-
-def test_host_exec_timeout_returns_124():
-    import sys
-
-    from maverick.tools import host_exec
-    code, out, err = host_exec(
-        [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.5,
-    )
-    assert code == 124
-    assert "TIMEOUT" in err
-
-
-def test_host_exec_binary_mode_returns_bytes():
-    import sys
-
-    from maverick.tools import host_exec
-    code, out, err = host_exec(
-        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\x89PNG')"],
-        timeout=15, text=False,
-    )
-    assert code == 0
-    assert out == b"\x89PNG"
-
-
-def test_android_adb_routes_through_host_exec(monkeypatch):
-    """android._adb must dispatch via host_exec (the auditable host-bound path),
-    not a bare subprocess.run."""
-    import maverick.tools as tools_pkg
-    from maverick.tools import android
-    calls = {}
-
-    def fake_host_exec(argv, *, timeout=60.0, text=True):
-        calls["argv"] = argv
-        return 0, "device-list", ""
-
-    monkeypatch.setattr(tools_pkg, "host_exec", fake_host_exec)
-    code, out, err = android._adb(["devices", "-l"])
-    assert code == 0 and out == "device-list"
-    assert calls["argv"][0] == "adb"
-
-
-# ---------- option-injection / path hardening (issue #476) ----------
-
-import importlib  # noqa: E402
-
-
-@pytest.mark.parametrize("mod", ["ffmpeg_tool", "imagemagick_tool", "pandoc_tool"])
-def test_safe_path_blocks_leading_dash_without_sandbox(mod):
-    """When sandbox is None, _safe_path returned the path verbatim -- so
-    input_path="-i" / "-write ..." became a flag to ffmpeg/convert/pandoc.
-    A leading-dash path must now be rejected; benign paths still pass."""
-    m = importlib.import_module(f"maverick.tools.{mod}")
+def test_ffmpeg_rejects_option_shaped_input_without_sandbox():
+    module = importlib.import_module("maverick.tools.ffmpeg_tool")
     with pytest.raises(ValueError, match="may not begin with '-'"):
-        m._safe_path(None, "-i")
-    assert m._safe_path(None, "in.png") == "in.png"
-
-
-def _capture_sandbox_run(monkeypatch, *, ret=(0, "", "")):
-    """Patch the tools.sandbox_run chokepoint and capture the argv it's given."""
-    import maverick.tools as T
-    captured: dict = {}
-
-    def _rec(sandbox, cmd, **kw):
-        captured["cmd"] = cmd
-        return ret
-
-    monkeypatch.setattr(T, "sandbox_run", _rec)
-    return captured
-
-
-def test_axe_target_protected_by_double_dash(monkeypatch):
-    """The axe target was positional with no `--`, so a target like
-    `--config=/tmp/evil.js` was parsed as an axe flag (pa11y was already
-    fixed). `--` must end option parsing with the target as the sole
-    positional after it."""
-    captured = _capture_sandbox_run(monkeypatch, ret=(0, "[]", ""))
-    from maverick.tools.a11y import _run_axe
-    _run_axe("--config=/tmp/evil.js", None)
-    cmd = captured["cmd"]
-    assert "--" in cmd
-    assert cmd[-1] == "--config=/tmp/evil.js"
-    assert cmd[: cmd.index("--")] == ["axe", "--no-reporter", "--save", "/dev/stdout"]
-
-
-def test_a11y_check_html_confines_path(tmp_path):
-    from maverick.tools.a11y import _confine_path
-    sb = _RecordingSandbox(tmp_path)
-    with pytest.raises(ValueError, match="may not begin with '-'"):
-        _confine_path(sb, "-x.html")
-    with pytest.raises(ValueError, match="escapes the workspace"):
-        _confine_path(sb, "../../etc/passwd")
-    assert _confine_path(sb, "page.html") == str((tmp_path / "page.html").resolve())
-    # No sandbox: pass through (still leading-dash guarded above).
-    assert _confine_path(None, "page.html") == "page.html"
-
-
-def test_imagemagick_composite_uses_magick_on_im7(tmp_path, monkeypatch):
-    monkeypatch.setattr("shutil.which",
-                        lambda b: f"/usr/bin/{b}" if b == "magick" else None)
-    captured = _capture_sandbox_run(monkeypatch)
-    from maverick.tools.imagemagick_tool import imagemagick_tool
-    out = imagemagick_tool(_RecordingSandbox(tmp_path)).fn({
-        "op": "composite", "base_path": "b.png",
-        "overlay_path": "o.png", "output_path": "out.png",
-    })
-    assert "wrote" in out
-    assert captured["cmd"][:2] == ["magick", "composite"]
-
-
-def test_imagemagick_composite_uses_im6_composite_binary(tmp_path, monkeypatch):
-    """IM6 has no `magick`; compositing needs the separate `composite` binary,
-    NOT `convert` (which _magick_or_convert would have wrongly picked)."""
-    present = {"convert", "composite", "identify"}
-    monkeypatch.setattr("shutil.which",
-                        lambda b: f"/usr/bin/{b}" if b in present else None)
-    captured = _capture_sandbox_run(monkeypatch)
-    from maverick.tools.imagemagick_tool import imagemagick_tool
-    out = imagemagick_tool(_RecordingSandbox(tmp_path)).fn({
-        "op": "composite", "base_path": "b.png",
-        "overlay_path": "o.png", "output_path": "out.png",
-    })
-    assert "wrote" in out
-    assert captured["cmd"][0] == "composite"
-    assert "convert" not in captured["cmd"]
+        module._safe_path(None, "-i")
+    assert module._safe_path(None, "in.mp4") == "in.mp4"

@@ -13,14 +13,14 @@ from maverick.migrate import KNOWN_SECTIONS
 
 # Sections the installer wizard itself writes into config.toml.
 _WIZARD_WRITTEN = {"providers", "budget", "safety", "sandbox", "capabilities",
-                   "security", "models", "channels"}
+                   "security", "models"}
 
 # Core kernel readers verified in source (config.py get_* helpers and
 # load_config().get("<section>") call sites).
 _KERNEL_READ = {"features", "persona", "autonomy", "calibration", "credit",
-                "adaptive_compute", "search", "skill_synthesis", "experience",
-                "durable", "egress", "quotas", "mcp_servers", "memory",
-                "encryption", "tenancy", "verification", "voice", "privacy"}
+                "adaptive_compute", "search", "experience",
+                "durable", "egress", "quotas", "memory",
+                "encryption", "tenancy", "verification", "privacy"}
 
 
 def test_wizard_written_sections_are_known():
@@ -69,7 +69,7 @@ def test_wizard_fast_config_lints_clean(tmp_path):
             "[sandbox]", 'backend = "local"',
             "[capabilities]", "computer_use = false",
             "[security]", 'denied_tools = ["shell"]',
-            "[models]", 'orchestrator = "vllm:stub-1"',
+            "[models]", 'default = "vllm:stub-1"',
         ]) + "\n",
         encoding="utf-8",
     )

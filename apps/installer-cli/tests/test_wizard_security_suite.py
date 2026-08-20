@@ -49,8 +49,7 @@ def test_write_config_emits_independent_security_knobs(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "ENV_FILE", tmp_path / ".env")
     wizard.write_config(
         providers=["anthropic"],
-        role_models={},
-        channels={},
+        run_model="anthropic:claude-sonnet-4-6",
         safety={"profile": "balanced"},
         budget={"max_dollars": 5.0, "max_wall_seconds": 600,
                 "max_tool_calls": 30},

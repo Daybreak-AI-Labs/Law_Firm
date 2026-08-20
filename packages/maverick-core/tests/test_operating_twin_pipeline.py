@@ -62,7 +62,7 @@ def test_learning_path_stratified_to_gate():
     assert est.trustworthy and est.ci_low > 0.0
 
     # The estimate flows into the promotion ladder's gate (built exactly as
-    # propose_with_effect does) and clears it on the causal lower bound.
+    # an offline candidate would) and clears it on the causal lower bound.
     cand = Candidate(
         rung="prompt", summary="adopt tool X", baseline_score=0.0,
         candidate_score=est.effect, samples=est.n_used, effect_ci_low=est.ci_low,

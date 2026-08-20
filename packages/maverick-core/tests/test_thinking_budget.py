@@ -61,3 +61,21 @@ def test_agent_thinking_budget_default_off_unchanged(monkeypatch):
     assert a._thinking_budget() == 8000
     a.role = "writer"
     assert a._thinking_budget() is None
+
+
+def test_agent_firm_budget_never_reads_global_outcome_stats(monkeypatch):
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+    monkeypatch.setattr(
+        tb,
+        "adjust",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("tenant-global thinking stats must not be read")
+        ),
+    )
+    from maverick.agent import Agent
+
+    agent = Agent.__new__(Agent)
+    agent.role = "orchestrator"
+    assert agent._thinking_budget() == 8000
+    agent.role = "writer"
+    assert agent._thinking_budget() is None

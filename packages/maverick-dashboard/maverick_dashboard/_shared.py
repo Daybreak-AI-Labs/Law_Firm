@@ -58,31 +58,21 @@ def _any_provider_key_set() -> bool:
         return False
 
 
-def require_provider_or_400(*, role: str | None = None) -> None:
-    """Raise HTTP 400 unless the route(s) this operation uses are complete.
-
-    ``role=None`` validates every deterministic swarm route before goal state
-    is created. A drafting endpoint can name its one role so an unrelated or
-    incomplete worker route does not block a single bounded completion.
-    """
+def require_provider_or_400() -> None:
+    """Raise HTTP 400 unless the one selected run model is ready."""
     try:
         from maverick.config import load_config
         from maverick.operator_preflight import (
             _format_route_missing,
-            _role_configuration_missing,
             _routed_configuration_missing,
         )
 
         cfg = load_config()
-        if role is None:
-            missing = {
-                provider: fields
-                for provider, fields in _routed_configuration_missing(cfg).items()
-                if fields
-            }
-        else:
-            provider, fields = _role_configuration_missing(role, cfg)
-            missing = {provider: fields} if fields else {}
+        missing = {
+            provider: fields
+            for provider, fields in _routed_configuration_missing(cfg).items()
+            if fields
+        }
     except RuntimeOverridesSecurityError:
         # This is an operator-policy integrity failure, not an incomplete model
         # route. Let the app's explicit handler return the actionable 503.
@@ -97,7 +87,7 @@ def require_provider_or_400(*, role: str | None = None) -> None:
     raise HTTPException(
         status_code=400,
         detail=(
-            "The selected AI model route is incomplete "
+            "The selected AI run model is incomplete "
             f"({missing_detail}). An administrator can run 'maverick init' and "
             "'maverick doctor' before this operation."
         ),
@@ -113,15 +103,6 @@ def _world():
     DB path so test fixtures that monkeypatch ``DEFAULT_DB`` to a fresh
     ``tmp_path`` still get an isolated WorldModel per test.
     """
-    # Client binding: when the deployment is bound to a client, the dashboard
-    # reads/writes that client's isolated world DB (under tenants/<client>/),
-    # never the shared root. Unbound (legacy / tests that monkeypatch
-    # DEFAULT_DB) keeps the prior DEFAULT_DB path exactly.
-    from maverick.paths import current_tenant_id
-    tid = current_tenant_id()
-    if tid:
-        from maverick.world_model import world_for_tenant
-        return world_for_tenant(tid)
     from maverick.world_model import default_db_path, open_world
     path = default_db_path()
     key = str(path)

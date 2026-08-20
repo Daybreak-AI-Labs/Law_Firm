@@ -233,20 +233,22 @@ def seed_corpora(kb, *, only: str | None = None,
     replaces rather than duplicates.
     """
     report: dict[str, int] = {}
+    from maverick_knowledge import public_collection
     for corpus in _CORPORA:
         collection = corpus["collection"]
         if only and collection != only:
             continue
+        collection_key = public_collection(collection)
         for source, text in corpus["documents"]:
             # Retract any prior copy of this document first so re-seeding
             # replaces rather than duplicates (chunk ids are random per ingest,
             # so INSERT OR REPLACE alone wouldn't dedup). Idempotent by source.
             try:
-                kb.erase_source(source, [collection])
+                kb.erase_source(source, [collection_key])
             except Exception:  # pragma: no cover -- first seed has nothing to retract
                 pass
             n = kb.ingest_text(
-                collection, text, source=source,
+                collection_key, text, source=source,
                 sensitivity="public", trust_tier=3, ingested_by=ingested_by,
                 extra_meta={"corpus": corpus["title"]},
             )

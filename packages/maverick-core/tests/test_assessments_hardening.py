@@ -11,7 +11,7 @@ from maverick import assessments as A
 SAFE = {
     "kind": "agent", "subject": "calm_bot", "description": "reads",
     "allow_tools": ["read_file"], "deny_tools": [], "max_risk": "low",
-    "allow_paths": [], "allow_hosts": [], "mcp_servers": [],
+    "allow_paths": [], "allow_hosts": [],
     "knowledge_sources": [], "has_human_gate": True, "steps": 1,
 }
 

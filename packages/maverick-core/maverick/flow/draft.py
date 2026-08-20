@@ -476,19 +476,10 @@ def _tool_hint(tools, tool_docs, tool_schemas=None) -> str:
     )
 
 
-def _factory_guided(system: str) -> str:
-    """Apply only promoted factory guidance; validation below stays authoritative."""
-    try:
-        from ..factory_learning import augment_system_prompt
-        return augment_system_prompt(system)
-    except Exception:  # guidance must never take authoring down
-        return system
-
-
 def _run(complete, tools, description: str, tool_docs=None, tool_schemas=None) -> str:
     from ..budget import Budget
     resp = complete(
-        system=_factory_guided(FLOW_DRAFT_SYSTEM) + _tool_hint(
+        system=FLOW_DRAFT_SYSTEM + _tool_hint(
             tools, tool_docs, tool_schemas),
         messages=[{"role": "user", "content": f"Design a flow for: {description}"}],
         budget=Budget(max_dollars=_DRAFT_MAX_DOLLARS),

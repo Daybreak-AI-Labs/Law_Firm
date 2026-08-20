@@ -48,7 +48,6 @@ _STAGES = (
     "sandbox_exec",     # SandboxBackend.exec
     "tool_dispatch",    # ToolRegistry.run
     "llm_call",         # LLM.complete / complete_async
-    "http_fetch",       # http_fetch tool
 )
 
 
@@ -89,7 +88,6 @@ class ChaosController:
         sandbox_exec_fail_pct: int = 0,
         tool_dispatch_fail_pct: int = 0,
         llm_call_fail_pct: int = 0,
-        http_fetch_fail_pct: int = 0,
     ) -> None:
         with self._lock:
             st = self._state
@@ -99,7 +97,6 @@ class ChaosController:
                 "sandbox_exec": int(sandbox_exec_fail_pct),
                 "tool_dispatch": int(tool_dispatch_fail_pct),
                 "llm_call": int(llm_call_fail_pct),
-                "http_fetch": int(http_fetch_fail_pct),
             }
 
     def disable(self) -> None:
@@ -179,7 +176,6 @@ def _configure_from_env(c: ChaosController) -> None:
         sandbox_exec_fail_pct=rates.get("sandbox", 0),
         tool_dispatch_fail_pct=rates.get("tool", 0),
         llm_call_fail_pct=rates.get("llm", 0),
-        http_fetch_fail_pct=rates.get("http", 0),
     )
     log.warning("chaos: ACTIVE seed=%d rates=%s", seed, c.state.rates)
 

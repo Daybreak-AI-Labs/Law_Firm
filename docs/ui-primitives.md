@@ -18,8 +18,8 @@ Transient notification.
   polite region is not).
 
 ```js
-mvToast('Schedule deleted');
-mvToast('Could not delete schedule', { error: true });
+mvToast('Matter membership updated');
+mvToast('Could not update membership', { error: true });
 ```
 
 ## `window.mvConfirm(message, { okText }) -> Promise<boolean>`
@@ -30,7 +30,7 @@ focus returns to the opener on close. Falls back to `window.confirm` where
 open resolves `false`.
 
 ```js
-if (!(await mvConfirm('Delete this schedule? It will stop running.', { okText: 'Delete' }))) return;
+if (!(await mvConfirm('Revoke this matter member?', { okText: 'Revoke' }))) return;
 ```
 
 Callers must be `async`. If the confirmed action removes the element that held
@@ -49,10 +49,11 @@ Falls back to sequential `prompt`s where `<dialog>.showModal` is unavailable.
 `type` is `text` | `number` | `date` | `bool` | `select` (`options` for `select`).
 
 ```js
-const vals = await mvForm('Run this flow', [
-  { key: 'amount', label: 'Amount', type: 'number', required: true },
-  { key: 'urgent', label: 'Urgent?', type: 'bool', default: false },
-], { okText: 'Run' });
+const vals = await mvForm('Add matter member', [
+  { key: 'principal', label: 'Principal', type: 'text', required: true },
+  { key: 'role', label: 'Role', type: 'select', required: true,
+    options: ['attorney', 'staff', 'viewer'] },
+], { okText: 'Add' });
 if (vals === null) return;                 // cancelled
 ```
 
@@ -89,8 +90,8 @@ row.appendChild(mvEl('div', 'mv-row__sub', 'last run ' + mvWhen(ts)));
 ## `.card` / `.card-grid`
 
 The shared card surface (border + token padding + hover) and a responsive
-`auto-fill` grid of them. Used by the Templates catalog. Cards and `.mv-row`s
-get a subtle `mv-rise` entrance, disabled under `prefers-reduced-motion`.
+`auto-fill` grid of them. Cards and `.mv-row`s get a subtle `mv-rise` entrance,
+disabled under `prefers-reduced-motion`.
 
 ```html
 <div class="card-grid">
@@ -101,9 +102,7 @@ get a subtle `mv-rise` entrance, disabled under `prefers-reduced-motion`.
 ## `.mv-row` / `.btn--icon`
 
 The shared list-row component — an icon/title + a muted subline + trailing
-actions — used by the Automations page, the builder's schedule/trigger lists,
-and the Workflows index. `.btn--icon` is the compact square button for a row's
-`✕` / icon action.
+actions. `.btn--icon` is the compact square button for a row action.
 
 ```html
 <li class="mv-row">
@@ -117,8 +116,6 @@ and the Workflows index. `.btn--icon` is the compact square button for a row's
 
 ## Adoption
 
-In use by: the Automations page, the workflow builder (schedules, triggers,
-connector picker), the killswitch pill, fleets, learned-tools, the goal
-cancel action, the assessments register (delete + add-evidence), connections
-(delete), and the agent-factory tool picker. New destructive actions and
+In the retained firm UI, these back the halt confirmation, goal actions,
+clipboard feedback, and deliverable cards. New destructive actions and
 notifications should use these rather than native dialogs.

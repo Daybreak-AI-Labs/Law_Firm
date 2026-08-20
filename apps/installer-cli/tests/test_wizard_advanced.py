@@ -17,8 +17,8 @@ def _write(cfg_dir, monkeypatch, advanced, capabilities=None):
     monkeypatch.setattr("maverick_installer.wizard.CONFIG_FILE", cfg_dir / "config.toml")
     from maverick_installer.wizard import write_config
     write_config(
-        providers=["anthropic"], role_models={},
-        channels={}, safety={"profile": "balanced"},
+        providers=["anthropic"], run_model="anthropic:claude-sonnet-4-6",
+        safety={"profile": "balanced"},
         budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
         sandbox={"backend": "local", "workdir": "~/ws"},
         keys={"ANTHROPIC_API_KEY": "x"},
@@ -29,13 +29,9 @@ def _write(cfg_dir, monkeypatch, advanced, capabilities=None):
 
 def test_advanced_all_on_writes_kernel_sections(tmp_path, monkeypatch):
     cfg = _write(tmp_path, monkeypatch, {
-        "cost_aware": True, "verify_ensemble": True,
         "tree_of_thought": True, "compact_history": True, "reflexion": True,
     })
-    assert "[routing]" in cfg
-    assert 'allowed_providers = ["anthropic"]' in cfg
-    assert "cost_aware = true" in cfg
-    assert "verify_ensemble = true" in cfg
+    assert "[routing]" not in cfg
     assert "[planning]" in cfg and 'mode = "tree_of_thought"' in cfg
     assert "[context]" in cfg and "compact = true" in cfg
     assert "[reflexion]" in cfg and "enable = true" in cfg
@@ -43,40 +39,13 @@ def test_advanced_all_on_writes_kernel_sections(tmp_path, monkeypatch):
 
 def test_advanced_all_off_persists_default_on_learning_opt_out(tmp_path, monkeypatch):
     cfg = _write(tmp_path, monkeypatch, dict.fromkeys(
-        ["cost_aware", "verify_ensemble", "tree_of_thought",
-         "compact_history", "reflexion", "enforce_quotas", "pg_rls"], False,
+        ["tree_of_thought", "compact_history", "reflexion",
+         "enforce_quotas", "pg_rls"], False,
     ))
     for section in ("[routing]", "[planning]", "[context]", "[quotas]",
                     "[world_model]"):
         assert section not in cfg
     assert tomllib.loads(cfg)["reflexion"]["enable"] is False
-
-
-def test_voice_declines_share_one_voice_table(tmp_path, monkeypatch):
-    """voice_commands=False + voice_local_stt=False must merge into ONE
-    [voice] table (two would be a duplicate-key TOML error). Both knobs are
-    default-on, so only declines write lines."""
-    cfg = _write(tmp_path, monkeypatch, {
-        "voice_commands": False, "voice_local_stt": False,
-    })
-    assert cfg.count("[voice]") == 1
-    parsed = tomllib.loads(cfg)
-    assert parsed["voice"]["dashboard_commands"] is False
-    assert parsed["voice"]["auto_fetch_model"] is False
-
-
-def test_voice_local_stt_decline_writes_auto_fetch_off(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"voice_local_stt": False})
-    parsed = tomllib.loads(cfg)
-    assert parsed["voice"] == {"auto_fetch_model": False}
-
-
-def test_voice_defaults_write_no_voice_table(tmp_path, monkeypatch):
-    # Default-on accepts (mic + built-in local STT) need no config at all.
-    cfg = _write(tmp_path, monkeypatch, {
-        "voice_commands": True, "voice_local_stt": True,
-    })
-    assert "[voice]" not in cfg
 
 
 def test_kernel_modules_read_what_the_wizard_writes(tmp_path, monkeypatch):
@@ -90,7 +59,6 @@ def test_kernel_modules_read_what_the_wizard_writes(tmp_path, monkeypatch):
     cfg_dir.mkdir(parents=True, exist_ok=True)
     _write(cfg_dir, monkeypatch, {
         "tree_of_thought": True, "compact_history": True, "reflexion": True,
-        "cost_aware": True, "verify_ensemble": True,
     })
 
     from maverick import context_compactor, reflexion, tree_of_thought
@@ -167,13 +135,12 @@ def test_autonomy_gate_writes_and_is_read(tmp_path, monkeypatch):
     cfg_dir = tmp_path / ".maverick"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cfg = _write(cfg_dir, monkeypatch, {"autonomy_gate": True})
-    assert "[routing]" in cfg
-    assert 'allowed_providers = ["anthropic"]' in cfg
+    assert "[routing]" not in cfg
     assert "[autonomy]" in cfg
     assert "enable = true" in cfg
 
     parsed = tomllib.loads(cfg)
-    assert parsed["routing"]["allowed_providers"] == ["anthropic"]
+    assert parsed["autonomy"] == {"enable": True}
 
     from maverick import autonomy
     assert autonomy.autonomy_enabled() is True
@@ -250,22 +217,20 @@ def test_sota_loop_toggles_write_and_are_read(tmp_path, monkeypatch):
     and the kernel reads each back."""
     monkeypatch.setenv("HOME", str(tmp_path))
     for env in ("MAVERICK_ADAPTIVE_COMPUTE", "MAVERICK_BEST_OF_N",
-                "MAVERICK_SKILL_SYNTHESIS", "MAVERICK_EXPERIENCE_GUIDANCE"):
+                "MAVERICK_EXPERIENCE_GUIDANCE"):
         monkeypatch.delenv(env, raising=False)
     cfg_dir = tmp_path / ".maverick"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cfg = _write(cfg_dir, monkeypatch, {
         "adaptive_compute": True, "best_of_n": True,
-        "skill_synthesis": True, "experience_guidance": True,
+        "experience_guidance": True,
     })
-    for section in ("[adaptive_compute]", "[search]", "[skill_synthesis]", "[experience]"):
+    for section in ("[adaptive_compute]", "[search]", "[experience]"):
         assert section in cfg
 
     from maverick import adaptive_compute, best_of_n, experience
-    from maverick.skill import synthesis as skill_synthesis
     assert adaptive_compute.enabled() is True
     assert best_of_n.enabled() is True
-    assert skill_synthesis.enabled() is True
     assert experience.enabled() is True
 
 
@@ -318,9 +283,8 @@ def test_per_call_token_exchange_writes_and_is_read(tmp_path, monkeypatch):
 
 
 def test_enforce_capabilities_reuses_existing_capabilities_table(tmp_path, monkeypatch):
-    """The normal wizard path already writes [capabilities]; enabling
-    enforcement must add to that table instead of emitting a duplicate TOML
-    table that makes the entire config unreadable."""
+    """Retired broad capabilities are ignored while enforcement reuses the
+    one retained [capabilities] table."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MAVERICK_ENFORCE_CAPABILITIES", raising=False)
     cfg_dir = tmp_path / ".maverick"
@@ -335,13 +299,7 @@ def test_enforce_capabilities_reuses_existing_capabilities_table(tmp_path, monke
 
     assert cfg.count("[capabilities]") == 1
     parsed = tomllib.loads(cfg)
-    assert parsed["capabilities"] == {
-        "computer_use": False,
-        "browser": False,
-        "ros": False,
-        "code_exec": False,
-        "enforce": True,
-    }
+    assert parsed["capabilities"] == {"enforce": True}
 
     from maverick.capability import capability_enforced
 
@@ -352,8 +310,8 @@ def _write_with_flows(cfg_dir, monkeypatch, flows, advanced):
     monkeypatch.setattr("maverick_installer.wizard.CONFIG_FILE", cfg_dir / "config.toml")
     from maverick_installer.wizard import write_config
     write_config(
-        providers=["anthropic"], role_models={},
-        channels={}, safety={"profile": "balanced"},
+        providers=["anthropic"], run_model="anthropic:claude-sonnet-4-6",
+        safety={"profile": "balanced"},
         budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
         sandbox={"backend": "local", "workdir": "~/ws"},
         keys={"ANTHROPIC_API_KEY": "x"},
@@ -591,20 +549,6 @@ def test_encrypt_per_tenant_writes_and_is_read(tmp_path, monkeypatch):
     assert per_tenant_at_rest() is True
 
 
-def test_hedge_requests_writes_and_is_read(tmp_path, monkeypatch):
-    """Rule-6 loop: the hedge toggle writes [latency] hedge_ms, and the kernel's
-    LLM path reads it back as a positive hedge delay."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_LLM_HEDGE_MS", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {"hedge_requests": True})
-    assert "[latency]" in cfg and "hedge_ms = 1500" in cfg
-
-    from maverick.llm import _hedge_ms
-    assert _hedge_ms() == 1500.0
-
-
 def test_audit_sign_writes_and_is_read(tmp_path, monkeypatch):
     """Rule-6 loop: the wizard's audit-signing toggle writes [audit] sign, and
     the kernel's signing resolver reads it back. This is the tamper-evidence
@@ -709,60 +653,6 @@ def test_both_editing_locks_share_one_features_table(tmp_path, monkeypatch):
     assert feats["pack_editing"] is False and feats["role_editing"] is False
 
 
-def test_governed_execution_planes_write_and_are_read(tmp_path, monkeypatch):
-    """Rule-6 loop: the governed-kernel and self-refinement opt-ins write
-    [repl] / [harness_refine] and the kernel's getters read them back."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_REPL", raising=False)
-    monkeypatch.delenv("MAVERICK_HARNESS_REFINE", raising=False)
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {"repl": True, "harness_refine": True})
-    parsed = tomllib.loads(cfg)
-    assert parsed["repl"] == {"enable": True}
-    # require_approval is default-on and fails closed, so an accepted gate
-    # writes no line at all.
-    assert parsed["harness_refine"] == {"enable": True}
-
-    from maverick.config import get_harness_refine, get_repl
-    assert get_repl()["enable"] is True
-    refine = get_harness_refine()
-    assert refine["enable"] is True and refine["require_approval"] is True
-
-
-def test_declined_refinement_approval_gate_is_written_explicitly(
-        tmp_path, monkeypatch):
-    """Declining the gate is a real decision: it must reach the file, because
-    the default (and a malformed value) both mean 'approval required'."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_HARNESS_REFINE", raising=False)
-    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
-    cfg_dir = tmp_path / ".maverick"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg = _write(cfg_dir, monkeypatch, {
-        "harness_refine": True, "harness_refine_require_approval": False,
-    })
-    assert tomllib.loads(cfg)["harness_refine"]["require_approval"] is False
-
-    from maverick.config import get_harness_refine
-    assert get_harness_refine()["require_approval"] is False
-
-
-def test_advanced_off_writes_no_governed_execution_sections(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"repl": False, "harness_refine": False})
-    assert "[repl]" not in cfg and "[harness_refine]" not in cfg
-
-
-def test_run_forking_writes_only_an_explicit_decline(tmp_path, monkeypatch):
-    """[session_tree] is on by default (lineage only, no execution), so an
-    accepted prompt stays byte-identical and only a decline writes."""
-    assert "[session_tree]" not in _write(tmp_path, monkeypatch,
-                                         {"session_tree": True})
-    cfg = _write(tmp_path, monkeypatch, {"session_tree": False})
-    assert tomllib.loads(cfg)["session_tree"]["enable"] is False
-
-
 def test_audit_worm_writes_worm_section(tmp_path, monkeypatch):
     cfg = _write(tmp_path, monkeypatch, {"audit_worm": True})
     assert "[audit.worm]" in cfg
@@ -796,40 +686,18 @@ def test_dual_approval_off_writes_no_quorum(tmp_path, monkeypatch):
     assert "approvals_required" not in cfg
 
 
-def test_saml_writes_auth_saml_template(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"saml": True})
-    assert "[auth.saml]" in cfg
-    assert "sp_entity_id" in cfg and "acs_url" in cfg and "idp_metadata_url" in cfg
-    parsed = tomllib.loads(cfg)
-    assert "saml" in parsed["auth"]
-
-
-def test_saml_off_writes_no_section(tmp_path, monkeypatch):
-    cfg = _write(tmp_path, monkeypatch, {"saml": False})
-    assert "[auth.saml]" not in cfg
-
-
 def test_department_access_writes_dashboard_scoping(tmp_path, monkeypatch):
-    # The department-access step writes [dashboard] default_suites + the SCIM
-    # group-mapping tables, and the result must be valid, round-trippable TOML
-    # (group names carry spaces, so the keys must be quoted).
+    # Department access writes only the retained default suite restriction.
     cfg = _write(tmp_path, monkeypatch, {"department_access": {
-        "default_suites": ["finance", "tax"],
-        "group_roles": {"Finance Team": "operator"},
-        "group_suites": {"Finance Team": ["finance", "tax"]},
+        "default_suites": ["legal"],
     }})
     assert "[dashboard]" in cfg
-    assert 'default_suites = ["finance", "tax"]' in cfg
-    assert "[dashboard.group_roles]" in cfg
-    assert "[dashboard.group_suites]" in cfg
+    assert 'default_suites = ["legal"]' in cfg
     parsed = tomllib.loads(cfg)
     dash = parsed["dashboard"]
-    assert dash["default_suites"] == ["finance", "tax"]
-    assert dash["group_roles"]["Finance Team"] == "operator"
-    assert dash["group_suites"]["Finance Team"] == ["finance", "tax"]
+    assert dash["default_suites"] == ["legal"]
 
 
 def test_department_access_absent_writes_no_dashboard_section(tmp_path, monkeypatch):
     cfg = _write(tmp_path, monkeypatch, {"department_access": {}})
-    assert "[dashboard.group_roles]" not in cfg
     assert "default_suites" not in cfg

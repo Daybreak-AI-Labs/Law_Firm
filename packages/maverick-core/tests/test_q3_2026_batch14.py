@@ -1,8 +1,4 @@
-"""Q3 2026 batch 14 — Azure/Bedrock providers, 8 SaaS tools, cron scheduler.
-
-Trello / NewsAPI / Wolfram / Dropbox / MS Graph /
-Confluence / Gmail + maverick.scheduler.
-"""
+"""Q3 2026 batch 14 — retained Azure/Bedrock providers and scheduler."""
 from __future__ import annotations
 
 import sys
@@ -265,302 +261,67 @@ def test_bedrock_builds_url(monkeypatch):
     assert "bedrock-runtime.us-east-1.amazonaws.com" in c.base_url
 
 
-# ---------- Trello ----------
 
-def test_trello_requires_op():
-    from maverick.tools.trello_tool import trello_tool
-    assert "op is required" in trello_tool().fn({})
 
 
-def test_trello_missing_auth(monkeypatch):
-    monkeypatch.delenv("TRELLO_KEY", raising=False)
-    monkeypatch.delenv("TRELLO_TOKEN", raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.trello_tool import trello_tool
-    out = trello_tool().fn({"op": "boards"})
-    assert "TRELLO_KEY" in out
 
 
-def test_trello_boards_renders(monkeypatch):
-    monkeypatch.setenv("TRELLO_KEY", "k")
-    monkeypatch.setenv("TRELLO_TOKEN", "t")
-    body = [{"id": "b1", "name": "Roadmap", "closed": False}]
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.trello_tool import trello_tool
-    out = trello_tool().fn({"op": "boards"})
-    assert "Roadmap" in out
 
 
-def test_trello_card_create_dry_run(monkeypatch):
-    monkeypatch.setenv("TRELLO_KEY", "k")
-    monkeypatch.setenv("TRELLO_TOKEN", "t")
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.trello_tool import trello_tool
-    out = trello_tool().fn({"op": "card_create", "list_id": "L", "name": "Do it"})
-    assert "DRY RUN" in out
 
 
-# ---------- NewsAPI ----------
 
-def test_newsapi_requires_op():
-    from maverick.tools.newsapi_tool import newsapi_tool
-    assert "op is required" in newsapi_tool().fn({})
 
 
-def test_newsapi_missing_key(monkeypatch):
-    monkeypatch.delenv("NEWSAPI_KEY", raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.newsapi_tool import newsapi_tool
-    out = newsapi_tool().fn({"op": "top_headlines"})
-    assert "NEWSAPI_KEY" in out
 
 
-def test_newsapi_search_renders(monkeypatch):
-    monkeypatch.setenv("NEWSAPI_KEY", "k")
-    body = {"status": "ok", "totalResults": 1, "articles": [
-        {"source": {"name": "TechCrunch"}, "title": "AI breakthrough",
-         "url": "https://tc/1"},
-    ]}
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.newsapi_tool import newsapi_tool
-    out = newsapi_tool().fn({"op": "search", "query": "ai"})
-    assert "AI breakthrough" in out and "TechCrunch" in out
 
 
-# ---------- Wolfram ----------
 
-def test_wolfram_requires_query():
-    from maverick.tools.wolfram_tool import wolfram_tool
-    out = wolfram_tool().fn({"op": "short"})
-    assert "query is required" in out
 
 
-def test_wolfram_missing_appid(monkeypatch):
-    monkeypatch.delenv("WOLFRAM_APP_ID", raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.wolfram_tool import wolfram_tool
-    out = wolfram_tool().fn({"op": "short", "query": "2+2"})
-    assert "WOLFRAM_APP_ID" in out
 
 
-def test_wolfram_short_renders(monkeypatch):
-    monkeypatch.setenv("WOLFRAM_APP_ID", "app")
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, "4", text="4")))
-    from maverick.tools.wolfram_tool import wolfram_tool
-    out = wolfram_tool().fn({"op": "short", "query": "2+2"})
-    assert out == "4"
 
 
-# ---------- Dropbox ----------
 
-def test_dropbox_requires_op():
-    from maverick.tools.dropbox_tool import dropbox_tool
-    assert "op is required" in dropbox_tool().fn({})
 
 
-def test_dropbox_missing_token(monkeypatch):
-    monkeypatch.delenv("DROPBOX_ACCESS_TOKEN", raising=False)
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.dropbox_tool import dropbox_tool
-    out = dropbox_tool().fn({"op": "list", "path": "/"})
-    assert "DROPBOX_ACCESS_TOKEN" in out
 
 
-def test_dropbox_upload_dry_run(monkeypatch):
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.dropbox_tool import dropbox_tool
-    out = dropbox_tool().fn({"op": "upload", "path": "/x.txt", "content": "hi"})
-    assert "DRY RUN" in out
-
-
-
-
-def test_dropbox_share_dry_run(monkeypatch):
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
-    post = MagicMock()
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.dropbox_tool import dropbox_tool
-    out = dropbox_tool().fn({"op": "share", "path": "/x.txt"})
-    assert "DRY RUN" in out
-    post.assert_not_called()
-def test_dropbox_list_renders(monkeypatch):
-    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
-    body = {"entries": [
-        {".tag": "file", "name": "a.txt", "size": 10, "path_display": "/a.txt"},
-    ]}
-    _fake_httpx(monkeypatch, post=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.dropbox_tool import dropbox_tool
-    out = dropbox_tool().fn({"op": "list", "path": ""})
-    assert "/a.txt" in out
-
-
-# ---------- MS Graph ----------
-
-def test_msgraph_requires_op():
-    from maverick.tools.msgraph_tool import msgraph_tool
-    assert "op is required" in msgraph_tool().fn({})
-
-
-def test_msgraph_missing_token(monkeypatch):
-    monkeypatch.delenv("MSGRAPH_ACCESS_TOKEN", raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.msgraph_tool import msgraph_tool
-    out = msgraph_tool().fn({"op": "me"})
-    assert "MSGRAPH_ACCESS_TOKEN" in out
-
-
-def test_msgraph_send_mail_dry_run(monkeypatch):
-    monkeypatch.setenv("MSGRAPH_ACCESS_TOKEN", "tok")
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.msgraph_tool import msgraph_tool
-    out = msgraph_tool().fn({
-        "op": "send_mail", "to": ["a@x"], "subject": "hi", "body": "yo",
-    })
-    assert "DRY RUN" in out
-
-
-def test_msgraph_messages_renders(monkeypatch):
-    monkeypatch.setenv("MSGRAPH_ACCESS_TOKEN", "tok")
-    body = {"value": [{
-        "subject": "Standup", "isRead": False,
-        "from": {"emailAddress": {"address": "boss@x"}},
-    }]}
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.msgraph_tool import msgraph_tool
-    out = msgraph_tool().fn({"op": "messages"})
-    assert "Standup" in out and "boss@x" in out
-
-
-# ---------- Confluence ----------
-
-def test_confluence_requires_op():
-    from maverick.tools.confluence_tool import confluence_tool
-    assert "op is required" in confluence_tool().fn({})
-
-
-def test_confluence_missing_config(monkeypatch):
-    for k in ("CONFLUENCE_URL", "CONFLUENCE_USER", "CONFLUENCE_API_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.confluence_tool import confluence_tool
-    out = confluence_tool().fn({"op": "search", "cql": "text ~ 'x'"})
-    assert "CONFLUENCE_URL" in out
-
-
-def test_confluence_page_get_strips_html(monkeypatch):
-    monkeypatch.setenv("CONFLUENCE_URL", "https://x.atlassian.net/wiki")
-    monkeypatch.setenv("CONFLUENCE_USER", "u@x")
-    monkeypatch.setenv("CONFLUENCE_API_TOKEN", "tok")
-    body = {
-        "id": "123", "title": "Roadmap",
-        "space": {"key": "ENG"}, "version": {"number": 3},
-        "body": {"storage": {"value": "<p>Hello <b>world</b></p>"}},
-    }
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.confluence_tool import confluence_tool
-    out = confluence_tool().fn({"op": "page_get", "page_id": "123"})
-    assert "Hello world" in out and "<p>" not in out
-
-
-def test_confluence_page_create_dry_run(monkeypatch):
-    monkeypatch.setenv("CONFLUENCE_URL", "https://x.atlassian.net/wiki")
-    monkeypatch.setenv("CONFLUENCE_USER", "u@x")
-    monkeypatch.setenv("CONFLUENCE_API_TOKEN", "tok")
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.confluence_tool import confluence_tool
-    out = confluence_tool().fn({
-        "op": "page_create", "space_key": "ENG", "title": "New",
-    })
-    assert "DRY RUN" in out
-
-
-def _confluence_env(monkeypatch):
-    monkeypatch.setenv("CONFLUENCE_URL", "https://x.atlassian.net/wiki")
-    monkeypatch.setenv("CONFLUENCE_USER", "u@x")
-    monkeypatch.setenv("CONFLUENCE_API_TOKEN", "tok")
-
-
-def test_confluence_page_create_sends_space_key(monkeypatch):
-    # Issue #475: the v1 content API keys space by KEY (space.key). Confirm the
-    # space_key arg lands in payload["space"]["key"].
-    _confluence_env(monkeypatch)
-    post = MagicMock(return_value=_resp(200, {"id": "999", "title": "New"}))
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.confluence_tool import confluence_tool
-    confluence_tool().fn({
-        "op": "page_create", "space_key": "ENG", "title": "New",
-        "body": "<p>hi</p>", "confirm": True,
-    })
-    payload = post.call_args.kwargs["json"]
-    assert payload["space"]["key"] == "ENG"
-
-
-def test_confluence_page_create_accepts_legacy_space_id(monkeypatch):
-    # Back-compat: the old `space_id` arg still works (treated as the key).
-    _confluence_env(monkeypatch)
-    post = MagicMock(return_value=_resp(200, {"id": "999", "title": "New"}))
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.confluence_tool import confluence_tool
-    confluence_tool().fn({
-        "op": "page_create", "space_id": "ENG", "title": "New", "confirm": True,
-    })
-    assert post.call_args.kwargs["json"]["space"]["key"] == "ENG"
-
-
-# ---------- Gmail ----------
-
-def test_gmail_requires_op():
-    from maverick.tools.gmail_tool import gmail_tool
-    assert "op is required" in gmail_tool().fn({})
-
-
-def test_gmail_missing_token(monkeypatch):
-    monkeypatch.delenv("GMAIL_ACCESS_TOKEN", raising=False)
-    _fake_httpx(monkeypatch, get=MagicMock())
-    from maverick.tools.gmail_tool import gmail_tool
-    out = gmail_tool().fn({"op": "labels"})
-    assert "GMAIL_ACCESS_TOKEN" in out
-
-
-def test_gmail_send_dry_run(monkeypatch):
-    monkeypatch.setenv("GMAIL_ACCESS_TOKEN", "tok")
-    _fake_httpx(monkeypatch, post=MagicMock())
-    from maverick.tools.gmail_tool import gmail_tool
-    out = gmail_tool().fn({
-        "op": "send", "to": "a@x", "subject": "hi", "body": "yo",
-    })
-    assert "DRY RUN" in out
-
-
-def test_gmail_send_confirmed(monkeypatch):
-    monkeypatch.setenv("GMAIL_ACCESS_TOKEN", "tok")
-    _fake_httpx(monkeypatch,
-                post=MagicMock(return_value=_resp(200, {"id": "m1"})))
-    from maverick.tools.gmail_tool import gmail_tool
-    out = gmail_tool().fn({
-        "op": "send", "to": "a@x", "subject": "hi", "body": "yo",
-        "confirm": True,
-    })
-    assert "sent" in out and "m1" in out
-
-
-def test_gmail_extract_plain_malformed_base64_never_raises():
-    # A sender-controlled text/plain body whose base64url length is 1 (mod 4)
-    # used to crash _extract_plain (binascii.Error from the over-padding
-    # `+ "==="`). It must reject cleanly (return "") instead.
-    import base64
-
-    from maverick.tools.gmail_tool import _decode_b64url, _extract_plain
-
-    bad = {"mimeType": "text/plain", "body": {"data": "AAAAA"}}  # len%4 == 1
-    assert _extract_plain(bad) == ""
-    assert _decode_b64url("AAAAA") == ""
-    # Padding-stripped valid bodies (Gmail strips '=') still round-trip.
-    raw = b"hello plain body"
-    stripped = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    ok = {"mimeType": "text/plain", "body": {"data": stripped}}
-    assert _extract_plain(ok) == raw.decode()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ---------- Scheduler ----------
@@ -659,20 +420,3 @@ def test_scheduler_schedule_cron_enqueues(tmp_path):
     assert q.claim(now=base) is None
     # Claimable at/after run_at.
     assert q.claim(now=run_at + 1) is not None
-
-
-# ---------- registration smoke ----------
-
-def test_new_tools_register(tmp_path):
-    from maverick.sandbox.local import LocalBackend
-    from maverick.tools import base_registry
-
-    class _W:
-        def open_questions(self, gid):
-            return []
-
-    reg = base_registry(_W(), LocalBackend(workdir=tmp_path))
-    names = {t.name for t in reg.all()}
-    for n in ("trello", "newsapi", "wolfram", "dropbox",
-              "msgraph", "confluence", "gmail"):
-        assert n in names, f"{n} not registered"

@@ -1,11 +1,11 @@
 """Compliance mode profiles (roadmap: 2027 H1 safety — "HIPAA mode profile").
 
-Cross-domain runtime postures you turn on the way the finance suite turns on
-``[finance] regimes``: each profile asserts the safeguards it stands for, names
+Cross-domain runtime postures selected through ``[compliance] profiles``:
+each profile asserts the safeguards it stands for, names
 the protection *floors* it requires to be live (redaction, encryption-at-rest,
 egress lock, audit), and compiles to a governance :class:`~maverick.governance.Policy`
 (what must pause for a human). Selecting several unions them strictest-wins via
-the same helper the finance regimes use.
+one strictest-wins policy.
 
 The first profile is **HIPAA mode** — a PHI-handling posture. This is the
 enforcement counterpart to the HIPAA *assessment* template in

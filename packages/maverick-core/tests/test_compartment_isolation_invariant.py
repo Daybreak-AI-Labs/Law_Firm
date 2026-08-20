@@ -95,17 +95,15 @@ def test_escalation_threshold_seals_only_that_compartment():
 def test_fault_injection_seal_does_not_bleed_across_compartments():
     reg = _registry_with_whole_roster()
     comps = _by_compartment()
-    # two compartments in DIFFERENT suites
-    comp_suite = {c: suite_for(a[0].split("agent:")[1]) for c, a in comps.items()}
-    items = [(c, comp_suite[c]) for c in comps if comp_suite[c]]
-    cx, sx = items[0]
-    cy, sy = next((c, s) for c, s in items if s != sx)
+    # The firm has one legal suite, but separate matter-purpose compartments
+    # must remain isolated from one another.
+    cx, cy = list(comps)[:2]
     x_agent, y_agent = comps[cx][0], comps[cy][0]
 
     reg.seal_domain(cx, "breach in X")
     assert reg.is_sealed(x_agent), "mechanism inert: X's own agent not sealed"
     assert not reg.is_sealed(y_agent), (
-        f"isolation breach: sealing {cx} ({sx}) sealed {y_agent} in {cy} ({sy})")
+        f"isolation breach: sealing {cx} sealed {y_agent} in {cy}")
 
     # control: the same Y agent IS sealed once ITS compartment is sealed
     reg.seal_domain(cy, "breach in Y")

@@ -1,12 +1,8 @@
-"""World-DB backend for the self-harness learning stores (fleet-shared state).
+"""World-DB backend for matter-scoped self-harness learning stores.
 
-Phase 1 of ``docs/proposals/fleet-learning-state.md``: the three LEARNING
-stores -- the addenda map, the provenance/outcome line-meta sidecar, and the
-transfer tried-memory -- can live as world-database tables instead of per-host
-JSON files, so a fleet spanning hosts shares one learning state (transfer
-sweeps see every host's guidance, outcome evidence aggregates, and two hosts
-can't promote conflicting lines). The eval corpus and its harvest sidecars
-stay on files this phase (operator data keyed by a configurable path).
+The addenda map, provenance/outcome line metadata, and evaluated corpus may use
+the world database instead of file sidecars. Cross-model transfer state is not
+part of the firm product.
 
 Selection is the ``[self_harness] store`` knob (``"files"`` default,
 ``"world"`` opt-in) and the seam lives in :mod:`maverick.self_harness`: an
@@ -36,16 +32,11 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# One row per logical file the store replaces.
-_TABLES = ("harness_addenda", "harness_line_meta", "harness_transfer_tried")
-
 _SQLITE_DDL = (
     "CREATE TABLE IF NOT EXISTS harness_addenda ("
     " key TEXT PRIMARY KEY, block TEXT NOT NULL, updated_at REAL NOT NULL)",
     "CREATE TABLE IF NOT EXISTS harness_line_meta ("
     " line_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at REAL NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS harness_transfer_tried ("
-    " line_id TEXT PRIMARY KEY, ts REAL NOT NULL)",
     # Phase 2: the eval-corpus family. ``kind`` is live|pending|rejected plus
     # ``extra`` for a live file's non-list top-level entries (operator
     # annotations like "_meta"), so an export/import round-trip loses nothing.
@@ -129,112 +120,97 @@ def _ph(n: int) -> str:
     return ", ".join(["?"] * n)
 
 
-def load_addenda_db() -> dict[str, str]:
+def load_addenda_db(*, strict: bool = False) -> dict[str, str]:
     """``{key: block}`` -- the world-store addenda map ({} on any error)."""
     try:
+        from .learning_crypto import decode_text, protected_learning_enabled
+
         with _conn() as c:
-            return {str(k): str(b) for k, b in
-                    _rows(c, "SELECT key, block FROM harness_addenda")}
+            out: dict[str, str] = {}
+            for key, block in _rows(c, "SELECT key, block FROM harness_addenda"):
+                decoded = decode_text(str(block))
+                if decoded is None:
+                    if strict or protected_learning_enabled():
+                        raise ValueError("unsealed or unreadable harness addendum")
+                    continue
+                out[str(key)] = decoded
+            return out
     except Exception:
+        if strict:
+            raise
         log.debug("learning_store: addenda read failed", exc_info=True)
         return {}
 
 
 def write_addenda_db(data: dict[str, str]) -> None:
     """Whole-map replace, mirroring the file store's atomic rewrite."""
+    from .learning_crypto import encode_text
+
     now = time.time()
     with _conn() as c:
         _exec(c, "DELETE FROM harness_addenda")
         for k, block in (data or {}).items():
             _exec(c, f"INSERT INTO harness_addenda (key, block, updated_at) "
-                     f"VALUES ({_ph(3)})", (str(k), str(block), now))
+                     f"VALUES ({_ph(3)})", (str(k), encode_text(str(block)), now))
 
 
-def load_line_meta_db() -> dict[str, dict]:
+def load_line_meta_db(*, strict: bool = False) -> dict[str, dict]:
     """``{line_id: record}`` provenance sidecar ({} on any error)."""
     out: dict[str, dict] = {}
     try:
+        from .learning_crypto import decode_text, protected_learning_enabled
+
         with _conn() as c:
             for lid, rec in _rows(
                     c, "SELECT line_id, record FROM harness_line_meta"):
                 try:
-                    parsed = json.loads(rec)
+                    decoded = decode_text(str(rec))
+                    if decoded is None:
+                        raise ValueError("unsealed or unreadable harness line metadata")
+                    parsed = json.loads(decoded)
                     if isinstance(parsed, dict):
                         out[str(lid)] = parsed
                 except ValueError:
+                    if strict or protected_learning_enabled():
+                        raise
                     continue
     except Exception:
+        if strict:
+            raise
         log.debug("learning_store: line-meta read failed", exc_info=True)
     return out
 
 
 def write_line_meta_db(meta: dict[str, dict]) -> None:
+    from .learning_crypto import encode_text
+
     now = time.time()
     with _conn() as c:
         _exec(c, "DELETE FROM harness_line_meta")
         for lid, rec in (meta or {}).items():
             _exec(c, f"INSERT INTO harness_line_meta (line_id, record, "
                      f"updated_at) VALUES ({_ph(3)})",
-                  (str(lid), json.dumps(rec, sort_keys=True), now))
-
-
-def load_transfer_tried_db() -> dict[str, float]:
-    """``{line_id: ts}`` transfer tried-memory ({} on any error)."""
-    try:
-        with _conn() as c:
-            return {str(k): float(ts) for k, ts in
-                    _rows(c, "SELECT line_id, ts FROM harness_transfer_tried")}
-    except Exception:
-        log.debug("learning_store: tried read failed", exc_info=True)
-        return {}
-
-
-def write_transfer_tried_db(tried: dict[str, float]) -> None:
-    with _conn() as c:
-        _exec(c, "DELETE FROM harness_transfer_tried")
-        for lid, ts in (tried or {}).items():
-            _exec(c, f"INSERT INTO harness_transfer_tried (line_id, ts) "
-                     f"VALUES ({_ph(2)})", (str(lid), float(ts)))
-
-
-def _corpus_row_sensitive(kind: str) -> bool:
-    """True for machine-owned corpus rows that mirror sealed file sidecars."""
-    return str(kind) in {"pending", "rejected"}
+                  (str(lid), encode_text(json.dumps(rec, sort_keys=True)), now))
 
 
 def _encode_corpus_row(kind: str, row: object) -> str:
+    del kind
     text = json.dumps(row, sort_keys=True)
-    if _corpus_row_sensitive(kind):
-        from .crypto_at_rest import at_rest_enabled
-        if at_rest_enabled():
-            from .crypto_at_rest import seal_to_str
-            return seal_to_str(text)
-    return text
+    from .learning_crypto import encode_text
+
+    return encode_text(text)
 
 
 def _decode_corpus_row(kind: str, row: str) -> object:
-    if _corpus_row_sensitive(kind):
-        from .crypto_at_rest import at_rest_enabled, is_sealed_str, strict_at_rest, unseal_from_str
-        if at_rest_enabled():
-            if is_sealed_str(row):
-                row = unseal_from_str(row)
-            elif strict_at_rest():
-                log.error(
-                    "at-rest strict: withholding an unsealed harness_corpus.%s row",
-                    kind,
-                )
-                raise ValueError("unsealed sensitive corpus row withheld")
-            else:
-                log.warning(
-                    "at-rest: unsealed harness_corpus.%s row "
-                    "(pre-migration legacy or tampering); seal legacy rows via "
-                    "maverick.encryption_migrate",
-                    kind,
-                )
-    return json.loads(row)
+    from .learning_crypto import decode_text
+
+    decoded = decode_text(str(row))
+    if decoded is None:
+        raise ValueError(f"unsealed or unreadable harness_corpus.{kind} row")
+    return json.loads(decoded)
 
 
-def load_corpus_db(kind: str) -> dict:
+def load_corpus_db(kind: str, *, strict: bool = False) -> dict:
     """The corpus family from the world store, in the FILE shape:
     ``kind="live"`` returns ``{key: [row-dicts]}`` merged with any preserved
     non-list top-level entries (stored under kind ``extra``); ``"pending"``
@@ -249,6 +225,10 @@ def load_corpus_db(kind: str) -> dict:
                 try:
                     out.setdefault(str(key), []).append(_decode_corpus_row(str(kind), row))
                 except ValueError:
+                    from .learning_crypto import protected_learning_enabled
+
+                    if protected_learning_enabled():
+                        raise
                     continue
             if kind == "live":
                 for key, row in _rows(
@@ -258,8 +238,14 @@ def load_corpus_db(kind: str) -> dict:
                     try:
                         out[str(key)] = _decode_corpus_row("extra", row)
                     except ValueError:
+                        from .learning_crypto import protected_learning_enabled
+
+                        if protected_learning_enabled():
+                            raise
                         continue
     except Exception:
+        if strict:
+            raise
         log.debug("learning_store: corpus read failed (%s)", kind, exc_info=True)
         return {}
     return out
@@ -291,6 +277,5 @@ __all__ = [
     "enabled", "rmw_lock",
     "load_addenda_db", "write_addenda_db",
     "load_line_meta_db", "write_line_meta_db",
-    "load_transfer_tried_db", "write_transfer_tried_db",
     "load_corpus_db", "write_corpus_db",
 ]

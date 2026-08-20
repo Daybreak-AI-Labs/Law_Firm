@@ -1,12 +1,4 @@
-"""Sandbox picks a language-appropriate toolchain image (polyglot coding-mode).
-
-coding_mode already detects + runs cargo / go test / jest and parses their
-output; the missing piece was the container backend, which defaulted to
-python:3.12-slim and so had no toolchain to run those with. build_sandbox now
-resolves the image from the MAVERICK_LANGUAGE hint (the same signal coding_mode
-threads into the test runner). An explicit [sandbox] image always wins; an
-unknown language falls back to Python so existing setups are unchanged.
-"""
+"""Sandbox resolves an operator-selected language toolchain image."""
 from maverick.sandbox import _DEFAULT_IMAGE, _resolve_image
 
 

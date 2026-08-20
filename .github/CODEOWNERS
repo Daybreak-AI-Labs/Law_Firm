@@ -6,9 +6,7 @@
 /packages/maverick-core/                @cdayAI
 /packages/maverick-shield/              @cdayAI
 /packages/maverick-dashboard/           @cdayAI
-/packages/maverick-mcp/                 @cdayAI
 /apps/installer-cli/                    @cdayAI
-/apps/installer-desktop/                @cdayAI
 /deploy/                                @cdayAI
 /.github/workflows/                     @cdayAI
 SECURITY.md                             @cdayAI

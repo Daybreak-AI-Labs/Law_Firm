@@ -31,8 +31,7 @@ def test_tool_risk_defaults():
     from maverick.safety.tool_risk import tool_risk
     assert tool_risk("shell") == "high"
     assert tool_risk("code_exec") == "high"
-    assert tool_risk("memory") == "high"
-    for mutating_tool in ("github_issues", "gitlab_issues", "anki"):
+    for mutating_tool in ("gitlab_issues", "anki"):
         assert tool_risk(mutating_tool) == "high"
     for connector in (
         "servicenow",
@@ -51,11 +50,11 @@ def test_tool_risk_config_override(tmp_path, monkeypatch):
     _write_config(tmp_path, '''
 [security.tool_risk]
 read_file = "high"
-"mcp_*" = "high"
+"external_*" = "high"
 ''')
     from maverick.safety.tool_risk import tool_risk
     assert tool_risk("read_file") == "high"            # exact override
-    assert tool_risk("mcp_github__list") == "high"     # glob override
+    assert tool_risk("external_catalog_list") == "high"  # glob override
 
 
 def test_risk_map_classifies_each_name():
@@ -103,7 +102,7 @@ max_risk = "low"
 # ---------- apply_to_registry: ceiling drops high-risk tools ----------
 
 def test_user_low_ceiling_drops_high_risk_tool(tmp_path, monkeypatch):
-    """A user with max_risk=low cannot resolve a high-risk tool (shell)."""
+    """A user with max_risk=low cannot resolve a high-risk tool."""
     monkeypatch.setenv("HOME", str(tmp_path))
     _write_config(tmp_path, '''
 [security.users."tg:42"]
@@ -111,12 +110,12 @@ max_risk = "low"
 ''')
     from maverick.tools import base_registry
     reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
-    assert "shell" in {t.name for t in reg.all()}
+    assert "sql_query" in {t.name for t in reg.all()}
 
     from maverick.safety.tool_acl import apply_to_registry
     apply_to_registry(reg, user_id="tg:42")
     names = {t.name for t in reg.all()}
-    assert "shell" not in names         # high-risk dropped
+    assert "sql_query" not in names     # high-risk dropped
     assert "write_file" not in names    # high-risk dropped
     assert "read_file" in names         # low-risk kept
 
@@ -132,9 +131,8 @@ max_risk = "medium"
 
     reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
     names = {t.name for t in reg.all()}
-    assert "memory" not in names
     assert "write_file" not in names
-    for mutating_tool in ("github_issues", "gitlab_issues", "anki"):
+    for mutating_tool in ("gitlab_issues", "anki"):
         assert mutating_tool not in names
     assert "read_file" in names
 
@@ -161,7 +159,7 @@ max_risk = "medium"
 
 
 def test_user_high_ceiling_keeps_high_risk_tool(tmp_path, monkeypatch):
-    """max_risk=high (or unset) keeps current behaviour -- shell stays."""
+    """max_risk=high keeps the retained high-risk tool."""
     monkeypatch.setenv("HOME", str(tmp_path))
     _write_config(tmp_path, '''
 [security.users."tg:42"]
@@ -173,12 +171,12 @@ max_risk = "high"
     from maverick.safety.tool_acl import apply_to_registry
     apply_to_registry(reg, user_id="tg:42")
     names = {t.name for t in reg.all()}
-    assert "shell" in names
+    assert "sql_query" in names
     assert "read_file" in names
 
 
 def test_no_ceiling_keeps_high_risk_tool(tmp_path, monkeypatch):
-    """No max_risk anywhere -> no cap; shell is resolvable."""
+    """No max_risk anywhere means the retained high-risk tool is resolvable."""
     monkeypatch.setenv("HOME", str(tmp_path))
     _write_config(tmp_path, '[security]\ndenied_tools = ["computer"]\n')
     from maverick.tools import base_registry
@@ -186,7 +184,7 @@ def test_no_ceiling_keeps_high_risk_tool(tmp_path, monkeypatch):
 
     from maverick.safety.tool_acl import apply_to_registry
     apply_to_registry(reg, user_id="tg:42")
-    assert "shell" in {t.name for t in reg.all()}
+    assert "sql_query" in {t.name for t in reg.all()}
 
 
 def test_max_risk_applies_to_late_registered_tools(tmp_path, monkeypatch):
@@ -197,7 +195,7 @@ def test_max_risk_applies_to_late_registered_tools(tmp_path, monkeypatch):
 max_risk = "low"
 
 [security.tool_risk]
-"mcp_*" = "high"
+"external_*" = "high"
 ''')
     from maverick.safety.tool_acl import apply_to_registry
     from maverick.tools import Tool, ToolRegistry
@@ -212,15 +210,15 @@ max_risk = "low"
     apply_to_registry(reg)
 
     reg.register(Tool(
-        name="mcp_evil__shell",
-        description="late MCP shell",
+        name="external_evil_shell",
+        description="late external tool",
         input_schema={"type": "object"},
         fn=lambda _: "pwned",
     ))
 
     names = {t.name for t in reg.all()}
     assert "read_file" in names
-    assert "mcp_evil__shell" not in names
+    assert "external_evil_shell" not in names
 
 
 def test_medium_ceiling_drops_late_code_exec_tool(tmp_path, monkeypatch):
@@ -244,34 +242,3 @@ max_risk = "medium"
     ))
 
     assert "code_exec" not in {t.name for t in reg.all()}
-
-
-def test_max_risk_blocks_late_plugin_tools_in_base_registry(tmp_path, monkeypatch):
-    """Plugin tools registered after the first ACL pass still honor max_risk."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAVERICK_PLUGINS_ALLOW", "*")
-    _write_config(tmp_path, '''
-[security]
-max_risk = "low"
-
-[security.tool_risk]
-plugin_evil = "high"
-''')
-    from maverick import plugins
-    from maverick.tools import Tool, base_registry
-
-    def factory():
-        return Tool(
-            name="plugin_evil",
-            description="late plugin shell",
-            input_schema={"type": "object"},
-            fn=lambda _: "pwned",
-        )
-
-    monkeypatch.setattr(plugins, "discover_tools", lambda: [("plugin_evil", factory)])
-
-    reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
-    names = {t.name for t in reg.all()}
-    assert "read_file" in names
-    assert "shell" not in names
-    assert "plugin_evil" not in names

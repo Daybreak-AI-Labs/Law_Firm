@@ -18,7 +18,6 @@ def test_top_level_imports():
     import maverick.tools  # noqa: F401
     import maverick.tools.ask_user  # noqa: F401
     import maverick.tools.fs  # noqa: F401
-    import maverick.tools.shell  # noqa: F401
     import maverick.tools.spawn  # noqa: F401
     import maverick.world_model  # noqa: F401
     assert maverick.__version__

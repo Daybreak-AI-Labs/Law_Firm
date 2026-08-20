@@ -2,7 +2,7 @@
 
 Extracts text from PDFs with page-range slicing. Tries pdfplumber
 first (better table handling), falls back to pypdf. Both are in the
-``[pdf]`` optional extra.
+``[parsers]`` optional extra.
 
 Reads from local paths or http(s) URLs.
 """
@@ -75,6 +75,8 @@ def _parse_pages(spec: str, total: int) -> list[int]:
 
 def _load_bytes(source: str) -> bytes | None:
     """Get PDF bytes from a workspace-local path or safe URL."""
+    from ..parser_isolation import MAX_INPUT_BYTES
+
     if source.startswith(("http://", "https://")):
         try:
             import httpx  # noqa: F401  (presence check; safe_get imports it)
@@ -85,19 +87,22 @@ def _load_bytes(source: str) -> bytes | None:
         # validated public IP (SSRF / DNS-rebinding), AND we stream with a
         # hard byte ceiling so a model-supplied URL can't exhaust memory with
         # a multi-GB / endless body.
-        _MAX = 100 * 1024 * 1024  # 100 MiB
         try:
             with safe_client(source, timeout=30.0) as client:
                 with client.stream("GET", source) as resp:
                     resp.raise_for_status()
                     clen = resp.headers.get("content-length")
-                    if clen is not None and clen.isdigit() and int(clen) > _MAX:
+                    if (
+                        clen is not None
+                        and clen.isdigit()
+                        and int(clen) > MAX_INPUT_BYTES
+                    ):
                         log.warning("pdf fetch refused: %s bytes > cap", clen)
                         return None
                     buf = bytearray()
                     for chunk in resp.iter_bytes():
                         buf += chunk
-                        if len(buf) > _MAX:
+                        if len(buf) > MAX_INPUT_BYTES:
                             log.warning("pdf fetch refused: body exceeded cap")
                             return None
                     return bytes(buf)
@@ -120,7 +125,15 @@ def _load_bytes(source: str) -> bytes | None:
         return None
     if not p.exists() or not p.is_file():
         return None
-    return p.read_bytes()
+    try:
+        with p.open("rb") as stream:
+            data = stream.read(MAX_INPUT_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > MAX_INPUT_BYTES:
+        log.warning("pdf read refused: local file exceeded parser input cap")
+        return None
+    return data
 
 
 def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: bool) -> str | None:
@@ -182,10 +195,10 @@ def extract_text_from_bytes(data: bytes, *, pages: str = "",
     """Extract text from PDF bytes (pdfplumber, pypdf fallback).
 
     Also the **parser-isolation child entry** (``parser_isolation.PARSERS
-    ["pdf_text"]``): with ``[security] isolate_parsers`` on, hostile PDF bytes
-    are parsed in a scrubbed child process so a memory-safety bug in the
-    C-backed parsers can't touch the kernel. Returns None when no parser
-    extra is installed.
+    ["pdf_text"]``). Hostile PDF bytes use a scrubbed child by default so a
+    memory-safety bug in C-backed parsers cannot touch the kernel. Direct
+    in-process use is reserved for the explicitly trusted/test escape hatch.
+    Returns None when no parser extra is installed.
     """
     text = _extract_with_pdfplumber(data, pages, include_tables)
     if text is None:
@@ -221,7 +234,7 @@ def _run_read_pdf(args: dict[str, Any]) -> str:
     if text is None:
         return (
             "ERROR: no PDF parser available. Run: "
-            "python -m pip install -e './packages/maverick-core[pdf]'"
+            "python -m pip install -e './packages/maverick-core[parsers]'"
         )
 
     if len(text) > max_chars:
@@ -237,7 +250,7 @@ def read_pdf() -> Tool:
             "Read text from a PDF (local path or http(s) URL). Supports "
             "pages='1-5,8,10-' for ranges, include_tables=true to extract "
             "tables as markdown. Tries pdfplumber first, falls back to "
-            "pypdf. Install with: python -m pip install -e './packages/maverick-core[pdf]'."
+            "pypdf. Install with: python -m pip install -e './packages/maverick-core[parsers]'."
         ),
         input_schema=_PDF_INPUT_SCHEMA,
         fn=_run_read_pdf,

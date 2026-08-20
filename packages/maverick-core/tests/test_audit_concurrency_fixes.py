@@ -20,8 +20,10 @@ def test_stale_complete_does_not_clobber_reclaimed_job():
     q = _q()
     q.enqueue("k", {"x": 1})
     a = q.claim()                  # worker A, attempts=1
-    q.reclaim_stale(0)             # lease expires -> back to pending
-    b = q.claim()                  # worker B re-claims, attempts=2
+    reclaim_at = a.updated_at + 1.0
+    assert q.reclaim_stale(2.0, now=reclaim_at) == 0
+    assert q.reclaim_stale(0.5, now=reclaim_at) == 1
+    b = q.claim(now=reclaim_at)    # worker B re-claims, attempts=2
     assert a.attempts != b.attempts
     # A finished late; its fenced completion must be rejected.
     assert q.complete(a.id, expected_attempts=a.attempts) is False
@@ -33,8 +35,10 @@ def test_stale_fail_does_not_reschedule_reclaimed_job():
     q = _q()
     q.enqueue("k", {})
     a = q.claim()
-    q.reclaim_stale(0)
-    b = q.claim()
+    reclaim_at = a.updated_at + 1.0
+    assert q.reclaim_stale(2.0, now=reclaim_at) == 0
+    assert q.reclaim_stale(0.5, now=reclaim_at) == 1
+    b = q.claim(now=reclaim_at)
     assert q.fail(a.id, "boom", expected_attempts=a.attempts) is False
     assert q.fail(b.id, "boom", expected_attempts=b.attempts) is True
 

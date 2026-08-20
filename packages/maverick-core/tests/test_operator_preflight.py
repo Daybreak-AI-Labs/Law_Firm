@@ -90,7 +90,7 @@ def test_run_profile_ready_with_local_provider(monkeypatch, isolated_config):
                 "[providers.ollama]",
                 'base_url = "http://127.0.0.1:11434"',
                 "[models]",
-                'planner = "ollama:test-model"',
+                'default = "ollama:test-model"',
                 "",
             ]
         ),
@@ -144,7 +144,7 @@ def test_cockpit_profile_requires_all_evidence_dependencies(
                 "[providers.ollama]",
                 'base_url = "http://127.0.0.1:11434"',
                 "[models]",
-                'planner = "ollama:test-model"',
+                'default = "ollama:test-model"',
                 "",
             ]
         ),
@@ -181,7 +181,7 @@ def test_cockpit_profile_ready_when_dependencies_enabled(
                 "[providers.ollama]",
                 'base_url = "http://127.0.0.1:11434"',
                 "[models]",
-                'planner = "ollama:test-model"',
+                'default = "ollama:test-model"',
                 "[evidence_graph]",
                 "enable = true",
                 "",
@@ -224,7 +224,7 @@ def test_cockpit_profile_requires_explicit_tenant_scope(
                 "[providers.ollama]",
                 'base_url = "http://127.0.0.1:11434"',
                 "[models]",
-                'planner = "ollama:test-model"',
+                'default = "ollama:test-model"',
                 "[evidence_graph]",
                 "enable = true",
                 "",
@@ -253,7 +253,7 @@ def test_cockpit_profile_requires_explicit_tenant_scope(
     assert tenant.remediation == "maverick config edit"
 
 
-def test_default_route_requires_its_own_provider_credential(
+def test_selected_run_model_requires_its_own_provider_credential(
     monkeypatch, isolated_config
 ):
     isolated_config.write_text(
@@ -262,7 +262,7 @@ def test_default_route_requires_its_own_provider_credential(
                 "[providers.ollama]",
                 'base_url = "http://127.0.0.1:11434"',
                 "[models]",
-                'planner = "ollama:test-model"',
+                'default = "anthropic:remote"',
                 "",
             ]
         ),
@@ -280,11 +280,12 @@ def test_default_route_requires_its_own_provider_credential(
     assert "ollama" not in route.detail
 
 
-def test_role_edit_route_matches_live_model_resolution(
+def test_secure_preflight_ignores_retired_role_edit_model(
     monkeypatch, isolated_config,
 ):
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
     isolated_config.write_text(
-        '[models]\norchestrator = "anthropic:remote"\n',
+        '[models]\ndefault = "anthropic:remote"\n',
         encoding="utf-8",
     )
     (isolated_config.parent / "roles.toml").write_text(
@@ -292,27 +293,28 @@ def test_role_edit_route_matches_live_model_resolution(
         encoding="utf-8",
     )
     from maverick import config
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-present")
     from maverick.llm import model_for_role, offline_model_for_role
-    from maverick.operator_preflight import _role_configuration_missing
+    from maverick.operator_preflight import _routed_configuration_missing
 
     config.reset_config_cache()
     cfg = config.load_config()
-    assert model_for_role("orchestrator") == "ollama:qwen3"
-    assert offline_model_for_role("orchestrator", config=cfg) == "ollama:qwen3"
-    assert _role_configuration_missing("orchestrator", cfg) == ("ollama", ())
+    assert model_for_role("orchestrator") == "anthropic:remote"
+    assert offline_model_for_role("orchestrator", config=cfg) == "anthropic:remote"
+    assert _routed_configuration_missing(cfg) == {"anthropic": ()}
 
 
-def test_dashboard_pin_route_matches_live_model_resolution(
+def test_dashboard_global_pin_matches_live_model_resolution(
     isolated_config,
 ):
     isolated_config.write_text("", encoding="utf-8")
     (isolated_config.parent / "runtime-overrides.toml").write_text(
-        '[models]\norchestrator = "vllm:local-orchestrator"\n',
+        '[models]\ndefault = "vllm:local-orchestrator"\n',
         encoding="utf-8",
     )
     from maverick import config
     from maverick.llm import model_for_role, offline_model_for_role
-    from maverick.operator_preflight import _role_configuration_missing
+    from maverick.operator_preflight import _routed_configuration_missing
 
     config.reset_config_cache()
     cfg = config.load_config()
@@ -321,14 +323,14 @@ def test_dashboard_pin_route_matches_live_model_resolution(
         offline_model_for_role("orchestrator", config=cfg)
         == "vllm:local-orchestrator"
     )
-    assert _role_configuration_missing("orchestrator", cfg) == ("vllm", ())
+    assert _routed_configuration_missing(cfg) == {"vllm": ()}
 
 
-def test_allowed_model_fallback_route_matches_live_model_resolution(
+def test_allowlist_mismatch_blocks_without_substitution(
     isolated_config,
 ):
     isolated_config.write_text(
-        '[models]\norchestrator = "anthropic:remote"\n',
+        '[models]\ndefault = "anthropic:remote"\n',
         encoding="utf-8",
     )
     (isolated_config.parent / "runtime-overrides.toml").write_text(
@@ -336,19 +338,20 @@ def test_allowed_model_fallback_route_matches_live_model_resolution(
         encoding="utf-8",
     )
     from maverick import config
-    from maverick.llm import model_for_role, offline_model_for_role
-    from maverick.operator_preflight import _role_configuration_missing
+    from maverick.llm import ModelNotAllowedError, offline_model_for_role
+    from maverick.operator_preflight import collect
 
     config.reset_config_cache()
     cfg = config.load_config()
-    assert model_for_role("orchestrator") == "ollama:qwen3"
-    assert offline_model_for_role("orchestrator", config=cfg) == "ollama:qwen3"
-    assert _role_configuration_missing("orchestrator", cfg) == ("ollama", ())
+    with pytest.raises(ModelNotAllowedError):
+        offline_model_for_role("orchestrator", config=cfg)
+    assert _by_id(collect("run"))["model_routes"].status == "blocked"
 
 
-def test_per_role_environment_override_precedes_global_in_preflight(
+def test_secure_preflight_ignores_per_role_environment_override(
     monkeypatch, isolated_config,
 ):
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
     isolated_config.write_text("", encoding="utf-8")
     monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "openai:global")
     monkeypatch.setenv(
@@ -357,16 +360,13 @@ def test_per_role_environment_override_precedes_global_in_preflight(
     )
     from maverick import config
     from maverick.llm import model_for_role, offline_model_for_role
-    from maverick.operator_preflight import _role_configuration_missing
+    from maverick.operator_preflight import _routed_configuration_missing
 
     config.reset_config_cache()
     cfg = config.load_config()
-    assert model_for_role("orchestrator") == "ollama:role-specific"
-    assert (
-        offline_model_for_role("orchestrator", config=cfg)
-        == "ollama:role-specific"
-    )
-    assert _role_configuration_missing("orchestrator", cfg) == ("ollama", ())
+    assert model_for_role("orchestrator") == "openai:global"
+    assert offline_model_for_role("orchestrator", config=cfg) == "openai:global"
+    assert _routed_configuration_missing(cfg) == {"openai": ("api_key",)}
 
 
 @pytest.mark.parametrize(

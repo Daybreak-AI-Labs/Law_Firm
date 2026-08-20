@@ -1,7 +1,7 @@
 """Roster-wide privilege-escalation (capability attenuation) invariant.
 
 The capability model's core security promise: a child spawned under a parent
-grant can NEVER exceed it. When the fleet spawns a specialist, it runs the pack
+grant can NEVER exceed it. When the runner spawns a specialist, it runs the pack
 under ``domain_capability(profile, parent_cap, principal)`` -> ``parent.attenuate
 (...)``. This proves, across the WHOLE roster and in both governance modes, that
 the resulting child capability is contained by a deliberately narrow parent:
@@ -10,8 +10,7 @@ the resulting child capability is contained by a deliberately narrow parent:
   * the child's risk ceiling never rises above the parent's,
   * no host the child reaches is outside the parent's allow-list,
 
-even when autonomy-levels-on lifts the pack's own ceiling to ``high`` and the
-data-grounding grant adds connectors -- the parent still caps everything.
+The firm runtime does not add global workforce grants to the pack allowlist.
 
 Includes a fault-injection control: a deliberately greedy pack (allows shell,
 wire_transfer, ... at high risk, denies nothing) is fully contained by the
@@ -22,7 +21,6 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
 from maverick.capability import Capability
 from maverick.domain import available_domains, domain_capability
 from maverick.safety.tool_risk import risk_rank
@@ -49,12 +47,6 @@ _PROBE_TOOLS = (
 _PROBE_HOSTS = ("data.sec.gov", "api.stlouisfed.org", "evil.example.com", "10.0.0.5")
 
 
-@pytest.fixture()
-def _both_modes_on(monkeypatch):
-    # the worst case for escalation: pack ceiling lifted to high + grants added.
-    monkeypatch.setenv("MAVERICK_WORKFORCE_DATA_GROUNDING", "on")
-
-
 def _assert_contained(child: Capability, name: str):
     for t in _PROBE_TOOLS:
         if child.permits(t):
@@ -67,12 +59,10 @@ def _assert_contained(child: Capability, name: str):
             assert _PARENT.permits_host(h), f"{name}: child reaches host {h!r} past parent"
 
 
-def test_no_pack_escalates_beyond_a_narrow_parent(_both_modes_on, monkeypatch):
-    for levels in ("false", "true"):
-        monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", levels)
-        for name in _NAMES:
-            child = domain_capability(_DOMAINS[name], _PARENT, f"agent:{name}-child")
-            _assert_contained(child, name)
+def test_no_pack_escalates_beyond_a_narrow_parent():
+    for name in _NAMES:
+        child = domain_capability(_DOMAINS[name], _PARENT, f"agent:{name}-child")
+        _assert_contained(child, name)
 
 
 def test_disjoint_allowlist_collapses_to_deny_not_all():
@@ -84,10 +74,9 @@ def test_disjoint_allowlist_collapses_to_deny_not_all():
     assert not child.permits("some_unrelated_tool")
 
 
-def test_fault_injection_greedy_pack_is_contained(monkeypatch):
+def test_fault_injection_greedy_pack_is_contained():
     """A hostile pack that allows every dangerous tool at high risk is fully
     contained by the narrow parent -- and demonstrably greedy without it."""
-    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "true")
     base = _DOMAINS[_NAMES[0]]
     greedy = dataclasses.replace(
         base,
@@ -109,11 +98,8 @@ def test_fault_injection_greedy_pack_is_contained(monkeypatch):
     _assert_contained(child, "greedy")
 
 
-def test_levels_on_high_ceiling_still_capped_by_low_parent(monkeypatch):
-    # Specifically guard the lift: levels-on raises a non-empty pack to high,
-    # but attenuation under a low parent must keep the child at low.
-    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "true")
-    monkeypatch.setenv("MAVERICK_WORKFORCE_DATA_GROUNDING", "on")
+def test_high_ceiling_still_capped_by_low_parent():
+    # A high-ceiling pack must remain capped by a low-risk parent.
     capped = 0
     for name in _NAMES:
         child = domain_capability(_DOMAINS[name], _PARENT, f"agent:{name}-c")

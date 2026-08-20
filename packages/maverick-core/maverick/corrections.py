@@ -36,6 +36,40 @@ _CORRECTION_RE = re.compile(
 )
 
 
+def _secure_execution() -> bool:
+    try:
+        from .security_defaults import secure_by_default
+
+        return bool(secure_by_default())
+    except Exception:
+        return True
+
+
+def _scoped_turns(world: Any, conversation_id: int, goal: Any) -> list[Any]:
+    """Read correction evidence through the current ethical-wall boundary.
+
+    The legacy ``conversations`` table has no matter key.  In firm mode a
+    numeric id may therefore collide with an unrelated row and must never be
+    used.  Re-resolve live authority, prove the durable goal scope matches it,
+    and query only ``matter_turns`` through an active exact membership.
+    """
+    if not _secure_execution():
+        return world.recent_turns(conversation_id, limit=6)
+    from .matter_context import refresh_matter_context
+
+    context = refresh_matter_context()
+    matter_id = getattr(goal, "project_id", None)
+    owner = getattr(goal, "owner", None)
+    if matter_id != context.matter_id or owner != context.principal:
+        return []
+    return world.recent_matter_turns(
+        conversation_id,
+        project_id=context.matter_id,
+        principal=context.principal,
+        limit=6,
+    )
+
+
 def detect_correction(turns: list[Any]) -> tuple[str, str] | None:
     """Return ``(correction_text, prior_answer)`` when the newest turn is a
     user correction of an earlier assistant answer, else ``None``.
@@ -73,7 +107,7 @@ def maybe_record_correction(
         from . import reflexion
         if not reflexion.enabled():
             return False
-        turns = world.recent_turns(conversation_id, limit=6)
+        turns = _scoped_turns(world, conversation_id, goal)
         # recent_turns may return oldest-first; normalize to newest-first.
         if len(turns) >= 2 and getattr(turns[0], "ts", 0) <= getattr(turns[-1], "ts", 0):
             turns = list(reversed(turns))
@@ -96,6 +130,11 @@ def maybe_record_correction(
                 "presenting it, and address the correction explicitly."
             ),
             channel=channel, user_id=user_id, domain=domain,
+            matter_id=getattr(goal, "project_id", None),
+            owner=(
+                str(goal.owner) if getattr(goal, "owner", None) is not None
+                else None
+            ),
         )
     except Exception as e:  # pragma: no cover -- ingestion never blocks a run
         log.debug("correction ingestion skipped: %s", e)

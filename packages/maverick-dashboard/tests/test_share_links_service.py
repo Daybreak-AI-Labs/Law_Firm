@@ -11,14 +11,36 @@ client = TestClient(app, headers={"Origin": "http://testserver"})
 def _world(tmp_path, monkeypatch):
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    monkeypatch.setattr(
+        "maverick_dashboard.public_origin.canonical_url",
+        lambda path: "https://firm.example/" + str(path or "").lstrip("/"),
+    )
+    monkeypatch.setattr("maverick.audit.audit_event", lambda *a, **k: True)
     return world_model.WorldModel(tmp_path / "world.db")
 
 
 def _make_goal(w, *, approve=True):
-    gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
+    reviewer = "user:reviewer"
+    sequence = len(w.list_projects()) + 1
+    project_id = w.create_client_matter(
+        "Client matter",
+        principal=reviewer,
+        domain="legal_obligations",
+        matter_number=f"SHARE-{sequence}",
+        jurisdiction="Tennessee",
+        client_name=f"Share Client {sequence}",
+    )
+    gid = w.create_matter_goal(
+        "Refresh forecast",
+        "",
+        principal=reviewer,
+        domain="legal_obligations",
+        project_id=project_id,
+    )
+    assert gid is not None
     w.set_goal_status(gid, "done", result="| Week | Net |\n| --- | --- |\n| W1 | 300 |")
     if approve:
-        w.record_signoff(gid, "approved", decided_by="reviewer")
+        w.record_signoff(gid, "approved", decided_by=reviewer)
     return gid
 
 
@@ -70,7 +92,7 @@ def test_gated_share_requires_current_approval(tmp_path, monkeypatch):
     gid = _make_goal(w, approve=False)
     assert client.post(f"/api/v1/goals/{gid}/share").status_code == 403
 
-    w.record_signoff(gid, "approved", decided_by="reviewer")
+    w.record_signoff(gid, "approved", decided_by="user:reviewer")
     created = client.post(f"/api/v1/goals/{gid}/share")
     assert created.status_code == 201
     token = created.json()["url"].split("/share/")[1]
@@ -88,7 +110,7 @@ def test_share_section_on_goal_page(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
     gid = _make_goal(w)
     t = client.get(f"/chat/goal/{gid}").text
-    assert "share-create" in t and "Create share link" in t
+    assert "share-create" in t and "Create release link" in t
 
 
 def test_revoke_is_goal_scoped(tmp_path, monkeypatch):

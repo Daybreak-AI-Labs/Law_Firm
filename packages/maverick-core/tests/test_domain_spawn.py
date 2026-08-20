@@ -5,7 +5,6 @@ not in the lightweight local subset).
 """
 from __future__ import annotations
 
-from maverick.agent_autonomy import AutonomyLevel, AutonomyProfile
 from maverick.capability import Capability
 from maverick.domain import DomainProfile, agent_from_profile
 
@@ -70,30 +69,6 @@ def test_agent_from_profile_uses_active_handoff_grant_for_parent(tmp_path):
     assert child.capability.permits("shell") is False
 
 
-def test_agent_from_profile_no_autonomy_block_uses_own_suite_default(tmp_path):
-    ctx = _ctx(tmp_path)
-    parent = agent_from_profile(
-        DomainProfile(
-            name="parent",
-            allow_tools=["read_file"],
-            autonomy=AutonomyProfile(default=AutonomyLevel.AUTO, onboarding=False),
-        ),
-        ctx,
-        "parent task",
-    )
-    profile = DomainProfile(
-        name="legal_investigations",
-        allow_tools=["read_file"],
-        autonomy=None,
-    )
-
-    child = agent_from_profile(profile, ctx, "Review transfer", parent=parent, depth=1)
-
-    assert child._autonomy is not parent._autonomy
-    assert child._autonomy.default is AutonomyLevel.SUGGEST
-    assert child._autonomy.onboarding is True
-
-
 def test_children_inherit_parent_domain(tmp_path):
     from maverick.agent import Agent
 
@@ -131,9 +106,8 @@ def test_build_intake_agent_assembles_interviewer(tmp_path):
 
 
 def _one_pack_per_suite():
-    # A representative built-in pack from each suite -- enough to exercise the
-    # spawn path (persona + discipline + workflow render + capability) for every
-    # suite without constructing 1,118 Agents.
+    # A representative built-in pack from each retained suite exercises the
+    # spawn path without constructing every legal specialist.
     from maverick.domain import builtin_dir, load_domains, suite_for
     packs = load_domains(builtin_dir())
     sample = {}
@@ -148,7 +122,7 @@ def test_every_suite_spawns_with_workflow_and_envelope(tmp_path):
     # envelope. Catches a pack whose appended [[workflow]] breaks the spawn path.
     ctx = _ctx(tmp_path)
     sample = _one_pack_per_suite()
-    assert len(sample) >= 10, f"only {len(sample)} suites sampled"
+    assert sample, "no retained legal suite sampled"
     for name, profile in sample:
         agent = agent_from_profile(profile, ctx, "Do your job for the period.")
         assert agent.role == name
@@ -156,7 +130,8 @@ def test_every_suite_spawns_with_workflow_and_envelope(tmp_path):
             assert "Workflow" in agent.system, f"{name}: playbook not in system prompt"
             assert profile.workflow[0].name in agent.system, f"{name}: step missing"
         # Envelope still enforced regardless of the new content.
-        assert agent.capability.permits("read_file") is True, name
+        assert profile.allow_tools, name
+        assert any(agent.capability.permits(tool) for tool in profile.allow_tools), name
         if "shell" not in profile.allow_tools:
             assert agent.capability.permits("shell") is False, name
 
@@ -167,10 +142,10 @@ def test_pack_effort_tier_flows_to_agent(tmp_path, monkeypatch):
     from maverick import effort as effort_mod
     ctx = _ctx(tmp_path)
     profile = DomainProfile(
-        name="finance_gl_close", persona="You audit SOX controls. Cite evidence.",
+        name="legal_settlement",
+        persona="You prepare settlement analysis for attorney review.",
         allow_tools=["read_file"], deny_tools=["shell", "write_file"],
         max_risk="low", effort="high",
-        models={"x": "claude-opus-4-8"},
     )
     # Feature OFF -> pack tier ignored.
     monkeypatch.setattr(effort_mod, "_config_effort", dict)
@@ -183,15 +158,15 @@ def test_pack_effort_tier_flows_to_agent(tmp_path, monkeypatch):
 
 
 def test_refusals_reach_the_agent_system_prompt(tmp_path):
-    # A spawned HR agent carries its hard refusals (Art-5) in the system prompt,
+    # A spawned legal agent carries its hard refusals in the system prompt,
     # independent of the model following persona prose.
     ctx = _ctx(tmp_path)
     profile = DomainProfile(
-        name="hr_employment_law", persona="You screen resumes against the rubric.",
+        name="legal_conflicts", persona="You screen proposed matters for conflicts.",
         allow_tools=["read_file"], deny_tools=["shell", "write_file"], max_risk="low",
-        refuse=["never rank candidates by a credit score"],
+        refuse=["never clear a conflict without attorney review"],
     )
-    agent = agent_from_profile(profile, ctx, "Screen these five resumes.")
+    agent = agent_from_profile(profile, ctx, "Screen this proposed representation.")
     assert "Hard refusals" in agent.system
-    assert "emotion" in agent.system           # suite (Art-5) refusal injected
-    assert "credit score" in agent.system      # pack-specific refusal injected
+    assert "client confidentiality" in agent.system  # legal suite rule injected
+    assert "clear a conflict" in agent.system        # pack-specific refusal injected

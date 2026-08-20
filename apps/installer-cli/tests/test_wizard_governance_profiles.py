@@ -1,6 +1,6 @@
-"""Governance profiles: business-shaped onboarding levels.
+"""Governance profiles: law-firm onboarding levels.
 
-One early wizard question maps a business type to a preset bundle of
+One early wizard question maps a firm posture to a preset bundle of
 existing knobs: every level gets the self-learning/self-improvement
 lifecycle; what escalates is the governance posture around it
 (essentials -> standard -> regulated).
@@ -27,9 +27,19 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
         str(tmp_path / "workspace"),   # workdir
     ])
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(answers))
-    monkeypatch.setattr(wizard, "_q_secret", lambda *a, **kw: key)
     monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **kw: True)
     monkeypatch.setattr(wizard, "_q_select", lambda *a, **kw: "$5")
+    monkeypatch.setattr(wizard, "pick_providers", lambda: ["anthropic"])
+    monkeypatch.setattr(
+        wizard,
+        "pick_run_model",
+        lambda providers: "anthropic:claude-sonnet-4-6",
+    )
+    monkeypatch.setattr(
+        wizard,
+        "collect_api_keys",
+        lambda providers, extra_envs: ({"ANTHROPIC_API_KEY": key} if key else {}),
+    )
 
     monkeypatch.setattr(wizard, "CONFIG_DIR", tmp_path / ".maverick")
     monkeypatch.setattr(wizard, "CONFIG_FILE", tmp_path / ".maverick" / "config.toml")
@@ -42,17 +52,14 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
                         tmp_path / ".maverick" / "wizard-partial.json")
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
-    monkeypatch.setattr(
-        wizard, "_validate_anthropic_key", lambda k: (True, "validated"),
-    )
     return wizard
 
 
 def _select_stub(profile_answer: str):
-    """A _q_select stub that answers the business-type question with
+    """A _q_select stub that answers the governance question with
     ``profile_answer`` and every other select (budget) with its default."""
     def fake_select(message, choices, default=None):
-        if "kind of business" in message:
+        if "governance posture" in message:
             return profile_answer
         return "$5"
     return fake_select
@@ -88,9 +95,8 @@ def test_every_level_gets_the_learning_lifecycle():
                     "evaluator_evolution"):
             assert preset["advanced"].get(key) is True, (name, key)
         assert preset["self_learning"]["enable"] is True, name
-        # The two higher-trust autonomy switches stay OFF at every level.
-        assert preset["self_learning"]["create_tools"] is False, name
-        assert preset["self_learning"]["allow_mcp_acquisition"] is False, name
+        # Extra provider egress stays off at every level.
+        assert preset["self_learning"]["allow_provider_egress"] is False, name
         assert "self_modify" not in preset["advanced"], name
 
 
@@ -177,8 +183,7 @@ def test_consumer_default_is_essentials(monkeypatch, tmp_path: Path):
     assert config["governance"]["profile"] == "essentials"
     # The lifecycle is on...
     assert config["self_learning"]["enable"] is True
-    assert config["self_learning"]["create_tools"] is False
-    assert config["self_learning"]["allow_mcp_acquisition"] is False
+    assert config["self_learning"]["allow_provider_egress"] is False
     assert "self_modify" not in config
     assert config["reflexion"]["enable"] is True
     assert config["dreaming"]["enable"] is True
@@ -197,8 +202,7 @@ def test_consumer_standard_level(monkeypatch, tmp_path: Path):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(
         wizard, "_q_select",
-        _select_stub("standard   - growing company: + budgets enforced, "
-                     "signed audit trail (a manufacturer, an agency)"))
+        _select_stub("standard   - signed audit and enforced firm budgets"))
     assert wizard.run_consumer() == 0
     config = _load_config(tmp_path)
     assert config["governance"]["profile"] == "standard"
@@ -219,8 +223,7 @@ def test_consumer_regulated_level(monkeypatch, tmp_path: Path):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(
         wizard, "_q_select",
-        _select_stub("regulated  - bank / clinic / government: + human "
-                     "sign-off, immutable audit, long retention"))
+        _select_stub("regulated  - signed approvals, immutable audit, and long retention"))
     assert wizard.run_consumer() == 0
     config = _load_config(tmp_path)
     assert config["governance"]["profile"] == "regulated"
@@ -241,8 +244,7 @@ def test_express_regulated_adds_governance(monkeypatch, tmp_path: Path):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(
         wizard, "_q_select",
-        _select_stub("regulated  - bank / clinic / government: + human "
-                     "sign-off, immutable audit, long retention"))
+        _select_stub("regulated  - signed approvals, immutable audit, and long retention"))
     assert wizard.run_express() == 0
     config = _load_config(tmp_path)
     assert config["governance"]["profile"] == "regulated"

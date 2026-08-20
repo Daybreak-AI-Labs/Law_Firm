@@ -226,7 +226,7 @@ def _rest_validate(
     try:
         import httpx  # noqa: F401
     except ImportError:
-        return "ERROR: httpx not installed. Run: python -m pip install -e './packages/maverick-core[issue-trackers]'"
+        return "ERROR: the required httpx runtime dependency is not installed"
     if op in _WRITE_OPS and not as_bool(args.get("confirm")):
         return f"DRY RUN: would {op.upper()} {norm(path)}. Re-run with confirm=true."
     return op, path
@@ -593,7 +593,7 @@ def make_graphql_tool(
         try:
             import httpx  # noqa: F401
         except ImportError:
-            return "ERROR: httpx not installed. Run: python -m pip install -e './packages/maverick-core[issue-trackers]'"
+            return "ERROR: the required httpx runtime dependency is not installed"
         if _graphql_has_mutation(q) and not as_bool(args.get("confirm")):
             return "DRY RUN: GraphQL mutation. Re-run with confirm=true."
         variables = args.get("variables") if isinstance(args.get("variables"), dict) else {}

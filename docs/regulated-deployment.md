@@ -1,122 +1,93 @@
-# Regulated deployment
+# Regulated firm deployment
 
-**Run Maverick on private / sensitive data with fail-closed application
-controls and deployment-level network containment.**
+This is a deployment checklist, not a legal attestation. Qualified counsel and
+the firm's security owner remain responsible for retention, professional rules,
+client commitments, incident response, and release decisions.
 
-The kernel ships fail-open and cloud-capable — right for a personal agent, wrong the
-moment it touches PHI, PII, financial, or otherwise regulated data. This page is the
-single reference for standing Maverick up in a *regulated* posture: one profile, the
-guarantees it gives you, and how to **prove** they hold.
+## Required boundary
 
-## The guarantee
+A production run is admitted only when durable state proves:
 
-With the profile below, every load-bearing control is fail-closed at once:
+- a positive matter and client id, canonical matter number, and jurisdiction;
+- a named principal with an active attorney/staff matter membership;
+- a legal domain whose workflow ends in review or approval;
+- goal owner, matter, domain, purpose, and signed queue identity still match;
+- the matter's current `egress_mode` permits attempted external work.
 
-| Guarantee | What it means | GDPR / EU AI Act |
-|---|---|---|
-| **Application egress lock** | Governed LLM calls are pinned to local / self-hosted models (`ollama` / `vllm` / `tgi`, or an allow-listed endpoint). A cloud-routed call raises `EgressBlocked` **before any prompt is sent**; supported Python HTTP clients are checked per request. | GDPR Art. 32 / AI Act Art. 15 |
-| **Encryption at rest** | AES-256-GCM seals the memory store and the world-DB content (turns, facts, messages, questions). | GDPR Art. 32 |
-| **Tamper-evident audit** | Every event is Ed25519 hash-chained, so a forged or deleted log line is detectable. | EU AI Act Art. 12 |
-| **Human oversight** | Destructive-action consent defaults to `ask` — and therefore *deny* in non-interactive contexts — instead of auto-approve. | EU AI Act Art. 14 |
-| **Storage limitation** | Retention windows expire audit, episode, and event data on a schedule. | GDPR Art. 5(1)(e) |
-| **Isolated execution** | Agent-generated shell runs in a container (docker → podman), never `shell=True` on the host; if no container runtime exists it fails closed. Plugin tool calls can be isolation-proxied and plugin distributions can be content-hash-checked after a lockfile is generated, but plugin import/discovery code still runs in-process; install only trusted plugins. | EU AI Act Art. 15 (robustness / cybersecurity) |
+There is no administrator or shared-bearer bypass. Workers re-resolve this
+authority immediately before dispatch, and tool/model egress rechecks it again.
 
-Enterprise mode alone is not a hard network boundary: raw sockets, subprocess
-clients, and network libraries outside the wrapped set require sandbox and
-deployment controls. For a no-egress requirement, enforce container/sandbox
-network isolation plus host/OS/VPC default-deny egress, and verify those
-controls independently of the platform's guarantee checks.
-
-## The profile
-
-Put this in `~/.maverick/config.toml`. Enterprise mode alone gives you the egress lock,
-fail-closed consent, capability enforcement, at-rest encryption, **and** the
-deployment-specific secure defaults (container-default sandbox, plugin tool-call isolation +
-hash-lock checks); signing, retention, and anonymization are the extra knobs. Setting
-`[profile] name = "enterprise"` (or `MAVERICK_PROFILE=enterprise`) selects enterprise
-mode plus those defaults in a single knob.
+## Baseline configuration
 
 ```toml
 [enterprise]
-mode = true            # egress lock + fail-closed consent + capabilities + at-rest encryption
+mode = true
+require = true
+
+[security]
+secure_defaults = true
+approvals_required = 2
+
+[safety]
+profile = "strict"
+scan_input = true
+scan_tool_calls = true
+scan_output = true
 
 [audit]
-sign = true            # Ed25519 tamper-evident audit chain
+sign = true
 
-[privacy]
-anonymous = true       # redact PII (email/SSN/phone) from audit events before write
+[encryption]
+at_rest = true
 
 [retention]
-audit_days = 365       # storage limitation (GDPR Art. 5(1)(e)) -- tune to your policy
+audit_days = 365
 episodes_days = 90
 events_days = 365
 ```
 
-Anonymization is required, not optional: at-rest encryption protects *closed, sealed*
-audit segments, but the current day-file stays plaintext until it is sealed, so only
-anonymous mode actually redacts PII from the live log. Without it the
-`PII redaction in logs` compliance control reports `action_needed`.
+Tune retention only through a counsel-approved schedule. Inject application,
+audit, backup, queue, and OIDC keys from independent operator custody. None may
+live in the data root or encrypted backup archive.
 
-Retention and tamper-evidence are designed to coexist. Retention enforcement
-deletes expired day-files, but their entries stay in the append-only anchor ledger --
-so the purge is recorded there as a signed `retention_purge` row naming each removed
-day and the exact tip hash and row count it destroyed. `maverick audit verify` reads
-that row and reports the deletion as policy rather than tampering, which is why a
-retention-enabled deployment still verifies green.
+Set `MAVERICK_REQUIRE_ENTERPRISE=1`, `MAVERICK_REQUIRE_SHIELD=1`, and
+`MAVERICK_CONFIG_STRICT=1`. Use named OIDC identities; the static dashboard
+bearer is not an execution identity.
 
-The record is deliberately narrow, so it excuses a deletion without excusing an
-attack. It is honoured only when the ledger's own signed chain is intact, only for
-the days it names, and only when the tip and row count match that day's last anchor
--- so a file altered before deletion, or truncated before deletion, still fails
-verification. Because the row commits to the tip, an archived copy of a purged day
-(see [audit checkpoint operations](audit-checkpoints.md))
-can be reconciled byte-for-byte against what
-the purge claims it removed.
+## Network and model boundary
 
-The env equivalents (for containers / CI, where a secrets manager injects the key):
+`[enterprise] mode = true` blocks cloud model dispatch and applies the guarded
+HTTP send policy. Each matter defaults to `local_only`; only a responsible
+attorney can move it to reviewed `approved_services` mode.
 
-```bash
-export MAVERICK_ENTERPRISE=1
-export MAVERICK_AUDIT_SIGN=1
-export MAVERICK_ANON=1
-export MAVERICK_ENCRYPTION_KEY=<32-byte key, hex or base64>   # else generated under ~/.maverick/keys
+Application guards are defense in depth, not a packet firewall. Enforce default-
+deny host/container/VPC egress and isolate parsers and subprocesses. The legal
+roster grants no agent shell/code execution, but deployment containment remains
+required for libraries and operator processes.
+
+## Storage, audit, and recovery
+
+- Keep `MAVERICK_HOME` on a private encrypted volume.
+- Require AES-256-GCM at-rest sealing and pin the injected key digest.
+- Require the Ed25519 audit chain with off-host key custody.
+- Create, verify, and restore disaster-recovery archives only through the local
+  `maverick backup` CLI. Restore authenticates and decrypts before staging.
+- Exercise wrong-key, tamper, rollback, and key-exclusion scenarios. Never copy
+  custody keys into the data root.
+
+## Release and operations gate
+
+Before first service and after every upgrade:
+
+```powershell
+maverick config-lint
+maverick doctor
+maverick domains-lint --ci
+maverick audit verify
+maverick backup verify <archive>
 ```
 
-Data that already exists on disk from before encryption was enabled stays
-readable and is sealed as it is rewritten (see [Encryption at rest](encryption.md)).
-
-## Prove it
-
-Two checks, two audiences, both running inside the platform. The
-regulated-deployment guarantee check (ops-facing) does **not** just read flags —
-it proves the egress lock refuses a real cloud provider and that at-rest sealing
-round-trips on *this* box (so a missing crypto backend or unreadable key fails
-here, not silently at write time):
-
-```text
-Regulated-deployment guarantees
-===============================
-
-  [PASS]  Egress lock           enterprise mode on; cloud provider 'anthropic' refused, self-hosted 'ollama' allowed ...
-  [PASS]  At-rest encryption    AES-256-GCM seal/unseal round-trips; plaintext absent from ciphertext
-  [PASS]  Tamper-evident audit  Ed25519 hash-chain on; verify with 'maverick audit verify'
-  [PASS]  Human oversight       consent mode = ask
-  [PASS]  Retention policy      configured; enforced at runtime
-
-5/5 guarantees hold
-```
-
-The compliance control map (auditor-facing) is the broader GDPR + EU AI Act view:
-it also covers transparency disclosure, redaction, the kill switch, and the
-data-subject-rights tooling. From the command line, `maverick audit verify` still
-proves the tamper-evident chain end-to-end.
-
-## What this is *not*
-
-This is **control coverage, not a legal compliance attestation.** Full GDPR / EU AI Act
-compliance also needs organizational and legal measures the software cannot perform —
-paperwork owned by counsel, not generated by the platform. The data-subject
-rights (access, portability, erasure) are *available* on demand via
-`maverick export-user` and `maverick erase`, not automatic.
-
-See also: [Encryption at rest](encryption.md) · [Safety & enterprise mode](safety.md#enterprise-mode-private-sensitive-data).
+Also verify the five-wheel cohort, OIDC login and matter membership, mid-run
+revocation, approval/release audit linkage, parser isolation, local knowledge
+model digest, queue tamper rejection, and encrypted restore into an empty staging
+root. Any failed check blocks deployment.

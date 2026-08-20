@@ -1,8 +1,8 @@
 """P0 capability layer: host resource-scope enforcement at the tool chokepoint.
 
 A capability whose ``allow_hosts`` is non-empty restricts which network hosts
-the known network tools (http_fetch/browser/oidc/oauth_helper) may reach: the host is parsed from
-the tool's URL argument and denied if it matches no ``allow_hosts`` glob.
+the retained OIDC/OAuth helper paths may reach: the host is parsed from the
+tool's token URL argument and denied if it matches no ``allow_hosts`` glob.
 Default-open: an empty ``allow_hosts`` (the common case, and the only state
 reachable without opting into capability enforcement) is a no-op, so normal
 behaviour is unchanged.
@@ -53,11 +53,11 @@ async def test_host_outside_scope_denied_and_tool_not_run(tmp_path):
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
-    # Register a fake http_fetch so a permitted call would be observable; the
-    # denied call must NOT reach it.
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {"url": "https://evil.com/x"})
+    out = await agent._run_tool(
+        "oauth_helper", {"token_url": "https://evil.com/token"}
+    )
     assert "DENIED by capability" in out
     assert "agent:coder-1" in out
     assert "evil.com" in out
@@ -79,30 +79,18 @@ async def test_oidc_token_url_outside_scope_denied_and_tool_not_run(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_oauth_helper_token_url_outside_scope_denied_and_tool_not_run(tmp_path):
+async def test_host_inside_scope_permitted(tmp_path):
     agent = _agent(tmp_path)
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
     agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("oauth_helper", {"token_url": "https://evil.com/token"})
-    assert "DENIED by capability" in out
-    assert "evil.com" in out
-    assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_host_inside_scope_permitted(tmp_path):
-    agent = _agent(tmp_path)
-    agent.capability = Capability(principal="agent:coder-1",
-                                  allow_hosts=frozenset({"*.example.com"}))
-    calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
-
-    out = await agent._run_tool("http_fetch", {"url": "https://api.example.com/x"})
+    out = await agent._run_tool(
+        "oauth_helper", {"token_url": "https://api.example.com/token"}
+    )
     assert "DENIED" not in out
-    assert calls == ["https://api.example.com/x"]  # passed the gate and ran
+    assert calls == ["https://api.example.com/token"]
 
 
 @pytest.mark.asyncio
@@ -126,11 +114,13 @@ async def test_no_allow_hosts_is_no_host_denial(tmp_path):
     agent = _agent(tmp_path)
     agent.capability = Capability(principal="agent:coder-1")  # no allow_hosts
     calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {"url": "https://evil.com/x"})
+    out = await agent._run_tool(
+        "oauth_helper", {"token_url": "https://evil.com/token"}
+    )
     assert "DENIED" not in out
-    assert calls == ["https://evil.com/x"]
+    assert calls == ["https://evil.com/token"]
 
 
 @pytest.mark.asyncio
@@ -139,11 +129,13 @@ async def test_unrestricted_capability_none_is_no_host_denial(tmp_path):
     agent = _agent(tmp_path)
     agent.capability = None
     calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {"url": "https://evil.com/x"})
+    out = await agent._run_tool(
+        "oauth_helper", {"token_url": "https://evil.com/token"}
+    )
     assert "DENIED" not in out
-    assert calls == ["https://evil.com/x"]
+    assert calls == ["https://evil.com/token"]
 
 
 @pytest.mark.asyncio
@@ -154,9 +146,9 @@ async def test_missing_url_arg_fails_soft(tmp_path):
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {})  # no "url"
+    out = await agent._run_tool("oauth_helper", {})
     assert "DENIED by capability" not in out
     assert calls == [None]  # reached the tool
 
@@ -169,9 +161,9 @@ async def test_malformed_url_fails_soft(tmp_path):
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {"url": "not a url"})
+    out = await agent._run_tool("oauth_helper", {"token_url": "not a url"})
     assert "DENIED by capability" not in out
     assert calls == ["not a url"]  # reached the tool
 
@@ -184,9 +176,9 @@ async def test_url_that_raises_on_parse_fails_soft(tmp_path):
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
-    agent.tools.register(_spy_tool("http_fetch", calls))
+    agent.tools.register(_spy_tool("oauth_helper", calls, url_key="token_url"))
 
-    out = await agent._run_tool("http_fetch", {"url": "http://[::1"})
+    out = await agent._run_tool("oauth_helper", {"token_url": "http://[::1"})
     assert "DENIED by capability" not in out
     assert calls == ["http://[::1"]  # reached the tool
 
@@ -201,31 +193,35 @@ async def test_host_denial_is_audited(tmp_path, monkeypatch):
     agent = _agent(tmp_path)
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
-    await agent._run_tool("browser",
-                          {"action": "navigate", "url": "https://evil.com/x"})
+    agent.tools.register(_spy_tool("oauth_helper", [], url_key="token_url"))
+    await agent._run_tool(
+        "oauth_helper", {"token_url": "https://evil.com/token"}
+    )
     denied = [kw for k, kw in calls if k == EventKind.CAPABILITY_DENIED]
     assert denied, "host denial was not written to the audit log"
-    assert denied[0]["tool"] == "browser"
+    assert denied[0]["tool"] == "oauth_helper"
     assert denied[0]["principal"] == "agent:coder-1"
     assert denied[0]["host"] == "evil.com"
 
 
 @pytest.mark.asyncio
-async def test_browser_receives_active_host_scope(tmp_path):
+async def test_oauth_helper_receives_active_host_scope(tmp_path):
     agent = _agent(tmp_path)
     agent.capability = Capability(principal="agent:coder-1",
                                   allow_hosts=frozenset({"*.example.com"}))
     calls: list = []
     agent.tools.register(Tool(
-        name="browser",
-        description="spy browser",
+        name="oauth_helper",
+        description="oauth spy",
         fn=lambda args: calls.append(args) or "ran",
-        input_schema={"type": "object", "properties": {"url": {"type": "string"}}},
+        input_schema={
+            "type": "object",
+            "properties": {"token_url": {"type": "string"}},
+        },
     ))
 
-    out = await agent._run_tool("browser", {
-        "action": "navigate",
-        "url": "https://api.example.com/x",
+    out = await agent._run_tool("oauth_helper", {
+        "token_url": "https://api.example.com/token",
     })
     assert "DENIED" not in out
     assert calls[0]["_capability_allow_hosts"] == ("*.example.com",)

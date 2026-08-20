@@ -3,8 +3,8 @@
 #
 # Plain `ruff`/`pytest` miss the bespoke gates that have repeatedly failed CI
 # *after* a green local run: the detect-secrets baseline check (which only scans
-# git-TRACKED files), the `shell=True` source grep, the plugin/deprecation/proto/
-# a11y/schema gates. This mirrors the lint job in .github/workflows/ci.yml so
+# git-TRACKED files), the `shell=True` source grep, and the deprecation/a11y/
+# schema gates. This mirrors the lint job in .github/workflows/ci.yml so
 # those surface here instead of on CI.
 #
 # Usage:  bash scripts/pre-push-lint.sh
@@ -109,9 +109,7 @@ else
 fi
 
 echo "== custom CI gates =="
-run "plugin_matrix --ci"      python -m maverick.plugin_matrix --ci
 run "deprecations --ci"       python -m maverick.deprecations --ci
-run "grpc contract --check"   python -m maverick.grpc_api.contract --check
 run "a11y_audit --ci"         python -m maverick.a11y_audit --ci
 run "schema_migrations --ci"  python -m maverick.schema_migrations --ci
 

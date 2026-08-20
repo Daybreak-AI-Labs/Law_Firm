@@ -84,11 +84,7 @@ async def test_spawn_specialist_deploys_pack_and_inherits_max_steps(monkeypatch)
         rec.update(profile=profile, task=task, parent=parent, depth=depth, child=child)
         return child
 
-    async def _noop(*a, **k):
-        return None
-
     monkeypatch.setattr("maverick.domain.agent_from_profile", fake_agent_from_profile)
-    monkeypatch.setattr("maverick.hooks.emit", _noop)
 
     parent = _fake_parent(depth=0)
     out = await spawn_specialist_tool(parent).fn({"domain": dom, "task": "do it"})

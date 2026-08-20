@@ -11,6 +11,7 @@ The bus itself is per-process and in-memory; see ``agent_bus.py``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -144,13 +145,16 @@ def _plain_message_block(agent: Any, sender: str, text: str) -> str | None:
 
     # Preserve quarantine triage even when the audit subsystem refuses its row;
     # the untrusted payload remains blocked and the refusal then propagates.
+    reason_encoded = str(reasons or "").encode("utf-8")
     try:
         audit_event(
             EventKind.SHIELD_BLOCK,
             agent=sender,
             goal_id=getattr(ctx, "goal_id", None),
+            matter_id=getattr(ctx, "matter_id", None),
             stage="agent_bus_input",
-            reason=reasons[:1000],
+            reason_bytes=len(reason_encoded),
+            reason_sha256=hashlib.sha256(reason_encoded).hexdigest(),
             score=score,
         )
     finally:

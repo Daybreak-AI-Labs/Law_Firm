@@ -22,6 +22,10 @@ def test_worker_marks_crashed_goal_as_failed_job(tmp_path, monkeypatch):
     from maverick.worker import Worker
 
     monkeypatch.setattr(runner, "run_goal_in_thread", lambda gid: "error")
+    monkeypatch.setattr(
+        "maverick.worker._verify_job_matter_context",
+        lambda _payload, _goal_id: None,
+    )
     q = JobQueue(db_path=tmp_path / "jobs.db")
     w = Worker(queue=q, retry_after=0.0, max_attempts=1)
     jid = q.enqueue("run_goal", {"goal_id": 1})
@@ -37,6 +41,10 @@ def test_worker_does_not_retry_deliberately_blocked_goal(tmp_path, monkeypatch):
 
     # 'blocked' = budget cap / killswitch / awaiting user -- a deliberate stop.
     monkeypatch.setattr(runner, "run_goal_in_thread", lambda gid: "blocked")
+    monkeypatch.setattr(
+        "maverick.worker._verify_job_matter_context",
+        lambda _payload, _goal_id: None,
+    )
     q = JobQueue(db_path=tmp_path / "jobs.db")
     w = Worker(queue=q, retry_after=0.0, max_attempts=5)
     jid = q.enqueue("run_goal", {"goal_id": 1})
@@ -51,6 +59,10 @@ def test_worker_retries_when_goal_could_not_start(tmp_path, monkeypatch):
     from maverick.worker import Worker
 
     monkeypatch.setattr(runner, "run_goal_in_thread", lambda gid: None)
+    monkeypatch.setattr(
+        "maverick.worker._verify_job_matter_context",
+        lambda _payload, _goal_id: None,
+    )
     q = JobQueue(db_path=tmp_path / "jobs.db")
     w = Worker(queue=q, retry_after=0.0, max_attempts=5)
     jid = q.enqueue("run_goal", {"goal_id": 1})
@@ -65,6 +77,10 @@ def test_worker_completes_when_goal_done(tmp_path, monkeypatch):
     from maverick.worker import Worker
 
     monkeypatch.setattr(runner, "run_goal_in_thread", lambda gid: "done")
+    monkeypatch.setattr(
+        "maverick.worker._verify_job_matter_context",
+        lambda _payload, _goal_id: None,
+    )
     q = JobQueue(db_path=tmp_path / "jobs.db")
     w = Worker(queue=q)
     jid = q.enqueue("run_goal", {"goal_id": 1})
@@ -108,24 +124,6 @@ def test_scrub_env_strips_secrets_keeps_benign():
     }
     out = scrub_env(src)
     assert out == {"PATH": "/usr/bin", "HOME": "/home/x", "LANG": "en_US.UTF-8"}
-
-
-# --- SEC-6: SSRF guard must block metadata/reserved/multicast/unspecified ---
-
-@pytest.mark.parametrize(
-    "host",
-    ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1",
-     "0.0.0.0", "224.0.0.1", "::1"],
-)
-def test_is_private_ip_blocks_unsafe_ranges(host):
-    from maverick.tools.http_fetch import _is_private_ip
-    assert _is_private_ip(host) is True
-
-
-def test_is_private_ip_allows_public_literal():
-    from maverick.tools.http_fetch import _is_private_ip
-    # Literal public IP -> resolves to itself, no DNS needed.
-    assert _is_private_ip("93.184.216.34") is False
 
 
 # --- PRODUCT-3: the initial goal text must pass through scan_input ---

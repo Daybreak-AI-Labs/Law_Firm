@@ -44,6 +44,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .audit.errors import AuditRefused
 from .learning_guard import Halted, check_learning_halt
 from .paths import data_dir
 
@@ -109,7 +110,6 @@ def settings() -> dict:
                 "holdout_query_alpha": 0.05, "holdout_max_queries": 1,
                 "metamorphic": True, "metamorphic_tolerance": 0.0,
                 "calibrate_judge": True, "calibration_max_age_hours": 24.0,
-                "transfer_auto": False,
                 "corpus_harvest": "off", "store": "files",
                 "relapse_failure_share": 0.0, "relapse_min_outcomes": 5,
                 "promote_as_canary": True,
@@ -123,10 +123,9 @@ def _store_path() -> Path:
 
 def _world_routed(p: Path) -> bool:
     """True when ``p`` is the DEFAULT store location and the operator selected
-    the world learning store (``[self_harness] store = "world"`` -- phase 1 of
-    docs/proposals/fleet-learning-state.md). An EXPLICIT non-default path
-    always means the file store at that path, so tests and tenant redirection
-    are byte-for-byte unchanged."""
+    the world learning store. An EXPLICIT non-default path always means the
+    file store at that path, so tests and tenant redirection are byte-for-byte
+    unchanged."""
     try:
         if str(settings().get("store") or "files").strip().lower() != "world":
             return False
@@ -137,7 +136,7 @@ def _world_routed(p: Path) -> bool:
 
 def _store_rmw_lock(p: Path):
     """DB-side critical-section lock for the world store: ``flock`` only
-    serializes ONE host, so a Postgres-backed fleet also takes a session
+    serializes ONE host, so a multi-host Postgres deployment also takes a session
     advisory lock around the whole load-modify-save. A no-op for the file
     store and the (single-host) SQLite world store."""
     if _world_routed(p):
@@ -158,7 +157,12 @@ def load_addenda(path: Path | None = None) -> dict[str, str]:
         return {str(k): v for k, v in raw.items()
                 if isinstance(v, str) and v.strip()}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        from .learning_crypto import decode_text
+
+        decoded = decode_text(p.read_text(encoding="utf-8"))
+        if decoded is None:
+            return {}
+        data = json.loads(decoded)
         if isinstance(data, dict):
             # Accept ONLY string values: a tampered/corrupt store with a numeric
             # or null value must not coerce to "123"/"None" and get recalled into
@@ -186,7 +190,10 @@ def _write_addenda(addenda: dict[str, str], path: Path | None = None) -> None:
     # fault-injection battery.)
     from .file_lock import atomic_write_text
     p = path if path is not None else _store_path()
-    atomic_write_text(p, json.dumps(addenda, indent=2, sort_keys=True), mode=0o600)
+    from .learning_crypto import encode_text
+
+    payload = encode_text(json.dumps(addenda, indent=2, sort_keys=True))
+    atomic_write_text(p, payload, mode=0o600)
 
 
 def _load_addenda_strict(path: Path) -> dict[str, str]:
@@ -199,12 +206,17 @@ def _load_addenda_strict(path: Path) -> dict[str, str]:
     """
     if _world_routed(path):
         from . import learning_store
-        raw = learning_store.load_addenda_db()
+        raw = learning_store.load_addenda_db(strict=True)
     else:
         if path.is_symlink():
             raise ValueError("addenda store must not be a symbolic link")
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            from .learning_crypto import decode_text
+
+            decoded = decode_text(path.read_text(encoding="utf-8"))
+            if decoded is None:
+                raise ValueError("addenda store is not authenticated ciphertext")
+            raw = json.loads(decoded)
         except FileNotFoundError:
             return {}
         except (OSError, UnicodeError, ValueError) as exc:
@@ -243,6 +255,104 @@ def _scoped_key(model_id: str, context: str) -> str:
     return f"{model_id}\x00{context}" if context else str(model_id)
 
 
+def _owner_scope_digest(owner: str) -> str:
+    """Return the opaque, stable owner namespace used by learned artifacts."""
+    return hashlib.sha256(str(owner).encode("utf-8")).hexdigest()[:16]
+
+
+def _matter_scoped_key(
+    model_id: str, *, matter_id: int, owner_scope: str, context: str = "",
+) -> str:
+    """Key one addendum block to an exact matter and opaque owner.
+
+    The principal itself never enters the prompt store.  The optional existing
+    domain/role/tool context is nested *inside* the matter/owner namespace, so
+    no contextual variant can escape to a model-global key.
+    """
+    if (
+        isinstance(matter_id, bool)
+        or not isinstance(matter_id, int)
+        or matter_id <= 0
+        or not re.fullmatch(r"[0-9a-f]{16}", owner_scope or "")
+    ):
+        raise ValueError("exact matter and owner scope required")
+    matter_context = f"matter={matter_id};owner={owner_scope}"
+    if context:
+        matter_context += f";{context}"
+    return _scoped_key(str(model_id), matter_context)
+
+
+def _secure_defaults_enabled() -> bool:
+    """Resolve the production posture; uncertainty remains secure."""
+    try:
+        from .security_defaults import secure_by_default
+
+        return secure_by_default()
+    except Exception:  # pragma: no cover - policy failure must not enable global recall
+        return True
+
+
+def _bound_matter_owner_scope() -> tuple[int, str] | None:
+    """Resolve the active execution namespace from its validated context."""
+    try:
+        from .matter_context import (
+            GOAL_EXECUTION_PURPOSE,
+            MatterContext,
+            current_matter_context,
+        )
+
+        context = current_matter_context()
+        if (
+            not isinstance(context, MatterContext)
+            or context.purpose != GOAL_EXECUTION_PURPOSE
+        ):
+            return None
+        matter_id = context.matter_id
+        principal = context.principal
+        if (
+            isinstance(matter_id, bool)
+            or not isinstance(matter_id, int)
+            or matter_id <= 0
+            or not isinstance(principal, str)
+            or not principal
+        ):
+            return None
+        return matter_id, _owner_scope_digest(principal)
+    except Exception:  # pragma: no cover - malformed/missing context fails closed
+        return None
+
+
+def _runtime_store_keys(
+    model_id: str, contexts: list[str], *, secure: bool,
+) -> list[str]:
+    """Return only the prompt keys authorized for this runtime invocation."""
+    mid = str(model_id)
+    if not secure:
+        return [mid] + [_scoped_key(mid, context) for context in contexts]
+    scope = _bound_matter_owner_scope()
+    if scope is None:
+        return []
+    matter_id, owner_scope = scope
+    return [
+        _matter_scoped_key(
+            mid, matter_id=matter_id, owner_scope=owner_scope, context=context,
+        )
+        for context in ["", *contexts]
+    ]
+
+
+def _promotion_store_key(
+    model_id: str, context: str, *, matter_id: int, owner_scope: str,
+) -> str:
+    """Select a governed promotion key for the active security posture."""
+    if not _secure_defaults_enabled():
+        return _scoped_key(str(model_id), context)
+    return _matter_scoped_key(
+        str(model_id), matter_id=matter_id,
+        owner_scope=owner_scope, context=context,
+    )
+
+
 def _scope_contexts(domain: str | None = None,
                     tools: list[str] | tuple[str, ...] | None = None,
                     role: str | None = None) -> list[str]:
@@ -269,20 +379,23 @@ def recall_addendum(model_id: str | None, path: Path | None = None, *,
     """The learned operating-guidance block for ``model_id`` (``""`` if none /
     disabled). Recalled into the system prompt by the agent at build time.
 
-    The model-wide block is always included. When ``domain`` is given, guidance
-    mined SCOPED to that department is appended (so a finance lesson rides only
-    finance runs); when ``role`` is given, guidance mined scoped to that agent
-    role is appended (so an orchestrator lesson doesn't tax a coder prompt of
-    the same model); when ``tools`` are given, guidance mined scoped to each tool
-    the run has on hand is appended (so a ``web_fetch`` lesson rides only runs
-    that can call ``web_fetch`` -- #7 component profiles). With none (the default)
-    this is exactly the model-wide block, byte-for-byte unchanged."""
+    Under secure defaults every block is nested under the currently bound exact
+    matter and hashed principal. Missing context yields no guidance, and legacy
+    global keys are never a fallback. Explicitly disabling secure defaults keeps
+    the historical model/domain/role/tool key layout for local compatibility.
+    """
     if not model_id or not enabled():
         return ""
+    contexts = _scope_contexts(domain, tools, role)
+    keys = _runtime_store_keys(
+        str(model_id), contexts, secure=_secure_defaults_enabled(),
+    )
+    if not keys:
+        return ""
     store = load_addenda(path)
-    block = store.get(str(model_id), "")
-    for ctx in _scope_contexts(domain, tools, role):
-        scoped = store.get(_scoped_key(str(model_id), ctx), "")
+    block = ""
+    for key in keys:
+        scoped = store.get(key, "")
         if scoped:
             block = (block + "\n" + scoped) if block else scoped
     return block
@@ -317,7 +430,12 @@ def load_line_meta(path: Path | None = None) -> dict[str, dict]:
         return learning_store.load_line_meta_db()
     mp = _meta_path(path)
     try:
-        data = json.loads(mp.read_text(encoding="utf-8"))
+        from .learning_crypto import decode_text
+
+        decoded = decode_text(mp.read_text(encoding="utf-8"))
+        if decoded is None:
+            return {}
+        data = json.loads(decoded)
         if isinstance(data, dict):
             return {str(k): v for k, v in data.items() if isinstance(v, dict)}
     except (FileNotFoundError, ValueError, OSError):
@@ -331,8 +449,10 @@ def _write_line_meta(meta: dict[str, dict], path: Path | None = None) -> None:
         learning_store.write_line_meta_db(meta)
         return
     from .file_lock import atomic_write_text
-    atomic_write_text(_meta_path(path),
-                      json.dumps(meta, indent=2, sort_keys=True), mode=0o600)
+    from .learning_crypto import encode_text
+
+    payload = encode_text(json.dumps(meta, indent=2, sort_keys=True))
+    atomic_write_text(_meta_path(path), payload, mode=0o600)
 
 
 def _reconcile_meta(meta: dict[str, dict], model_id: str,
@@ -599,28 +719,18 @@ def forget_addendum(model_id: str, *, line: str | None = None,
             _write_line_meta(meta, p)
         except Exception:  # pragma: no cover -- sidecar is best-effort
             log.debug("self_harness: line-meta prune failed", exc_info=True)
-    # A governed removal must be durable against auto-transfer: record the
-    # removed lines in the transfer tried-memory so a nightly sweep can't
-    # resurrect a line this model just rolled back (operator forget, canary
-    # demotion, efficacy retirement) from a fleet peer that still carries it.
-    # Outside the store lock -- the recorder takes the same lock.
-    try:
-        gone: set[str] = set()
-        for k in touched:
-            kept_now = set(_bullets(after.get(k, "")))
-            gone |= {ln for ln in _bullets(before[k]) if ln not in kept_now}
-        if gone:
-            _record_transfer_tried(
-                [_line_id(str(model_id), ln) for ln in sorted(gone)], path=p)
-    except Exception:  # pragma: no cover -- the memory is best-effort
-        log.debug("self_harness: transfer-tried record on forget failed",
-                  exc_info=True)
-    try:
-        from .audit import EventKind, record
-        record(EventKind.LEARNING_UPDATE, agent="self_harness", model_id=model_id,
-               rung="prompt", line=line or "*", phase="forget")
-    except Exception:  # pragma: no cover -- audit best-effort
-        pass
+    from .audit import EventKind, audit_event
+
+    audit_event(
+        EventKind.LEARNING_UPDATE,
+        agent="self_harness",
+        model_id=model_id,
+        rung="prompt",
+        line_sha256=(
+            hashlib.sha256(line.encode("utf-8")).hexdigest() if line else "*"
+        ),
+        phase="forget",
+    )
     return removed
 
 
@@ -679,14 +789,20 @@ def retire_stale(*, older_than_days: float, model_id: str | None = None,
         log.warning("self_harness: retire_stale failed", exc_info=True)
         return 0
     for m, ln in removed:
-        try:
-            from .audit import EventKind, record
-            # Audit with the BARE model id (+ scope), never the raw NUL key.
-            mid, ctx = _split_key(m)
-            record(EventKind.LEARNING_UPDATE, agent="self_harness", model_id=mid,
-                   scope=(ctx or None), rung="prompt", line=ln, phase="retire")
-        except Exception:  # pragma: no cover -- audit best-effort
-            pass
+        from .audit import EventKind, audit_event
+
+        # Audit with the BARE model id (+ scope), never the raw NUL key or
+        # learned instruction text.
+        mid, ctx = _split_key(m)
+        audit_event(
+            EventKind.LEARNING_UPDATE,
+            agent="self_harness",
+            model_id=mid,
+            scope=(ctx or None),
+            rung="prompt",
+            line_sha256=hashlib.sha256(ln.encode("utf-8")).hexdigest(),
+            phase="retire",
+        )
     return len(removed)
 
 
@@ -1593,8 +1709,8 @@ def _metamorphic_failure(
 
 # The rejection reason for an evaluation that never actually judged the line
 # (budget-dead arm, broken scorer). A sentinel constant so callers that must
-# distinguish "judged on the merits" from "indeterminate" (the transfer
-# tried-memory) don't string-match prose.
+# distinguish "judged on the merits" from "indeterminate" do not string-match
+# prose.
 _INDETERMINATE_REASON = "scorer returned a non-finite or out-of-range value"
 
 
@@ -2065,10 +2181,10 @@ _lock = threading.Lock()
 
 def _apply_addendum_locked(
     proposal: HarnessProposal, path: Path, before: dict[str, str], *,
-    provenance: dict | None = None,
+    provenance: dict | None = None, store_key: str | None = None,
 ) -> dict[str, str]:
     """Apply one proposal while the caller holds every store/CAS lock."""
-    store_key = _scoped_key(proposal.model_id, proposal.context)
+    store_key = store_key or _scoped_key(proposal.model_id, proposal.context)
     after = dict(before)
     new_block = _compose_addendum(
         store_key, before.get(store_key, ""), proposal.addendum_line)
@@ -2119,14 +2235,19 @@ def note_recall(model_id: str | None, *, now: float | None = None,
     staleness can be judged by USE, not only by promotion. In-process throttled
     (``min_interval_s``; 0 disables the throttle, for tests) so the hot recall
     path does at most one cheap write per model per interval. Tracks the
-    model-wide block AND every scope ``recall_addendum`` injected for this run
-    (the ``domain`` block and each ``tool`` block), so a recalled scoped line isn't
-    wrongly retired. Never raises."""
+    same exact keys ``recall_addendum`` injected for this run. Under secure
+    defaults those keys include the bound matter and hashed principal; without a
+    MatterContext nothing is credited. Never raises."""
     if not model_id:
         return
     mid = str(model_id)
     contexts = _scope_contexts(domain, tools, role)
-    throttle_key = mid + "\x00" + "\x00".join(contexts)
+    keys = _runtime_store_keys(
+        mid, contexts, secure=_secure_defaults_enabled(),
+    )
+    if not keys:
+        return
+    throttle_key = "\x00".join(keys)
     if min_interval_s:
         mono = time.monotonic()
         with _recall_note_lock:
@@ -2137,7 +2258,6 @@ def note_recall(model_id: str | None, *, now: float | None = None,
     try:
         p = path if path is not None else _store_path()
         ts = now if now is not None else time.time()
-        keys = [mid] + [_scoped_key(mid, ctx) for ctx in contexts]
         from .file_lock import cross_process_lock
         with _lock, cross_process_lock(p), _store_rmw_lock(p):
             meta = load_line_meta(p)
@@ -2186,9 +2306,10 @@ def _recent_counts(rec: Mapping) -> tuple[int, int]:
 
 
 def _is_relapsing(rec: Mapping, *, failure_share: float, min_outcomes: int) -> bool:
-    """The recent-window relapse predicate, shared by :func:`review_relapses`
-    and :func:`transferable_lines` so the two can't drift. ``failure_share <= 0``
-    disables it; a record whose window holds fewer than ``min_outcomes``
+    """The recent-window predicate used by :func:`review_relapses`.
+
+    ``failure_share <= 0`` disables it; a record whose window holds fewer than
+    ``min_outcomes``
     outcomes -- including legacy records with no window at all -- is never
     relapsing (lifetime counters are not a recency signal)."""
     if not failure_share or failure_share <= 0:
@@ -2210,14 +2331,20 @@ def note_outcome(model_id: str | None, success: bool, *, line: str | None = None
     signals :func:`review_efficacy`/:func:`review_canaries`/
     :func:`review_relapses` act on.
 
-    A specific ``line`` is targeted wherever it lives (any scope). Otherwise the
-    outcome is attributed to the lines THIS run actually recalled: the model-wide
-    block PLUS the ``domain`` block and each ``tool`` block -- mirroring
-    :func:`recall_addendum`/:func:`note_recall`, so a finance run credits finance
-    + model-wide guidance, not every other domain's. Best-effort; never raises."""
+    Under secure defaults a specific line and the normal aggregate path are both
+    constrained to the exact bound matter/owner keys that runtime recall could
+    have injected. Missing MatterContext records nothing. Explicitly insecure
+    legacy mode retains the historical line-across-model-scopes behavior.
+    Best-effort; never raises."""
     if not model_id:
         return
     mid = str(model_id)
+    secure = _secure_defaults_enabled()
+    keys = _runtime_store_keys(
+        mid, _scope_contexts(domain, tools, role), secure=secure,
+    )
+    if not keys:
+        return
     field_name = "recall_success" if success else "recall_failure"
     try:
         p = path if path is not None else _store_path()
@@ -2227,10 +2354,20 @@ def note_outcome(model_id: str | None, success: bool, *, line: str | None = None
             meta = load_line_meta(p)
             changed = False
             if line is not None:
-                pairs = [(k, ln) for k, ln in _iter_model_lines(store, mid) if ln == line]
+                if secure:
+                    pairs = [
+                        (key, stored_line)
+                        for key in keys
+                        for stored_line in _bullets(store.get(key, ""))
+                        if stored_line == line
+                    ]
+                else:
+                    pairs = [
+                        (key, stored_line)
+                        for key, stored_line in _iter_model_lines(store, mid)
+                        if stored_line == line
+                    ]
             else:
-                keys = [mid] + [_scoped_key(mid, ctx)
-                                for ctx in _scope_contexts(domain, tools, role)]
                 pairs = [(k, ln) for k in keys for ln in _bullets(store.get(k, ""))]
             for k, ln in pairs:
                 rec = meta.get(_line_id(k, ln))
@@ -2302,6 +2439,8 @@ def review_efficacy(model_id: str, cases: list[str], *,
             if len(cases) >= min_samples and (w - wo) <= min_lift:
                 if forget_addendum(model_id, line=ln, path=path):
                     demoted.append(ln)
+    except AuditRefused:
+        raise
     except Exception:  # pragma: no cover -- review never perturbs a run
         log.debug("self_harness: review_efficacy failed", exc_info=True)
     return demoted
@@ -2382,6 +2521,8 @@ def review_canaries(model_id: str, *, graduate_after: int = 3,
             elif s >= graduate_after:
                 if mark_canary(model_id, ln, canary=False, path=path):
                     graduated.append(ln)
+    except AuditRefused:
+        raise
     except Exception:  # pragma: no cover -- review never perturbs a run
         log.debug("self_harness: review_canaries failed", exc_info=True)
     return {"graduated": graduated, "demoted": demoted}
@@ -2419,226 +2560,25 @@ def review_relapses(model_id: str, *, failure_share: float,
             fails = sum(1 for o in window if not o)
             if mark_canary(model_id, ln, canary=True, path=path):
                 relapsed.append(ln)
-                try:
-                    from .audit import EventKind, record
-                    mid, ctx = _split_key(k)
-                    record(EventKind.LEARNING_UPDATE, agent="self_harness",
-                           model_id=mid, scope=(ctx or None), rung="prompt",
-                           line=ln, phase="relapse",
-                           recent_failures=fails, recent_total=len(window))
-                except Exception:  # pragma: no cover -- audit best-effort
-                    pass
+                from .audit import EventKind, audit_event
+
+                mid, ctx = _split_key(k)
+                audit_event(
+                    EventKind.LEARNING_UPDATE,
+                    agent="self_harness",
+                    model_id=mid,
+                    scope=(ctx or None),
+                    rung="prompt",
+                    line_sha256=hashlib.sha256(ln.encode("utf-8")).hexdigest(),
+                    phase="relapse",
+                    recent_failures=fails,
+                    recent_total=len(window),
+                )
+    except AuditRefused:
+        raise
     except Exception:  # pragma: no cover -- review never perturbs a run
         log.debug("self_harness: review_relapses failed", exc_info=True)
     return relapsed
-
-
-# ---- CROSS-MODEL TRANSFER --------------------------------------------------
-# A line PROVEN on one model may help another: the research review explicitly
-# refuted "harness edits are inherently model-specific", so transfer TESTS the
-# hypothesis on the operator's own fleet instead of assuming either way. A
-# source model's graduated lines are tried on target models through the SAME
-# validation floors and governed gate, landing as CANARIES so real outcomes
-# adjudicate (the canary review pulls a transfer that doesn't travel). A
-# persisted tried-memory keyed (target, normalized line) makes every attempt
-# one-shot -- a nightly sweep never re-spends on a pair it has already judged.
-
-def _transfer_tried_path(addenda_path: Path | None = None) -> Path:
-    """The tried-memory SIDECAR of the addenda store -- derived from the store
-    path exactly like the ``.meta.json`` provenance sidecar, so a caller that
-    redirects the store (tests, tenants) redirects the memory with it."""
-    p = addenda_path if addenda_path is not None else _store_path()
-    return p.with_suffix(".transfer.json")
-
-
-def _load_transfer_tried(path: Path | None = None) -> dict[str, float]:
-    """The ``{line_id: ts}`` transfer attempt memory for the store at ``path``
-    (empty on any error). Keys are :func:`_line_id` of (target, line) -- the
-    same content-addressed identity the provenance sidecar uses."""
-    if _world_routed(path if path is not None else _store_path()):
-        from . import learning_store
-        return learning_store.load_transfer_tried_db()
-    p = _transfer_tried_path(path)
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {str(k): v for k, v in data.items() if isinstance(v, (int, float))}
-    except (FileNotFoundError, ValueError, OSError):
-        pass
-    return {}
-
-
-def _record_transfer_tried(keys: list[str], *, path: Path | None = None) -> None:
-    from .file_lock import atomic_write_text, cross_process_lock
-    ap = path if path is not None else _store_path()
-    p = _transfer_tried_path(path)
-    ts = time.time()
-    with _lock, cross_process_lock(p), _store_rmw_lock(ap):
-        tried = _load_transfer_tried(path)
-        for k in keys:
-            tried[k] = ts
-        if _world_routed(ap):
-            from . import learning_store
-            learning_store.write_transfer_tried_db(tried)
-            return
-        atomic_write_text(p, json.dumps(tried, indent=2, sort_keys=True), mode=0o600)
-
-
-def transfer_memory_stats(path: Path | None = None) -> dict:
-    """Read-only view of the transfer tried-memory for surfaces (dashboard,
-    docs): ``{"pairs": <judged (target, line) pairs>, "last_judged_at":
-    <newest record ts | None>}``. Content-free by construction -- the memory
-    stores line-id hashes and timestamps only."""
-    tried = _load_transfer_tried(path)
-    return {"pairs": len(tried),
-            "last_judged_at": max(tried.values()) if tried else None}
-
-
-def transferable_lines(source_model: str, path: Path | None = None, *,
-                       store: dict | None = None,
-                       meta: dict | None = None) -> list[str]:
-    """The ``source_model`` lines worth trying elsewhere: MODEL-WIDE and
-    GRADUATED -- not on canary probation, and not currently relapsing by the
-    SAME configured predicate :func:`review_relapses` applies
-    (``relapse_failure_share``/``relapse_min_outcomes``; a 1/2 recent failure
-    share is the filter's own default when the relapse knob is off). Scoped
-    (domain/role/tool) lines stay home: they encode a context the target run
-    may not share. ``store``/``meta`` accept pre-loaded copies so a caller that
-    already holds them skips the re-read."""
-    store = store if store is not None else load_addenda(path)
-    meta = meta if meta is not None else load_line_meta(path)
-    st = settings()
-    share = float(st.get("relapse_failure_share") or 0.0) or 0.5
-    min_out = int(st.get("relapse_min_outcomes") or 5)
-    out = []
-    for ln in _bullets(store.get(str(source_model), "")):
-        rec = meta.get(_line_id(str(source_model), ln)) or {}
-        if rec.get("canary"):
-            continue
-        if _is_relapsing(rec, failure_share=share, min_outcomes=min_out):
-            continue
-        screened = _screen_addendum_line(ln)
-        if screened is None:
-            continue
-        out.append(screened)
-    return out
-
-
-def run_transfer(source_model: str, targets: list[str], *,
-                 eval_for_target: Callable[[str], tuple | None],
-                 controller=None, path: Path | None = None,
-                 force: bool = False,
-                 validate_kwargs: dict | None = None,
-                 holdout_rotations: int = 1) -> dict:
-    """Try ``source_model``'s graduated model-wide lines on each target model
-    through the FULL validation + governed gate, landing survivors as CANARIES.
-
-    ``eval_for_target(model) -> (held_in, held_out, score_with, score_without)
-    | None`` is the injected evaluation seam (a real A/B needs a real model +
-    corpus); a target with no quad is skipped with a reason. A (target, line)
-    pair is recorded in the tried-memory (a sidecar of the store at ``path``)
-    only when it was judged ON THE MERITS -- promoted, or rejected by the
-    validation floors. An indeterminate evaluation (budget-dead arm, broken
-    scorer) and a gate refusal (loop disabled, calibration freeze, evidence
-    floor) are environmental, not verdicts: those pairs stay out of the memory
-    so a healthy sweep retries them. Judged keys are flushed per target, so a
-    mid-sweep crash loses at most the in-flight pair. ``force`` ignores the
-    memory and re-records. With ``holdout_rotations > 1`` a line must clear
-    :func:`_validate_rotated`'s ALL-folds rule -- the same cross-validation the
-    home-grown cycle applies, so transfer is never the weaker gate. A line
-    already present in the target's block (normalized) is skipped for free, and
-    a target block at :data:`_MAX_LINES_PER_MODEL` capacity is skipped before
-    any evaluation spend -- a transfer canary must never evict a proven line.
-    Returns ``{target: {"attempted": [...], "promoted": [...],
-    "skipped": [...]}}``. Never raises -- a transfer trial must not perturb
-    anything."""
-    report: dict[str, dict] = {}
-    try:
-        if not enabled():
-            return report
-        store = load_addenda(path)
-        lines = transferable_lines(source_model, path, store=store,
-                                   meta=load_line_meta(path))
-        tried = {} if (force or not lines) else _load_transfer_tried(path)
-        # Dedup while preserving order: a repeated --to target must not
-        # re-spend evaluation or double-audit the gate.
-        for tgt in dict.fromkeys(str(t) for t in targets or []):
-            if tgt == str(source_model):
-                continue
-            res = {"attempted": [], "promoted": [], "skipped": []}
-            report[tgt] = res
-            if not lines:
-                continue
-            block = _bullets(store.get(tgt, ""))
-            existing = {_norm_line(x) for x in block}
-            free = _MAX_LINES_PER_MODEL - len(block)
-            todo = []
-            for ln in lines:
-                if _norm_line(ln) in existing:
-                    res["skipped"].append(f"already present: {ln}")
-                elif _line_id(tgt, ln) in tried:
-                    res["skipped"].append(f"already tried: {ln}")
-                else:
-                    todo.append(ln)
-            if not todo:
-                continue
-            if free <= 0:
-                # The composition cap would drop the target's OLDEST bullets to
-                # make room and the sidecar reconcile would erase their history;
-                # skip before spending a single evaluation dollar.
-                res["skipped"].append("target addendum at capacity")
-                continue
-            try:
-                quad = eval_for_target(tgt)
-            except Exception:  # a bad seam skips the target, never the sweep
-                log.debug("self_harness: transfer evaluator failed for %s",
-                          tgt, exc_info=True)
-                quad = None
-            if quad is None:
-                res["skipped"].append("no evaluator/corpus for target")
-                continue
-            hi, ho, sw, swo = quad
-            judged_keys: list[str] = []
-            try:
-                for ln in todo:
-                    if free <= 0:
-                        res["skipped"].append(f"target addendum at capacity: {ln}")
-                        continue
-                    proposal = HarnessProposal(
-                        model_id=tgt, signature=f"transfer from {source_model}",
-                        addendum_line=ln,
-                        rationale=f"proven on {source_model}; transfer trial")
-                    res["attempted"].append(ln)
-                    if holdout_rotations and int(holdout_rotations) > 1 and ho:
-                        vr = _validate_rotated(
-                            proposal, pool=list(hi) + list(ho),
-                            rotations=int(holdout_rotations),
-                            score_with=sw, score_without=swo,
-                            validate_kwargs=dict(validate_kwargs or {}))
-                    else:
-                        vr = validate_proposal(
-                            proposal, held_in=list(hi), held_out=list(ho),
-                            score_with=sw, score_without=swo,
-                            **(validate_kwargs or {}))
-                    if not vr.accepted:
-                        res["skipped"].append(f"rejected ({vr.reason}): {ln}")
-                        if _INDETERMINATE_REASON not in vr.reason:
-                            judged_keys.append(_line_id(tgt, ln))
-                        continue
-                    ok, why = _gate_and_apply(proposal, vr, controller=controller,
-                                              path=path, canary=True)
-                    if ok:
-                        res["promoted"].append(ln)
-                        judged_keys.append(_line_id(tgt, ln))
-                        free -= 1
-                    else:
-                        res["skipped"].append(f"gate refused ({why}): {ln}")
-            finally:
-                if judged_keys:
-                    _record_transfer_tried(judged_keys, path=path)
-    except Exception:  # pragma: no cover -- a transfer trial never perturbs a run
-        log.warning("self_harness: transfer failed", exc_info=True)
-    return report
 
 
 # ---- DRIVE (mine -> propose -> validate -> gate) --------------------------
@@ -2760,6 +2700,7 @@ def _best_validated_candidate(
 
 def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
     reflexions: list[dict], *, model_id: str,
+    project_id: int | None = None, owner: str | None = None,
     held_in: list[str] | None = None, held_out: list[str] | None = None,
     score_with: ScoreFn | None = None, score_without: ScoreFn | None = None,
     propose_fn: ProposeFn | None = None, controller=None,
@@ -2780,6 +2721,7 @@ def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
     canary: bool = False,
     eval_for_context: Callable[[str], tuple | None] | None = None,
     promotion_authorize: Callable[[], bool] | None = None,
+    apply_promotions: bool = False,
 ) -> SelfHarnessReport:
     """One self-harness pass for ``model_id``: mine weaknesses, propose minimal
     edits, validate on held-in/held-out, and GATE each survivor through the
@@ -2804,7 +2746,15 @@ def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
     ``promotion_authorize`` is a final fail-closed evidence receipt checked
     after validation and immediately before the governed apply transaction. It
     lets risk-limited callers bind a just-completed evaluation to a fresh judge
-    calibration window; default ``None`` preserves historical behavior.
+    calibration window; default ``None`` forbids artifact application.
+    Every pass requires one exact ``project_id`` + ``owner`` scope and ignores
+    records that are missing or do not exactly match it. This applies even to
+    offline candidate generation: raw client traces are never treated as a
+    global/default corpus. The default is offline-only: mining/proposal/
+    evaluation remain intact, but validated candidates do not mutate the
+    runtime addendum store. An explicit operator promotion must additionally
+    set ``apply_promotions=True`` and provide a positive
+    ``promotion_authorize`` evidence callback. Runtime runners never opt in.
     Returns a :class:`SelfHarnessReport`. Operational failures are captured in
     the report, but :class:`Halted` is deliberately re-raised so an operator
     interlock cannot be mistaken for an ordinary no-change pass."""
@@ -2817,6 +2767,15 @@ def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
     report.frozen, report.gate_enabled = _governance_readiness()
     try:
         check_learning_halt("self_harness", "start")
+        promotion_scope = _exact_promotion_scope(project_id, owner)
+        if promotion_scope is None:
+            report.skipped.append(
+                "reflexion processing requires exact matter and owner scope"
+            )
+            return report
+        reflexions = _scope_reflexions_for_harness(
+            reflexions, matter_id=promotion_scope[0], owner=str(owner),
+        )
         sim_fn = similarity_fn or (semantic_similarity if semantic_mining else None)
         sigs = mine_failures(reflexions, model_id=model_id, min_support=min_support,
                              min_support_by_class=min_support_by_class,
@@ -2911,9 +2870,30 @@ def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
                     continue
             report.validated += 1
 
+            if not apply_promotions:
+                report.skipped.append(
+                    "validated offline; runtime promotion requires a separate "
+                    f"operator action: {proposal.addendum_line}"
+                )
+                continue
+            if promotion_scope is None:
+                report.skipped.append(
+                    "operator promotion requires exact matter and owner "
+                    f"provenance: {proposal.addendum_line}"
+                )
+                continue
+            if promotion_authorize is None:
+                report.skipped.append(
+                    "operator promotion requires explicit approval evidence: "
+                    f"{proposal.addendum_line}"
+                )
+                continue
+
             ok, why = _gate_and_apply(proposal, vr, controller=controller,
                                       path=path, canary=canary,
-                                      promotion_authorize=promotion_authorize)
+                                      promotion_authorize=promotion_authorize,
+                                      matter_id=promotion_scope[0],
+                                      owner_scope=promotion_scope[1])
             if not ok:
                 # Surface WHY the gate refused (e.g. "too few samples (3 < 5)",
                 # frozen verifier, disabled controller) so an operator with a
@@ -2941,11 +2921,71 @@ def run_self_harness(  # noqa: C901 - fail-closed orchestration boundary
     return report
 
 
+def _exact_promotion_scope(
+    project_id: int | None, owner: str | None,
+) -> tuple[int, str] | None:
+    """Return auditable matter + opaque principal provenance, fail closed."""
+    if project_id is None or isinstance(project_id, bool) or owner is None:
+        return None
+    try:
+        matter_id = int(project_id)
+    except (TypeError, ValueError):
+        return None
+    if matter_id <= 0:
+        return None
+    owner_scope = _owner_scope_digest(str(owner))
+    return matter_id, owner_scope
+
+
+def _scope_reflexions_for_harness(
+    reflexions: list[dict], *, matter_id: int, owner: str,
+) -> list[dict]:
+    """Return only traces bearing the exact operator-declared provenance."""
+    selected: list[dict] = []
+    for raw in reflexions or []:
+        record = raw.to_dict() if hasattr(raw, "to_dict") else raw
+        if not isinstance(record, Mapping):
+            continue
+        raw_matter = record.get("matter_id")
+        if isinstance(raw_matter, bool):
+            continue
+        try:
+            record_matter = int(raw_matter)
+        except (TypeError, ValueError):
+            continue
+        if record_matter != matter_id or record.get("owner") != owner:
+            continue
+        selected.append(dict(record))
+    return selected
+
+
+def _promotion_receipt_evidence(proposal: HarnessProposal) -> dict[str, int | str]:
+    """Return content-free bindings for a self-harness promotion receipt.
+
+    The exact proposal remains in the encrypted matter-scoped addenda/metadata
+    store.  Promotion records and their audit outbox are longer-lived and may
+    be replicated independently, so they carry only UTF-8 byte counts and
+    canonical SHA-256 bindings for client-derived proposal text.
+    """
+    evidence: dict[str, int | str] = {}
+    for label, value in (
+        ("addendum", proposal.addendum_line),
+        ("signature", proposal.signature),
+        ("rationale", proposal.rationale),
+        ("hypothesis", proposal.hypothesis or ""),
+    ):
+        raw = value.encode("utf-8")
+        evidence[f"{label}_bytes"] = len(raw)
+        evidence[f"{label}_sha256"] = hashlib.sha256(raw).hexdigest()
+    return evidence
+
+
 def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
     proposal: HarnessProposal, vr: ValidationResult, *,
     controller=None, path: Path | None = None,
     canary: bool = False,
     promotion_authorize: Callable[[], bool] | None = None,
+    matter_id: int, owner_scope: str,
 ) -> tuple[bool, str]:
     """Prepare, CAS-apply, and commit one governed prompt promotion.
 
@@ -2958,17 +2998,23 @@ def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
     from .file_lock import cross_process_lock
 
     check_learning_halt("self_harness", "promotion")
-    if promotion_authorize is not None:
-        try:
-            if promotion_authorize() is not True:
-                return False, "fresh evaluator-bound calibration receipt unavailable"
-        except Halted:
-            raise
-        except Exception:
-            log.debug(
-                "self_harness: promotion evidence authorization failed",
-                exc_info=True)
-            return False, "fresh evaluator-bound calibration receipt unavailable"
+    if (
+        matter_id <= 0
+        or not re.fullmatch(r"[0-9a-f]{16}", owner_scope or "")
+    ):
+        return False, "exact matter and owner provenance unavailable"
+    if promotion_authorize is None:
+        return False, "explicit operator approval evidence unavailable"
+    try:
+        if promotion_authorize() is not True:
+            return False, "explicit operator approval evidence unavailable"
+    except Halted:
+        raise
+    except Exception:
+        log.debug(
+            "self_harness: promotion evidence authorization failed",
+            exc_info=True)
+        return False, "explicit operator approval evidence unavailable"
     if not si.enabled():
         return False, "self-improvement disabled"
     active = controller or si.shared()
@@ -2976,6 +3022,7 @@ def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
     apply_prov = {
         "signature": proposal.signature, "rationale": proposal.rationale,
         "hypothesis": proposal.hypothesis or None,
+        "matter_id": matter_id, "owner_scope": owner_scope,
         "held_out_delta": round(vr.held_out_delta, 4), "samples": vr.samples,
         "held_in_samples": vr.held_in_samples,
         "held_out_samples": vr.held_out_samples,
@@ -2984,7 +3031,10 @@ def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
     if canary:  # only stamp the flag when staging -- non-canary leaves meta clean
         apply_prov["canary"] = True
 
-    store_key = _scoped_key(proposal.model_id, proposal.context)
+    store_key = _promotion_store_key(
+        proposal.model_id, proposal.context,
+        matter_id=matter_id, owner_scope=owner_scope,
+    )
     with _lock, cross_process_lock(p), _store_rmw_lock(p):
         try:
             before_store = _load_addenda_strict(p)
@@ -3016,35 +3066,43 @@ def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
         rollback = _cas_rollback_handle(
             p, before_store=before_store, after_store=after_store,
             store_key=store_key, before_meta=before_meta)
+        receipt_evidence = _promotion_receipt_evidence(proposal)
         cand = si.Candidate(
             rung="prompt",
-            summary=(f"self-harness addendum [{proposal.model_id}]: "
-                     f"{proposal.addendum_line}"),
+            summary=("self-harness prompt candidate sha256:"
+                     f"{receipt_evidence['addendum_sha256']}"),
             baseline_score=vr.baseline_score,
             candidate_score=vr.candidate_score,
             samples=vr.samples,
             effect_ci_low=vr.effect_ci_low,
             payload={
                 "model_id": proposal.model_id,
-                "line": proposal.addendum_line,
-                "artifact_identity": before_revision.identity,
+                "matter_id": matter_id,
+                "owner_scope": owner_scope,
                 "before_sha256": before_revision.sha256,
                 "after_sha256": after_revision.sha256,
+                **receipt_evidence,
             },
             rollback=rollback,
-            provenance={"source": "self_harness", "signature": proposal.signature,
-                        "hypothesis": proposal.hypothesis or None},
+            provenance={
+                "source": "self_harness",
+                "matter_id": matter_id, "owner_scope": owner_scope,
+                "before_sha256": before_revision.sha256,
+                "after_sha256": after_revision.sha256,
+                **receipt_evidence,
+            },
             audit_payload={
                 "_audit_agent": "self_harness",
                 "model_id": proposal.model_id,
-                "line": proposal.addendum_line,
                 "phase": "apply",
-                "signature": proposal.signature,
-                "rationale": proposal.rationale,
-                "hypothesis": proposal.hypothesis or None,
+                "matter_id": matter_id,
+                "owner_scope": owner_scope,
+                "before_sha256": before_revision.sha256,
+                "after_sha256": after_revision.sha256,
                 "held_out_delta": round(vr.held_out_delta, 4),
                 "held_in_samples": vr.held_in_samples,
                 "held_out_samples": vr.held_out_samples,
+                **receipt_evidence,
             },
         )
         # Close the validation-to-apply race: a HALT that lands while the
@@ -3072,7 +3130,8 @@ def _gate_and_apply(  # noqa: C901 - durable promotion transaction boundary
                 if not authorization.ok:
                     return False, authorization.blocking_reason or "refused"
                 written = _apply_addendum_locked(
-                    proposal, p, before_store, provenance=apply_prov)
+                    proposal, p, before_store, provenance=apply_prov,
+                    store_key=store_key)
                 observed = _addenda_artifact_revision(p, _load_addenda_strict(p))
                 if written != after_store or observed != after_revision:
                     raise RuntimeError("addenda CAS readback differs from prepared intent")
@@ -3122,7 +3181,6 @@ __all__ = [
     "load_line_meta", "line_provenance", "note_recall",
     "note_outcome", "line_efficacy", "review_efficacy",
     "mark_canary", "list_canaries", "review_canaries", "review_relapses",
-    "transferable_lines", "run_transfer", "transfer_memory_stats",
     "find_conflicts", "detect_store_conflicts", "llm_conflict_classifier",
     "FailureSignature", "mine_failures", "count_eligible", "semantic_similarity",
     "HarnessProposal", "ProposeFn", "propose_addendum", "llm_proposer",

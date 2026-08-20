@@ -3929,7 +3929,7 @@ PRIVACY_ANALYST_PERSONA = (
 )
 
 # The analyst's safe envelope: read-only research + the control catalog. Mutating
-# tools (shell, write_file, ...) are excluded -- and so is ``http_fetch``: it can
+# Tools that can mutate the host or perform unrestricted network access are excluded.
 # POST an arbitrary body to any URL, which a prompt-injected analyst (it ingests
 # untrusted subject material) could use to exfiltrate what it read. ``web_search``
 # stays as the research channel (a query, not an arbitrary request body).

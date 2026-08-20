@@ -13,9 +13,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME_ROOTS = (
     REPO / "packages" / "maverick-core" / "maverick",
-    REPO / "packages" / "maverick-channels" / "maverick_channels",
     REPO / "packages" / "maverick-dashboard" / "maverick_dashboard",
-    REPO / "packages" / "maverick-mcp" / "maverick_mcp",
 )
 FACTORY_MODULE = REPO / "packages" / "maverick-core" / "maverick" / "world_model.py"
 

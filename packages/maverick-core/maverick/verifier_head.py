@@ -7,8 +7,8 @@ that trains on captured trajectories with plain gradient descent (no torch, no
 GPU, no numpy), is evaluated by how well it *separates* promising from
 unpromising steps, and is adopted only through the governed artifact
 PREPARE/apply/COMMIT protocol. It is the verifier rung made real on a laptop;
-the torch MLP in
-``training/prm_train.py`` is the scale-up, not the prerequisite.
+the optional torch-backed :class:`maverick.prm.LearnedPRM` serving path is not
+a prerequisite.
 
 Deterministic (seeded) and offline -- a unit test trains it on synthetic
 trajectories and checks it both learns and gets gated correctly.

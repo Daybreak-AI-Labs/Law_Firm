@@ -99,7 +99,7 @@ def load_overrides(src: str | Path) -> dict:
             tables = {}
         for role, tbl in tables.items():
             patch = {k: str((tbl or {}).get(k) or "")
-                     for k in ("system_addendum", "model", "effort")}
+                     for k in ("system_addendum", "effort")}
             errs = validate_role(role, patch)
             if errs:
                 out["skipped"].append(f"roles.toml[{role}]: {errs[0]}")

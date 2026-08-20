@@ -11,20 +11,18 @@ See [`../../docs/safety.md`](../../docs/safety.md) for profiles and
 
 ## Roster-wide governance invariants
 
-Beyond the three runtime chokepoints, the platform enforces six governance
-invariants verified across all 2,020 specialist packs with a non-vacuous
-fault-injection control (property-fuzzed up to 5,000 iterations):
+Beyond the three runtime chokepoints, the firm profile enforces governance
+invariants across the fixed 31-profile legal roster, with non-vacuous
+fault-injection controls:
 
 1. **Tool-reachability** — no drafting/non-builder agent can reach a
    state-mutating tool.
-2. **Autonomy dial** — an onboarding agent is never autonomous, and a
-   high-risk action is never autonomous even once an agent is graduated.
-3. **Capability attenuation** — a spawned child can never exceed its parent's
+2. **Capability attenuation** — a spawned child can never exceed its parent's
    grant (no privilege escalation).
-4. **Compartment isolation** — a quarantine seal never bleeds across
-   compartments or suites.
-5. **Hard refusals** — the universal refusal floor is unstrippable.
-6. **Budget caps** — no cap is ever silently exceeded.
+3. **Matter isolation** — client material never crosses matter authorization
+   boundaries.
+4. **Hard refusals** — the universal refusal floor is unstrippable.
+5. **Budget caps** — no cap is ever silently exceeded.
 
 The suite also hostile-argument fuzzes every connector and tool, and each
 invariant ships a fault-injection control proving it is non-vacuous.

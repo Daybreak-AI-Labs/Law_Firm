@@ -1,5 +1,5 @@
 # Legal — Tower 7 (Employment & Privacy Law) — Employment Law.
-# Cross-ref HR Tower 7. CourtListener for case law.
+# Employment-law drafting and research for attorney review.
 name = "legal_employment"
 compartment = "legal_emp_privacy"
 description = "Employment-law advice, policy legal review, and dispute/claim analysis."
@@ -13,7 +13,6 @@ allow_tools = ["read_file", "web_search", "knowledge_search"]
 max_risk = "low"
 deny_tools = ["shell", "write_file"]
 
-mcp_servers = ["CourtListener"]
 knowledge_sources = ["legal"]
 authoring = "manual"
 

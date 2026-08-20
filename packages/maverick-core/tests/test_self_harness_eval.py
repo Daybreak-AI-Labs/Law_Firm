@@ -426,50 +426,6 @@ def test_uninstrumented_custom_judge_cannot_spoof_operational_totals():
     assert not ({"cost", "latency", "tool_calls"} & result.keys())
 
 
-def test_operational_cost_never_diffs_a_shared_budget():
-    class _NoisyBudgetLLM:
-        model = "anthropic:claude-sonnet-4-6"
-
-        def complete(self, _system, _messages, **kw):
-            # Simulate unrelated concurrent spend landing on the shared pot.
-            kw["budget"].dollars += 50.0
-            usage = SimpleNamespace(input_tokens=1000, output_tokens=100)
-            return SimpleNamespace(
-                text="ok", raw=SimpleNamespace(usage=usage),
-                cache_read_tokens=0, cache_creation_tokens=0, tool_calls=[])
-
-    budget = SimpleNamespace(dollars=0.0)
-    cases = [{"goal": "g1", "expected": "ok"},
-             {"goal": "g2", "expected": "ok"}]
-    sw, _ = ev.corpus_ab_scorers(
-        cases, run_fn=ev.llm_runner(_NoisyBudgetLLM(), budget=budget),
-        detailed=True)
-
-    result = sw("line", ["g1", "g2"])
-    assert budget.dollars == 100.0
-    assert abs(result["cost"] - 0.009) < 1e-12  # response usage, not $100 delta
-
-
-def test_operational_cost_uses_response_usage_for_known_model():
-    class _UsageLLM:
-        model = "anthropic:claude-sonnet-4-6"
-
-        def complete(self, _system, _messages, **_kw):
-            usage = SimpleNamespace(input_tokens=1000, output_tokens=100)
-            return SimpleNamespace(
-                text="ok", raw=SimpleNamespace(usage=usage),
-                cache_read_tokens=0, cache_creation_tokens=0, tool_calls=[])
-
-    cases = [{"goal": "g", "expected": "ok"}]
-    sw, _ = ev.corpus_ab_scorers(
-        cases, run_fn=ev.llm_runner(_UsageLLM()), detailed=True)
-    result = sw("line", ["g"])
-
-    # Sonnet: 1k input at $3/M + 100 output at $15/M.
-    assert abs(result["cost"] - 0.0045) < 1e-12
-    assert result["tool_calls"] == 0
-
-
 def test_measured_cost_drives_fail_closed_validation_cap():
     class _CostRegressingLLM:
         model = "anthropic:claude-sonnet-4-6"
@@ -695,16 +651,16 @@ def test_scorers_mark_dirty_on_fail_open_degradation():
 
 
 def test_pending_and_rejected_sidecars_seal_at_rest(tmp_path, monkeypatch):
-    # The machine-owned harvest sidecars carry the same goal text the world DB
-    # seals: with at-rest encryption on they must not sit in plaintext, while
-    # the LIVE corpus stays operator-editable plaintext by design. Loaders
-    # unseal transparently (and stay plaintext-tolerant for legacy files).
+    # Every corpus state may carry client-derived goal/evaluation text. With
+    # at-rest encryption on, live, pending, and rejected documents must all be
+    # authenticated ciphertext; the public loaders decrypt them transparently.
     import pytest
     pytest.importorskip("cryptography")
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_PER_TENANT", "0")
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", "55" * 32)
     cpath = tmp_path / "corpus.json"
-    cpath.write_text("{}")
     assert ev.stage_candidates(cpath, "M", [{"goal": "secret-ish goal",
                                              "expected": "hint"}]) == 1
     raw = ev.pending_corpus_path(cpath).read_bytes()
@@ -714,9 +670,11 @@ def test_pending_and_rejected_sidecars_seal_at_rest(tmp_path, monkeypatch):
     assert res["rejected"] == 1
     assert b"secret-ish goal" not in ev.rejected_corpus_path(cpath).read_bytes()
     assert ev.load_rejected(cpath) == {"M": ["secret-ish goal"]}
-    # live corpus (operator data) remains plaintext-readable JSON
+    # Live cases are client-derived too, so operator review goes through the
+    # authenticated loader instead of plaintext file editing.
     assert ev.merge_candidates(cpath, "M", [{"goal": "g2", "expected": "e"}]) == 1
-    assert "g2" in cpath.read_text()
+    assert b"g2" not in cpath.read_bytes()
+    assert ev.load_eval_corpus(cpath)["M"][0]["goal"] == "g2"
 
 
 def test_rate_budget_death_fails_the_whole_arm_closed():

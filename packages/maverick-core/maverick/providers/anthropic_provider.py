@@ -26,18 +26,10 @@ _LOW_CACHE_WARNING_EMITTED: dict[str, bool] = {}
 
 
 def _default_cache_ttl() -> str:
-    """Wave 11: benchmark mode defaults to 5m TTL (no cross-instance
-    reuse), interactive mode keeps 1h (multi-turn within a single
-    long-running goal benefits from longer cache life).
-
-    Explicit MAVERICK_ANTHROPIC_CACHE_TTL always wins.
-    """
+    """Return the operator override or the one-hour interactive default."""
     explicit = os.environ.get("MAVERICK_ANTHROPIC_CACHE_TTL")
     if explicit:
         return explicit
-    coding = os.environ.get("MAVERICK_CODING_MODE", "").lower() in ("1", "true", "yes")
-    if coding:
-        return "5m"
     return "1h"
 
 
@@ -84,10 +76,6 @@ def _ephemeral(obj: dict) -> dict:
     # across many turns inside a single goal -- 5m is too short and
     # forces ~20% extra spend on re-creates. Explicitly set 1h on every
     # cache control block so we get the discount we expect.
-    # Wave 11: in coding-mode (SWE-bench style), default to 5m since
-    # there is no cross-instance reuse and the 25% cache-write surcharge
-    # on a 1h TTL is wasted.
-    #
     # Wave 12 hotfix — minimum cacheable prompt size:
     # Claude Opus 4.5+, Sonnet 4.5+, and Haiku 4.5: the cumulative prompt
     # up to AND INCLUDING the cache breakpoint must be >= 4,096 tokens
@@ -453,9 +441,8 @@ class AnthropicClient:
 
         # Per-role reasoning effort (output_config.effort) — the biggest
         # cost/latency lever on Opus 4.7/4.8. Caller usually resolves it via
-        # maverick.effort.effort_for_role, but provider failover can carry a
-        # primary model's effort to a lower-ceiling fallback. Defence-in-depth:
-        # validate and re-clamp for the actual model so a stray effort never 400s.
+        # maverick.effort.effort_for_role. Defence-in-depth: validate and
+        # re-clamp for the selected run model so a stray effort never 400s.
         if effort:
             from ..effort import effort_for_model
             model_effort = effort_for_model(effort, model_id)

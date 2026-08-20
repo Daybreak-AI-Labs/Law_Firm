@@ -2,8 +2,9 @@
 
 ``QueueDispatcher`` is the control-plane/data-plane split for goal execution.
 Every dispatch is a versioned, expiring envelope whose HMAC covers the complete
-security context: goal/conversation ids and cost limits, depth, channel/user identity,
-concurrency principal, capability, tenant, message id, nonce, and timestamps.
+security context: goal/matter ids, legal domain, authenticated and concurrency
+principals, conversation ids and cost limits, depth, channel/user identity,
+capability, tenant, message id, nonce, and timestamps.
 Workers authenticate and validate the immutable envelope snapshot before they
 interpret any of those fields.
 
@@ -44,7 +45,7 @@ log = logging.getLogger(__name__)
 JOB_NAME = "maverick.run_goal"
 QUEUED_STATUS = "queued"
 
-ENVELOPE_VERSION = 2
+ENVELOPE_VERSION = 3
 _AUTH_LOCAL = "local-process"
 _AUTH_SHARED = "shared-hmac"
 _QUEUE_SIG_FIELD = "sig"
@@ -76,6 +77,9 @@ _ENVELOPE_FIELDS = frozenset(
         "expires_at",
         "tenant",
         "goal_id",
+        "matter_id",
+        "principal",
+        "domain",
         "conversation_id",
         "max_dollars",
         "max_wall_seconds",
@@ -217,7 +221,7 @@ def _snapshot_payload(raw: Any) -> dict[str, Any]:
 
 
 def _capability_sig(payload: dict[str, Any], key: str | bytes) -> str:
-    """HMAC a standalone capability grant (also used by the gRPC path)."""
+    """HMAC a standalone capability grant embedded in a queue envelope."""
     body = {k: payload[k] for k in sorted(payload) if k != _QUEUE_SIG_FIELD}
     msg = json.dumps(
         body, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -443,6 +447,14 @@ def _valid_optional_text(value: Any, field: str) -> None:
         raise QueueSecurityError(f"queue envelope {field} is invalid or too long")
 
 
+def _valid_required_text(value: Any, field: str) -> None:
+    _valid_optional_text(value, field)
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise QueueSecurityError(
+            f"queue envelope {field} must be a non-empty canonical string"
+        )
+
+
 def _valid_optional_number(value: Any, field: str) -> None:
     if value is None:
         return
@@ -458,6 +470,13 @@ def _valid_optional_positive_int(value: Any, field: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise QueueSecurityError(
             f"queue envelope {field} must be a positive integer or null"
+        )
+
+
+def _valid_positive_int(value: Any, field: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise QueueSecurityError(
+            f"queue envelope {field} must be a positive integer"
         )
 
 
@@ -494,7 +513,7 @@ def _valid_allowed_suites(value: Any) -> None:
 
 def _validate_envelope(payload: dict[str, Any], *, now: float | None = None) -> None:
     if frozenset(payload) != _ENVELOPE_FIELDS:
-        raise QueueSecurityError("queue envelope fields do not match version 2")
+        raise QueueSecurityError("queue envelope fields do not match version 3")
     if payload["version"] != ENVELOPE_VERSION:
         raise QueueSecurityError("unsupported queue envelope version")
     if payload["job_name"] != JOB_NAME:
@@ -538,9 +557,10 @@ def _validate_envelope(payload: dict[str, Any], *, now: float | None = None) -> 
 
         data_dir("jobs.db", tenant=tenant)
 
-    goal_id = payload["goal_id"]
-    if isinstance(goal_id, bool) or not isinstance(goal_id, int) or goal_id <= 0:
-        raise QueueSecurityError("queue envelope goal_id must be a positive integer")
+    _valid_positive_int(payload["goal_id"], "goal_id")
+    _valid_positive_int(payload["matter_id"], "matter_id")
+    _valid_required_text(payload["principal"], "principal")
+    _valid_required_text(payload["domain"], "domain")
     _valid_optional_positive_int(payload["conversation_id"], "conversation_id")
     max_depth = payload["max_depth"]
     if (
@@ -553,7 +573,11 @@ def _validate_envelope(payload: dict[str, Any], *, now: float | None = None) -> 
     _valid_optional_number(payload["max_wall_seconds"], "max_wall_seconds")
     _valid_optional_text(payload["channel"], "channel")
     _valid_optional_text(payload["user_id"], "user_id")
-    _valid_optional_text(payload["concurrency_principal"], "concurrency_principal")
+    _valid_required_text(payload["concurrency_principal"], "concurrency_principal")
+    if payload["concurrency_principal"] != payload["principal"]:
+        raise QueueSecurityError(
+            "queue envelope concurrency_principal must equal its matter principal"
+        )
     _valid_allowed_suites(payload["allowed_suites"])
     capability = payload["capability"]
     if capability is not None:
@@ -595,6 +619,9 @@ def _verify_envelope(raw: Any) -> dict[str, Any]:
 def _payload(
     goal_id: int,
     *,
+    matter_id: int,
+    principal: str,
+    domain: str,
     conversation_id: int | None,
     max_dollars: float | None,
     max_wall_seconds: float | None,
@@ -622,6 +649,9 @@ def _payload(
         "expires_at": now + ttl_seconds,
         "tenant": current_tenant_id() or "",
         "goal_id": int(goal_id),
+        "matter_id": matter_id,
+        "principal": principal,
+        "domain": domain,
         "conversation_id": conversation_id,
         "max_dollars": max_dollars,
         "max_wall_seconds": max_wall_seconds,
@@ -639,6 +669,61 @@ def _payload(
     signed = _sign_envelope(envelope, signing_key)
     _validate_envelope(signed, now=now)
     return signed
+
+
+def _resolve_dispatch_context(goal_id: int, principal: str | None):
+    """Resolve the producer's durable matter snapshot before signing."""
+    from .matter_context import MatterContextError, resolve_goal_matter_context
+    from .world_model import close_world_if_owned, open_world
+
+    world = open_world()
+    try:
+        try:
+            return resolve_goal_matter_context(
+                world,
+                goal_id,
+                principal=principal,
+                source="queue-producer",
+            )
+        except MatterContextError as exc:
+            raise QueueSecurityError(
+                "queue producer could not establish matter execution context"
+            ) from exc
+    finally:
+        close_world_if_owned(world)
+
+
+def _verify_worker_context(envelope: dict[str, Any]):
+    """Re-resolve and compare the signed matter snapshot before dispatch."""
+    from .matter_context import (
+        MatterContextError,
+        resolve_goal_matter_context,
+        verify_context_snapshot,
+    )
+    from .world_model import close_world_if_owned, open_world
+
+    world = open_world()
+    try:
+        try:
+            context = resolve_goal_matter_context(
+                world,
+                envelope["goal_id"],
+                principal=envelope["principal"],
+                source="queue-worker",
+            )
+            verify_context_snapshot(
+                context,
+                matter_id=envelope["matter_id"],
+                principal=envelope["principal"],
+                domain=envelope["domain"],
+            )
+            return context
+        except MatterContextError as exc:
+            raise QueueSecurityError(
+                "queued matter execution context is missing, unauthorized, or changed"
+            ) from exc
+    finally:
+        close_world_if_owned(world)
 
 
 def _network_claim_id(envelope: dict[str, Any]) -> str:
@@ -734,8 +819,12 @@ class QueueDispatcher:
     ) -> str | None:
         from .runner import DEFAULT_MAX_DEPTH
 
+        context = _resolve_dispatch_context(goal_id, concurrency_principal)
         payload = _payload(
             goal_id,
+            matter_id=context.matter_id,
+            principal=context.principal,
+            domain=context.domain,
             conversation_id=conversation_id,
             max_dollars=max_dollars,
             max_wall_seconds=max_wall_seconds,
@@ -806,11 +895,7 @@ def run_queued_goal(payload: dict) -> str | None:
             user_id=user_id,
         )
         max_dollars, max_wall_seconds, max_depth = _worker_execution_limits(envelope)
-        concurrency_principal = (
-            envelope["concurrency_principal"]
-            if envelope["auth_mode"] == _AUTH_LOCAL
-            else f"queue:{tenant}"
-        )
+        concurrency_principal = envelope["principal"]
 
         if envelope["auth_mode"] == _AUTH_SHARED:
             claimed = _claim_network_envelope_once(envelope)
@@ -827,6 +912,12 @@ def run_queued_goal(payload: dict) -> str | None:
                 "queue dispatch envelope was already consumed; "
                 "submit a fresh signed job to retry"
             )
+
+        # This is deliberately the last operation before dispatch. Revocation,
+        # goal re-filing, or a specialist-domain edit after enqueue invalidates
+        # the signed snapshot, and the runner independently resolves once more
+        # before constructing its LLM or sandbox.
+        _verify_worker_context(envelope)
 
         from .runner import LocalThreadDispatcher
         return LocalThreadDispatcher().submit(

@@ -1,8 +1,7 @@
-"""P1 multi-tenancy increment 1: tenant-aware paths + per-tenant memory.
+"""Tenant-aware data paths and per-user tenant scoping.
 
 A tenant namespaces on-disk state. With no tenant active, paths resolve to the
-legacy ~/.maverick locations (single-tenant unchanged). With a tenant, the
-cross-session memory store is isolated so one tenant cannot read another's.
+legacy ~/.maverick locations (single-tenant unchanged).
 """
 import maverick.paths as paths
 import pytest
@@ -46,9 +45,9 @@ def test_tenant_encoding_prevents_traversal_without_collisions(monkeypatch):
 
 def test_tenant_encoding_is_collision_resistant(monkeypatch):
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    assert data_dir("memory", tenant="ac/me") != data_dir("memory", tenant="ac_me")
-    assert data_dir("memory", tenant="/") != data_dir("memory", tenant="default")
-    assert data_dir("memory", tenant=".").resolve().parent == (
+    assert data_dir("audit", tenant="ac/me") != data_dir("audit", tenant="ac_me")
+    assert data_dir("audit", tenant="/") != data_dir("audit", tenant="default")
+    assert data_dir("audit", tenant=".").resolve().parent == (
         paths.maverick_home() / "tenants" / "%2E"
     ).resolve()
 
@@ -60,25 +59,25 @@ def test_tenant_segment_nfc_normalised(monkeypatch):
     nfd = unicodedata.normalize("NFD", "josé")   # "josé" decomposed
     assert nfc != nfd  # distinct byte sequences pre-normalisation
     # ...but the same on-disk namespace, so one tenant's data isn't split in two.
-    assert data_dir("memory", tenant=nfc) == data_dir("memory", tenant=nfd)
+    assert data_dir("audit", tenant=nfc) == data_dir("audit", tenant=nfd)
 
 
 def test_data_dir_refuses_case_alias_before_any_store_access(monkeypatch):
     from maverick.paths import TenantNamespaceCollision
 
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    owner_path = data_dir("memory", tenant="Acme")
+    owner_path = data_dir("audit", tenant="Acme")
     with pytest.raises(TenantNamespaceCollision, match="aliases namespace owned"):
-        data_dir("memory", tenant="acme")
-    assert owner_path == paths.maverick_home() / "tenants" / "Acme" / "memory"
+        data_dir("audit", tenant="acme")
+    assert owner_path == paths.maverick_home() / "tenants" / "Acme" / "audit"
 
 
 # --- data_dir --------------------------------------------------------------
 
 def test_data_dir_no_tenant(monkeypatch):
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    p = data_dir("memory")
-    assert p == paths.maverick_home() / "memory"
+    p = data_dir("audit")
+    assert p == paths.maverick_home() / "audit"
     assert "tenants" not in p.parts
 
 
@@ -86,8 +85,8 @@ def test_data_dir_with_tenant(monkeypatch):
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
     tok = set_tenant("acme")
     try:
-        p = data_dir("memory")
-        assert p == paths.maverick_home() / "tenants" / "acme" / "memory"
+        p = data_dir("audit")
+        assert p == paths.maverick_home() / "tenants" / "acme" / "audit"
     finally:
         reset_tenant(tok)
 
@@ -98,110 +97,6 @@ def test_data_dir_force_shared(monkeypatch):
     try:
         # tenant=None forces the shared location even when a tenant is active.
         assert data_dir("audit", tenant=None) == paths.maverick_home() / "audit"
-    finally:
-        reset_tenant(tok)
-
-
-# --- memory store honours the tenant + stays isolated ----------------------
-
-def test_memory_root_follows_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    monkeypatch.delenv("MAVERICK_MEMORY_DIR", raising=False)
-    from maverick.tools.memory import _memory_root
-
-    assert _memory_root() == tmp_path / ".maverick" / "memory"  # legacy default
-    tok = set_tenant("acme")
-    try:
-        assert _memory_root() == tmp_path / ".maverick" / "tenants" / "acme" / "memory"
-    finally:
-        reset_tenant(tok)
-
-
-def test_explicit_memory_dir_override_wins(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAVERICK_MEMORY_DIR", str(tmp_path / "mem"))
-    tok = set_tenant("acme")
-    try:
-        from maverick.tools.memory import _memory_root
-        assert _memory_root() == tmp_path / "mem"  # override ignores tenant
-    finally:
-        reset_tenant(tok)
-
-
-def test_memory_isolated_across_tenants(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    monkeypatch.delenv("MAVERICK_MEMORY_DIR", raising=False)
-    from maverick.tools.memory import _run
-
-    tok = set_tenant("tenant-a")
-    try:
-        assert "wrote" in _run({"command": "create", "path": "notes.md",
-                                "file_text": "a-secret"})
-        assert "notes.md" in _run({"command": "view", "path": ""})
-    finally:
-        reset_tenant(tok)
-
-    # A different tenant sees an empty memory -- no cross-tenant leakage.
-    tok = set_tenant("tenant-b")
-    try:
-        assert _run({"command": "view", "path": ""}) == "(memory is empty)"
-    finally:
-        reset_tenant(tok)
-
-    # Back to tenant-a: the note is still there.
-    tok = set_tenant("tenant-a")
-    try:
-        out = _run({"command": "view", "path": "notes.md"})
-        assert "a-secret" in out
-    finally:
-        reset_tenant(tok)
-
-
-def test_memory_store_cannot_be_reopened_through_case_alias(monkeypatch, tmp_path):
-    from maverick.paths import TenantNamespaceCollision
-    from maverick.tools.memory import _run
-
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_MEMORY_DIR", raising=False)
-    owner = set_tenant("Acme")
-    try:
-        assert "wrote" in _run(
-            {"command": "create", "path": "private.md", "file_text": "secret"}
-        )
-    finally:
-        reset_tenant(owner)
-
-    alias = set_tenant("acme")
-    try:
-        with pytest.raises(TenantNamespaceCollision):
-            _run({"command": "view", "path": "private.md"})
-    finally:
-        reset_tenant(alias)
-
-
-def test_memory_isolated_for_previously_colliding_tenants(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    monkeypatch.delenv("MAVERICK_MEMORY_DIR", raising=False)
-    from maverick.tools.memory import _run
-
-    tok = set_tenant("ac/me")
-    try:
-        assert "wrote" in _run({"command": "create", "path": "secrets.md",
-                                "file_text": "SECRET123"})
-    finally:
-        reset_tenant(tok)
-
-    tok = set_tenant("ac_me")
-    try:
-        assert _run({"command": "view", "path": ""}) == "(memory is empty)"
-    finally:
-        reset_tenant(tok)
-
-    tok = set_tenant("ac/me")
-    try:
-        assert "SECRET123" in _run({"command": "view", "path": "secrets.md"})
     finally:
         reset_tenant(tok)
 

@@ -110,6 +110,44 @@ def test_worker_command_runs_forever(tmp_path, monkeypatch):
 
 # ---------- start_goal: recurring autonomous tasks ----------
 
+_SCHEDULE_PRINCIPAL = "user:alice"
+_SCHEDULE_DOMAIN = "legal_scheduler_test"
+
+
+def _matter_payload(tmp_path, monkeypatch, **extra):
+    """Create the exact governed matter authority a scheduled run requires."""
+    from maverick import domain as domain_mod
+    from maverick.world_model import WorldModel
+
+    profile = domain_mod.DomainProfile(
+        name=_SCHEDULE_DOMAIN,
+        workflow=[domain_mod.WorkflowStep(name="attorney review", gate="review")],
+    )
+    monkeypatch.setattr(
+        domain_mod,
+        "enabled_domains",
+        lambda: {_SCHEDULE_DOMAIN: profile},
+    )
+    world = WorldModel(tmp_path / "world.db")
+    try:
+        matter_id = world.create_client_matter(
+            "Scheduled client matter",
+            principal=_SCHEDULE_PRINCIPAL,
+            domain=_SCHEDULE_DOMAIN,
+            matter_number="SCHEDULE-TEST-1",
+            jurisdiction="Tennessee",
+            client_name="Scheduler Test Client",
+        )
+    finally:
+        world.close()
+    return {
+        "matter_id": matter_id,
+        "domain": _SCHEDULE_DOMAIN,
+        "concurrency_principal": _SCHEDULE_PRINCIPAL,
+        **extra,
+    }
+
+
 def test_start_goal_handler_creates_fresh_goal_and_runs_it(tmp_path, monkeypatch):
     # The handler must CREATE a new goal from the prompt (not re-run a fixed id)
     # and hand that fresh id to the runner.
@@ -128,13 +166,14 @@ def test_start_goal_handler_creates_fresh_goal_and_runs_it(tmp_path, monkeypatch
     w = Worker(db_path=tmp_path / "jobs.db")
     w._handlers["start_goal"](Job(
         id=1, kind="start_goal",
-        payload={
-            "title": "Digest",
-            "text": "Summarize overnight emails",
-            "owner": "user:alice",
-            "channel": "api",
-            "user_id": "alice",
-        },
+        payload=_matter_payload(
+            tmp_path,
+            monkeypatch,
+            title="Digest",
+            text="Summarize overnight emails",
+            channel="api",
+            user_id="alice",
+        ),
         run_at=0.0, status="running", attempts=1,
     ))
 
@@ -148,7 +187,11 @@ def test_start_goal_handler_creates_fresh_goal_and_runs_it(tmp_path, monkeypatch
     assert g.title == "Digest"
     assert g.description == "Summarize overnight emails"
     assert g.owner == "user:alice"
-    assert seen["run_kwargs"] == {"channel": "api", "user_id": "alice"}
+    assert seen["run_kwargs"] == {
+        "channel": "api",
+        "user_id": "alice",
+        "concurrency_principal": _SCHEDULE_PRINCIPAL,
+    }
 
 
 def test_start_goal_records_schedule_provenance(tmp_path, monkeypatch):
@@ -163,8 +206,13 @@ def test_start_goal_records_schedule_provenance(tmp_path, monkeypatch):
     w = Worker(db_path=tmp_path / "jobs.db")
     w._handlers["start_goal"](Job(
         id=1, kind="start_goal",
-        payload={"text": "Summarize emails", "title": "Digest",
-                 "schedule_id": "sched-xyz"},
+        payload=_matter_payload(
+            tmp_path,
+            monkeypatch,
+            text="Summarize emails",
+            title="Digest",
+            schedule_id="sched-xyz",
+        ),
         run_at=0.0, status="running", attempts=1,
     ))
 
@@ -185,7 +233,13 @@ def test_start_goal_without_schedule_id_records_no_origin(tmp_path, monkeypatch)
     from maverick.job_queue import Job
     from maverick.worker import Worker
     Worker(db_path=tmp_path / "jobs.db")._handlers["start_goal"](Job(
-        id=1, kind="start_goal", payload={"text": "one-off"},
+        id=1,
+        kind="start_goal",
+        payload=_matter_payload(
+            tmp_path,
+            monkeypatch,
+            text="one-off",
+        ),
         run_at=0.0, status="running", attempts=1,
     ))
     from maverick.world_model import open_world
@@ -208,7 +262,11 @@ def test_start_goal_idempotent_across_retries(tmp_path, monkeypatch):
     from maverick.job_queue import JobQueue
     from maverick.worker import Worker
     q = JobQueue(db_path=tmp_path / "jobs.db")
-    q.enqueue("start_goal", {"text": "recurring task"}, run_at=0.0)
+    q.enqueue(
+        "start_goal",
+        _matter_payload(tmp_path, monkeypatch, text="recurring task"),
+        run_at=0.0,
+    )
     w = Worker(queue=q, retry_after=0.0)
 
     assert w.run_once() is True   # attempt 1: creates goal #1, fails -> requeued
@@ -234,30 +292,39 @@ def test_start_goal_requires_text(tmp_path):
         ))
 
 
-def test_start_goal_recurs_with_same_prompt(tmp_path, monkeypatch):
-    # End-to-end: a cron-armed start_goal runs and re-arms the next occurrence
-    # carrying the same prompt -- a true recurring autonomous task.
-    monkeypatch.setattr("maverick.world_model.DEFAULT_DB", tmp_path / "world.db")
+def test_legacy_start_goal_cron_is_consumed_without_work_or_rearm(
+    tmp_path, monkeypatch,
+):
+    """A pre-existing matterless cron cannot mint goals or perpetuate itself."""
     monkeypatch.setattr(
-        "maverick.runner.run_goal_in_thread", lambda goal_id, *a, **k: "done"
+        "maverick.worker._create_scheduled_matter_goal",
+        lambda *_args, **_kwargs: pytest.fail("legacy cron created a goal"),
+    )
+    monkeypatch.setattr(
+        "maverick.worker._verify_job_matter_context",
+        lambda *_args, **_kwargs: pytest.fail("legacy cron resolved a matter"),
+    )
+    monkeypatch.setattr(
+        "maverick.runner.run_goal_in_thread",
+        lambda *_args, **_kwargs: pytest.fail("legacy cron invoked the runner"),
     )
     from maverick.job_queue import JobQueue
     from maverick.worker import Worker
+
     q = JobQueue(db_path=tmp_path / "jobs.db")
     jid = q.enqueue(
         "start_goal",
-        {"text": "Summarize overnight emails", "title": "Digest",
-         "__cron__": "*/5 * * * *"},
+        {
+            "text": "Summarize overnight emails",
+            "title": "Digest",
+            "__cron__": "*/5 * * * *",
+        },
         run_at=1000.0,
     )
     w = Worker(queue=q, idle_sleep=0.0)
     assert w.run_once() is True
     assert q.get(jid).status == "done"
-    nxt = [j for j in q.list(status="pending") if j.payload.get("__cron__")]
-    assert len(nxt) == 1 and nxt[0].id != jid
-    assert nxt[0].kind == "start_goal"
-    assert nxt[0].payload["text"] == "Summarize overnight emails"
-    assert nxt[0].payload["title"] == "Digest"
+    assert q.list(status="pending") == []
 
 
 

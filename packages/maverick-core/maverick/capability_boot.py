@@ -2,7 +2,7 @@
 
 When the swarm spawns a child agent, the child today simply *inherits* the
 parent's grant attenuated to its principal — it can't ask for a *narrower,
-explicit* scope ("I only need read_file + http_fetch, low risk"), and there's
+explicit* scope ("I only need knowledge_search + web_search, low risk"), and there's
 no record of what was agreed. Boot negotiation adds that handshake:
 
 * a child declares a **requested** scope (tools / max_risk / paths / hosts);

@@ -1,7 +1,4 @@
-"""Wave 12 hardening pass 2: correctness fixes from the 20-round
-bug-hunt. Covers TTL normalization, Budget pickling, gotest false-
-positive, token-overlap noise bypass, and Anthropic SDK robustness.
-"""
+"""Retained cache, budget, and Anthropic SDK robustness regressions."""
 from __future__ import annotations
 
 import pickle
@@ -80,83 +77,6 @@ class TestBudgetPickling:
             pass
         else:
             raise AssertionError("post-unpickle wall cap bypassed")
-
-
-class TestGotestPassInPackageName:
-    def test_pass_in_package_name_does_not_mask_build_failure(self):
-        """Package paths like github.com/PASSport/foo contain `PASS`;
-        the old `'PASS' not in out` check incorrectly silenced build
-        failures from such repos."""
-        from maverick.coding_mode import _parse_gotest
-        out = (
-            "# github.com/PASSport/foo\n"
-            "./foo.go:10:5: undefined: bar\n"
-            "FAIL\tgithub.com/PASSport/foo [build failed]\n"
-        )
-        p, f, ok = _parse_gotest(out)
-        assert ok
-        assert f >= 1, (
-            "build failure should be detected even when package "
-            "contains 'PASS' in the path"
-        )
-
-
-class TestTokenOverlapNoisePrefixBypass:
-    def test_prepended_noise_does_not_zero_ratio(self):
-        """Bypass attempt: prepend ~1000 noise tokens before a verbatim
-        gold copy. Before Wave 12 hardening, the `[:5000]` slice did
-        not cut here but the symmetric ratio metric was diluted; the
-        new "longest contiguous block / gold length" metric is
-        immune to noise dilution as long as the gold body is preserved
-        as a contiguous run."""
-        from maverick.coding_mode import defensive_validate
-        # ~150 lines of noise prose (< 10K tokens so sampling doesn't kick
-        # in and the verbatim gold block stays contiguous in the matcher).
-        noise = "\n".join(
-            f"+# noise_{i}_token alpha beta gamma"
-            for i in range(150)
-        )
-        gold_body = (
-            "+def fixed_implementation():\n"
-            "+    intermediate_result = compute_thing(input_value)\n"
-            "+    final_answer = transform(intermediate_result)\n"
-            "+    return final_answer\n"
-        ) * 5
-        ours = (
-            "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n"
-            + noise + "\n" + gold_body
-        )
-        gold = (
-            "diff --git a/x.py b/x.py\n@@ -1 +1 @@\n" + gold_body
-        )
-        result = defensive_validate(ours, gold_patch=gold)
-        # The verbatim gold block must be detected as a contiguous run.
-        assert not result.ok, (
-            "noise-prefix bypass should be caught — longest contiguous "
-            "match should equal the gold block. "
-            f"warnings={result.warnings}"
-        )
-
-    def test_exact_50_percent_caught_on_substantive_gold(self):
-        """Boundary `>= 0.50` (not `> 0.50`).
-
-        May 26 smoke fix: the detector now skips gold patches with
-        fewer than 30 tokens to avoid false-positives on obvious
-        one-line fixes. The boundary test uses a 30+-token gold so
-        the detector engages, and constructs ours with ~50% longest
-        contiguous match to verify the boundary behavior."""
-        from maverick.coding_mode import defensive_validate
-        # 60+ tokens in gold so the detector engages.
-        gold_body = " ".join([f"identifier_{i}" for i in range(60)])
-        gold = f"diff --git a/x.py b/x.py\n@@ -1 +1 @@\n+{gold_body}\n"
-        # ours: first 30 tokens of gold + 30 unrelated tokens =
-        # longest contiguous match is 30/60 = 50% of gold tokens.
-        first_half = " ".join([f"identifier_{i}" for i in range(30)])
-        unrelated = " ".join([f"other_{i}" for i in range(30)])
-        ours = f"diff --git a/x.py b/x.py\n@@ -1 +1 @@\n+{first_half} {unrelated}\n"
-        result = defensive_validate(ours, gold_patch=gold)
-        # >= 0.50 → blocked
-        assert not result.ok
 
 
 class TestAnthropicProviderRobust:

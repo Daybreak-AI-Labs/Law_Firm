@@ -1,9 +1,8 @@
-"""Practice-operations CLI: the dream beat and the tax group.
+"""Practice-operations CLI: the governed per-matter dream beat.
 
-These lived in the finance CLI module upstream. The finance-agent-suite group
-went with that subsystem; everything here is independent of it and is the
-firm's own operating surface, so it keeps its own home rather than being
-deleted alongside its former neighbours.
+This module retains only explicit, matter-authorized dreaming and rehearsal.
+Fleet-wide automatic harness cycles and unrelated tax-preparation commands are
+not part of the two-attorney product.
 
 Registered via import at the end of the package __init__ so the @main.group
 decorators fire on package import.
@@ -12,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from pathlib import Path
 from typing import TypeVar
 
 import click
@@ -42,49 +40,73 @@ def _run_dreaming_guarded(operation: Callable[[], _T]) -> _T:
             "dreaming refused: global learning HALT is active") from exc
 
 
-def _run_self_harness_nightly(world) -> None:
-    """Operate the self-harness on the dream beat when ``[self_harness]
-    auto_run`` is active (the pristine governed profile enables it): the
-    mine -> propose -> validate -> gate cycle for
-    every configured role model, so the loop runs without a second cron entry.
-    Each model's pass auto-builds its live A/B from ``[self_harness]
-    eval_corpus`` when configured (else it is a dry inspection + stale-line
-    retirement + canary review). With ``corpus_harvest`` on, hindsight pairs
-    feed the corpus too. Never breaks dreaming."""
+async def _run_matter_rehearsal_goal(
+    *,
+    world,
+    llm,
+    sandbox,
+    prompt: str,
+    matter_id: int,
+    owner: str,
+    domain: str,
+    budget_dollars: float,
+) -> str:
+    """Create and run one offline test goal under fresh durable authority."""
+    from ..budget import Budget
+    from ..matter_context import (
+        MatterContextError,
+        matter_context_scope,
+        resolve_goal_matter_context,
+        resolve_matter_context,
+        verify_context_snapshot,
+    )
+
     try:
-        from .. import self_harness
-        st = self_harness.settings()
-        if not (self_harness.enabled() and st.get("auto_run")):
-            return
-        from .. import self_improvement_runner as si_runner
-        for mid, (rep, retired) in sorted(si_runner.run_self_harness_all_models().items()):
-            click.echo(
-                f"[self-harness] {mid}: mined={rep.mined} "
-                f"promoted={rep.promoted} demoted={len(rep.demoted)} "
-                f"retired={retired} relapsed={len(rep.relapsed)}")
-        # Cross-model transfer on the same beat (opt-in, [self_harness]
-        # transfer_auto): the tried-memory makes it near-free once caught up.
-        if st.get("transfer_auto"):
-            sweep = si_runner.run_self_harness_transfer_sweep()
-            for src in sorted(sweep):
-                for tgt in sorted(sweep[src]):
-                    res = sweep[src][tgt]
-                    if res.get("attempted"):
-                        click.echo(
-                            f"[self-harness transfer] {src} -> {tgt}: "
-                            f"attempted={len(res['attempted'])} "
-                            f"promoted={len(res['promoted'])}")
-        # Corpus bootstrapping on the same beat: run_corpus_harvest owns the
-        # whole policy (mode gate, corpus default, limits); ``mode`` is read
-        # here only to word the echo.
-        n = si_runner.run_corpus_harvest(world)
-        if n:
-            verb = ("merged into the corpus"
-                    if st.get("corpus_harvest") == "auto"
-                    else "staged for review")
-            click.echo(f"[self-harness corpus] {n} candidate case(s) {verb}")
-    except Exception:  # pragma: no cover -- the harness must never break dreaming
-        pass
+        prepared = resolve_matter_context(
+            world,
+            matter_id=matter_id,
+            principal=owner,
+            domain=domain,
+            source="dream-rehearsal-prepare",
+        )
+        goal_id = world.create_matter_goal(
+            f"[rehearsal] {prompt[:200]}",
+            "Offline rehearsal of a previously failing matter pattern.",
+            principal=prepared.principal,
+            domain=prepared.domain,
+            project_id=prepared.matter_id,
+        )
+        if goal_id is None:
+            return "BLOCKED: rehearsal matter membership is no longer active"
+        # Re-resolve after the atomic INSERT so a revocation or egress-policy
+        # change between preparation and execution is observed before run_goal.
+        context = resolve_goal_matter_context(
+            world,
+            goal_id,
+            principal=prepared.principal,
+            source="dream-rehearsal-execute",
+        )
+        verify_context_snapshot(
+            context,
+            matter_id=prepared.matter_id,
+            principal=prepared.principal,
+            domain=prepared.domain,
+        )
+    except (MatterContextError, ValueError) as exc:
+        return f"BLOCKED: rehearsal authority refused ({exc})"
+
+    from ..orchestrator import run_goal
+
+    with matter_context_scope(context):
+        return await run_goal(
+            llm=llm,
+            world=world,
+            budget=Budget(max_dollars=budget_dollars),
+            goal_id=goal_id,
+            sandbox=sandbox,
+            domain=context.domain,
+            user_id=context.principal,
+        )
 
 
 @main.command()
@@ -105,8 +127,15 @@ def _run_self_harness_nightly(world) -> None:
               help="Restore every learned store from a snapshot "
                    "('latest' or a name from --list-snapshots), then exit.")
 @click.pass_context
-def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
-          dry_run: bool, list_snaps: bool, rollback: str | None) -> None:
+def dream(  # noqa: C901
+    ctx,
+    max_goals: int,
+    rehearse: bool,
+    rehearse_budget: float,
+    dry_run: bool,
+    list_snaps: bool,
+    rollback: str | None,
+) -> None:
     """Run one offline dreaming cycle (experience consolidation).
 
     Replays recent successes and failure reflexions, groups them by
@@ -190,23 +219,6 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         ),
     )
     click.echo(report.summary())
-    # Cognitive Data Engine: turn the flywheel as part of the nightly cycle --
-    # triage failures by causal impact, mine self-correcting guardrails,
-    # consolidate beneficial habits, propose improvements, all grounded in real
-    # outcomes. No-op unless [data_engine] is enabled; never breaks dreaming.
-    try:
-        from .. import data_engine
-        if data_engine.enabled():
-            from ..flywheel import maybe_run
-            fw = maybe_run()
-            if fw.acted:
-                click.echo(
-                    f"[flywheel] {len(fw.guardrails)} guardrails, {len(fw.memories)} "
-                    f"habits, {len(fw.hypotheses)} improvements "
-                    f"(recoverable lift ~{fw.predicted_lift:.2f})")
-    except Exception:  # pragma: no cover -- the flywheel must never break dreaming
-        pass
-    _run_self_harness_nightly(world)
     if not rehearse:
         return
     cases = dreaming.load_rehearsals()
@@ -214,248 +226,60 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         click.echo("Rehearsal: no queued cases (enable [dreaming] rehearse "
                    "so dream cycles queue recurring failures).")
         return
-    from ..budget import Budget
     from ..llm import LLM, model_for_role
-    from ..orchestrator import run_goal
     from ..sandbox import build_sandbox
 
     llm = LLM(model=ctx.obj["model"] or model_for_role("orchestrator"))
     sandbox = build_sandbox()
-    cases_by_prompt = {str(c.get("prompt", "")): c for c in cases}
 
-    async def _practice(prompt: str) -> str:
-        case = cases_by_prompt.get(prompt, {})
-        gid = world.create_goal(
-            f"[rehearsal] {prompt[:200]}",
-            "Dream-time rehearsal of a previously-failing goal pattern.",
-        )
-        return await run_goal(
-            llm=llm, world=world, budget=Budget(max_dollars=rehearse_budget),
-            goal_id=gid, sandbox=sandbox, domain=case.get("domain"),
+    async def _practice(
+        prompt: str, *, matter_id: int, owner: str, domain: str,
+    ) -> str:
+        return await _run_matter_rehearsal_goal(
+            world=world,
+            llm=llm,
+            sandbox=sandbox,
+            prompt=prompt,
+            matter_id=matter_id,
+            owner=owner,
+            domain=domain,
+            budget_dollars=rehearse_budget,
         )
 
     async def _score(prompt: str, output: str) -> float:
         # Verifier-scored rehearsal: completion alone is a weak signal, so a
         # case only counts as practiced when the calibrated verifier rates
         # the answer too. Scoring spends from its own small budget.
+        from ..budget import Budget
         from ..verifier import verify_proposal
         v = await verify_proposal(
             prompt, output, llm, Budget(max_dollars=max(0.25, rehearse_budget / 4)),
         )
         return float(getattr(v, "confidence", 0.0) or 0.0)
 
+    async def _run_all_scopes() -> tuple[int, int]:
+        passed = total = 0
+        scopes = sorted({
+            (int(case["matter_id"]), str(case["owner"]))
+            for case in cases
+        })
+        for matter_id, owner in scopes:
+            scope_passed, scope_total = await dreaming.rehearse(
+                _practice,
+                scorer=_score,
+                matter_id=matter_id,
+                owner=owner,
+            )
+            passed += scope_passed
+            total += scope_total
+        return passed, total
+
     try:
         passed, total = _run_dreaming_guarded(
-            lambda: asyncio.run(dreaming.rehearse(_practice, scorer=_score)),
+            lambda: asyncio.run(_run_all_scopes()),
         )
     except dreaming.RehearsalFrozen as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"Rehearsal: {passed}/{total} previously-failing pattern(s) "
                "now complete (verifier-scored).")
-
-
-
-
-
-
-@main.group("tax")
-def tax_group() -> None:
-    """Tax preparation pipeline: uploaded documents -> first-pass draft return."""
-
-
-@tax_group.command("prepare")
-@click.argument("docs_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--filing-status", type=click.Choice(["single", "mfj", "hoh"]),
-              default="single", show_default=True,
-              help="Filing status for the first-pass computation.")
-@click.option("--dependents", default=0, show_default=True,
-              help="Qualifying children under 17 (child tax credit).")
-@click.option("--state", "state_code", default=None, metavar="XX",
-              help="Resident state for the state return (default: inferred "
-                   "from W-2 box 15).")
-@click.option("--estimated-payments", default=0.0, show_default=True,
-              help="Federal estimated tax already paid (Form 1040-ES).")
-@click.option("--prior-year-overpayment", default=0.0, show_default=True,
-              help="Prior-year overpayment applied to this year.")
-@click.option("--taxpayer-65", is_flag=True,
-              help="Taxpayer is 65 or older (additional standard deduction).")
-@click.option("--spouse-65", is_flag=True,
-              help="Spouse is 65 or older (MFJ; additional standard deduction).")
-@click.option("--taxpayer-blind", is_flag=True,
-              help="Taxpayer is blind (additional standard deduction).")
-@click.option("--spouse-blind", is_flag=True,
-              help="Spouse is blind (MFJ; additional standard deduction).")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]),
-              default="text", show_default=True,
-              help="Output format: human review package or structured JSON "
-                   "for programmatic intake.")
-@click.option("--out", "out_path", type=click.Path(), default=None,
-              help="Also write the review package to this file.")
-def tax_prepare(docs_dir: str, filing_status: str, dependents: int,
-                state_code: str | None, estimated_payments: float,
-                prior_year_overpayment: float,
-                taxpayer_65: bool, spouse_65: bool, taxpayer_blind: bool,
-                spouse_blind: bool, fmt: str, out_path: str | None) -> None:
-    """Turn a folder of uploaded documents into a first-pass draft return.
-
-    Reads every ``*.txt`` document in DOCS_DIR (text exports of the client's
-    W-2s, 1099s, etc. -- extraction agents handle PDFs upstream), classifies
-    and extracts each one deterministically, assembles the workpaper, runs
-    the TY2025 federal first pass AND the resident-state first pass (no-tax
-    and flat-rate states computed; graduated states handed to the preparer /
-    tax engine), and prints the preparer review package: every line cited to
-    its source document, every out-of-scope item flagged as an OPEN ITEM.
-    A credentialed preparer reviews, completes, and signs -- this never
-    files anything.
-    """
-    from .. import tax_constants, tax_prep
-    try:
-        from ..config import get_tax
-        if get_tax()["auto_update"]:
-            status, detail = tax_constants.check_for_update()
-            if status == "applied":
-                click.echo(f"[tax] {detail}", err=(fmt == "json"))
-    except Exception:  # the update channel must never block a prep run
-        pass
-    federal, state_tables, provenance = tax_constants.active_constants()
-    docs = []
-    for p in sorted(Path(docs_dir).glob("*.txt")):
-        text = p.read_text(encoding="utf-8", errors="replace")
-        docs.append(tax_prep.extract(text, label=p.name))
-    wp = tax_prep.Workpaper(filing_status=filing_status,
-                            dependents_under_17=dependents, docs=docs,
-                            state=(state_code or ""),
-                            estimated_payments=estimated_payments,
-                            prior_year_overpayment=prior_year_overpayment,
-                            taxpayer_65_or_older=taxpayer_65,
-                            spouse_65_or_older=spouse_65,
-                            taxpayer_blind=taxpayer_blind,
-                            spouse_blind=spouse_blind)
-    draft = tax_prep.compute_first_pass(wp, constants=federal)
-    state = (tax_prep.compute_state_first_pass(
-                 wp, tax_prep.infer_state(wp), federal=draft,
-                 constants=state_tables)
-             if docs else None)
-    if fmt == "json":
-        import json
-        data = tax_prep.review_package_dict(draft, state)
-        data["constants"] = f"TY{federal['year']} {provenance}"
-        package = json.dumps(data, indent=2)
-    else:
-        package = tax_prep.render_review_package(draft, state)
-        package += f"\n\nConstants: TY{federal['year']} {provenance}"
-    click.echo(package)
-    if out_path:
-        Path(out_path).write_text(package + "\n", encoding="utf-8")
-        click.echo(f"\nWrote review package -> {out_path}",
-                   err=(fmt == "json"))
-
-
-@tax_group.command("backtest")
-@click.argument("cases_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--tolerance", default=None, type=float,
-              help="Dollar tolerance for an in-scope line match "
-                   "(default $1.00).")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]),
-              default="text", show_default=True,
-              help="Output format: human report or structured JSON.")
-@click.option("--out", "out_path", type=click.Path(), default=None,
-              help="Also write the back-test report to this file.")
-def tax_backtest(cases_dir: str, tolerance: float | None, fmt: str,
-                 out_path: str | None) -> None:
-    """Measure first-pass accuracy against a firm's PRIOR FILED returns.
-
-    Point this at a folder of case subdirectories -- each holding a client's
-    source ``*.txt`` documents plus a ``filed.json`` with the figures the firm
-    actually filed -- and it runs the deterministic pipeline on every case and
-    reports how close the draft lands. Returns carrying items the engine
-    deliberately doesn't compute (Schedule C/D/E, itemized, graduated-state,
-    unsupported status) are listed OUT OF SCOPE and excluded from the accuracy
-    number, so "matched N of M in-scope within $T" is an honest signal a firm
-    can act on in an afternoon -- on its own data, not synthetic samples.
-    """
-    from .. import tax_backtest as bt
-    tol = bt.DEFAULT_TOLERANCE if tolerance is None else tolerance
-    report = bt.run_backtest_dir(cases_dir, tolerance=tol)
-    if fmt == "json":
-        import json
-        text = json.dumps(bt.backtest_dict(report), indent=2)
-    else:
-        text = bt.render_backtest(report)
-    click.echo(text)
-    if out_path:
-        Path(out_path).write_text(text + "\n", encoding="utf-8")
-        click.echo(f"\nWrote back-test report -> {out_path}")
-
-
-@tax_group.command("onboard")
-@click.argument("profile", type=click.Path(exists=True, dir_okay=False))
-def tax_onboard(profile: str) -> None:
-    """Scope a firm's pilot from its intake profile (a TOML file).
-
-    Sorts every state the firm serves into computed-first-pass (no-tax / flat)
-    vs handed-off (graduated -- their tax engine owns it), resolves the firm's
-    document-label taxonomy to the canonical types, and prints a ready-to-pilot
-    verdict with blockers (must fix) separated from warnings. Run this first to
-    set expectations, then `maverick tax backtest` to prove accuracy on the
-    firm's own prior filed returns -- together they make "intake in days"
-    concrete. Exits non-zero when there are blockers.
-    """
-    from .. import tax_onboarding as ob
-    rep = ob.assess_readiness(ob.load_profile(profile))
-    click.echo(ob.render_readiness(rep))
-    if not rep.ready_to_pilot:
-        raise click.ClickException("onboarding blockers must be resolved "
-                                   "before intake (see above)")
-
-
-@tax_group.command("update")
-@click.option("--file", "bundle_file", type=click.Path(exists=True),
-              default=None, help="Apply a signed constants bundle from a "
-              "file (air-gapped transport).")
-@click.option("--url", default=None,
-              help="Check this URL instead of [tax] update_url.")
-@click.option("--status", "show_status", is_flag=True,
-              help="Show the applied constants version and exit.")
-@click.option("--rollback", "do_rollback", is_flag=True,
-              help="Restore the previously applied constants bundle.")
-def tax_update(bundle_file: str | None, url: str | None,
-               show_status: bool, do_rollback: bool) -> None:
-    """Update the tax computation constants from a SIGNED publisher bundle.
-
-    New tax law ships as a content release, not a code release: the bundle
-    is Ed25519-verified against [tax] trusted_constants_pubkeys
-    (fail-closed), sanity-validated (rates, brackets, state codes), and
-    downgrade-protected before it can replace the tables. With [tax]
-    auto_update + update_url configured, `maverick tax prepare` runs this
-    check automatically (throttled), so a published law change reaches
-    every prep run without an upgrade. The previous bundle is kept for
-    --rollback; every apply writes an audit row.
-    """
-    from .. import tax_constants
-    if show_status:
-        federal, _, provenance = tax_constants.active_constants()
-        click.echo(f"TY{federal['year']} constants: {provenance}")
-        return
-    if do_rollback:
-        ok, reason = tax_constants.rollback()
-        if not ok:
-            raise click.ClickException(reason)
-        click.echo(reason)
-        return
-    if bundle_file:
-        ok, reason = tax_constants.apply_bundle_file(bundle_file)
-        if not ok:
-            raise click.ClickException(reason)
-        click.echo(reason)
-        return
-    status, detail = tax_constants.check_for_update(url=url, force=True)
-    if status == "error":
-        raise click.ClickException(detail)
-    click.echo(f"{status}: {detail}")
-
-
-
-
-
 

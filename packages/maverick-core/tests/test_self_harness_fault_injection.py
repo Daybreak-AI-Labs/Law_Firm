@@ -39,6 +39,8 @@ from maverick import secrets as secrets_mod
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 ORIG = {"M": "Operating guidance learned for this model:\n- seeded line"}
 
 
@@ -88,7 +90,7 @@ def _promote(store, *, model="M", n=4):
     recs = [{"model_id": model, "failure_class": "timeout",
              "goal_text": f"do the thing {i}", "failure_msg": "timed out"}
             for i in range(n)]
-    return sh.run_self_harness(
+    return run_operator_harness(
         recs, model_id=model, min_support=3, held_in=["a", "b"],
         held_out=["c", "d", "e", "f", "g"], score_with=lambda a, c: 0.95,
         score_without=lambda a, c: 0.4, controller=ctrl, path=store)
@@ -180,7 +182,7 @@ def _promote_with(store, **kw):
     recs = [{"model_id": "M", "failure_class": "timeout",
              "goal_text": f"do the thing {i}", "failure_msg": "timed out"}
             for i in range(4)]
-    return sh.run_self_harness(
+    return run_operator_harness(
         recs, model_id="M", min_support=3, held_in=["a", "b"],
         held_out=["c", "d", "e", "f", "g"], score_with=lambda a, c: 0.95,
         score_without=lambda a, c: 0.4, controller=ctrl, path=store, **kw)

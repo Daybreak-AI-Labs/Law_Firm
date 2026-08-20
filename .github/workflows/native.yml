@@ -5,13 +5,13 @@ name: Native (Rust)
 #     scanners; absent => pure-Python fallback, so this is additive.
 #   - the `mvk-scan-wasm` package (wasm-bindgen) — TypeScript / edge.
 # The whole point: CI here *exercises the native path* (the parity tests skip in
-# the main suite because the wheel isn't built there) and produces installable
-# artifacts. Publish is gated on a tag + configured registry credentials.
+# the main suite because the wheel isn't built there). The wheel is retained only
+# as a short-lived GitHub Actions artifact for debugging this CI run; this
+# workflow does not publish release assets or write to a package registry.
 
 on:
   push:
     branches: [main]
-    tags: ["native-v*"]
   pull_request:
     paths:
       - "rust/**"
@@ -34,11 +34,10 @@ on:
 permissions:
   contents: read
 
-# A new push to the same ref supersedes in-flight runs (tags excepted — those
-# feed publish and must each complete).
+# A new push to the same ref supersedes in-flight runs.
 concurrency:
   group: native-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: "1"
@@ -139,11 +138,8 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "RUSTFLAGS=-C link-arg=/Brepro" >> "$GITHUB_ENV"
           fi
-      # One clean build into dist/. Upstream built twice, into dist-first and
-      # dist-second, so a reproducibility step could hash both and promote one
-      # to dist/. That step proved a PUBLISHED wheel matches its source and is
-      # gone with the rest of the distribution machinery, so build once and
-      # build straight into the directory the install step reads.
+      # Build once into the directory used by the parity test. The wheel is a CI
+      # diagnostic artifact, not a published distribution.
       - name: Build the maverick_native wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         env:
@@ -175,7 +171,7 @@ jobs:
           PY
           # setup-python's Windows image carries runner-owned pipx packages in
           # the global environment. Verify dependency closure inside a fresh
-          # venv so image contents cannot contaminate the release gate.
+          # venv so image contents cannot contaminate the parity check.
           python -I -m venv .native-parity-venv
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             parity_python=".native-parity-venv/Scripts/python.exe"

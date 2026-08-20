@@ -13,6 +13,7 @@ have been registered.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
@@ -80,12 +81,15 @@ def check(path: str | os.PathLike, *, action: str = "access") -> None:
     with _lock:
         hit = p in _canaries
     if hit:
-        # Audit-log before raising. Fail-safe (audit failures don't block).
-        try:
-            from ..audit import record
-            record("sandbox_canary_fired", path=p, action=action)
-        except Exception:  # pragma: no cover
-            pass
+        # Record only a path commitment; the private workspace layout itself is
+        # not useful audit content. Compliance refusals still block the access.
+        from ..audit import audit_event
+
+        audit_event(
+            "sandbox_canary_fired",
+            path_sha256=hashlib.sha256(p.encode("utf-8")).hexdigest(),
+            action=action,
+        )
         raise SandboxCanaryFired(p, action)
 
 

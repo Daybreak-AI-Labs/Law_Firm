@@ -1,14 +1,13 @@
 """Per-user department (suite) access grants: job-function scoping (kernel).
 
 The dashboard's privilege RBAC (``maverick_dashboard.rbac``) answers "how MUCH
-may this user do?"; this store answers the orthogonal "WHICH part of the
-workforce may they use?" — a finance analyst granted ``{"finance", "tax"}``
-works with Finance and Tax specialists, never Legal's.
+may this user do?"; this store answers the orthogonal "WHICH legal practice
+group may they use?" — a principal granted ``{"legal"}`` cannot cross into a
+future ungranted suite.
 
-This module is the KERNEL home of the store and its enforcement so that every
-caller — the dashboard, the CLI, and any future networked surface — shares one
-source of truth (:func:`ensure_suite_allowed` at the deploy/dispatch
-chokepoints in :mod:`maverick.departments` and :mod:`maverick.fleet`).
+This module is the kernel home of the store and its enforcement so retained
+authenticated callers share one source of truth via
+:func:`ensure_suite_allowed`.
 ``maverick_dashboard.suite_grants`` re-exports this module for backward
 compatibility; the dashboard additionally layers SCIM-group-derived grants on
 top at HTTP resolution time (see ``maverick_dashboard.auth.caller_suites``).

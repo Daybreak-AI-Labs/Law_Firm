@@ -224,6 +224,9 @@ class TestStructuredVerify:
     async def test_reward_signed_into_audit_when_enabled(
         self, fake_llm, make_llm_response, monkeypatch,
     ):
+        import hashlib
+        import json
+
         import maverick.audit as audit
         from maverick import reasoning_reward
         from maverick.budget import Budget
@@ -232,19 +235,26 @@ class TestStructuredVerify:
         recorded = []
         monkeypatch.setattr(audit, "record",
                             lambda kind, **kw: recorded.append((kind, kw)) or True)
+        critique = "Client Falcon privileged merger analysis from merger.docx"
         fake_llm.scripted = [make_llm_response(text=(
             '{"reasoning": "long trace", "dimensions": '
             '[{"name": "correctness", "score": 1.0},'
             '{"name": "completeness", "score": 1.0},'
             '{"name": "grounding", "score": 1.0},'
             '{"name": "safety", "score": 0.1, "critique": "unsafe"}], '
-            '"score": 0.9, "confidence": 0.8}'))]
+            f'"critique": "{critique}", "score": 0.9, "confidence": 0.8}}'))]
         await verify_proposal_structured("b", "a", fake_llm, Budget())
         assert recorded, "structured reward was not signed into the audit chain"
         kind, payload = recorded[0]
         assert kind == audit.EventKind.VERIFICATION_REWARD
         assert payload["vetoed"] is True and "dimensions" in payload
         assert "reasoning" not in payload  # compact summary, not the full trace
+        assert "critique" not in payload
+        assert payload["critique_bytes"] == len(critique.encode("utf-8"))
+        assert payload["critique_sha256"] == hashlib.sha256(
+            critique.encode("utf-8")
+        ).hexdigest()
+        assert critique not in json.dumps(payload, ensure_ascii=False)
 
     @pytest.mark.asyncio
     async def test_reward_not_audited_when_disabled(
@@ -305,36 +315,3 @@ class TestStructuredVerify:
         # Routed to the rubric judge: the safety veto rejected despite score 0.9.
         assert v.accepts is False
         assert v.reward_audit is not None
-
-
-@pytest.mark.asyncio
-async def test_ensemble_reraises_budget_exceeded_not_swallowed():
-    # A BudgetExceeded from one panel member must PROPAGATE out of the ensemble
-    # (so the budget stops the run), not be collected by gather(return_exceptions)
-    # and folded into a combined reject verdict. The other member is still awaited
-    # rather than orphaned. Regression for the gather() that used to propagate
-    # mid-flight and leave siblings running.
-    from types import SimpleNamespace
-
-    from maverick.budget import Budget, BudgetExceeded
-    from maverick.verifier import verify_proposal_ensemble
-
-    class _PanelLLM:
-        def __init__(self):
-            self.calls = []
-
-        async def complete_async(self, **kw):
-            self.calls.append(kw.get("model"))
-            if kw.get("model") == "m-budget":
-                raise BudgetExceeded("verifier out of budget")
-            return SimpleNamespace(
-                text='{"confidence": 0.9, "accepts": true, "critique": "ok", "issues": []}')
-
-    llm = _PanelLLM()
-    with pytest.raises(BudgetExceeded):
-        await verify_proposal_ensemble(
-            "brief", "a genuine proposal to verify", llm, Budget(),
-            panel=["m-ok", "m-budget"], weighted=True,
-        )
-    # Both members were awaited (the panel ran), not just the failing one.
-    assert set(llm.calls) == {"m-ok", "m-budget"}

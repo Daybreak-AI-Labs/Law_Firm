@@ -1,9 +1,7 @@
-"""SQL query tool — read-only by default, over a local SQLite database.
+"""Permanently read-only SQL query tool over a local SQLite database.
 
-Lets the agent inspect a SQLite file with real SQL. Read-only is the
-default and is enforced with a read-only connection plus a SQLite authorizer,
-so a SELECT can never mutate the database even if a write slips past the
-keyword guard. Set ``read_only=false`` to allow writes.
+The read-only connection and SQLite authorizer are both mandatory, so a model
+cannot turn a research tool into a workspace database writer.
 
 SQLite only for v1 (stdlib, no dependency, and it's the same engine the
 world model uses). The DB path is confined to the sandbox workspace.
@@ -75,10 +73,6 @@ _SQL_QUERY_SCHEMA: dict[str, Any] = {
             "type": "integer",
             "description": f"Max rows to return (1-{_MAX_ROWS_CAP}, default 100).",
         },
-        "read_only": {
-            "type": "boolean",
-            "description": "Reject writes and open the DB read-only. Default true.",
-        },
     },
     "required": ["database", "query"],
 }
@@ -116,20 +110,6 @@ def _read_only_authorizer(action: int, _arg1: str | None, _arg2: str | None,
     return sqlite3.SQLITE_OK
 
 
-# Even in WRITE mode the tool is confined to the workspace-checked `database`
-# path. ATTACH/DETACH would let a statement reach an arbitrary filesystem path
-# (`ATTACH DATABASE '/etc/passwd' AS x`) and read/write outside that confinement,
-# so deny them while still permitting normal DML/DDL on the main database.
-_WRITE_DENIED_ACTIONS = frozenset({sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH})
-
-
-def _write_authorizer(action: int, _arg1: str | None, _arg2: str | None,
-                      _db_name: str | None, _trigger: str | None) -> int:
-    if action in _WRITE_DENIED_ACTIONS:
-        return sqlite3.SQLITE_DENY
-    return sqlite3.SQLITE_OK
-
-
 def _format_rows(cols: list[str], rows: list[tuple]) -> str:
     header = " | ".join(cols)
     sep = "-+-".join("-" * len(c) for c in cols)
@@ -147,8 +127,8 @@ def _run_sql_query(args: dict[str, Any], sandbox) -> str:
         return "ERROR: database is required"
     if not query:
         return "ERROR: query is required"
-    read_only = args.get("read_only")
-    read_only = True if read_only is None else bool(read_only)
+    if "read_only" in args and args.get("read_only") is not True:
+        return "ERROR: sql_query is permanently read-only"
     try:
         max_rows = int(args.get("max_rows") or 100)
     except (TypeError, ValueError):
@@ -166,36 +146,22 @@ def _run_sql_query(args: dict[str, Any], sandbox) -> str:
     if not p.is_file():
         return f"ERROR: database file not found: {database!r}"
 
-    if read_only and _looks_like_write(query):
-        return "ERROR: write statement rejected in read-only mode (set read_only=false to allow)"
+    if _looks_like_write(query):
+        return "ERROR: write statement rejected; sql_query is permanently read-only"
 
     conn = None
     try:
-        if read_only:
-            # mode=ro protects the main DB; the authorizer also denies SQLite
-            # operations that could write through attached/temp databases or
-            # filesystem paths embedded in SQL (for example ATTACH/VACUUM INTO).
-            conn = sqlite3.connect(f"{p.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
-            conn.set_authorizer(_read_only_authorizer)
-        else:
-            conn = sqlite3.connect(str(p), timeout=10)
-            # Confine writes to the checked database path: deny ATTACH/DETACH so
-            # a statement can't reach an arbitrary filesystem path.
-            conn.set_authorizer(_write_authorizer)
+        # mode=ro protects the main DB; the authorizer also denies SQLite
+        # operations that could write through attached/temp databases or
+        # filesystem paths embedded in SQL (for example ATTACH/VACUUM INTO).
+        conn = sqlite3.connect(f"{p.resolve().as_uri()}?mode=ro", uri=True, timeout=10)
+        conn.set_authorizer(_read_only_authorizer)
         cur = conn.execute(query, params)
         if cur.description is None:
-            conn.commit()
-            return f"OK: {cur.rowcount} row(s) affected"
+            return "OK: statement completed without rows"
         cols = [d[0] for d in cur.description]
         rows = cur.fetchmany(max_rows)
         truncated = cur.fetchone() is not None
-        # A write with a RETURNING clause (INSERT/UPDATE/DELETE ... RETURNING)
-        # produces a cursor description, so it lands here rather than the branch
-        # above -- but it still opened an implicit transaction that sqlite rolls
-        # back on close unless we commit. In read-only mode nothing mutated, so
-        # committing is a harmless no-op; do it for writes to persist RETURNING.
-        if not read_only:
-            conn.commit()
         out = _format_rows(cols, rows)
         summary = f"\n({len(rows)} row(s)" + (f", truncated at {max_rows}" if truncated else "") + ")"
         return (out + summary)[:_MAX_OUTPUT]
@@ -214,8 +180,8 @@ def sql_query(sandbox=None) -> Tool:
         name="sql_query",
         description=(
             "Run a SQL query against a local SQLite database file. "
-            "Read-only by default (writes are rejected and the DB is opened "
-            "read-only); pass read_only=false to allow INSERT/UPDATE/etc. "
+            "Permanently read-only: writes are rejected and the DB is opened "
+            "with SQLite read-only mode plus an authorizer. "
             "Use `params` for ? placeholders, `max_rows` to cap output. "
             "Returns a formatted table."
         ),

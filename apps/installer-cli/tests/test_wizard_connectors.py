@@ -9,10 +9,10 @@ from __future__ import annotations
 
 def _fake_catalog():
     return [
-        {"name": "servicenow", "label": "ServiceNow",
-         "env": [("SERVICENOW_INSTANCE_URL", False), ("SERVICENOW_TOKEN", True)]},
-        {"name": "snowflake", "label": "Snowflake",
-         "env": [("SNOWFLAKE_ACCOUNT", False), ("SNOWFLAKE_TOKEN", True)]},
+        {"name": "clio_read", "label": "Clio (read only)",
+         "env": [("CLIO_BASE_URL", False), ("CLIO_TOKEN", True)]},
+        {"name": "docusign_read", "label": "DocuSign (read only)",
+         "env": [("DOCUSIGN_BASE_URL", False), ("DOCUSIGN_TOKEN", True)]},
     ]
 
 
@@ -40,13 +40,13 @@ def test_collects_url_and_secret(monkeypatch):
     keys = _drive(
         monkeypatch,
         enable=True,
-        names="servicenow",
-        texts=["https://acme.service-now.com"],  # SERVICENOW_INSTANCE_URL (url)
-        secrets=["tok-123"],                      # SERVICENOW_TOKEN (secret)
+        names="clio_read",
+        texts=["https://app.clio.com"],
+        secrets=["tok-123"],
     )
     assert keys == {
-        "SERVICENOW_INSTANCE_URL": "https://acme.service-now.com",
-        "SERVICENOW_TOKEN": "tok-123",
+        "CLIO_BASE_URL": "https://app.clio.com",
+        "CLIO_TOKEN": "tok-123",
     }
 
 
@@ -54,43 +54,37 @@ def test_unknown_name_skipped(monkeypatch):
     keys = _drive(
         monkeypatch,
         enable=True,
-        names="servicenow, not_a_real_system",
-        texts=["https://acme.service-now.com"],
+        names="clio_read, not_a_real_system",
+        texts=["https://app.clio.com"],
         secrets=["tok-123"],
     )
     # The bogus name contributes nothing; the valid one is still collected.
     assert keys == {
-        "SERVICENOW_INSTANCE_URL": "https://acme.service-now.com",
-        "SERVICENOW_TOKEN": "tok-123",
+        "CLIO_BASE_URL": "https://app.clio.com",
+        "CLIO_TOKEN": "tok-123",
     }
 
 
 def test_blank_values_are_not_written(monkeypatch):
     keys = _drive(
-        monkeypatch, enable=True, names="snowflake",
-        texts=[""],     # SNOWFLAKE_ACCOUNT left blank
-        secrets=[""],   # SNOWFLAKE_TOKEN left blank
+        monkeypatch, enable=True, names="docusign_read",
+        texts=[""],
+        secrets=[""],
     )
     assert keys == {}
 
 
 def test_catalog_is_the_source_of_truth():
-    """The real catalog is well-formed and covers headline systems."""
+    """The real catalog is well-formed and limited to retained legal systems."""
     from maverick.tools.enterprise_connectors import connector_catalog
 
     cat = connector_catalog()
     names = [e["name"] for e in cat]
     assert len(names) == len(set(names)), "connector names must be unique"
-    # Floor guarding against an empty/one-entry catalog, not a headcount --
-    # the roster is scoped to legal practice, not the upstream SaaS catalogue.
-    assert len(cat) >= 100
-    # The systems a firm actually runs. The dedicated-module connectors for
-    # enterprise systems (salesforce, servicenow, snowflake, sap, workday, ...)
-    # are still in tools/ and still in this catalog, but they are not something
-    # this fork guarantees, so they are not asserted here.
-    for headline in ("clio", "westlaw", "pacer", "docusign", "ironclad",
-                     "imanage", "quickbooks"):
-        assert headline in names, headline
+    assert set(names) == {
+        "carta_read", "clio_read", "contractbook_read", "docusign_read",
+        "ironclad_read",
+    }
     # Shape: each entry has a label and (env_name, is_secret) pairs.
     for e in cat:
         assert e["label"] and isinstance(e["env"], list) and e["env"]

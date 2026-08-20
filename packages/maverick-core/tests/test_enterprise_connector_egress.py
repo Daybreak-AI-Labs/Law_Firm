@@ -1,8 +1,5 @@
-"""The enterprise tool-egress lock also covers REST connectors and MCP-HTTP,
-not just http_fetch / web_search."""
+"""The enterprise tool-egress lock covers retained REST connectors."""
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 
@@ -47,33 +44,3 @@ def test_connector_egress_noop_when_enterprise_off(monkeypatch):
     tool = _acme_tool(monkeypatch, "https://acme.invalid")
     out = tool.fn({"op": "get", "path": "/x"})       # enterprise off
     assert "enterprise mode" not in out               # not blocked
-
-
-def test_mcp_http_egress_blocked_under_enterprise(monkeypatch):
-    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
-    from maverick.mcp_client import (
-        MCPClientError,
-        MCPServerSpec,
-        StreamableHttpMCPClient,
-    )
-    client = StreamableHttpMCPClient(
-        MCPServerSpec(name="remote", url="https://mcp.invalid/rpc"))
-    with pytest.raises(MCPClientError) as exc:
-        asyncio.run(client.start())                   # refused before connecting
-    assert "enterprise mode" in str(exc.value) and "mcp.invalid" in str(exc.value)
-
-
-def test_mcp_http_allowed_host_passes_the_egress_gate(monkeypatch):
-    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
-    monkeypatch.setattr(
-        "maverick.config.load_config",
-        lambda *a, **k: {"enterprise": {"allowed_hosts": ["mcp.invalid"]}},
-    )
-    from maverick.mcp_client import MCPServerSpec, StreamableHttpMCPClient
-    client = StreamableHttpMCPClient(
-        MCPServerSpec(name="remote", url="https://mcp.invalid/rpc"))
-    # Allow-listed: past the gate, so any failure is a connection error, not the
-    # enterprise egress denial.
-    with pytest.raises(Exception) as exc:  # noqa: PT011 - connection error shape varies
-        asyncio.run(client.start())
-    assert "enterprise mode" not in str(exc.value)

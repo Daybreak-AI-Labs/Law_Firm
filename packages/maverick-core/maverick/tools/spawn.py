@@ -173,9 +173,8 @@ async def _run_child_and_report(parent, child) -> str:
 
     Shared by ``spawn_subagent`` and ``spawn_specialist``: registers the child
     with quarantine before execution, refuses already sealed children, returns
-    the spawn slot if the child RAISES (#612), emits ``SUBAGENT_STOP``, withholds
-    a sealed child's (attacker-influenced) output (Rung 1), then normalizes the
-    result.
+    the spawn slot if the child RAISES (#612), withholds a sealed child's
+    (attacker-influenced) output (Rung 1), then normalizes the result.
     """
     _register_child_with_quarantine(parent.ctx, child)
     notice = _sealed_notice(parent.ctx, child)
@@ -187,19 +186,9 @@ async def _run_child_and_report(parent, child) -> str:
     except BaseException:
         parent.ctx.release_spawns(1)
         raise
-    # Containment Rung 1: a sealed child's final is attacker-influenced, so it
-    # must never surface -- not even inside a SUBAGENT_STOP hook payload (hook
-    # consumers log/route it). Compute the withhold notice BEFORE emitting and
-    # hand the hook the notice instead of the raw final when the child is sealed.
+    # Containment Rung 1: a sealed child's final is attacker-influenced and must
+    # never surface.
     notice = _sealed_notice(parent.ctx, child)
-    from ..hooks import HookEvent
-    from ..hooks import emit as _emit_hook
-    await _emit_hook(
-        HookEvent.SUBAGENT_STOP,
-        goal_id=parent.ctx.goal_id, agent_role=child.role,
-        extra={"name": child.name,
-               "final": notice if notice is not None else (result.final or "")},
-    )
     if notice is not None:
         return notice
     if result.final:
@@ -313,12 +302,7 @@ def _resolve_swarm_fanout(parent: Agent) -> int:
 
 
 def _record_swarm_disagreement(parent: Agent, children: list, results: list) -> bool:
-    """Measure disagreement across children's FINAL answers, record it, and
-    escalate FINAL verification when it crosses the autonomy threshold.
-
-    Returns ``True`` when verification was escalated (so the caller prepends the
-    reconcile note), ``False`` otherwise.
-    """
+    """Measure disagreement across child answers without changing providers."""
     finals = [
         res.final for child, res in zip(children, results, strict=False)
         if not isinstance(res, Exception) and res.final
@@ -332,35 +316,9 @@ def _record_swarm_disagreement(parent: Agent, children: list, results: list) -> 
         parent.name, "verify",
         f"swarm disagreement entropy={entropy:.3f} across {len(finals)} answers",
     )
-    # Stamp on the context so the orchestrator's verify branch, the
-    # autonomy gate, and the donation selector can read it.
+    # Stamp on the context so trust/risk logic can read it.
     parent.ctx.last_disagreement = entropy
-
-    # Loop 1: act on high disagreement. Ask the orchestrator's FINAL to
-    # be verified by the cross-family ensemble (a stronger, lockstep-
-    # resistant label exactly where it matters most) and instruct the
-    # caller to reconcile the divergent answers rather than cherry-pick.
-    from .. import autonomy
-    if not autonomy.should_escalate_verification(entropy):
-        return False
-    parent.ctx.escalate_verification = True
-    parent.ctx.blackboard.post(
-        parent.name, "verify",
-        f"high swarm disagreement ({entropy:.3f}); escalating FINAL "
-        "verification to the cross-family ensemble",
-    )
-    try:  # tamper-evident record of the escalation; never block
-        from ..audit import EventKind, record
-        record(
-            EventKind.AUTONOMY_ESCALATED,
-            agent=parent.name,
-            goal_id=parent.ctx.goal_id,
-            disagreement=round(entropy, 4),
-            answers=len(finals),
-        )
-    except Exception:  # pragma: no cover -- audit must never break the loop
-        pass
-    return True
+    return False
 
 
 async def _swarm_credit_assignment(parent: Agent, children: list, results: list) -> None:
@@ -584,17 +542,6 @@ async def _run_swarm(parent: Agent, args: dict) -> str:
     for res in results:
         if isinstance(res, (_BE, _ks.Halted)):
             raise res
-
-    # SubagentStop hooks: one per child that completed without raising.
-    from ..hooks import HookEvent
-    from ..hooks import emit as _emit_hook
-    for child, res in zip(children, results, strict=False):
-        if not isinstance(res, Exception):
-            await _emit_hook(
-                HookEvent.SUBAGENT_STOP,
-                goal_id=parent.ctx.goal_id, agent_role=child.role,
-                extra={"name": child.name, "final": res.final or ""},
-            )
 
     # Karpathy SOTA-review item: measure disagreement across the children's
     # FINAL answers, record it on the blackboard, and escalate FINAL

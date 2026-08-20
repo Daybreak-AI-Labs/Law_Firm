@@ -2,7 +2,7 @@
 
 A :class:`DomainProfile` describes one specialist domain (finance, legal,
 privacy/compliance, generic, ...): its persona, the capability envelope its
-agents run under, the tools / MCP servers it may use, model overrides, and the
+agents run under, the tools it may use, model overrides, and the
 knowledge sources (uploaded docs) it draws on. Two authoring paths feed the
 same schema:
 
@@ -30,16 +30,13 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
-from .agent_autonomy import AutonomyProfile
-from .safety.tool_risk import risk_rank, tool_risk
-
 # Keys we accept from a pack's TOML. Unknown keys are ignored so a newer pack
 # can't crash an older loader.
 _FIELDS = frozenset({
     "compartment", "description", "persona", "allow_tools", "deny_tools",
-    "max_risk", "allow_paths", "allow_hosts", "mcp_servers", "models",
+    "max_risk", "allow_paths", "allow_hosts", "models",
     "knowledge_sources", "authoring", "extends", "workflow", "output", "effort",
-    "refuse", "autonomy",
+    "refuse",
 })
 
 _MAX_DOMAIN_FILE_BYTES = 256 * 1024
@@ -165,7 +162,6 @@ class DomainProfile:
     max_risk: str | None = None
     allow_paths: list[str] = field(default_factory=list)
     allow_hosts: list[str] = field(default_factory=list)
-    mcp_servers: list[str] = field(default_factory=list)
     models: dict[str, str] = field(default_factory=dict)
     knowledge_sources: list[str] = field(default_factory=list)
     authoring: str = "manual"      # "manual" | "generated"
@@ -174,7 +170,6 @@ class DomainProfile:
     extends: str = ""              # overlay base: inherit a pack, patch the rest
     workflow: list[WorkflowStep] = field(default_factory=list)  # editable playbook
     output: OutputContract = field(default_factory=OutputContract)  # the deliverable
-    autonomy: AutonomyProfile | None = None  # explicit [autonomy] block; None -> suite default
 
     def __post_init__(self) -> None:
         if not self.compartment:
@@ -246,8 +241,6 @@ def _coerce(name: str, data: dict) -> DomainProfile:
     if "refuse" in fields:
         raw = fields["refuse"]
         fields["refuse"] = ([str(r) for r in raw] if isinstance(raw, list) else [])
-    if "autonomy" in fields:
-        fields["autonomy"] = AutonomyProfile.from_toml(fields["autonomy"])
     return DomainProfile(name=name, **fields)
 
 
@@ -360,7 +353,6 @@ def overlay_profile(base: DomainProfile, patch: dict) -> DomainProfile:
         "max_risk": base.max_risk,
         "allow_paths": list(base.allow_paths),
         "allow_hosts": list(base.allow_hosts),
-        "mcp_servers": list(base.mcp_servers),
         "models": dict(base.models),
         "knowledge_sources": list(base.knowledge_sources),
         "authoring": base.authoring,
@@ -368,7 +360,6 @@ def overlay_profile(base: DomainProfile, patch: dict) -> DomainProfile:
         "refuse": list(base.refuse),
         "workflow": list(base.workflow),
         "output": base.output,
-        "autonomy": base.autonomy,
     }
     for k in overridden_fields(patch):
         data[k] = patch[k]
@@ -376,13 +367,6 @@ def overlay_profile(base: DomainProfile, patch: dict) -> DomainProfile:
         data["workflow"] = _coerce_workflow(patch["workflow"])
     if "output" in patch:
         data["output"] = _coerce_output(patch["output"])
-    # autonomy is a structured field, so coerce the raw TOML table the same way
-    # _coerce does on the load path. Without this the override loop above stored
-    # patch["autonomy"] as a bare dict, so downstream code expecting an
-    # AutonomyProfile broke; and without seeding it from base above, an overlay
-    # that didn't set [autonomy] silently dropped the base pack's autonomy.
-    if "autonomy" in patch:
-        data["autonomy"] = AutonomyProfile.from_toml(patch["autonomy"])
     return DomainProfile(name=base.name, **data)
 
 
@@ -489,6 +473,12 @@ SUITE_PREFIXES: dict[str, str] = {
 
 def suite_for(name: str) -> str | None:
     """The business suite a domain pack belongs to, or ``None`` (legacy/generic)."""
+    # The original hand-authored legal pack predates the ``legal_*`` naming
+    # convention but is still the shipped base law-firm specialist. Treating it
+    # as generic bypassed legal suite grants/toggles and made the firm-only goal
+    # admission policy reject its own canonical profile.
+    if name == "legal":
+        return "legal"
     for prefix, suite in SUITE_PREFIXES.items():
         if name.startswith(prefix):
             return suite
@@ -525,91 +515,17 @@ def enabled_domains(cfg: dict | None = None) -> dict[str, DomainProfile]:
     }
 
 
-# Governed office actions a hire may EXECUTE once per-agent autonomy levels are
-# on -- comms and scheduling, every one classified high-risk so the autonomy
-# dial + governance gate hold them to the agent's authority (staged or approved
-# per rung; never raw). This is the dial-coupled grant that turns a read-only
-# specialist into one that can actually take governed actions. Domain-specific
-# governed writes (update a record, file a doc) are layered per suite on top.
-_GOVERNED_ACTION_BUNDLE = frozenset({"email", "notify", "calendar"})
-
-
-def data_grounding_enabled() -> bool:
-    """Whether packs are granted their suite's primary-source data connectors.
-
-    ON by default (these are GET-only, LOW-risk public/government data readers,
-    deferred so they cost no context until ``find_tools`` surfaces them, and
-    inert without their env key). ``MAVERICK_WORKFORCE_DATA_GROUNDING`` overrides
-    the ``[workforce] data_grounding`` config either way. Never raises."""
-    import os
-    env = os.environ.get("MAVERICK_WORKFORCE_DATA_GROUNDING", "").strip().lower()
-    if env in {"0", "false", "no", "off"}:
-        return False
-    try:
-        from .config import config_source_errors, get_workforce
-
-        settings = get_workforce()
-        # ``load_config`` deliberately maps unreadable TOML to defaults. At an
-        # additive capability boundary, policy loss must not restore the
-        # default-on connector grant or let a positive env flag bypass it.
-        if config_source_errors():
-            return False
-        if env in {"1", "true", "yes", "on"}:
-            return True
-        if env:
-            return False
-        return settings.get("data_grounding") is True
-    except Exception:  # pragma: no cover -- config must never block a run
-        return False
-
-
 def domain_capability(profile: DomainProfile, parent_cap, principal: str):
     """The Capability a domain agent runs under.
 
     With a parent grant present, attenuate it by the profile's scopes (never
     broaden); otherwise mint the profile's own envelope. Empty profile fields
     pass ``None`` so they inherit the parent's scope rather than emptying it --
-    an empty allow-set means "all", which would *broaden* the grant.
-
-    When the client has enabled per-agent autonomy levels (``[workforce]
-    levels``), a non-empty allowlist is expanded with the governed action bundle
-    so the hire can execute its job's output -- gated by its autonomy rung. Off
-    by default (kernel rule 1): no grant, the pack stays exactly read-only.
+    an empty allow-set means "all", which would *broaden* the grant. The firm
+    runtime never expands a pack's declared tools from global workforce knobs.
     """
     allow = set(profile.allow_tools)
     max_risk = profile.max_risk
-    if allow:  # only a real allowlist is expanded (empty == inherit, untouched)
-        try:
-            from .agent_autonomy import levels_enabled
-            if levels_enabled():
-                # The governed action bundle is high-risk, so packs with a
-                # low/medium ceiling need a high runtime ceiling for those
-                # actions to pass through to the autonomy gate. Keep that lift
-                # scoped to the new governed tools: tools that were already in
-                # the pack but above its declared ceiling were not reachable
-                # before levels were enabled and must not become reachable just
-                # because email/notify/calendar were added.
-                if max_risk in ("low", "medium"):
-                    allow = {
-                        tool for tool in allow
-                        if risk_rank(tool_risk(tool)) <= risk_rank(max_risk)
-                    }
-                    max_risk = "high"
-                allow = allow | _GOVERNED_ACTION_BUNDLE
-        except Exception:  # pragma: no cover -- never block capability build
-            pass
-        # Grant the pack's suite its primary-source data connectors (GET-only,
-        # LOW risk, deferred) so the analyst reaches for FRED/SEC EDGAR/openFDA/
-        # etc. by default. Additive to the allowlist; the LOW risk keeps them
-        # under a read-only pack's ceiling. allow_hosts is deliberately NOT
-        # widened -- a host-restricted pack stays restricted (the connector
-        # returns a graceful egress error) until an operator opts the host in.
-        try:
-            if data_grounding_enabled():
-                from .tools.enterprise_connectors import data_connectors_for_suite
-                allow = allow | set(data_connectors_for_suite(suite_for(profile.name)))
-        except Exception:  # pragma: no cover -- never block capability build
-            pass
     allow = allow or None
     deny = set(profile.deny_tools) or None
     paths = set(profile.allow_paths) or None
@@ -866,7 +782,6 @@ def agent_from_profile(profile: DomainProfile, ctx, task: str, *,
     spawn depth, works like a professional with its department's memory.
     """
     from .agent import Agent
-    from .agent_autonomy import default_profile_for, render_autonomy_prompt
     from .domain_discipline import augment_persona
     from .domain_refusals import render_refusals
     principal = principal or f"agent:{profile.name}-{depth}"
@@ -887,10 +802,8 @@ def agent_from_profile(profile: DomainProfile, ctx, task: str, *,
         domain=profile.compartment,
         persona=(augment_persona(profile.name, profile.persona)
                  + render_refusals(profile.name, profile.refuse)
-                 + render_autonomy_prompt(profile.name, profile.autonomy)
                  + render_workflow_prompt(profile.workflow)),
         capability=cap,
         knowledge_sources=profile.knowledge_sources,
         domain_effort=profile.effort,
-        autonomy=profile.autonomy or default_profile_for(profile.name),
     )

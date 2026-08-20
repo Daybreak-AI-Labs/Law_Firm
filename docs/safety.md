@@ -1,161 +1,58 @@
-# Safety
+# Safety boundary
 
-Maverick wraps its agent loop in [Agent Shield](https://github.com/cdayAI/agent-shield) at three chokepoints:
+The firm runtime ships `maverick-shield` in the same reviewed wheel cohort as
+the core. It scans model-bound user input, each tool call, and tool output before
+that content can return to the model or user.
 
-1. **Input scan** — every user message goes through `shield.scan_input()` before the orchestrator sees it.
-2. **Tool-call scan** — every `tool_use` request goes through `shield.scan_tool_call(name, args)` before the sandbox executes it.
-3. **Output scan** — every final answer goes through `shield.scan_output()` before reaching the user.
+Under the default secure posture, a missing scanner, scanner exception, or deny
+verdict prevents model/tool work or withholds the affected content. The older
+fail-open behavior is reachable only after explicitly disabling secure defaults
+and is not an approved client-matter configuration.
 
-All three chokepoints additionally run a **decode/defang pre-pass** (`maverick_shield/deobfuscate.py`): base64 / hex / percent-encoded payloads are decoded and Unicode homoglyphs (Cyrillic/Greek lookalikes NFKC leaves alone) plus zero-width/bidi chars are folded, then the detectors re-run over each variant — so an *encoded* `rm -rf /` is caught even when the literal surface form hides it. This is part of the **built-in** shield (not the optional SDK), is monotonic (it can only turn an allowed scan into a block, never the reverse), bounded against decode bombs, and fail-open. Escape hatch: `MAVERICK_SHIELD_NO_DECODE=1`.
+## What Shield does
 
-## Profiles
+- Scans input, tool arguments, and output at central orchestration and dispatch
+  chokepoints.
+- Normalizes hostile Unicode and re-scans bounded decoded variants to catch
+  encoded prompt injection.
+- Frames tool output as untrusted data, redacts detected secrets, and caps its
+  size before it re-enters model context.
+- Records blocks on the audit chain and can seal the affected run compartment.
 
-| Profile | Block threshold | Use case |
-|---|---|---|
-| `strict` | medium | Sensitive data, enterprise, regulated industries |
-| `balanced` | high | Recommended default for personal use |
-| `permissive` | critical | Research / experimentation |
-| `off` | — | Not recommended. Kernel-only mode for debugging. |
+The built-in rules are a local heuristic defense, not proof that content is safe.
+They supplement—never replace—exact-matter authorization, capability, egress,
+approval, audit, and qualified-attorney release gates.
 
-Set in `~/.maverick/config.toml`:
+## Firm configuration
 
 ```toml
+[security]
+secure_defaults = true
+
 [safety]
-profile = "balanced"
-block_threshold = "high"
+profile = "strict"
+scan_input = true
+scan_tool_calls = true
+scan_output = true
 ```
 
-## What gets caught
+Set `MAVERICK_REQUIRE_SHIELD=1` and run the regulated-deployment preflight before
+serving client matters. Do not use `profile = "off"`, disable a scan sink, or set
+`MAVERICK_SECURE_DEFAULT=0` in the firm deployment.
 
-The **built-in ~20-pattern** layer is what runs in every environment we ship: the
-full Agent Shield SDK (~115 patterns) is **not published on PyPI and not vendored
-here**, so the public package name is not an installation path and the fallback
-is not a fallback in practice — it is the product. The current internal, reproducible
-diagnostic is reported with its corpus size and confidence intervals on the
-[Shield benchmark page](./security/shield-benchmark.md). Those small,
-repository-authored held-out results are regression evidence, not a generalized
-public efficacy or marketing claim. The categories below describe the full SDK
-ruleset; treat them as a coverage target, not as shipped coverage:
+The separately named `agent-shield` SDK remains optional. If absent, the reviewed
+`maverick-shield` built-in backend still runs. Evidence in
+[the Shield benchmark](security/shield-benchmark.md) is repository regression
+evidence only; it is not a generalized efficacy or compliance claim.
 
-- **Prompt injection** — system prompt overrides, ChatML/LLaMA delimiters, instruction hijacking
-- **Role hijacking** — DAN mode, developer mode, persona attacks, jailbreaks
-- **Data exfiltration** — prompt extraction, markdown image leaks, DNS tunneling, side-channel encoding
-- **Tool abuse** — shell execution attempts, SQL injection, path traversal, sensitive file access
-- **Social engineering** — identity concealment, urgency + authority, gaslighting, false pre-approval
-- **Obfuscation** — Unicode homoglyphs, zero-width chars, Base64/hex/ROT13/leetspeak
-- **Indirect injection** — RAG poisoning, tool output injection, email/document payloads
-- **Visual deception** — hidden HTML/CSS content, LaTeX phantom commands
-- **Multi-language attacks** — 19 languages including CJK, Arabic, Cyrillic, Hindi
-- **AI phishing** — fake AI login, QR phishing, MFA harvesting
-- **Sybil attacks** — coordinated fake agents, voting collusion
-- **Side channels** — DNS exfiltration, timing-based encoding, beaconing
+## Operational verification
 
-> **Obfuscation is no longer SDK-only.** The built-in shield's decode/defang
-> pre-pass (above) covers base64/hex/percent/homoglyph/zero-width evasion on all
-> three surfaces, so an encoded payload is decoded and re-scanned against the
-> built-in rules even without the full SDK. The SDK still adds breadth (ROT13,
-> leetspeak, the wider pattern set); the *decoding* layer is now always present.
-
-## Checking your posture
-
-The dashboard's `/safety` page shows the live safety posture — shield status
-(installed + backend, or the fail-open fallback), the sandbox backend and
-whether it is container-isolated, and the egress policy (locked vs
-cloud-capable).
-
-## When the shield is missing
-
-Two layers can be missing, and they degrade differently:
-
-- **Full `agent-shield` SDK absent** (but the `maverick-shield` wrapper present): detection uses the **built-in** layer — ~20 high-impact rules, the decode/defang pre-pass, and a cheap-probe (regex + Unicode heuristics, optionally ensembled with a trained linear model via `[shield] probe_model`). No SDK efficacy number is attributed to this built-in backend; scans — including obfuscation-decoding — still run.
-- **Shield wrapper absent entirely**: scans are **skipped (fail-open)** with a startup warning, per the kernel's "runs without the shield" rule.
-
-The complete Maverick release cohort includes the `maverick-shield` wrapper.
-Core-only source installs must add `packages/maverick-shield` explicitly. The
-separate full `agent-shield` SDK is not available from public PyPI; do not use a
-public namesake package.
-
-To verify the shield is loaded:
-
-```python
-from maverick_shield import Shield
-shield = Shield()
-print(shield.enabled, shield.backend)  # e.g. True, "builtin"
+```powershell
+maverick config-lint
+maverick doctor
+python -m maverick_shield.redteam
 ```
 
-## Privacy posture
-
-- All Agent Shield detection runs **locally**. Nothing is sent to any external service.
-- Your model prompts go only to the LLM provider you chose during
-  `maverick init`. If you pick Ollama, model inference is local; tools and other
-  process code still need deployment egress controls.
-- The world model (SQLite) lives in `~/.maverick/world.db`. Inspect, back up, or wipe it freely.
-
-## Enterprise mode (private / sensitive data)
-
-The kernel ships fail-open and cloud-capable by design — right for a personal agent,
-wrong the moment it handles PHI / PII / financial / regulated data. **Enterprise mode**
-is one switch that flips those application defaults to *fail-closed*. It blocks
-non-local governed model dispatch and supported Python HTTP paths; it is not a
-packet-level firewall.
-
-```toml
-[enterprise]
-mode = true
-# Optional: extra self-hosted providers to treat as local (e.g. an internal vLLM
-# fronted by a generic OpenAI-compatible provider).
-local_providers = ["my-internal-vllm"]
-```
-
-Or set `MAVERICK_ENTERPRISE=1`, or pick it in `maverick init`. **Off by default.**
-
-The simplest way to select the whole regulated posture is the **named deployment
-profile**: `MAVERICK_PROFILE=enterprise` (or `[profile] name = "enterprise"`).
-`enterprise` turns on enterprise mode *plus* the deployment-specific secure
-defaults below in one knob; `standard` (the default) keeps the zero-config happy
-path. Every individual control still has its own explicit override, and a
-compliance floor can force any control on — both win over the profile. When the
-posture is on:
-
-| Control | Default kernel behavior | Enterprise mode |
-|---|---|---|
-| **LLM egress** | any configured provider (incl. cloud) sees the prompt | **pinned to local/self-hosted** (`ollama`/`vllm`/`tgi` or an allow-listed endpoint); a cloud-routed call raises `EgressBlocked` **before any prompt is sent**, and the denial is audited |
-| **Consent** | `auto-approve` | `ask` (and therefore *deny* in non-interactive contexts) |
-| **Capabilities** | opt-in | enforced (least privilege; sub-agents can only narrow their grant) |
-| **Sandbox** | `local` host shell (warned) | **container-default** — a `local`/unset backend is upgraded to an available container runtime (docker → podman); if none is installed it fails closed rather than running `shell=True` on the host (`[sandbox] backend` / `require_container`) |
-| **Plugins** | in-process, lockfile off | plugin **tool calls** are proxied through the configured isolation backend, and lock enforcement refuses version/content drift once a lockfile exists; plugin import/discovery, factories, channel plugins, skill plugins, and persona plugins still run in-process, so install only trusted plugins (`[plugins] isolation` / `lock_policy`) |
-
-The model egress lock is enforced at the single LLM dispatch chokepoint
-(`maverick.llm.LLM.complete`), so it covers every agent, role, and tool-driven
-model call that uses that path. Supported `httpx`, `requests`, and `urllib`
-calls are checked separately. An explicit env/config setting still wins per
-control, but the model egress lock can never be satisfied by a cloud provider.
-
-For a hard no-egress boundary, also use sandbox network isolation and
-host/OS/VPC default-deny egress policy. Application interception cannot contain
-raw sockets, subprocess network clients, unwrapped libraries, or untrusted code
-running in the Maverick process.
-
-## Compliance posture
-
-These are the GDPR + EU AI Act controls the deployment can run, mapped to the
-article each supports — with the exact knob to enable each:
-
-| Control | Article(s) | Status / enable with |
-|---|---|---|
-| AI transparency disclosure | EU AI Act Art. 50 | on by default (channel server) |
-| Audit logging (record-keeping) | EU AI Act Art. 12, GDPR Art. 30 | always on |
-| Tamper-evident audit | EU AI Act Art. 12 | `[audit] sign = true` |
-| Human oversight (consent) | EU AI Act Art. 14 | `MAVERICK_CONSENT_MODE=ask` or enterprise mode |
-| Kill switch | EU AI Act Art. 14 | `~/.maverick/HALT` |
-| Data-subject access & portability | GDPR Art. 15 & 20 | `maverick export-user` |
-| Right to erasure | GDPR Art. 17 | `maverick erase` |
-| Storage limitation (retention) | GDPR Art. 5(1)(e) | `[retention]` |
-| Data-egress control | GDPR Art. 32 / AI Act Art. 15 | `[enterprise] mode = true` |
-| Secret/PII redaction in logs | GDPR Art. 25 & 32 | always on |
-| Encryption at rest (memory + world-DB content) | GDPR Art. 32 | `[encryption] at_rest = true` (implied by enterprise mode) — see [encryption.md](encryption.md) |
-| Log data minimization | GDPR Art. 5(1)(c) | `[privacy] anonymous = true` |
-
-**This is control coverage, not a
-legal attestation** — full GDPR / EU AI Act compliance also requires a DPA, ROPA (Art. 30
-records), a DPIA, AI-Act risk classification, and review by qualified counsel.
+Verify the installed wheel cohort and treat every Shield warning or withheld
+result as a security event. The dashboard has no separate `/safety` control
+plane; operators use the local CLI, configuration review, logs, and signed audit.

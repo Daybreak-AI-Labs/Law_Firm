@@ -29,8 +29,8 @@ def test_profile_defaults():
     assert p.no_network is True
     assert p.ephemeral_workspace is True
     assert p.max_wall_seconds == 1800.0
-    # The obviously-exfil set: generic egress + send-ish connectors.
-    for tool in ("http_fetch", "web_search", "browser", "websocket",
+    # The retained defense-in-depth set: generic egress + send-ish connectors.
+    for tool in ("web_search", "browser", "websocket",
                  "email", "gmail", "slack_bot", "notify"):
         assert tool in p.deny_tools
 
@@ -102,7 +102,7 @@ def test_denied_tools_actually_blocked_by_registry_acl():
     reg = ToolRegistry()
     containment.apply(containment.ContainmentProfile(), registry=reg,
                       sandbox_env={})
-    assert reg._acl_allows("http_fetch") is False
+    assert reg._acl_allows("web_search") is False
     assert reg._acl_allows("read_file") is True
 
 

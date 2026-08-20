@@ -32,7 +32,6 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .. import fastjson as _fastjson
 from ..paths import data_dir
 
 _DEFAULT_SIZE = 256
@@ -106,17 +105,17 @@ def save_snapshot() -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         with _lock:
             rows = [(k, v, epoch) for k, (v, _mono, epoch) in _store.items()]
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            for k, v, epoch in rows:
-                # Round-trip snapshot (written here, parsed back at load): exact
-                # bytes don't matter for identity, so use the fast backend.
-                fh.write(_fastjson.dumps({"k": k, "v": v, "t": epoch}) + "\n")
-        os.replace(tmp, path)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        from ..file_lock import atomic_write_text
+        from ..learning_crypto import encode_json_record
+
+        # Tool results may contain privileged client material. Seal each whole
+        # row so keys, values, and timestamps are authenticated together; firm
+        # readers withhold legacy plaintext and wrong-key snapshots.
+        body = "".join(
+            encode_json_record({"k": k, "v": v, "t": epoch}) + "\n"
+            for k, v, epoch in rows
+        )
+        atomic_write_text(path, body, mode=0o600)
         return len(rows)
     except Exception:  # pragma: no cover -- snapshot is best-effort
         return 0
@@ -151,7 +150,11 @@ def warm_on_start() -> int:
                 if not line:
                     continue
                 try:
-                    row = _fastjson.loads(line)
+                    from ..learning_crypto import decode_json_record
+
+                    row = decode_json_record(line)
+                    if row is None:
+                        continue
                     k, v, epoch = str(row["k"]), str(row["v"]), float(row["t"])
                 except (ValueError, TypeError, KeyError):
                     continue  # tolerate a corrupt / partial line

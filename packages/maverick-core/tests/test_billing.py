@@ -78,11 +78,10 @@ def test_invoice_to_dict_round_trips(tmp_path):
 
 def test_default_plans_gate_features():
     assert entitled("free", "core") is True
-    assert entitled("free", "grpc") is False
-    assert entitled("pro", "grpc") is True
+    assert entitled("pro", "channels") is True
     assert entitled("enterprise", "sso") is True
     # Unknown plan -> free entitlements.
-    assert entitled("mystery", "grpc") is False
+    assert entitled("mystery", "channels") is False
 
 
 def test_config_override_plans(monkeypatch):
@@ -103,4 +102,4 @@ def test_tenant_entitled_reads_registered_plan(tmp_path):
     assert billing.tenant_entitled("acme", "audit_export") is True
     assert billing.tenant_entitled("acme", "nonexistent") is False
     # Unprovisioned tenant -> free.
-    assert billing.tenant_entitled("ghost", "grpc") is False
+    assert billing.tenant_entitled("ghost", "channels") is False

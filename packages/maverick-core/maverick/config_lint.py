@@ -8,8 +8,7 @@ section whose key set is fixed, and a small, safe set of obvious type errors
 Design constraints:
 - Pure stdlib (``difflib`` for "did you mean" suggestions), deterministic.
 - Conservative: only flag things we're confident about. Dynamic sections —
-  ``[providers.<name>]``, ``[channels.<name>]``, ``[models]``,
-  ``[mcp_servers.<name>]``, ``[roles.<role>]`` and similar — accept any
+  ``[providers.<name>]``, ``[roles.<role>]`` and similar — accept any
   subkeys, so we never flag their keys.
 - Never raises on a weird dict. A non-dict section value, a non-string key,
   ``None`` — all tolerated; we simply skip what we can't reason about.
@@ -22,6 +21,7 @@ from __future__ import annotations
 
 import difflib
 import math
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,8 +29,7 @@ from typing import Any
 #
 # ``None`` is used for two kinds of section:
 #   * genuinely dynamic tables whose subkeys are user-chosen names
-#     (``models`` role->spec, ``providers.<name>``, ``channels.<name>``,
-#     ``mcp_servers.<name>``, ``roles.<role>``), and
+#     (``providers.<name>``, ``roles.<role>``), and
 #   * sections whose key set is still evolving / spread across modules, where
 #     enumerating keys would produce false-positive warnings on valid configs.
 #
@@ -45,8 +44,8 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
         "max_tool_calls",
         "max_input_tokens",
         "max_output_tokens",
-        # Default-on per-task-class self-tuning of max_dollars (self_tuning_budget.py
-        # reads [budget] self_tuning; self_healing.py recommends it). Without it
+        # Default-on per-task-class self-tuning of max_dollars
+        # (self_tuning_budget.py reads [budget] self_tuning). Without it
         # here, a client enabling the documented knob got a false "unknown key".
         "self_tuning",
     },
@@ -63,26 +62,14 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     "sandbox": {
         "backend", "workdir", "timeout", "image", "language",
         "require_container", "allow_network", "allow_root", "pids_limit",
-        "memory", "memory_mb", "cpus", "runtime", "options",
-        "reuse_container", "cross_run_pool", "project_dir", "namespace",
-        "context", "extra_kubectl_args", "run_as_user", "provider",
-        "api_key", "network", "warm", "host", "ssh_args",
-        "host_key_checking",
+        "memory", "cpus", "reuse_container", "read_only_paths",
     },
-    "features": {"skills", "world_model", "streaming"},
+    "features": {"skills", "streaming"},
     "capabilities": {
-        "computer_use",
-        "browser",
         "web_search",
-        "mobile_tools",
-        "code_exec",
-        # Governance knobs the runtime reads (capability.py / agent.py) that
-        # were missing here -- so a client configuring the flagship
-        # capability-enforcement feature, or the deferred-tools knob, got a
-        # false "unknown key" warning (client-journey finding).
+        # Governance knobs the runtime reads (capability.py / agent.py).
         "enforce",
         "per_call_tokens",
-        "deferred_tools",
     },
     # Tamper-evident audit log. The runtime reads [audit] sign (audit/writer.py)
     # and migrate.py already lists it; config-lint flagged the whole section as
@@ -95,31 +82,24 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     # (app.py) and a [dashboard.themes] subtable (themes.py). Listing only
     # "token" made config-lint warn "unknown key" on documented operator
     # settings like `[dashboard] theme = "dark"` (user-testing finding).
-    # public_url: the externally-reachable base URL used to build signed flow
-    # approval links (automation_queue._public_base_url); without it here a client
-    # configuring actionable channel approvals got a false "unknown key".
+    # public_url: the externally-reachable base URL used to build signed browser
+    # approval links.
     # default_suites: deny-by-default department scoping for authenticated
     # dashboard users with no explicit grant (maverick.suite_grants).
-    # group_roles / group_suites: SCIM-group -> role / department mapping
-    # tables (maverick_dashboard.scim_groups), so access flows from IdP team
-    # membership.
     "dashboard": {"token", "theme", "density", "allow_extension", "themes", "public_url",
-                  "default_suites", "group_roles", "group_suites"},
-    "analytics": {"mcp_client_language"},
-    # Definition import reaches third-party APIs and can materialize recurring
-    # work, so both opt-ins are closed-schema booleans rather than permissive
-    # string truthiness.
-    "automation_import": {"enable", "create_schedules"},
+                  "default_suites"},
     # Evidence ingestion is review-gated and fail-closed.  Keep the section a
     # closed-schema boolean so a misspelled knob cannot silently fall back.
     "evidence_graph": {"enable"},
+    # Deployment allowlists intersect the responsible attorney's per-matter
+    # egress decision. Misspelled keys must not silently become an empty or
+    # unintended confidentiality policy.
+    "firm": {"approved_providers", "approved_hosts", "approved_local_hosts"},
     # --- dynamic / open-ended sections (any subkey accepted) ---
     "providers": None,
-    "models": None,
-    "channels": None,
-    "mcp_servers": None,
+    # One exact run-wide model plus optional operator-curated dashboard choices.
+    "models": {"default", "catalog"},
     "roles": None,
-    "routing": None,
     "planning": None,
     "context": None,
     "reflexion": None,
@@ -130,8 +110,6 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     "retention": None,
     "world_model": None,
     "memory": None,
-    "voice": None,
-    "webhooks": None,
     "a2a": None,
     "auth": None,
     "knowledge": None,
@@ -142,19 +120,17 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     "credit": None,
     "adaptive_compute": None,
     "search": None,
-    "skill_synthesis": None,
     "experience": None,
     "compliance": None,
     "security": None,
-    "plugins": None,
     "tools": None,
 }
 
 # Keep this registry in lockstep with migrate.py's KNOWN_SECTIONS (curated
 # from the real load_config() call sites) so config-lint never false-flags a
 # section the runtime actually reads as a typo. The two had drifted by ~59
-# sections -- a client configuring documented features like [provider_failover],
-# [enterprise], [egress], [governance], [encryption] got told they were
+# sections -- a client configuring documented features like [enterprise],
+# [egress], [governance], [encryption] got told they were
 # typos (client-journey finding). Sections with an explicit key schema above
 # keep it (setdefault won't overwrite); the rest accept any subkey (None),
 # exactly as migrate treats them.
@@ -183,7 +159,7 @@ _NUMERIC_KEYS: dict[str, set[str]] = {
         "max_input_tokens",
         "max_output_tokens",
     },
-    "sandbox": {"timeout", "pids_limit", "memory_mb", "cpus", "run_as_user"},
+    "sandbox": {"timeout", "pids_limit"},
     "durable": {"keep_last"},
 }
 
@@ -196,31 +172,31 @@ _INTEGER_KEYS: dict[str, set[str]] = {}
 # ``enabled``/``enable`` toggle, handled separately for every known section.
 _BOOL_KEYS: dict[str, set[str]] = {
     "safety": {"scan_input", "scan_tool_calls", "scan_output", "compartments"},
-    "features": {"skills", "world_model", "streaming"},
+    "features": {"skills", "streaming"},
     "capabilities": {
-        "computer_use",
-        "browser",
         "web_search",
-        "mobile_tools",
-        "code_exec",
         "enforce",
         "per_call_tokens",
-        "deferred_tools",
     },
     "audit": {"sign"},
     "sandbox": {"require_container", "allow_network", "allow_root",
-                "reuse_container", "cross_run_pool", "warm"},
-    "analytics": {"mcp_client_language"},
+                "reuse_container"},
     "self_learning": {
-        "preflight", "create_tools", "provision_packs",
-        "allow_mcp_acquisition", "allow_provider_egress", "distill_local",
+        "allow_provider_egress", "distill_local",
     },
-    "automation_import": {"enable", "create_schedules"},
-    "models": {"cascade"},
-    "routing": {"cost_aware"},
 }
 
 _UNIVERSAL_BOOL_KEYS = ("enabled", "enable")
+
+_EXACT_MODEL = re.compile(r"^[A-Za-z0-9_.-]+:[A-Za-z0-9_.:/-]+$")
+
+
+def _valid_exact_model(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(_EXACT_MODEL.fullmatch(value.strip()))
+        and value.strip().casefold() != "openrouter:auto"
+    )
 
 
 # Key names that carry secrets. A literal (non-``${ENV}``) string under one of
@@ -361,7 +337,27 @@ def lint_config(cfg: dict) -> list[Finding]:
                 continue
 
             # Type checks (conservative; only knowable cases).
-            if key in integer_keys and (
+            if section == "models" and key == "default" and not _valid_exact_model(kval):
+                findings.append(Finding(
+                    section=section,
+                    key=key,
+                    severity="error",
+                    message="models.default must be an exact provider:model value",
+                ))
+            elif section == "models" and key == "catalog" and (
+                not isinstance(kval, list)
+                or any(not _valid_exact_model(item) for item in kval)
+            ):
+                findings.append(Finding(
+                    section=section,
+                    key=key,
+                    severity="error",
+                    message=(
+                        "models.catalog must be a list of exact provider:model "
+                        "values"
+                    ),
+                ))
+            elif key in integer_keys and (
                 not isinstance(kval, int) or isinstance(kval, bool)
             ):
                 findings.append(
@@ -419,59 +415,7 @@ def lint_config(cfg: dict) -> list[Finding]:
                 )
 
     findings.extend(_lint_inline_secrets(cfg))
-    findings.extend(_lint_group_mappings(cfg))
     return findings
-
-
-def _lint_group_mappings(cfg: dict) -> list[Finding]:
-    """Advise on the SCIM-group -> access mapping tables.
-
-    ``[dashboard.group_roles]`` values must name a real dashboard role, and
-    ``[dashboard.group_suites]`` values must name real department suites. The
-    runtime already fails safe on a bad value (an unknown role/suite confers
-    nothing rather than widening access), but a silent no-op is a nasty
-    footgun, so surface the typo up front."""
-    out: list[Finding] = []
-    dash = cfg.get("dashboard")
-    if not isinstance(dash, dict):
-        return out
-    roles = {"admin", "operator", "auditor", "viewer"}
-    try:
-        from .domain import SUITE_PREFIXES
-        suites = set(SUITE_PREFIXES.values())
-    except Exception:  # pragma: no cover - never let a lint import break config
-        suites = set()
-
-    gr = dash.get("group_roles")
-    if isinstance(gr, dict):
-        for group, role in gr.items():
-            if not (isinstance(role, str) and role.strip().lower() in roles):
-                out.append(Finding(
-                    section="dashboard.group_roles", key=str(group),
-                    severity="error",
-                    message=(f"dashboard.group_roles[{group!r}] must name a role "
-                             f"{sorted(roles)}, got {role!r}")))
-
-    gs = dash.get("group_suites")
-    if isinstance(gs, dict):
-        for group, val in gs.items():
-            vals = [val] if isinstance(val, str) else (
-                list(val) if isinstance(val, (list, tuple)) else None)
-            if vals is None:
-                out.append(Finding(
-                    section="dashboard.group_suites", key=str(group),
-                    severity="error",
-                    message=(f"dashboard.group_suites[{group!r}] must be a suite "
-                             f"name or list of suite names, got {type(val).__name__}")))
-                continue
-            unknown = [s for s in vals if s not in suites] if suites else []
-            if unknown:
-                out.append(Finding(
-                    section="dashboard.group_suites", key=str(group),
-                    severity="warning",
-                    message=(f"dashboard.group_suites[{group!r}] names unknown "
-                             f"department(s) {unknown} (they confer no access)")))
-    return out
 
 
 def format_findings(findings: list[Finding]) -> str:

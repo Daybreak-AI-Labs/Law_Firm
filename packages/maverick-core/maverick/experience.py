@@ -4,9 +4,8 @@ SOTA (HERA / "Experience as a Compass", arXiv 2604.00901): an orchestrator that
 conditions on *what worked and what failed* on similar prior tasks outperforms
 one that re-plans from scratch. This module supplies that outcome signal -- a
 short "N similar tasks: X succeeded, Y failed; lean on …, avoid …" guidance
-distilled from the persistent world model. (Verbatim prior-goal recall was
-removed with semantic_recall: aggregate outcome statistics steer without
-re-injecting one matter's content into another's run.)
+distilled from the persistent world model. Even aggregate guidance carries
+prior titles, so retrieval is constrained to the exact matter and owner.
 
 Pure core (``summarize_experience``) for testability; ``recall`` is the
 world-backed convenience wrapper. On by default and owner-scoped
@@ -130,19 +129,29 @@ def recall(
     scan: int = 50,
     shield: Any | None = None,
     owner: str = "",
+    project_id: int | None = None,
 ) -> str | None:
     """World-backed wrapper: pull recent finished goals + outcomes, summarize.
 
     Never raises -- any world/schema issue degrades to None (no guidance).
     """
-    if not enabled():
+    # No project/matter is not a shared bucket. Without an exact matter key,
+    # never inspect cross-run client-derived history.
+    if project_id is None or isinstance(project_id, bool) or owner is None:
         return None
+    try:
+        matter_id = int(project_id)
+    except (TypeError, ValueError):
+        return None
+    if not enabled() or matter_id <= 0:
+        return None
+    exact_owner = str(owner)
     try:
         prior: list[tuple[str, str]] = []
         # Owner is an access boundary, not a ranking hint. The safe default is
         # the unowned/local principal, never the WorldModel's owner=None
         # administrator view that spans every user in the tenant.
-        episodes = world.list_episodes(limit=scan, owner=owner)
+        episodes = world.list_episodes(limit=scan, owner=exact_owner)
         for ep in episodes:
             outcome = getattr(ep, "outcome", None)
             if not outcome:
@@ -151,6 +160,14 @@ def recall(
             if gid is None:
                 continue
             goal = world.get_goal(gid)
+            goal_owner = getattr(goal, "owner", None) if goal is not None else None
+            if (
+                goal is None
+                or getattr(goal, "project_id", None) != matter_id
+                or goal_owner is None
+                or str(goal_owner) != exact_owner
+            ):
+                continue
             title = getattr(goal, "title", None) if goal else None
             if title:
                 prior.append((title, outcome))

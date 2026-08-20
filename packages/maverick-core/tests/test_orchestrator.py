@@ -119,14 +119,15 @@ async def test_blackboard_posts_mirror_into_goal_events(tmp_path: Path, fake_llm
 
 
 @pytest.mark.asyncio
-async def test_domain_build_failure_blocks_instead_of_falling_back(
-    tmp_path: Path, monkeypatch, fake_llm,
+@pytest.mark.parametrize("bad_allow_tools", ["123", "true"])
+async def test_malformed_domain_allow_tools_blocks_before_llm(
+    tmp_path: Path, monkeypatch, fake_llm, bad_allow_tools,
 ):
     domains_dir = tmp_path / "domains"
     domains_dir.mkdir()
     (domains_dir / "broken.toml").write_text(
         'name = "broken"\n'
-        'allow_tools = 123\n'
+        f'allow_tools = {bad_allow_tools}\n'
     )
     monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(domains_dir))
 
@@ -144,12 +145,11 @@ async def test_domain_build_failure_blocks_instead_of_falling_back(
         domain="broken",
     )
 
-    assert "agent build failed" in out
-    assert "Refusing to run without the requested domain capability envelope" in out
+    assert out == "BLOCKED: required matter knowledge is unavailable"
     assert fake_llm.calls == []
     goal = world.get_goal(gid)
     assert goal.status == "blocked"
-    assert "agent build failed" in (goal.result or "")
+    assert goal.result == "required matter knowledge unavailable"
 
 
 @pytest.mark.asyncio

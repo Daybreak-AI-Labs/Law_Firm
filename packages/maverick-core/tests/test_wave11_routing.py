@@ -1,50 +1,26 @@
-"""Wave 11: model routing + cache TTL + thinking-budget switches."""
+"""Anthropic cache TTL and thinking-budget switches."""
 from __future__ import annotations
 
 
-class TestModelOverride:
-    def test_env_override_wins_over_defaults(self, monkeypatch):
-        from maverick.llm import model_for_role
-        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_CODER", "claude-opus-4-7")
-        assert model_for_role("coder") == "claude-opus-4-7"
-
-    def test_env_override_is_role_specific(self, monkeypatch):
-        from maverick.llm import model_for_role
-        # Setting coder override does NOT affect orchestrator.
-        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_CODER", "deepseek-v4-pro")
-        monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE_ORCHESTRATOR", raising=False)
-        assert model_for_role("orchestrator") != "deepseek-v4-pro"
-
-    def test_no_override_falls_back_to_defaults(self, monkeypatch):
-        from maverick.llm import ROLE_MODELS, model_for_role
-        monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE_CODER", raising=False)
-        assert model_for_role("coder") == ROLE_MODELS["coder"]
-
-
 class TestCacheTTL:
-    def test_coding_mode_defaults_to_5m(self, monkeypatch):
+    def test_default_is_1h(self, monkeypatch):
         from maverick.providers.anthropic_provider import _default_cache_ttl
-        monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
-        monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
-        assert _default_cache_ttl() == "5m"
-
-    def test_non_coding_mode_defaults_to_1h(self, monkeypatch):
-        from maverick.providers.anthropic_provider import _default_cache_ttl
-        monkeypatch.delenv("MAVERICK_CODING_MODE", raising=False)
         monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
         assert _default_cache_ttl() == "1h"
 
     def test_explicit_env_override_wins(self, monkeypatch):
         from maverick.providers.anthropic_provider import _default_cache_ttl
-        monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
         monkeypatch.setenv("MAVERICK_ANTHROPIC_CACHE_TTL", "30m")
         assert _default_cache_ttl() == "30m"
 
 
 class TestThinkingOnOrchestrator:
-    def test_orchestrator_role_gets_thinking_budget(self, tmp_path):
+    def test_orchestrator_role_gets_thinking_budget(self, tmp_path, monkeypatch):
         """Wave 11: orchestrator + revisor get thinking_budget=8000
         (Anthropic effort=medium). Coder/researcher do not."""
+        monkeypatch.setenv(
+            "MAVERICK_MODEL_OVERRIDE", "anthropic:claude-opus-4-8"
+        )
         from maverick.agent import Agent
         from maverick.blackboard import Blackboard
         from maverick.budget import Budget
@@ -93,37 +69,3 @@ class TestThinkingBudgetWiredThrough:
             model="claude-sonnet-4-6",
         )
         assert "thinking" not in kwargs
-
-
-class TestHetBoNLadder:
-    """Wave 11: best-of-N ladder env-configurable, defaults to
-    configured orchestrator model with temperature diversity."""
-
-    def test_default_ladder_parses(self, monkeypatch):
-        # Indirect test: import the module and confirm the default
-        # string parses into 3 (model, temp) tuples by replicating the
-        # parsing logic. (The runtime BoN code itself requires a full
-        # WorldModel/LLM setup that's overkill for unit tests.)
-        default = "openai:gpt-5.4-mini:0.3,openai:gpt-5.4-mini:0.7,openai:gpt-5.4-mini:0.95"
-        ladder = []
-        for entry in default.split(","):
-            mdl, t = entry.rsplit(":", 1)
-            ladder.append((mdl.strip(), float(t)))
-        assert len(ladder) == 3
-        assert ladder[0] == ("openai:gpt-5.4-mini", 0.3)
-        assert ladder[1] == ("openai:gpt-5.4-mini", 0.7)
-        assert ladder[2] == ("openai:gpt-5.4-mini", 0.95)
-
-    def test_env_ladder_override(self, monkeypatch):
-        monkeypatch.setenv(
-            "MAVERICK_BON_LADDER",
-            "claude-sonnet-4-6:0.2,deepseek-v4-pro:0.5,claude-opus-4-7:0.3",
-        )
-        raw = monkeypatch.setenv  # noqa: F841 - keep monkeypatch alive
-        import os
-        ladder_str = os.environ["MAVERICK_BON_LADDER"]
-        parsed = []
-        for entry in ladder_str.split(","):
-            mdl, t = entry.rsplit(":", 1)
-            parsed.append((mdl.strip(), float(t)))
-        assert "deepseek-v4-pro" in [m for m, _ in parsed]

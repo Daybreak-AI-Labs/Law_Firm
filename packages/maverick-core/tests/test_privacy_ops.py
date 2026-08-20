@@ -1,7 +1,6 @@
 """Privacy ops record types: DPA review, AI registry, RoPA, DSAR tracker."""
 from __future__ import annotations
 
-import hashlib
 import json
 import threading
 import time
@@ -10,6 +9,12 @@ from pathlib import Path
 
 import pytest
 from maverick import privacy_ops
+
+
+def test_connector_document_discovery_is_not_shipped() -> None:
+    package = Path(privacy_ops.__file__).resolve().parent
+    assert not (package / "doc_discovery.py").exists()
+    assert "doc_discovery" not in Path(privacy_ops.__file__).read_text(encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -797,38 +802,6 @@ class TestDepthHooks:
         assert r2["tier"] == "prohibited"
         assert privacy_ops.register_ai_system_from_assessment("nope") is None
 
-    def test_review_dpa_from_document_text_and_docx(self, monkeypatch):
-        from maverick import doc_discovery
-
-        def fake_fetch(source, doc_id, ref=None, **kw):
-            if doc_id == "plain":
-                return GOOD_DPA.encode(), "text/plain"
-            if doc_id == "word":
-                import io
-                import zipfile
-                buf = io.BytesIO()
-                body = "".join(f"<w:p><w:r><w:t>{line}</w:t></w:r></w:p>"
-                               for line in GOOD_DPA.splitlines())
-                with zipfile.ZipFile(buf, "w") as z:
-                    z.writestr("word/document.xml",
-                               f"<w:document>{body}</w:document>")
-                return (buf.getvalue(),
-                        "application/vnd.openxmlformats-officedocument"
-                        ".wordprocessingml.document")
-            return b"%PDF-1.7 binary", "application/pdf"
-
-        monkeypatch.setattr(doc_discovery, "fetch", fake_fetch)
-        r = privacy_ops.review_dpa_from_document(
-            "Acme Corp", "msgraph", "plain", document_name="acme-dpa.txt")
-        assert r["clauses_present"] >= 9
-        assert r["document_name"] == "acme-dpa.txt"
-        r2 = privacy_ops.review_dpa_from_document(
-            "Acme Corp", "msgraph", "word", document_name="acme-dpa.docx")
-        assert r2["clauses_present"] >= 9
-        with pytest.raises(ValueError, match="cannot extract text"):
-            privacy_ops.review_dpa_from_document(
-                "Acme Corp", "msgraph", "scan", document_name="scan.pdf")
-
     def test_docx_zip_bomb_is_rejected_before_entry_read(self, monkeypatch):
         import io
         import zipfile
@@ -855,6 +828,93 @@ class TestDepthHooks:
             ".wordprocessingml.document",
         ) == ""
         assert opened is False
+
+    def test_docx_short_member_fails_closed(self, monkeypatch):
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("word/document.xml", b"<w:document>text</w:document>")
+        monkeypatch.setattr(
+            zipfile.ZipFile,
+            "open",
+            lambda *a, **k: io.BytesIO(b"<w:doc"),
+        )
+
+        assert privacy_ops._document_text(
+            buf.getvalue(),
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document",
+        ) == ""
+
+    def test_docx_malformed_member_failure_is_closed(self, monkeypatch):
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("word/document.xml", b"<w:document/>")
+        monkeypatch.setattr(
+            zipfile.ZipFile,
+            "open",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("bad member")),
+        )
+
+        assert privacy_ops._document_text(
+            buf.getvalue(),
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document",
+        ) == ""
+
+    def test_docx_member_read_is_bounded_by_declared_size(self, monkeypatch):
+        import io
+        import zipfile
+
+        body = b"<w:document><w:p>bounded text</w:p></w:document>"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("word/document.xml", body)
+        requested = []
+        real_open = zipfile.ZipFile.open
+
+        def tracked_open(self, *args, **kwargs):
+            stream = real_open(self, *args, **kwargs)
+            real_read = stream.read
+
+            def tracked_read(size=-1):
+                requested.append(size)
+                return real_read(size)
+
+            stream.read = tracked_read
+            return stream
+
+        monkeypatch.setattr(zipfile.ZipFile, "open", tracked_open)
+
+        text = privacy_ops._document_text(
+            buf.getvalue(),
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document",
+        )
+
+        assert "bounded text" in text
+        assert requested == [len(body) + 1]
+
+    def test_docx_duplicate_document_parts_are_rejected(self):
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            with zipfile.ZipFile(buf, "w") as archive:
+                archive.writestr("word/document.xml", b"<w:document/>")
+                archive.writestr("word/document.xml", b"<w:document/>")
+
+        assert privacy_ops._document_text(
+            buf.getvalue(),
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document",
+        ) == ""
 
     def test_import_onetrust_ropa_maps_drifting_headers(self):
         csv_text = (
@@ -950,21 +1010,6 @@ class TestPdfExtraction:
         ).encode()
         return cls._pdf_document(body, compress=compress)
 
-    def test_review_dpa_from_pdf_compressed_and_not(self, monkeypatch):
-        from maverick import doc_discovery
-        lines = [ln for ln in GOOD_DPA.splitlines() if ln]
-        for compress in (False, True):
-            pdf = self._pdf(lines, compress=compress)
-            monkeypatch.setattr(doc_discovery, "fetch",
-                                lambda *a, _p=pdf, **k: (_p,
-                                                         "application/pdf"))
-            r = privacy_ops.review_dpa_from_document(
-                "Acme Corp", "msgraph", "d1", document_name="acme-dpa.pdf")
-            assert r["clauses_present"] >= 9, (compress, r)
-            assert r["status"] == "pending_review"
-            assert r["extraction_confidence"] == "untrusted"
-            assert r["review_required"] is True
-
     def test_tj_arrays_and_hex_strings(self):
         s = (b"BT [(Standard )(Contractual )(Clauses )(cover )(the )"
              b"(international )(transfers )(of )(personal )(data.)] TJ ET "
@@ -975,15 +1020,6 @@ class TestPdfExtraction:
         assert ("Standard Contractual Clauses cover the international "
                 "transfers of personal data.") in txt
         assert "Audit rights and retention schedule defined." in txt
-
-    def test_scanned_pdf_still_refuses(self, monkeypatch):
-        from maverick import doc_discovery
-        scanned = self._pdf_document(b"\x00\x89PNG\x01\x02 image pixels")
-        monkeypatch.setattr(
-            doc_discovery, "fetch",
-            lambda *a, **k: (scanned, "application/pdf"))
-        with pytest.raises(ValueError, match="cannot extract text"):
-            privacy_ops.review_dpa_from_document("Acme", "msgraph", "scan")
 
 class TestDsarIntake:
     """Inbound messages become tracked requests — deterministically, with
@@ -1291,95 +1327,6 @@ class TestPdfExtraction(TestPdfExtraction):  # noqa: F811
         assert privacy_ops._pdf_text(self._pdf_document(
             b"q BI /W 1 /H 1 ID " + favorable + b" EI Q",
         )) == ""
-
-    def test_provenance_binds_bytes_mime_and_private_locator(self, monkeypatch):
-        from maverick import doc_discovery
-
-        pdf = self._pdf(
-            [line for line in GOOD_DPA.splitlines() if line],
-            compress=True,
-        )
-        fetch_calls = []
-
-        def fake_fetch(source, doc_id, ref=None, **kwargs):
-            fetch_calls.append((source, doc_id, ref, kwargs))
-            return pdf, "application/pdf; charset=binary"
-
-        monkeypatch.setattr(doc_discovery, "fetch", fake_fetch)
-        locator = "opaque-doc-12345"
-        ref = {"drive_id": "opaque-drive-67890"}
-        record = privacy_ops.review_dpa_from_document(
-            "Acme",
-            "msgraph",
-            locator,
-            ref=ref,
-            document_name="agreement.pdf",
-        )
-
-        assert fetch_calls[0][3]["max_bytes"] == (
-            privacy_ops._MAX_DOCUMENT_INPUT_BYTES
-        )
-        evidence = record["document_evidence"]
-        assert evidence["document_sha256"] == hashlib.sha256(pdf).hexdigest()
-        assert evidence["document_size_bytes"] == len(pdf)
-        assert evidence["resolved_mime"] == "application/pdf"
-        assert evidence["method"] == "pdf_page_content_streams"
-        assert evidence["scope"] == "page_referenced"
-        assert evidence["confidence"] == "untrusted"
-        assert evidence["review_required"] is True
-        assert evidence["referenced_streams"] == 1
-        assert record["review_required"] is True
-        assert locator not in json.dumps(evidence)
-        assert ref["drive_id"] not in json.dumps(evidence)
-        bound = dict(evidence)
-        binding = bound.pop("binding_sha256")
-        assert binding == privacy_ops._canonical_sha256(bound)
-
-        another = privacy_ops.review_dpa_from_document(
-            "Acme",
-            "msgraph",
-            "different-document-locator",
-            ref=ref,
-            document_name="agreement.pdf",
-        )
-        assert (
-            another["document_evidence"]["document_sha256"]
-            == evidence["document_sha256"]
-        )
-        assert (
-            another["document_evidence"]["source_binding_sha256"]
-            != evidence["source_binding_sha256"]
-        )
-
-        private_locator = "employee-alice-secret-folder/report-42.pdf"
-        unnamed = privacy_ops.review_dpa_from_document(
-            "Acme",
-            "msgraph",
-            private_locator,
-            ref={"drive_id": "private-drive"},
-        )
-        assert unnamed["document_name"] == "Connected document"
-        assert private_locator not in json.dumps(unnamed)
-        assert "private-drive" not in json.dumps(unnamed)
-
-    def test_review_boundary_rejects_oversize_fetch_result(self, monkeypatch):
-        from maverick import doc_discovery
-
-        fetch_kwargs = {}
-
-        def fake_fetch(*args, **kwargs):
-            fetch_kwargs.update(kwargs)
-            return b"A" * 65, "text/plain"
-
-        monkeypatch.setattr(privacy_ops, "_MAX_DOCUMENT_INPUT_BYTES", 64)
-        monkeypatch.setattr(doc_discovery, "fetch", fake_fetch)
-        with pytest.raises(ValueError, match="cannot extract text"):
-            privacy_ops.review_dpa_from_document(
-                "Acme",
-                "msgraph",
-                "oversize",
-            )
-        assert fetch_kwargs["max_bytes"] == 64
 
     def test_untrusted_evidence_cannot_disable_human_review(self):
         text = GOOD_DPA

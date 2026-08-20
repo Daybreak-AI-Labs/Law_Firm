@@ -21,7 +21,10 @@ from maverick import egress_contract as gate
 def test_the_census_is_substantial() -> None:
     """Anti-vacuity: every assertion here is empty over an empty scan."""
     census = gate.scan()
-    assert len(census) > 50, len(census)
+    # The firm-only prune removed the connector/fleet/media transports. Keep a
+    # floor below the retained census so deleting or excluding most of the
+    # remaining HTTP surface still fails this control.
+    assert len(census) >= 5, len(census)
 
 
 def test_the_repo_is_currently_clean() -> None:
@@ -224,7 +227,6 @@ def test_webrtc_is_not_registered_by_default() -> None:
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}))
     assert names, "anti-vacuity: the registry must have built"
-    assert "websocket" in names, "control: sibling transports stay registered"
     assert "webrtc" not in names, "webrtc must be opt-in, as its docstring says"
 
 

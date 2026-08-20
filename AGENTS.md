@@ -1,11 +1,11 @@
 # AGENTS.md
 
-Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace monorepo. 8 pip packages
-(`packages/*`, `apps/installer-cli`) + a TypeScript SDK (`sdks/plugin-ts`).
+Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace monorepo. Five
+lockstep Python distributions (`packages/*`, `apps/installer-cli`).
 
 ## Setup (verified)
 
-    bash .devcontainer/post-create.sh   # editable-installs all 8 packages +
+    bash .devcontainer/post-create.sh   # editable-installs the retained cohort +
                                         # dev tools (pyjwt[crypto], cffi, build)
 
 `pip install -e .` at the root FAILS (workspace pyproject has no [project]).
@@ -23,7 +23,8 @@ Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace mon
 
 1. Never bare `import tomllib` — use the try/except tomli fallback (3.10; CI greps).
 2. No `shell=True` outside `maverick/sandbox/` — use `sandbox.exec()` (CI greps).
-3. Never hard-code model ids — `maverick.config.get_role_model(role)`.
+3. Never hard-code model ids or select per-role models — secure runs use the
+   one exact `provider:model` pin resolved by `maverick.llm.model_for_role(role)`.
 4. Never bypass `Budget` — and note `record_tokens` enforces ALL caps
    (tokens/$/wall/tools) at record time, not just `check()`.
 5. Kernel must run without `agent-shield` installed — fail open with a warning.
@@ -40,5 +41,5 @@ Bjerken and Day practice platform: proprietary Python 3.10-3.12 uv-workspace mon
 12. pytest aborts everything on one collection error; a pyo3 PanicException
     usually hides a missing import on the stderr line above it.
 
-Suite at HEAD: 9094 passed, 107 skipped, 1 xfailed (~2m40s). No type checker
-configured; ruff is the only static gate.
+The suite count changes as the firm-only prune advances; run the command above
+against the current tree. No type checker is configured; ruff is the static gate.

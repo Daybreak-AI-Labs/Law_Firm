@@ -1,14 +1,13 @@
 """The reachability ledger, and the docs claim it protects.
 
 Two defect classes shared one root cause: nobody could answer "does production
-reach this?", so everyone guessed, and the guesses went both ways. A strategy
-review cited ``sigstore_signing.py`` as shipped capability (roadmap-tagged, no
-production importer) and in the same pass skipped ``erasure_verify.py`` as
-unbuilt (also roadmap-tagged, but it backs a shipping CLI command).
+reach this?", so everyone guessed, and the guesses went both ways. Historical
+reviews treated roadmap-tagged, zero-caller modules as shipped capabilities and
+in the same pass skipped ``erasure_verify.py`` as unbuilt even though it backs
+a retained CLI command.
 
-The ``roadmap: 20XX HN`` header was the only available signal and it is
-useless: 232 modules carry one and most ARE reachable. A tag that is wrong in
-both directions is worse than no tag, because it reads as evidence.
+A ``roadmap: 20XX HN`` header does not establish runtime reachability. Treating
+schedule metadata as reachability evidence caused errors in both directions.
 """
 
 from __future__ import annotations
@@ -49,8 +48,8 @@ def table() -> dict[str, str]:
 
 
 def test_it_classifies_a_substantial_tree(table) -> None:
-    """Anti-vacuity: every assertion below is empty if the walk finds nothing."""
-    assert len(table) > 500, len(table)
+    """Anti-vacuity after the intentional firm-only physical product prune."""
+    assert len(table) > 400, len(table)
     assert set(table.values()) <= CLASSES
 
 
@@ -69,18 +68,23 @@ def test_lazy_runtime_imports_are_declared_reachable(table) -> None:
         assert table.get(mod) == "PRODUCTION", (mod, table.get(mod))
 
 
-def test_the_two_modules_that_misled_a_review_classify_correctly(table) -> None:
-    """The concrete case this ledger exists to prevent.
-
-    Both carry a roadmap tag. One is genuinely unreachable from production and
-    one backs a shipping command -- and the tag does not distinguish them.
-    """
+def test_retained_erasure_verifier_is_reachable(table) -> None:
+    """A retained operator command must stay present in the graph."""
     # erasure_verify backs `maverick erase-verify`.
     assert table.get("maverick.erasure_verify") in {"PRODUCTION", "CLI_ONLY"}, (
         table.get("maverick.erasure_verify"))
-    # sigstore_signing is reachable or not, but the ledger must have an opinion
-    # rather than leaving a reader to infer one from a header comment.
-    assert table.get("maverick.sigstore_signing") in CLASSES
+
+
+def test_retired_cli_only_modules_are_absent(table) -> None:
+    retired = (
+        "maverick.backport_tool",
+        "maverick.ebpf_monitor",
+        "maverick.golden_path",
+        "maverick.licensing",
+        "maverick.profiling_daemon",
+        "maverick.sigstore_signing",
+    )
+    assert not [module for module in retired if module in table]
 
 
 def test_the_lock_is_committed_and_current(table) -> None:

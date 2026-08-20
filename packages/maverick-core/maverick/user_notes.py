@@ -97,6 +97,13 @@ def consolidate(
     dream cycle (atomic), so an edited or deleted conversation stops feeding
     notes on the next dream — no stale memory of retracted preferences.
     """
+    from .learning_crypto import protected_learning_enabled
+
+    if protected_learning_enabled():
+        # The firm runtime retired this channel/user-global prompt overlay. It
+        # has no matter key and cannot safely turn conversation text into
+        # cross-run legal guidance. Explicit erasure remains available below.
+        return 0
     p = Path(path) if path is not None else default_path()
     from .learning_guard import learning_write_allowed
     if not learning_write_allowed("user_notes", "consolidate"):
@@ -162,6 +169,10 @@ def notes_for(
     path: Path | str | None = None, *, k: int = 8,
 ) -> list[str]:
     """The stored notes for exactly this (channel, user_id) scope."""
+    from .learning_crypto import protected_learning_enabled
+
+    if protected_learning_enabled():
+        return []
     if not channel or not user_id:
         return []
     p = Path(path) if path is not None else default_path()

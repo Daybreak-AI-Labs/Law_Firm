@@ -1,17 +1,19 @@
-"""Authenticated, bounded backup / transactional restore for one client.
+"""Encrypted, authenticated backup / transactional restore for one client.
 
 Backups snapshot the active tenant/client data root. SQLite databases use the
-online backup API; every payload file is content-hashed; and ``manifest.json``
-is authenticated with an operator-custodied HMAC-SHA256 key supplied through
-``MAVERICK_BACKUP_SIGNING_KEY`` (exactly 32 bytes encoded as hex or base64).
-The HMAC is the authenticity boundary. Payload SHA-256 values alone are only
-self-consistency checks and are never described or treated as authentication.
+online backup API; every payload file is content-hashed; ``manifest.json`` is
+authenticated with an operator-custodied HMAC-SHA256 signing key; and the
+complete compressed archive is wrapped in streaming AES-256-GCM with a
+different operator-custodied encryption key.  The keys are supplied only via
+``MAVERICK_BACKUP_SIGNING_KEY`` and ``MAVERICK_BACKUP_ENCRYPTION_KEY`` (each
+exactly 32 bytes encoded as hex or base64), never read from or written beneath
+the data root.
 
-Unsigned legacy archives have an intentionally awkward compatibility path:
-callers must pass ``allow_unsigned=True`` to ``read_manifest`` / ``restore_backup``
-(and may create one with the same explicit flag). The CLI has no unsigned
+Unencrypted legacy archives have an intentionally awkward compatibility path:
+callers must pass ``allow_legacy_auth_off=True`` to ``read_manifest`` or
+``restore_backup``.  The operator CLI never exposes that migration-only
 override. ``force=True`` only overrides client/schema compatibility and never
-bypasses signature verification.
+bypasses encryption or signature verification.
 
 Restore scans tar streams without ``getmembers``/``extractall``, enforces hard
 member/path/type/per-file/expanded-size limits, writes only into a private
@@ -45,9 +47,15 @@ from . import file_lock
 log = logging.getLogger(__name__)
 
 MANIFEST = "manifest.json"
-SCHEMA = 2
+SCHEMA = 3
 _AUTH_ALGORITHM = "HMAC-SHA256"
 _SIGNING_KEY_ENV = "MAVERICK_BACKUP_SIGNING_KEY"
+_ENCRYPTION_KEY_ENV = "MAVERICK_BACKUP_ENCRYPTION_KEY"
+_ENCRYPTED_MAGIC = b"MVK-BACKUP\x00"
+_ENVELOPE_VERSION = 1
+_GCM_NONCE_BYTES = 12
+_GCM_TAG_BYTES = 16
+_ENVELOPE_HEADER_BYTES = len(_ENCRYPTED_MAGIC) + 1 + _GCM_NONCE_BYTES
 _SKIP_SUFFIXES = ("-wal", "-shm", ".tmp")
 _RESTORE_TX_ROOT = ".restore-transactions"
 _RESTORE_LOCK_TARGET = ".restore-transaction"
@@ -122,7 +130,7 @@ def _canonical_body(document: dict[str, Any]) -> bytes:
         raise BackupError("backup metadata is not canonical JSON") from exc
 
 
-def _decode_operator_key(raw: str) -> bytes:
+def _decode_key(raw: str, *, environment: str) -> bytes:
     value = raw.strip()
     if len(value) == 64:
         try:
@@ -137,22 +145,38 @@ def _decode_operator_key(raw: str) -> bytes:
         decoded = b""
     if len(decoded) != 32:
         raise BackupError(
-            f"{_SIGNING_KEY_ENV} must be exactly 32 bytes encoded as hex or base64"
+            f"{environment} must be exactly 32 bytes encoded as hex or base64"
         )
     return decoded
 
 
-def _operator_key(*, required: bool) -> bytes | None:
-    raw = os.environ.get(_SIGNING_KEY_ENV, "")
+def _environment_key(environment: str, *, required: bool) -> bytes | None:
+    raw = os.environ.get(environment, "")
     if not raw.strip():
         if required:
             raise BackupError(
-                f"authenticated backup requires {_SIGNING_KEY_ENV}; refusing "
-                "an unsigned archive (use allow_unsigned=True only for explicit "
-                "legacy recovery)"
+                f"secure backup requires {environment}; refusing to create or "
+                "open an unprotected archive"
             )
         return None
-    return _decode_operator_key(raw)
+    return _decode_key(raw, environment=environment)
+
+
+def _operator_key(*, required: bool) -> bytes | None:
+    """Return the manifest signing key (legacy private-name compatibility)."""
+    return _environment_key(_SIGNING_KEY_ENV, required=required)
+
+
+def _encryption_key(*, required: bool) -> bytes | None:
+    return _environment_key(_ENCRYPTION_KEY_ENV, required=required)
+
+
+def _require_independent_keys(signing_key: bytes, encryption_key: bytes) -> None:
+    if hmac.compare_digest(signing_key, encryption_key):
+        raise BackupError(
+            f"{_SIGNING_KEY_ENV} and {_ENCRYPTION_KEY_ENV} must contain "
+            "independent key values"
+        )
 
 
 def _key_id(key: bytes) -> str:
@@ -248,8 +272,10 @@ def _safe_relative_path(value: str, *, label: str) -> PurePosixPath:
 
 
 def _is_reserved_restore_path(relative: PurePosixPath) -> bool:
+    parts = relative.parts
     return (
-        relative.parts[0] in {"backups", _RESTORE_TX_ROOT}
+        parts[0] in {"backups", "keys", _RESTORE_TX_ROOT}
+        or parts[:2] == ("audit", "keys")
         or relative.as_posix() == f"{_RESTORE_LOCK_TARGET}.lock"
     )
 
@@ -325,7 +351,8 @@ def _verified_archive(path: str | Path):
         _is_alias(archive, before)
         or not stat.S_ISREG(before.st_mode)
         or before.st_nlink != 1
-        or before.st_size > MAX_ARCHIVE_COMPRESSED_BYTES
+        or before.st_size
+        > MAX_ARCHIVE_COMPRESSED_BYTES + _ENVELOPE_HEADER_BYTES + _GCM_TAG_BYTES
     ):
         raise BackupError("backup path must be one bounded, single-link regular file")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
@@ -406,15 +433,15 @@ def _read_manifest_stream(
         allow_unsigned=allow_unsigned,
         label="backup manifest",
     )
-    _manifest_files(manifest, allow_legacy_unsigned=allow_unsigned and key is None)
+    _manifest_files(manifest, allow_legacy=allow_unsigned)
     return manifest, key
 
 
 def _manifest_files(
-    manifest: dict[str, Any], *, allow_legacy_unsigned: bool,
+    manifest: dict[str, Any], *, allow_legacy: bool,
 ) -> dict[str, tuple[str, int | None]]:
     schema = manifest.get("schema")
-    if schema != SCHEMA and not (allow_legacy_unsigned and schema == 1):
+    if schema != SCHEMA and not (allow_legacy and schema in {1, 2}):
         raise BackupError(f"unsupported backup manifest schema: {schema!r}")
     raw_files = manifest.get("files")
     if not isinstance(raw_files, dict) or len(raw_files) > MAX_ARCHIVE_MEMBERS:
@@ -432,7 +459,7 @@ def _manifest_files(
         if folded in portable and portable[folded] != rel:
             raise BackupError("manifest file paths collide on a portable host")
         portable[folded] = rel
-        if isinstance(record, str) and allow_legacy_unsigned and schema == 1:
+        if isinstance(record, str) and allow_legacy and schema == 1:
             digest, size = record, None
         elif isinstance(record, dict):
             digest, size = record.get("sha256"), record.get("size")
@@ -454,16 +481,24 @@ def _manifest_files(
 
 
 def read_manifest(
-    tarball: str | Path, *, allow_unsigned: bool = False,
+    tarball: str | Path, *, allow_legacy_auth_off: bool = False,
 ) -> dict[str, Any]:
-    """Return a bounded, authenticated manifest.
+    """Return a bounded, decrypted and authenticated manifest.
 
-    ``allow_unsigned=True`` is an explicit compatibility path for legacy
-    recovery. It verifies structure and payload hashes during restore but does
-    not and cannot authenticate archive provenance.
+    ``allow_legacy_auth_off=True`` is a migration-only compatibility path for
+    old unencrypted archives. It is intentionally unavailable from the CLI.
     """
-    with _verified_archive(tarball) as stream:
-        manifest, _ = _read_manifest_stream(stream, allow_unsigned=allow_unsigned)
+    with _plaintext_archive(
+        tarball,
+        allow_legacy_auth_off=allow_legacy_auth_off,
+    ) as (stream, legacy, encryption_key):
+        manifest, signing_key = _read_manifest_stream(
+            stream,
+            allow_unsigned=legacy,
+        )
+        _manifest_files(manifest, allow_legacy=legacy)
+        if signing_key is not None and encryption_key is not None:
+            _require_independent_keys(signing_key, encryption_key)
         return manifest
 
 
@@ -506,6 +541,176 @@ def _open_private_writer(path: Path) -> tuple[int, os.stat_result]:
     except BaseException:
         os.close(fd)
         raise
+
+
+def _encrypt_archive_file(
+    source: Path,
+    destination: Path,
+    *,
+    key: bytes,
+    destination_precreated: bool = False,
+) -> None:
+    """Stream one bounded compressed tar through AES-256-GCM."""
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError as exc:  # pragma: no cover - cryptography is a core dep
+        raise BackupError("backup encryption requires the cryptography package") from exc
+
+    if len(key) != 32:
+        raise BackupError("backup encryption requires an AES-256 key")
+    if not destination_precreated:
+        file_lock.ensure_private_directory(destination.parent)
+        _new_private_empty(destination)
+    nonce = secrets.token_bytes(_GCM_NONCE_BYTES)
+    header = _ENCRYPTED_MAGIC + bytes([_ENVELOPE_VERSION]) + nonce
+    fd = -1
+    try:
+        with _verified_archive(source) as reader:
+            encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
+            encryptor.authenticate_additional_data(header)
+            fd, _ = _open_private_writer(destination)
+            with os.fdopen(fd, "wb") as output:
+                fd = -1
+                output.write(header)
+                for chunk in iter(lambda: reader.read(_COPY_CHUNK), b""):
+                    if not isinstance(chunk, bytes):
+                        raise BackupError("backup archive source returned non-bytes data")
+                    ciphertext = encryptor.update(chunk)
+                    if ciphertext:
+                        output.write(ciphertext)
+                tail = encryptor.finalize()
+                if tail:
+                    output.write(tail)
+                output.write(encryptor.tag)
+                output.flush()
+                os.fsync(output.fileno())
+        if not file_lock.private_path_is_restricted(destination):
+            raise BackupError("encrypted backup did not retain private permissions")
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def _decrypt_archive_to_private(
+    source: BinaryIO,
+    destination: Path,
+    *,
+    key: bytes,
+) -> None:
+    """Authenticate and stream-decrypt an envelope before exposing plaintext."""
+    try:
+        from cryptography.exceptions import InvalidTag
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError as exc:  # pragma: no cover - cryptography is a core dep
+        raise BackupError("backup decryption requires the cryptography package") from exc
+
+    if len(key) != 32:
+        raise BackupError("backup decryption requires an AES-256 key")
+    try:
+        total_size = os.fstat(source.fileno()).st_size
+    except (AttributeError, OSError) as exc:
+        raise BackupError("backup source has no stable file size") from exc
+    minimum_size = _ENVELOPE_HEADER_BYTES + _GCM_TAG_BYTES + 1
+    maximum_size = (
+        MAX_ARCHIVE_COMPRESSED_BYTES
+        + _ENVELOPE_HEADER_BYTES
+        + _GCM_TAG_BYTES
+    )
+    if total_size < minimum_size or total_size > maximum_size:
+        raise BackupError("encrypted backup envelope has an invalid bounded size")
+
+    source.seek(0)
+    header = source.read(_ENVELOPE_HEADER_BYTES)
+    if (
+        not isinstance(header, bytes)
+        or len(header) != _ENVELOPE_HEADER_BYTES
+        or not header.startswith(_ENCRYPTED_MAGIC)
+    ):
+        raise BackupError("backup encryption envelope header is malformed")
+    version_offset = len(_ENCRYPTED_MAGIC)
+    if header[version_offset] != _ENVELOPE_VERSION:
+        raise BackupError("backup encryption envelope version is unsupported")
+    nonce = header[-_GCM_NONCE_BYTES:]
+    source.seek(total_size - _GCM_TAG_BYTES)
+    tag = source.read(_GCM_TAG_BYTES)
+    if not isinstance(tag, bytes) or len(tag) != _GCM_TAG_BYTES:
+        raise BackupError("backup encryption envelope tag is truncated")
+    ciphertext_bytes = total_size - _ENVELOPE_HEADER_BYTES - _GCM_TAG_BYTES
+    source.seek(_ENVELOPE_HEADER_BYTES)
+
+    file_lock.ensure_private_directory(destination.parent)
+    _new_private_empty(destination)
+    fd = -1
+    try:
+        decryptor = Cipher(algorithms.AES(key), modes.GCM(nonce, tag)).decryptor()
+        decryptor.authenticate_additional_data(header)
+        fd, _ = _open_private_writer(destination)
+        with os.fdopen(fd, "wb") as output:
+            fd = -1
+            remaining = ciphertext_bytes
+            while remaining:
+                chunk = source.read(min(_COPY_CHUNK, remaining))
+                if not isinstance(chunk, bytes) or not chunk:
+                    raise BackupError("encrypted backup ciphertext is truncated")
+                remaining -= len(chunk)
+                plaintext = decryptor.update(chunk)
+                if plaintext:
+                    output.write(plaintext)
+            try:
+                tail = decryptor.finalize()
+            except InvalidTag as exc:
+                raise BackupError(
+                    "backup decryption authentication failed (wrong key or tampering)"
+                ) from exc
+            if tail:
+                output.write(tail)
+            output.flush()
+            os.fsync(output.fileno())
+        if destination.stat().st_size > MAX_ARCHIVE_COMPRESSED_BYTES:
+            raise BackupError("decrypted backup exceeds the compressed-size limit")
+        if not file_lock.private_path_is_restricted(destination):
+            raise BackupError("decrypted backup did not retain private permissions")
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        destination.unlink(missing_ok=True)
+        raise
+
+
+@contextmanager
+def _plaintext_archive(
+    path: str | Path,
+    *,
+    allow_legacy_auth_off: bool,
+):
+    """Yield a fully authenticated plaintext tar stream and its key posture."""
+    with _verified_archive(path) as source:
+        prefix = source.read(len(_ENCRYPTED_MAGIC))
+        source.seek(0)
+        if prefix != _ENCRYPTED_MAGIC:
+            if not allow_legacy_auth_off:
+                raise BackupError(
+                    "backup is not encrypted; legacy unencrypted restore is "
+                    "available only through the explicit auth-off migration path"
+                )
+            log.warning(
+                "accepting explicitly-authorized auth-off legacy unencrypted backup"
+            )
+            yield source, True, None
+            return
+
+        encryption_key = _encryption_key(required=True)
+        assert encryption_key is not None
+        with tempfile.TemporaryDirectory(prefix="mvk-backup-decrypt-") as temporary:
+            private = file_lock.ensure_private_directory(temporary)
+            plaintext = private / "archive.tgz"
+            _decrypt_archive_to_private(source, plaintext, key=encryption_key)
+            # GCM finalize above authenticates every byte before this reader is
+            # exposed to manifest parsing or restore staging.
+            with _verified_archive(plaintext) as decrypted:
+                yield decrypted, False, encryption_key
 
 
 def _stream_to_new_private(
@@ -649,9 +854,11 @@ def _world_schema_version(root: Path) -> int | None:
 
 
 def _excluded_from_snapshot(relative: Path) -> bool:
+    parts = relative.parts
     return (
-        not relative.parts
-        or relative.parts[0] in {"backups", _RESTORE_TX_ROOT}
+        not parts
+        or parts[0] in {"backups", "keys", _RESTORE_TX_ROOT}
+        or parts[:2] == ("audit", "keys")
         or relative.name == f"{_RESTORE_LOCK_TARGET}.lock"
         or relative.name.endswith(_SKIP_SUFFIXES)
     )
@@ -719,27 +926,27 @@ def _fsync_directory(directory: Path) -> None:
 
 def create_backup(
     out: str | Path | None = None,
-    *,
-    allow_unsigned: bool = False,
 ) -> Path:
-    """Create one private, atomically-published backup archive.
+    """Create one private, encrypted and atomically-published backup archive.
 
-    Authenticated creation is the default and requires
-    ``MAVERICK_BACKUP_SIGNING_KEY``. ``allow_unsigned=True`` exists only for
-    explicit legacy interoperability; such an archive is labelled unsigned.
-    Existing destination paths are refused rather than overwritten.
+    Creation requires independent signing and encryption keys. Existing
+    destination paths are refused rather than overwritten. There is no API or
+    CLI switch for creating a new plaintext/unsigned backup.
     """
     root = _client_root()
     if not root.exists():
         raise BackupError(f"no data root to back up at {root}")
     file_lock.ensure_private_directory(root)
-    key = _operator_key(required=not allow_unsigned)
+    signing_key = _operator_key(required=True)
+    encryption_key = _encryption_key(required=True)
+    assert signing_key is not None and encryption_key is not None
+    _require_independent_keys(signing_key, encryption_key)
     client_identifier = _client_id() or "unbound"
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     default_destination = out is None
     if default_destination:
         out = data_backups_dir() / (
-            f"maverick-{client_identifier}-{timestamp}-{secrets.token_hex(4)}.tgz"
+            f"maverick-{client_identifier}-{timestamp}-{secrets.token_hex(4)}.mvkb"
         )
     destination = Path(out).expanduser()
     try:
@@ -767,27 +974,54 @@ def create_backup(
             "created_at": time.time(),
             "world_schema_version": schema_version,
             "files": files,
-        }, key)
+        }, signing_key)
         manifest_path = temp_root / MANIFEST
         file_lock.atomic_create_text(
             manifest_path,
             json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False),
         )
 
+        plaintext_archive = temp_root / "archive.tgz"
+        _new_private_empty(plaintext_archive)
+        plaintext_fd, _ = _open_private_writer(plaintext_archive)
+        with os.fdopen(plaintext_fd, "wb") as output:
+            with tarfile.open(fileobj=output, mode="w:gz") as archive:
+                archive.add(manifest_path, arcname=MANIFEST, recursive=False)
+                archive.add(stage, arcname="data")
+            output.flush()
+            os.fsync(output.fileno())
+
+        # Validate the signed plaintext while it is still confined to the
+        # process-private temporary tree.
+        with _verified_archive(plaintext_archive) as stream:
+            _read_manifest_stream(stream, allow_unsigned=False)
+
         staged_archive = _unique_private_empty(destination.parent, destination.name)
         try:
-            fd, _ = _open_private_writer(staged_archive)
-            with os.fdopen(fd, "wb") as output:
-                with tarfile.open(fileobj=output, mode="w:gz") as archive:
-                    archive.add(manifest_path, arcname=MANIFEST, recursive=False)
-                    archive.add(stage, arcname="data")
-                output.flush()
-                os.fsync(output.fileno())
+            _encrypt_archive_file(
+                plaintext_archive,
+                staged_archive,
+                key=encryption_key,
+                destination_precreated=True,
+            )
 
-            # Validate the generated artifact through the same bounded/authenticated
-            # reader used by restore before it becomes the visible DR artifact.
-            with _verified_archive(staged_archive) as stream:
-                _read_manifest_stream(stream, allow_unsigned=allow_unsigned)
+            # Validate the generated encrypted artifact through the same
+            # decrypt/authenticate path used by restore before publication.
+            with _plaintext_archive(
+                staged_archive,
+                allow_legacy_auth_off=False,
+            ) as (stream, legacy, verified_encryption_key):
+                verified_manifest, verified_signing_key = _read_manifest_stream(
+                    stream,
+                    allow_unsigned=legacy,
+                )
+                _manifest_files(verified_manifest, allow_legacy=False)
+                assert verified_signing_key is not None
+                assert verified_encryption_key is not None
+                _require_independent_keys(
+                    verified_signing_key,
+                    verified_encryption_key,
+                )
             if os.path.lexists(destination):
                 raise BackupError(f"backup destination was planted: {destination}")
             os.replace(staged_archive, destination)
@@ -798,11 +1032,10 @@ def create_backup(
             raise
 
     log.info(
-        "backup written: %s (%d files, client=%s, authenticated=%s)",
+        "encrypted backup written: %s (%d files, client=%s)",
         destination,
         len(files),
         client_identifier,
-        key is not None,
     )
     return destination
 
@@ -1119,15 +1352,24 @@ def restore_backup(
     tarball: str | Path,
     *,
     force: bool = False,
-    allow_unsigned: bool = False,
+    allow_legacy_auth_off: bool = False,
 ) -> Path:
-    """Authenticate, verify and transactionally restore one backup.
+    """Decrypt, authenticate, verify and transactionally restore one backup.
 
-    ``force`` does not bypass signature verification. ``allow_unsigned`` is the
-    explicit legacy path and provides integrity/bounds checks, not provenance.
+    ``force`` does not bypass encryption or signature verification.
+    ``allow_legacy_auth_off`` is a migration-only API path for old unencrypted
+    archives; it is deliberately not exposed by the operator CLI.
     """
-    with _verified_archive(tarball) as stream:
-        manifest, key = _read_manifest_stream(stream, allow_unsigned=allow_unsigned)
+    with _plaintext_archive(
+        tarball,
+        allow_legacy_auth_off=allow_legacy_auth_off,
+    ) as (stream, legacy, encryption_key):
+        manifest, signing_key = _read_manifest_stream(
+            stream,
+            allow_unsigned=legacy,
+        )
+        if signing_key is not None and encryption_key is not None:
+            _require_independent_keys(signing_key, encryption_key)
         backup_client = manifest.get("client_id")
         live_client = _client_id()
         if not force and backup_client != live_client:
@@ -1150,7 +1392,7 @@ def restore_backup(
             )
         expected = _manifest_files(
             manifest,
-            allow_legacy_unsigned=allow_unsigned and key is None,
+            allow_legacy=legacy,
         )
         root = _client_root()
         file_lock.ensure_private_directory(root)
@@ -1160,19 +1402,19 @@ def restore_backup(
             _extract_payload_stream(stream, stage, expected=expected)
             lock_target = root / _RESTORE_LOCK_TARGET
             with file_lock.cross_process_lock(lock_target, strict=True):
-                _recover_transactions(root, allow_unsigned=allow_unsigned)
+                _recover_transactions(root, allow_unsigned=legacy)
                 _apply_transaction(
                     root,
                     stage,
                     expected,
-                    key=key,
+                    key=signing_key,
                 )
     log.info(
-        "restore complete into %s (from client=%s, %d files verified, authenticated=%s)",
+        "restore complete into %s (from client=%s, %d files verified, encrypted=%s)",
         root,
         backup_client,
         len(expected),
-        key is not None,
+        not legacy,
     )
     return root
 

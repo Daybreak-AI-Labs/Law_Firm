@@ -1,10 +1,11 @@
 """Dashboard authentication and authorization boundary.
 
-The global FastAPI dependency composes trusted-proxy identity, OIDC bearer and
-browser sessions, SAML sessions, local invite sessions, and the static dashboard
-bearer. Once any mechanism is configured, missing or invalid identity fails
-closed. Principal-less local-operator compatibility is available only when auth
-is genuinely off and client binding does not forbid ambient loopback trust.
+The global FastAPI dependency composes OIDC bearer/browser sessions and local
+invite sessions. The legacy static dashboard bearer exists only for explicit
+localhost auth-off development. Once named authentication is configured,
+missing or invalid identity fails closed. Principal-less local-operator
+compatibility is available only when auth is genuinely off and client binding
+does not forbid ambient loopback trust.
 
 Importing this module never hard-requires PyJWT: ``maverick.oidc`` lazy-imports
 it only when an OIDC token is actually verified.
@@ -13,32 +14,19 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from urllib.parse import urlparse
 
-from fastapi import HTTPException, Request, WebSocket
+from fastapi import HTTPException, Request
 from maverick.oidc import (
     OIDCError,
     VerifiedPrincipal,
     oidc_enabled,
     verify_oidc_token,
 )
-from maverick.proxy_auth import (
-    principal_from_proxy,
-    proxy_auth_enabled,
-    proxy_header_name,
-    proxy_trusts,
-)
-
-# Arm the SCIM-group grant resolver (registered on import with
-# maverick.suite_grants) so the HTTP gates and the kernel deploy/dispatch
-# gates both see group-derived department grants from the first request.
-from . import scim_groups  # noqa: F401
 
 # Probe/discovery endpoints that must answer without a bearer even when OIDC is
 # on (load balancers and k8s liveness/readiness probes, plus the OpenAPI docs,
 # can't present an ID token). Mirrors the dashboard's existing bearer-auth
-# exemptions in ``app._AUTH_EXEMPT`` -- the HMAC-signed webhooks are NOT listed
-# here because they carry their own credential and are gated separately.
+# exemptions in ``app._AUTH_EXEMPT``.
 _OIDC_EXEMPT_PATHS = frozenset(
     {
         "/healthz",
@@ -58,26 +46,23 @@ _OIDC_EXEMPT_PATHS = frozenset(
     }
 )
 
-SELF_AUTH_WEBHOOK_PATHS = frozenset(
-    {
-        "/webhook/start",
-        "/webhook/run",
-        "/webhook/linear",
-        "/webhook/jira",
-        "/webhook/github",
-        "/webhook/gitlab",
-    }
-)
+_SELF_AUTH_EXEMPT_PATHS = _OIDC_EXEMPT_PATHS
 
-_SELF_AUTH_EXEMPT_PATHS = _OIDC_EXEMPT_PATHS | frozenset(
-    {"/static/daybreak-logo.jpg"}
-) | SELF_AUTH_WEBHOOK_PATHS
+# The static dashboard bearer authenticates one deployment credential, not an
+# anonymous local operator and not an individual human.  Give that credential a
+# stable, non-secret subject so ownership, attribution, RBAC, and
+# audit records all use the same real principal.  Operators can explicitly grant
+# this principal a role as ``user:dashboard-static-bearer``; absent a grant it is
+# governed by the deny-by-default authenticated-user role.
+_STATIC_DASHBOARD_SUBJECT = "dashboard-static-bearer"
+_STATIC_DASHBOARD_ISSUER = "maverick:dashboard-static-bearer"
+_STATIC_DASHBOARD_AUDIENCE = "maverick-dashboard"
 
 
 def _self_authenticated_path(path: str) -> bool:
     """Whether a route authenticates itself or bootstraps authentication."""
     return path in _SELF_AUTH_EXEMPT_PATHS or path.startswith(
-        ("/share/", "/scim/", "/form/", "/saml/", "/auth/invite/")
+        ("/share/", "/auth/invite/")
     )
 
 
@@ -122,78 +107,22 @@ def _dashboard_require_auth_enabled() -> bool:
     return configured if isinstance(configured, bool) else True
 
 
-def _saml_policy_configured() -> bool:
-    """Whether config contains any SAML identity-policy surface.
-
-    ``saml_enabled`` intentionally reports only a *complete* SP setup so its
-    routes can remain inert while an operator fills in the template.  That is
-    the wrong predicate for the local-admin compatibility exception: once a
-    non-empty ``[auth.saml]`` table exists, incomplete or invalid policy must
-    lock anonymous access down instead of silently behaving as auth-off.
-    """
-    try:
-        from maverick.config import config_source_errors, load_config
-
-        config = load_config() or {}
-        if config_source_errors():
-            return True
-    except Exception:
-        return True
-    if not isinstance(config, dict):
-        return True
-    if "auth" not in config:
-        return False
-    auth = config["auth"]
-    if not isinstance(auth, dict):
-        return True
-    if "saml" not in auth:
-        return False
-    saml = auth["saml"]
-    return bool(saml) if isinstance(saml, dict) else True
-
-
 def non_static_auth_configured() -> bool:
     """Whether an identity mechanism besides the static bearer is configured.
 
-    The static operator token and enterprise/browser identity mechanisms are
+    The static operator token and named browser identity mechanisms are
     alternatives, not mutually exclusive deployment modes. Configuration
     uncertainty reports identity policy as configured so the request reaches
     the global dependency and fails closed unless an identity verifies.
     """
     try:
         from .invites import invites_enabled
-        from .saml import saml_enabled
-
         return any((
             oidc_enabled(),
-            proxy_auth_enabled(),
             invites_enabled(),
-            saml_enabled(),
-            _saml_policy_configured(),
         ))
     except Exception:
         return True
-
-
-def _proxy_principal(request: Request) -> VerifiedPrincipal | None:
-    """Reverse-proxy SSO: a principal from a forwarded identity header.
-
-    Honored ONLY when proxy auth is enabled AND the request's network peer is a
-    trusted upstream (anti-spoofing -- see :mod:`maverick.proxy_auth`). Returns
-    ``None`` (fall through to OIDC/loopback) when not applicable.
-    """
-    if not proxy_auth_enabled():
-        return None
-    client_host = request.client.host if request.client else ""
-    if not proxy_trusts(client_host):
-        return None
-    value = request.headers.get(proxy_header_name(), "") or ""
-    if not value:
-        return None
-    try:
-        return principal_from_proxy(value)
-    except ValueError:
-        return None
 
 
 def _invite_session_principal(request: Request) -> VerifiedPrincipal | None:
@@ -249,9 +178,9 @@ def execution_user_id_from_request(request: Request) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Owner-scoped multi-tenant authorization (stage 2)
+# Matter ACL and legacy owner authorization
 #
-# The verified principal is the unit of ownership. Goals/fleets created by a
+# The verified principal is the unit of ownership. Goals created by a
 # caller are stamped with that caller's ``user:<sub>`` string; every read/mutate
 # of an owned resource checks the caller against the owner.
 #
@@ -265,10 +194,11 @@ def execution_user_id_from_request(request: Request) -> str | None:
 def caller_principal(request: Request) -> str | None:
     """The full ``"user:<sub>"`` identity established on this request.
 
-    ``None`` only means no end-user principal was established; it is not proof
-    that auth is off because static-token and self-authenticated requests also
-    have no user subject. Authorization helpers must prove the local exception
-    through :func:`_authorization_principal` before granting operator semantics.
+    ``None`` only means no principal was established; it is not proof that auth
+    is off because self-authenticated routes also carry no dashboard identity.
+    A verified static bearer is bound to its credential principal, while
+    authorization helpers prove the remaining local exception through
+    :func:`_authorization_principal` before granting operator semantics.
     """
     principal = getattr(getattr(request, "state", None), "principal", None)
     if principal is None:
@@ -278,9 +208,16 @@ def caller_principal(request: Request) -> str | None:
 
 
 def _dashboard_token_authenticated(request) -> bool:
-    """Whether this request carries the configured static dashboard bearer."""
+    """Whether a local auth-off development request has the legacy bearer.
+
+    A shared token is not a human ethical-wall identity.  Secure firm mode,
+    named-auth mode, remote peers, forwarded requests, and non-loopback Host
+    headers all reject it even when the environment variable remains set.
+    """
     import hmac
 
+    if not legacy_static_bearer_allowed(request):
+        return False
     expected = os.environ.get("MAVERICK_DASHBOARD_TOKEN", "")
     if not expected:
         return False
@@ -289,29 +226,86 @@ def _dashboard_token_authenticated(request) -> bool:
     return bool(supplied) and hmac.compare_digest(supplied, expected)
 
 
+def legacy_static_bearer_allowed(request) -> bool:
+    """Static bearer compatibility is localhost + auth-off + insecure-dev only."""
+    try:
+        from maverick.security_defaults import secure_by_default
+
+        if secure_by_default() or non_static_auth_configured():
+            return False
+    except Exception:
+        return False
+    if not os.environ.get("MAVERICK_DASHBOARD_TOKEN"):
+        return False
+    return _is_direct_loopback_request(request)
+
+
+def _is_direct_loopback_request(request: Request) -> bool:
+    """Accept only a direct loopback peer and loopback Host (plus TestClient)."""
+    if any(
+        request.headers.get(name)
+        for name in ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+    ):
+        return False
+    peer = request.client.host if getattr(request, "client", None) else ""
+    host = str(getattr(getattr(request, "url", None), "hostname", "") or "")
+    try:
+        peer_ok = peer in {"localhost", "testclient"} or ipaddress.ip_address(peer).is_loopback
+        host_ok = host in {"localhost", "testserver"} or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+    return peer_ok and host_ok
+
+
+def _dashboard_token_principal(request) -> VerifiedPrincipal | None:
+    """Return the stable identity represented by a valid static bearer.
+
+    The token bytes are deliberately absent from both the subject and claims:
+    they are authentication material, not identity data, and must never appear
+    in ownership rows or logs.  Token rotation preserves the credential slot's
+    identity while revoking possession of the old secret.
+    """
+    if not _dashboard_token_authenticated(request):
+        return None
+    return VerifiedPrincipal(
+        sub=_STATIC_DASHBOARD_SUBJECT,
+        issuer=_STATIC_DASHBOARD_ISSUER,
+        audience=_STATIC_DASHBOARD_AUDIENCE,
+        claims={"sub": _STATIC_DASHBOARD_SUBJECT, "via": "static-bearer"},
+    )
+
+
+def _establish_dashboard_token_principal(request) -> VerifiedPrincipal | None:
+    """Authenticate and bind the static-bearer principal to request state."""
+    principal = _dashboard_token_principal(request)
+    if principal is None:
+        return None
+    request.state.principal = principal
+    return principal
+
+
 def auth_genuinely_off() -> bool:
     """Whether the dashboard has no configured authentication mechanism.
 
     This is deliberately stricter than ``caller_principal(...) is None``:
-    HMAC webhook requests are exempt from browser/OIDC authentication, and a
-    static dashboard token authenticates the request without establishing an
-    end-user principal. Legacy ownerless automations are safe only on a truly
-    unauthenticated local deployment. Any unreadable auth configuration denies
-    that legacy exception.
+    Self-authenticated public links are exempt from browser/OIDC authentication,
+    while a static dashboard token establishes a non-human credential principal.
+    Legacy ownerless local operations are safe only on a truly unauthenticated local
+    deployment. Any unreadable auth configuration denies that legacy exception.
     """
     if os.environ.get("MAVERICK_DASHBOARD_TOKEN") or _dashboard_require_auth_enabled():
         return False
     return not non_static_auth_configured()
 
 
-def anonymous_local_access_allowed() -> bool:
+def anonymous_local_access_allowed(request: Request) -> bool:
     """Whether principal-less loopback requests may act as the local operator.
 
     Having no configured identity mechanism is necessary but not sufficient:
-    client-bound/enterprise deployments explicitly disable ambient loopback
+    client-bound firm deployments explicitly disable ambient loopback
     trust. An unreadable binding policy denies the compatibility path.
     """
-    if not auth_genuinely_off():
+    if not auth_genuinely_off() or not _is_direct_loopback_request(request):
         return False
     try:
         from maverick.client import client_binding_enforced
@@ -324,91 +318,49 @@ def anonymous_local_access_allowed() -> bool:
 def _authorization_principal(request: Request) -> str | None:
     """Return the caller or prove that principal-less local access is safe.
 
-    ``None`` is an authorization grant only in genuine auth-off local mode or
-    after the static dashboard bearer has authenticated the request. A missing
-    proxy/OIDC/session identity must never inherit the legacy local-admin path.
+    ``None`` is an authorization grant only in genuine auth-off local mode. A
+    valid static dashboard bearer is a named principal; a missing OIDC/session
+    identity must never inherit the legacy local-admin path.
     """
     principal = caller_principal(request)
     if principal is not None:
         return principal
-    if anonymous_local_access_allowed() or _dashboard_token_authenticated(request):
+    static_principal = _establish_dashboard_token_principal(request)
+    if static_principal is not None:
+        return static_principal.principal
+    if anonymous_local_access_allowed(request):
         return None
     raise HTTPException(status_code=401, detail="authenticated identity required")
 
 
-def durable_automation_owner(request: Request) -> str:
-    """Stable owner for a trigger/import that will execute without a request.
-
-    Principal-bearing auth uses that exact principal. Auth-off preserves the
-    historical ownerless local mode. A configured static dashboard token has
-    no user subject, so bind it to the explicit local execution identity rather
-    than persisting an ownerless row that would later bypass revocation checks.
-    """
-    principal = caller_principal(request)
-    if principal:
-        return principal
-    return "" if anonymous_local_access_allowed() else "user:local"
-
-
-def _pin_tenant_from_principal(request: Request, principal: VerifiedPrincipal) -> None:
-    """Pin per-user tenant state once the verified principal is known.
-
-    HTTP middleware runs before FastAPI dependencies populate
-    ``request.state.principal``, so tenant pinning must happen here, in the
-    authentication dependency, immediately after a principal is established and
-    before route handlers choose tenant-scoped world state. The reset token is
-    stored on request state for the outer middleware to clean up after the
-    response. If an opted-in isolation policy cannot be resolved, authentication
-    is refused instead of silently serving the caller from the shared root.
-    """
-    try:
-        from maverick.paths import set_tenant, tenant_by_user_enabled
-
-        if not tenant_by_user_enabled():
-            return
-        name = getattr(principal, "principal", "")
-        if not isinstance(name, str):
-            name = ""
-        if not name or getattr(request.state, "tenant_pin_token", None) is not None:
-            return
-        request.state.tenant_pin_token = set_tenant(f"api:{name}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="tenant isolation policy unavailable",
-        ) from exc
-
-
 def is_dashboard_admin(principal: str) -> bool:
-    """True iff ``principal`` is a configured (bootstrap) dashboard admin.
+    """True only for an exact principal in the bootstrap-admin roster."""
+    if not principal:
+        return False
+    configured = (os.environ.get("MAVERICK_DASHBOARD_ADMINS") or "").strip()
+    if configured:
+        admins = {item.strip() for item in configured.split(",") if item.strip()}
+        return principal in admins
+    try:
+        from maverick.config import config_source_errors, load_config
 
-    Admins bypass owner scoping AND department scoping (they see and control
-    every goal/fleet/department). The roster is the ``[dashboard] admins`` list
-    in ``~/.maverick/config.toml`` with an optional ``MAVERICK_DASHBOARD_ADMINS``
-    (comma-separated) env override; comparison is exact against the full
-    ``"user:<sub>"`` form.
-
-    Single source of truth: delegates to :func:`maverick.suite_grants.is_admin_principal`
-    so the dashboard HTTP gates and the kernel deploy/dispatch gates can never
-    disagree about who bypasses scoping. NOTE this is the *config-pinned*
-    roster, not the effective RBAC role — a user assigned ``admin`` via the
-    Users page or a group mapping holds admin *permissions* but remains
-    department-scoped (an admin-of-finance administers finance); only the
-    config roster is the "never scoped" break-glass set.
-    """
-    from maverick.suite_grants import is_admin_principal
-    return is_admin_principal(principal)
+        if config_source_errors():
+            return False
+        dashboard = (load_config() or {}).get("dashboard", {}) or {}
+        if not isinstance(dashboard, dict):
+            return False
+        raw = dashboard.get("admins", []) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            return False
+        return principal in {str(item).strip() for item in raw if str(item).strip()}
+    except Exception:
+        return False
 
 
 def global_role_for_principal(principal: str | None) -> str | None:
-    """The principal's dashboard-wide RBAC role, ignoring tenant memberships.
-
-    Resolution: explicit stored assignment, then the role mapped to the user's
-    SCIM groups (``[dashboard] group_roles`` — team membership in the IdP), then
-    the configured default. Explicit always beats derived, so an admin can still
-    pin an individual without fighting the group mapping."""
+    """Resolve the firm's explicit role, then its deny-by-default role."""
     if principal is None:
         return None
     if is_dashboard_admin(principal):
@@ -418,10 +370,6 @@ def global_role_for_principal(principal: str | None) -> str | None:
         stored = rbac.get_stored_role(principal)
         if stored:
             return stored
-        from . import scim_groups
-        group_role = scim_groups.role_for_principal(principal)
-        if group_role:
-            return group_role
         return rbac.default_role()
     except Exception:
         # A damaged role roster, group-membership source, or config default is
@@ -437,29 +385,13 @@ def role_for_principal(principal: str | None) -> str | None:
     disable itself (single-user mode). A config-pinned bootstrap admin
     (:func:`is_dashboard_admin`) is always ``"admin"`` and cannot be demoted via
     the store, so you can't lock yourself out. Otherwise the stored role, or the
-    configured default (``operator``) for an authenticated user with no explicit
-    assignment.
+    configured default (``viewer`` when omitted) for an authenticated user with
+    no explicit assignment.
     """
     if principal is None:
         return None
     if is_dashboard_admin(principal):
         return "admin"
-    from . import rbac
-    # Per-tenant membership wins over the global role, but only for the active
-    # tenant. No active tenant or no membership -> the global behaviour below,
-    # unchanged. Bootstrap admin (above) always wins, so this can't lock admins
-    # out of a tenant.
-    try:
-        from maverick.paths import current_tenant_id
-        tid = current_tenant_id()
-        if tid:
-            tenant_role = rbac.get_tenant_role(tid, principal)
-            if tenant_role:
-                return tenant_role
-    except Exception:
-        # Never replace an unreadable tenant-local demotion with the broader
-        # global/default role.
-        return None
     return global_role_for_principal(principal)
 
 
@@ -487,11 +419,74 @@ def require_permission(request: Request, permission: str) -> None:
         raise HTTPException(status_code=403, detail="insufficient role for this action")
 
 
+def qualified_attorney_policy() -> tuple[bool, frozenset[str]]:
+    """Load the exact human counsel roster from ``[firm] qualified_attorneys``.
+
+    RBAC administrators manage software; that role is not evidence of a law
+    license.  Missing, malformed, shared-credential, or non-user entries make
+    the policy invalid so authenticated firm startup and every legal decision
+    fail closed.
+    """
+    try:
+        from maverick.config import config_source_errors, load_global_config
+
+        if config_source_errors(include_tenant=False):
+            return False, frozenset()
+        config = load_global_config() or {}
+    except Exception:
+        return False, frozenset()
+    if not isinstance(config, dict):
+        return False, frozenset()
+    firm = config.get("firm")
+    if not isinstance(firm, dict):
+        return False, frozenset()
+    raw = firm.get("qualified_attorneys")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return False, frozenset()
+    members: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str):
+            return False, frozenset()
+        principal = value.strip()
+        if (
+            not principal.startswith("user:")
+            or len(principal) <= len("user:")
+            or len(principal) > 256
+            or principal == "user:dashboard-static-bearer"
+        ):
+            return False, frozenset()
+        members.add(principal)
+    return bool(members), frozenset(members)
+
+
+def is_qualified_attorney_principal(principal: str | None) -> bool:
+    valid, members = qualified_attorney_policy()
+    return valid and isinstance(principal, str) and principal in members
+
+
+def require_qualified_attorney(request: Request) -> str:
+    """Require named verified identity, counsel roster, and signoff RBAC."""
+    require_permission(request, "legal_signoff")
+    verified = getattr(getattr(request, "state", None), "principal", None)
+    principal = caller_principal(request)
+    if (
+        not isinstance(verified, VerifiedPrincipal)
+        or not principal
+        or getattr(verified, "issuer", "") == _STATIC_DASHBOARD_ISSUER
+        or not is_qualified_attorney_principal(principal)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="qualified counsel authorization required",
+        )
+    return principal
+
+
 def has_global_permission(request: Request, permission: str) -> bool:
     """Whether the caller may perform a dashboard-wide control-plane action.
 
-    Tenant memberships are intentionally ignored so a tenant-local admin cannot
-    satisfy global admin gates for other tenants or dashboard settings.
+    Matter memberships are intentionally ignored; settings require the firm's
+    explicit global role.
     """
     principal = _authorization_principal(request)
     if principal is None:
@@ -508,102 +503,36 @@ def require_global_permission(request: Request, permission: str) -> None:
 
 
 def caller_suites(request: Request) -> frozenset[str] | None:
-    """The department suites the caller may use, or ``None`` for unrestricted.
-
-    Job-function scoping (``maverick_dashboard.suite_grants``), orthogonal to
-    the privilege role: it decides WHICH specialists a user works with, not how
-    much they may do. ``None`` — auth off, a dashboard admin, or a user with no
-    grant (and no configured default) — disables every suite gate, preserving
-    single-user behaviour."""
-    principal = _authorization_principal(request)
-    if principal is None or is_dashboard_admin(principal):
-        return None
-    from . import suite_grants
-    return suite_grants.granted_suites(principal)
-
-
-class AutomationAuthorizationError(RuntimeError):
-    """A request-less automation owner no longer has execution authority."""
-
-
-def stored_automation_identity(
-    owner: str,
-) -> tuple[str, str | None, frozenset[str] | None]:
-    """Revalidate a durable trigger owner and return its current run identity.
-
-    Trigger possession is not a perpetual grant. Every request-less fire checks
-    SCIM lifecycle, current RBAC ``operate`` permission, and the current suite
-    floor. Legacy ownerless rows execute only in genuinely auth-off local mode.
-    """
-    owner = str(owner or "").strip()
-    if not owner:
-        if anonymous_local_access_allowed():
-            return "", None, None
-        raise AutomationAuthorizationError("automation owner is unavailable")
-    try:
-        from .scim_groups import active_for_principal
-
-        if active_for_principal(owner) is False:
-            raise AutomationAuthorizationError("automation owner is unavailable")
-        from .rbac import permissions_for
-
-        if "operate" not in permissions_for(role_for_principal(owner)):
-            raise AutomationAuthorizationError("automation owner is unavailable")
-        suites = None
-        if not is_dashboard_admin(owner):
-            from .suite_grants import granted_suites
-
-            suites = granted_suites(owner)
-    except AutomationAuthorizationError:
-        raise
-    except Exception as exc:
-        raise AutomationAuthorizationError(
-            "automation authorization policy is unavailable") from exc
-    user_id = owner[len("user:"):] if owner.startswith("user:") else ""
-    return owner, (user_id or None), suites
+    """The firm-only dashboard has one specialist suite: legal."""
+    return frozenset({"legal"}) if _authorization_principal(request) else None
 
 
 def suite_allowed(request: Request, suite: str | None) -> bool:
-    """Whether the caller may use department ``suite``.
+    """Whether the caller may use the retained legal ``suite``.
 
     ``suite`` is a suite key (``maverick.domain.suite_for``); ``None`` means a
-    generic/legacy pack that belongs to no department and is never scoped."""
+    generic/legacy pack and is never admitted for named firm work."""
     allowed = caller_suites(request)
     if suite is None:
         return True
     return allowed is None or suite in allowed
 
 
-def scope_to_suites(request: Request, items, *, suite_of, keep_none: bool = True):
-    """Filter ``items`` to the caller's granted departments (job-function scope).
-
-    ``suite_of(item)`` returns the item's suite key, or ``None`` for a generic /
-    department-less item. Unscoped callers (auth off, admin, no grant) get every
-    item back unchanged; otherwise an item is kept when its suite is granted, or
-    when it is generic and ``keep_none`` is set (packs outside every department
-    stay visible). One helper so every catalog surface scopes identically —
-    the inline per-surface copies drifted (some kept generics, some didn't)."""
-    allowed = caller_suites(request)
-    if allowed is None:
-        return list(items)
-    return [it for it in items
-            if (suite_of(it) is None and keep_none) or suite_of(it) in allowed]
-
-
 def require_suite(request: Request, suite: str | None) -> None:
     """Raise ``HTTPException(403)`` unless the caller may use ``suite``."""
     if not suite_allowed(request, suite):
         raise HTTPException(
-            status_code=403, detail="insufficient department access for this action")
+            status_code=403, detail="legal workflow access required")
 
 
 def goal_owner_filter(request: Request) -> str | None:
     """The ``owner`` value to pass to ``WorldModel.list_goals``.
 
-    Returns None (no owner filter -> all goals) when the caller is unauthenticated
-    (auth off) or an admin; otherwise the caller's principal so the listing is
-    scoped to the rows they own. ``owner=None`` is the historical default, so the
-    auth-off path is unchanged.
+    Returns None for auth-off and for the historical administrator view of
+    non-matter resources. This helper must never authorize a client-matter
+    listing: goal/matter surfaces use :func:`list_accessible_goals` and
+    :func:`list_accessible_projects`, where global RBAC is not an ethical-wall
+    bypass.
     """
     principal = _authorization_principal(request)
     if principal is None or is_dashboard_admin(principal):
@@ -611,15 +540,107 @@ def goal_owner_filter(request: Request) -> str | None:
     return principal
 
 
-def can_access_goal_principal(principal: str | None, goal) -> bool:
-    """Whether ``principal`` may read/mutate ``goal``.
+def can_access_project_principal(
+    principal: str | None, project_id: int, *, world=None,
+) -> bool:
+    """Whether an exact principal is an active member of a client matter.
 
-    ``None`` means auth is off and preserves the dashboard's historical
-    single-user behavior. Authenticated non-admin callers may access only goals
-    stamped with their exact owner principal.
+    ``None`` preserves auth-off local operation.  No dashboard role, including
+    admin, implies matter membership.  Policy/backend failures deny access.
     """
     if principal is None:
         return True
+    try:
+        if world is None:
+            from ._shared import _world
+            world = _world()
+        return world.project_member_role(int(project_id), principal) is not None
+    except Exception:
+        return False
+
+
+def can_access_project(request: Request, project_id: int, *, world=None) -> bool:
+    """Request-bound wrapper for :func:`can_access_project_principal`."""
+    return can_access_project_principal(
+        _authorization_principal(request), project_id, world=world,
+    )
+
+
+def assert_project_access(request: Request, project_id: int, *, world=None) -> None:
+    """Hide a matter from callers outside its ethical wall."""
+    if not can_access_project(request, project_id, world=world):
+        raise HTTPException(status_code=404, detail="no such project")
+
+
+def list_accessible_projects(request: Request, world):
+    """List exactly the matters visible to this request."""
+    principal = _authorization_principal(request)
+    if principal is None:
+        return world.list_projects()
+    return world.list_projects(principal=principal)
+
+
+def list_accessible_goals(request: Request, world, **filters):
+    """List goals with the same ethical-wall rule as direct object access."""
+    principal = _authorization_principal(request)
+    if principal is None:
+        return world.list_goals(**filters)
+    return world.list_goals(
+        accessible_by=principal,
+        include_all_unfiled=is_dashboard_admin(principal),
+        **filters,
+    )
+
+
+def search_accessible_goals(request: Request, world, query: str, **filters):
+    """Search only goal rows the caller could fetch directly."""
+    principal = _authorization_principal(request)
+    if principal is None:
+        return world.search_goals(query, **filters)
+    return world.search_goals(
+        query,
+        accessible_by=principal,
+        include_all_unfiled=is_dashboard_admin(principal),
+        **filters,
+    )
+
+
+def list_accessible_episodes(request: Request, world, **filters):
+    """List run-cost rows without crossing a matter membership boundary."""
+    principal = _authorization_principal(request)
+    if principal is None:
+        return world.list_episodes(**filters)
+    return world.list_episodes(
+        accessible_by=principal,
+        include_all_unfiled=is_dashboard_admin(principal),
+        **filters,
+    )
+
+
+def total_accessible_spend(request: Request, world) -> dict[str, float]:
+    """Aggregate spend only over runs visible to this request."""
+    principal = _authorization_principal(request)
+    if principal is None:
+        return world.total_spend()
+    return world.total_spend(
+        accessible_by=principal,
+        include_all_unfiled=is_dashboard_admin(principal),
+    )
+
+
+def can_access_goal_principal(principal: str | None, goal, *, world=None) -> bool:
+    """Whether ``principal`` may read/mutate ``goal``.
+
+    ``None`` means auth is off and preserves the dashboard's historical
+    single-user behavior. A matter-bound goal requires an exact active
+    membership, regardless of ownership or global admin role. Only unfiled
+    legacy goals retain the owner/admin compatibility policy.
+    """
+    if principal is None:
+        return True
+    project_id = getattr(goal, "project_id", None)
+    if project_id is not None:
+        return can_access_project_principal(principal, project_id, world=world)
     if is_dashboard_admin(principal):
         return True
     return getattr(goal, "owner", "") == principal
@@ -630,7 +651,7 @@ def can_access_goal(request: Request, goal) -> bool:
 
     Allowed iff auth is off (no principal), the caller is an admin, or the
     caller owns the goal. Legacy ``owner == ""`` goals (created before this
-    layer, or by an external/webhook path) are therefore reachable only by the
+    layer) are therefore reachable only by the
     no-auth/admin paths, never by a different authenticated user.
     """
     return can_access_goal_principal(_authorization_principal(request), goal)
@@ -639,86 +660,12 @@ def can_access_goal(request: Request, goal) -> bool:
 def assert_goal_access(request: Request, goal) -> None:
     """Raise ``HTTPException(404)`` if the caller may not touch ``goal``.
 
-    404 (not 403) on denial so a cross-tenant probe can't distinguish "exists
+    404 (not 403) on denial so a cross-matter probe can't distinguish "exists
     but forbidden" from "does not exist". Callers fetch the goal first (a real
     miss is its own 404) and then gate on this.
     """
     if not can_access_goal(request, goal):
         raise HTTPException(status_code=404, detail="no such goal")
-
-
-def _enforce_scim_active(principal: VerifiedPrincipal) -> None:
-    """Reject a SCIM-matched principal that has been deprovisioned.
-
-    Revocation epochs terminate credentials minted before deprovisioning, but
-    an IdP that mistakenly continues issuing fresh tokens could otherwise give
-    the inactive user the dashboard's global default role. The live SCIM roster
-    is therefore an authentication gate as well as a group-grant source.
-    """
-    try:
-        from .scim_groups import active_for_principal
-
-        active = active_for_principal(principal.principal)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="identity lifecycle policy unavailable",
-        ) from exc
-    if active is False:
-        raise HTTPException(status_code=401, detail="invalid identity")
-
-
-def _require_websocket_principal(websocket) -> VerifiedPrincipal | None:
-    """Authenticate a WebSocket handshake with the configured mechanisms."""
-    if websocket is None:
-        if anonymous_local_access_allowed():
-            return None
-        raise HTTPException(status_code=401, detail="authenticated identity required")
-
-    # Explicit credentials take precedence over ambient proxy/cookie identity.
-    # Otherwise an invalid bearer could be ignored and the handshake satisfied
-    # by a browser session riding on the same request.
-    authorization = websocket.headers.get("authorization", "")
-    if authorization:
-        if _dashboard_token_authenticated(websocket):
-            return None
-        ws_token = _bearer_token(websocket)
-        if not ws_token or not oidc_enabled():
-            raise HTTPException(status_code=401, detail="invalid bearer credential")
-        try:
-            ws_principal = verify_oidc_token(ws_token)
-        except OIDCError as exc:
-            raise HTTPException(status_code=401, detail="invalid OIDC token") from exc
-        from .session_revocation import is_revoked
-        if is_revoked(ws_principal.sub, ws_principal.claims.get("iat")):
-            raise HTTPException(status_code=401, detail="invalid OIDC token")
-        _enforce_scim_active(ws_principal)
-        _pin_tenant_from_principal(websocket, ws_principal)
-        return ws_principal
-
-    # Proxy/session identities are valid WebSocket credentials too. Their
-    # browser Origin is checked by ``websocket_authorized`` before accept.
-    pp = _proxy_principal(websocket)
-    if pp is not None:
-        _enforce_scim_active(pp)
-        _pin_tenant_from_principal(websocket, pp)
-        return pp
-    sp = _session_principal(websocket)
-    if sp is not None:
-        _enforce_scim_active(sp)
-        _pin_tenant_from_principal(websocket, sp)
-        return sp
-    lp = _invite_session_principal(websocket)
-    if lp is not None:
-        _enforce_scim_active(lp)
-        _pin_tenant_from_principal(websocket, lp)
-        return lp
-
-    if oidc_enabled():
-        raise HTTPException(status_code=401, detail="OIDC bearer token required")
-    if not anonymous_local_access_allowed():
-        raise HTTPException(status_code=401, detail="authenticated identity required")
-    return None
 
 
 def _authenticate_oidc_bearer(request: Request, token: str) -> VerifiedPrincipal:
@@ -733,47 +680,40 @@ def _authenticate_oidc_bearer(request: Request, token: str) -> VerifiedPrincipal
             detail="invalid OIDC token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
-    # Revocation: a bearer issued before the principal's revocation epoch
-    # ("log out everywhere" / SCIM deprovision) is rejected even if it verifies.
+    # A bearer issued before the principal's revocation epoch (logout-all or
+    # firm offboarding) is rejected even if its IdP signature still verifies.
     from .session_revocation import is_revoked
     if is_revoked(principal.sub, principal.claims.get("iat")):
         raise HTTPException(
             status_code=401, detail="invalid OIDC token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
-    _enforce_scim_active(principal)
     request.state.principal = principal
-    _pin_tenant_from_principal(request, principal)
     return principal
 
 
-def require_principal(
-    request: Request = None,  # type: ignore[assignment]
-    websocket: WebSocket = None,  # type: ignore[assignment,name-defined]
-) -> VerifiedPrincipal | None:
-    """Authenticate every non-exempt HTTP or WebSocket request.
+def require_principal(request: Request) -> VerifiedPrincipal | None:
+    """Authenticate every non-exempt HTTP request.
 
     An explicit static/OIDC bearer takes precedence so an invalid credential
-    cannot borrow ambient authority. Without one, trusted proxy identity is
-    followed by a verified browser or invite session. Missing identity is
+    cannot borrow ambient authority. Without one, a verified browser or invite
+    session may establish identity. Missing identity is
     allowed only in genuine local auth-off mode. Probe,
-    discovery, login-bootstrap, share, SCIM, SAML, form, and webhook paths carry
-    their own narrower credential or are intentionally public bootstrap routes.
+    login-bootstrap and public-share paths carry their own narrower credential
+    or are intentionally public bootstrap routes.
     """
-    if request is None:
-        return _require_websocket_principal(websocket)
-
     # An explicit bearer is non-ambient API authority. Resolve it before
-    # proxy/browser sessions so the middleware's CSRF exemption cannot be
+    # browser sessions so the middleware's CSRF exemption cannot be
     # triggered by an invalid header and then satisfied by an ambient cookie.
     # Self-authenticated routes keep their own credential contract. A valid
-    # static dashboard bearer has local-operator semantics; any other bearer
+    # static dashboard bearer has its own stable principal; any other bearer
     # must verify as OIDC or fail instead of falling back to ambient identity.
     self_authenticated = _self_authenticated_path(request.url.path)
     authorization = request.headers.get("authorization", "")
     if not self_authenticated and authorization:
-        if _dashboard_token_authenticated(request):
-            return None
+        static_principal = _establish_dashboard_token_principal(request)
+        if static_principal is not None:
+            return static_principal
         explicit_token = _bearer_token(request)
         if explicit_token and oidc_enabled():
             return _authenticate_oidc_bearer(request, explicit_token)
@@ -783,21 +723,11 @@ def require_principal(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    pp = _proxy_principal(request)
-    if pp is not None:
-        _enforce_scim_active(pp)
-        request.state.principal = pp
-        _pin_tenant_from_principal(request, pp)
-        return pp
-
-    # OIDC and SAML mint the same signed browser session. Check it before the
-    # protocol switches so a SAML-only deployment (and a proxy+session fallback)
-    # cannot degrade to an anonymous local operator.
+    # OIDC and invite login mint signed browser sessions. Check it before any
+    # anonymous compatibility path.
     sp = _session_principal(request)
     if sp is not None:
-        _enforce_scim_active(sp)
         request.state.principal = sp
-        _pin_tenant_from_principal(request, sp)
         return sp
 
     # Email-invite local sessions use the same cookie name but their own issuer.
@@ -805,9 +735,7 @@ def require_principal(
     # anonymous compatibility path.
     lp = _invite_session_principal(request)
     if lp is not None:
-        _enforce_scim_active(lp)
         request.state.principal = lp
-        _pin_tenant_from_principal(request, lp)
         return lp
 
     if self_authenticated:
@@ -815,10 +743,10 @@ def require_principal(
 
     if not oidc_enabled():
         # ``None`` may mean local-admin only when *every* auth mechanism is off.
-        # Proxy, SAML, invites, require_auth, or an unreadable auth config all
+        # Invites, require_auth, or an unreadable auth config all
         # turn a missing/invalid identity into a 401 at the global dependency,
         # including routes that happen not to call an RBAC helper themselves.
-        if not anonymous_local_access_allowed():
+        if not anonymous_local_access_allowed(request):
             raise HTTPException(status_code=401, detail="authenticated identity required")
         return None
 
@@ -833,133 +761,7 @@ def require_principal(
 
 
 async def require_principal_in_request_context(
-    request: Request = None,  # type: ignore[assignment]
-    websocket: WebSocket = None,  # type: ignore[assignment,name-defined]
+    request: Request,
 ) -> VerifiedPrincipal | None:
-    """Run authentication in the request task so tenant ContextVars propagate.
-
-    FastAPI executes synchronous dependencies in a worker thread. Calling
-    :func:`set_tenant` there records a pin, but that worker's ContextVar value
-    is not visible to the async route or its child worker calls. The app-level
-    dependency therefore uses this async adapter; direct and WebSocket callers
-    can continue using the synchronous implementation above.
-    """
-    return require_principal(request=request, websocket=websocket)
-
-
-async def require_websocket_principal_in_context(
-    websocket: WebSocket,
-):
-    """Authenticate and scope a WebSocket, then always reset its tenant pin.
-
-    WebSocket routes do not pass through HTTP tenant cleanup middleware. This
-    yield dependency keeps the ContextVar in the async handler task (so world
-    selection and threadpool calls inherit it) and releases it on every normal,
-    rejected, disconnected, or exceptional exit.
-    """
-    try:
-        principal = _require_websocket_principal(websocket)
-        yield principal
-    finally:
-        token = getattr(websocket.state, "tenant_pin_token", None)
-        if token is not None:
-            try:
-                from maverick.paths import reset_tenant
-
-                reset_tenant(token)
-            finally:
-                websocket.state.tenant_pin_token = None
-
-
-def websocket_caller_principal(principal: VerifiedPrincipal | None) -> str | None:
-    """Return the owner principal established for a WebSocket connection.
-
-    The app-level dependency returns a ``VerifiedPrincipal`` for OIDC-authenticated
-    WebSockets but has no ``Request.state`` to persist it on. WebSocket handlers
-    pass that dependency result here so owner checks use the same
-    ``user:<sub>`` string as HTTP routes. ``None`` preserves auth-off behavior.
-    """
-    if principal is None:
-        return None
-    name = getattr(principal, "principal", "")
-    return name if isinstance(name, str) and name else None
-
-
-def _websocket_same_origin(websocket) -> bool:
-    """Require a browser WebSocket Origin matching the requested Host."""
-    origin = websocket.headers.get("origin")
-    host = websocket.headers.get("host")
-    if not origin or not host:
-        return False
-    return urlparse(origin).netloc == host
-
-
-def _websocket_loopback_request_host(websocket) -> bool:
-    """True when a WebSocket's user-controlled Host names loopback.
-
-    A loopback socket peer is insufficient in auth-off mode: DNS rebinding can
-    connect to 127.0.0.1 while preserving an attacker-controlled Host/Origin
-    pair that passes the same-origin comparison. Parse the Host independently
-    and require the same loopback boundary as HTTP requests.
-    """
-    raw_host = str(websocket.headers.get("host") or "")
-    if (
-        not raw_host
-        or raw_host != raw_host.strip()
-        or any(char in raw_host for char in "/\\@,?#")
-    ):
-        return False
-    try:
-        parsed = urlparse(f"//{raw_host}")
-        # Accessing ``port`` validates malformed/non-numeric/out-of-range ports.
-        _ = parsed.port
-        host = (parsed.hostname or "").rstrip(".").lower()
-    except ValueError:
-        return False
-    if host in {"localhost", "testserver"}:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def websocket_authorized(
-    websocket,
-    principal: VerifiedPrincipal | None = None,
-) -> bool:
-    """Auth gate for WebSocket endpoints (the HTTP middleware doesn't run
-    for WS connections).
-
-    Verified proxy/cookie principals additionally require same-origin browser
-    handshakes (CSWSH defense). Explicit OIDC/static bearers do not rely on
-    browser ambient authority. Principal-less handshakes are same-origin,
-    loopback-only, and available solely in genuine local auth-off mode.
-    """
-    import hmac as _hmac
-    import os as _os
-
-    if principal is not None:
-        via = str((principal.claims or {}).get("via") or "")
-        # Cookie/proxy credentials ride a browser handshake and therefore need
-        # a same-origin check (CSWSH defense). A verified OIDC bearer is explicit
-        # request authentication and does not require a browser Origin header.
-        return _websocket_same_origin(websocket) if via in {
-            "session", "invite", "proxy",
-        } else True
-    expected = _os.environ.get("MAVERICK_DASHBOARD_TOKEN")
-    if expected:
-        auth = websocket.headers.get("authorization", "")
-        supplied = auth[7:] if auth.startswith("Bearer ") else ""
-        return bool(supplied) and _hmac.compare_digest(expected.encode(), supplied.encode())
-    if not anonymous_local_access_allowed():
-        return False
-    from .app import _PROXY_FORWARD_HEADERS, _is_loopback_client
-    host = websocket.client.host if websocket.client else ""
-    proxied = any(websocket.headers.get(h) for h in _PROXY_FORWARD_HEADERS)
-    return (
-        _is_loopback_client(host)
-        and _websocket_loopback_request_host(websocket)
-        and not proxied
-        and _websocket_same_origin(websocket)
-    )
+    """Run authentication in the request task before any route handler."""
+    return require_principal(request)

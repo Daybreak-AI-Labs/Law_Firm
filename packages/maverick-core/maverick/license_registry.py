@@ -9,9 +9,8 @@ history — nothing is overwritten, and the register never files anything
 with a regulator itself (evidence in, humans file).
 
 Storage is one JSON file under the tenant data dir, guarded by the
-cross-process lock like every other register. Distinct from
-``maverick.licensing`` (our product license keys) — this is the client's
-REGULATORY licenses.
+cross-process lock like every other register. These are the client's
+REGULATORY licenses; the firm runtime has no product-license-key subsystem.
 """
 from __future__ import annotations
 

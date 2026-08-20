@@ -114,8 +114,8 @@ def _make_run(sandbox):
                 tmp.write(patch_text)
                 tmp_path = tmp.name
             # CLAUDE.md rule 4: route git through sandbox.exec so the patch
-            # applies on the configured backend's filesystem (ssh/k8s/fc),
-            # not the host. exec runs a shell string at workdir and returns
+            # applies on the configured backend's filesystem, not necessarily
+            # the host. exec runs a shell string at workdir and returns
             # exit_code/stderr, which is all `git apply` needs. The tempfile
             # was written into workdir, so we reference it by basename. Fall
             # back to host subprocess (env-scrubbed) when there's no exec.

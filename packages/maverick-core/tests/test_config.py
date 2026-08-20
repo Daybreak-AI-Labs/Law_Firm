@@ -114,11 +114,11 @@ def test_unset_env_var_becomes_empty(monkeypatch):
 
 
 def test_config_cache_avoids_reparse_but_keeps_interp_live(tmp_path, monkeypatch):
-    # Uses a benign [models] key so the literal isn't flagged by detect-secrets.
+    # Uses a benign [persona] key so the literal isn't flagged by detect-secrets.
     import maverick.config as cfg_mod
     cfg_mod.reset_config_cache()
     path = tmp_path / "c.toml"
-    path.write_text('[models]\nsummarizer = "${MAVERICK_CFG_TEST_VAL}"\n')
+    path.write_text('[persona]\nname = "${MAVERICK_CFG_TEST_VAL}"\n')
 
     calls = {"n": 0}
     real_load = cfg_mod.tomllib.load
@@ -130,17 +130,17 @@ def test_config_cache_avoids_reparse_but_keeps_interp_live(tmp_path, monkeypatch
     monkeypatch.setattr(cfg_mod.tomllib, "load", _counting_load)
 
     monkeypatch.setenv("MAVERICK_CFG_TEST_VAL", "first")
-    assert cfg_mod.load_config(path)["models"]["summarizer"] == "first"
+    assert cfg_mod.load_config(path)["persona"]["name"] == "first"
     # Second read: parse is cached (no new tomllib.load) ...
     monkeypatch.setenv("MAVERICK_CFG_TEST_VAL", "second")
-    assert cfg_mod.load_config(path)["models"]["summarizer"] == "second"
+    assert cfg_mod.load_config(path)["persona"]["name"] == "second"
     assert calls["n"] == 1  # parsed once, interpolation re-ran live
 
     # Editing the file (mtime/size changes) invalidates the cache.
     path.write_text(
-        '[models]\nsummarizer = "${MAVERICK_CFG_TEST_VAL}"\norchestrator = "x"\n')
+        '[persona]\nname = "${MAVERICK_CFG_TEST_VAL}"\nstyle = "balanced"\n')
     cfg = cfg_mod.load_config(path)
-    assert cfg["models"]["orchestrator"] == "x"
+    assert cfg["persona"]["style"] == "balanced"
     assert calls["n"] == 2
     cfg_mod.reset_config_cache()
 
@@ -149,57 +149,18 @@ def test_load_config_with_models_section():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
         f.write(
             '[models]\n'
-            'orchestrator = "anthropic:claude-opus-4-7"\n'
-            'summarizer = "ollama:phi3:14b"\n'
+            'default = "anthropic:claude-opus-4-7"\n'
+            'catalog = ["anthropic:claude-opus-4-7", "ollama:phi3:14b"]\n'
         )
         path = Path(f.name)
     try:
         cfg = load_config(path)
-        assert cfg["models"]["orchestrator"] == "anthropic:claude-opus-4-7"
-        assert cfg["models"]["summarizer"] == "ollama:phi3:14b"
+        assert cfg["models"]["default"] == "anthropic:claude-opus-4-7"
+        assert cfg["models"]["catalog"] == [
+            "anthropic:claude-opus-4-7", "ollama:phi3:14b",
+        ]
     finally:
         path.unlink()
-
-
-def test_get_governed_connectors_defaults_off(monkeypatch):
-    import maverick.config as cfg_mod
-    monkeypatch.delenv("MAVERICK_GOVERNED_RESTORE_POINTS", raising=False)
-    monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: {})
-    gc = cfg_mod.get_governed_connectors()
-    # restore_points defaults ON: it only takes effect once connectors are
-    # enabled, and without it every in-place update is irreversible.
-    assert gc == {"enable": False, "connectors": [], "approver": "",
-                  "restore_points": True}
-
-
-def test_get_governed_connectors_parses_list_and_csv(monkeypatch):
-    import maverick.config as cfg_mod
-    monkeypatch.delenv("MAVERICK_GOVERNED_RESTORE_POINTS", raising=False)
-    monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: {
-        "governed_connectors": {"enable": True, "connectors": ["salesforce", " servicenow "],
-                                "approver": "ops@corp"}})
-    assert cfg_mod.get_governed_connectors() == {
-        "enable": True, "connectors": ["salesforce", "servicenow"],
-        "approver": "ops@corp", "restore_points": True}
-    # A CSV string (an operator hand-edit) is tolerated and split.
-    monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: {
-        "governed_connectors": {"enable": True, "connectors": "salesforce, servicenow"}})
-    assert cfg_mod.get_governed_connectors()["connectors"] == ["salesforce", "servicenow"]
-
-
-def test_automation_import_rejects_string_truthiness(monkeypatch):
-    import maverick.config as cfg_mod
-
-    monkeypatch.setattr(cfg_mod, "load_config", lambda: {
-        "automation_import": {
-            "enable": "false",
-            "create_schedules": "true",
-        }
-    })
-    assert cfg_mod.get_automation_import() == {
-        "enable": False,
-        "create_schedules": False,
-    }
 
 
 def test_nested_dict_interpolation(monkeypatch):

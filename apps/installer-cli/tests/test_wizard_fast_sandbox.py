@@ -1,9 +1,7 @@
-"""`maverick init --fast` must not write a docker config it can't run.
+"""`maverick init --fast` must not guess an unpinned Docker image.
 
-run_fast() used to hardcode the docker sandbox even on a host with no Docker
-daemon, so the very next `maverick start` blew up with "Docker not available"
-on a backend the user never chose. It now mirrors write_consumer_config:
-docker when the daemon is up, else local.
+Non-interactive setup has no reviewed image digest to record, so it uses local.
+Advanced setup is the explicit Docker path and requires an immutable digest.
 """
 from __future__ import annotations
 
@@ -29,6 +27,7 @@ def _stub_fast(monkeypatch, tmp_path: Path, *, docker: bool):
     monkeypatch.setattr(wizard, "smoke_test", lambda: True)
     monkeypatch.setattr(wizard, "_docker_available", lambda: docker)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "anthropic:claude-sonnet-4-6")
     return wizard
 
 
@@ -40,26 +39,21 @@ def _backend(tmp_path: Path) -> str:
     return _config(tmp_path)["sandbox"]["backend"]
 
 
-def _denied_tools(tmp_path: Path) -> set[str]:
-    return set(_config(tmp_path)["security"]["denied_tools"])
-
-
 def test_fast_setup_falls_back_to_local_when_docker_down(monkeypatch, tmp_path):
     wizard = _stub_fast(monkeypatch, tmp_path, docker=False)
     assert wizard.run_fast() == 0
     assert _backend(tmp_path) == "local"
-    assert _denied_tools(tmp_path) >= {
-        "computer",
-        "browser",
-        "shell",
-        "write_file",
-        "apply_patch",
-        "str_replace_editor",
-    }
+    cfg = _config(tmp_path)
+    assert cfg["models"] == {"default": "anthropic:claude-sonnet-4-6"}
+    assert "security" not in cfg
+    assert not ({"computer_use", "browser", "code_exec"} & set(cfg.get("capabilities", {})))
 
 
-def test_fast_setup_uses_docker_when_daemon_up(monkeypatch, tmp_path):
+def test_fast_setup_stays_local_when_daemon_up(monkeypatch, tmp_path):
     wizard = _stub_fast(monkeypatch, tmp_path, docker=True)
     assert wizard.run_fast() == 0
-    assert _backend(tmp_path) == "docker"
-    assert _denied_tools(tmp_path) == {"computer", "browser"}
+    assert _backend(tmp_path) == "local"
+    cfg = _config(tmp_path)
+    assert cfg["models"] == {"default": "anthropic:claude-sonnet-4-6"}
+    assert "security" not in cfg
+    assert not ({"computer_use", "browser", "code_exec"} & set(cfg.get("capabilities", {})))

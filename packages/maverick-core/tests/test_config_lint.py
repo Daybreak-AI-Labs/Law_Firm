@@ -10,15 +10,14 @@ def _by_section(findings):
 
 def test_clean_config_no_findings():
     cfg = {
-        "deployment": {"type": "desktop"},
+        "deployment": {"type": "local"},
         "providers": {"anthropic": {"api_key": "${ANTHROPIC_API_KEY}"}},
-        "models": {"orchestrator": "anthropic:claude-opus-4-7"},
+        "models": {"default": "anthropic:claude-opus-4-7"},
         "budget": {"max_dollars": 5.0, "max_tool_calls": 500},
         "safety": {"profile": "balanced", "scan_input": True},
         "sandbox": {"backend": "local", "timeout": 60},
-        "features": {"skills": True, "world_model": True, "streaming": False},
+        "features": {"skills": True, "streaming": False},
         "durable": {"enabled": False, "keep_last": 5},
-        "mcp_servers": {"filesystem": {"command": "npx", "args": ["-y", "x"]}},
     }
     assert lint_config(cfg) == []
     assert format_findings(lint_config(cfg)) == "config OK"
@@ -85,27 +84,47 @@ def test_bad_type_enabled_must_be_bool():
 
 def test_high_authority_self_learning_keys_must_be_bool():
     findings = lint_config({"self_learning": {
-        "create_tools": "false",
-        "allow_mcp_acquisition": 1,
+        "distill_local": "false",
         "allow_provider_egress": {},
     }})
     assert {f.key for f in findings if f.severity == "error"} == {
-        "create_tools", "allow_mcp_acquisition", "allow_provider_egress",
+        "distill_local", "allow_provider_egress",
     }
 
 
-def test_runtime_routing_and_import_flags_must_be_bool():
+def test_models_schema_rejects_retired_routing_and_non_exact_pins():
     findings = lint_config({
-        "automation_import": {"enable": "false", "create_schedules": 1},
-        "models": {"cascade": "yes"},
-        "routing": {"cost_aware": []},
+        "models": {
+            "default": "claude-opus-4-7",
+            "orchestrator": "anthropic:claude-opus-4-7",
+            "cascade": True,
+        },
+        "routing": {"cost_aware": True},
     })
-    assert {f"{f.section}.{f.key}" for f in findings if f.severity == "error"} == {
-        "automation_import.enable",
-        "automation_import.create_schedules",
-        "models.cascade",
-        "routing.cost_aware",
+    assert {(f.section, f.key, f.severity) for f in findings} >= {
+        ("models", "default", "error"),
+        ("models", "orchestrator", "warning"),
+        ("models", "cascade", "warning"),
+        ("routing", None, "warning"),
     }
+
+
+def test_models_schema_accepts_only_exact_catalog_entries():
+    assert lint_config({"models": {
+        "default": "ollama:firm-model",
+        "catalog": ["ollama:firm-model", "openai:gpt-5.4"],
+    }}) == []
+
+    for invalid in (
+        ["gpt-5.4"],
+        ["openrouter:auto"],
+        "openai:gpt-5.4",
+    ):
+        findings = lint_config({"models": {
+            "default": "openai:gpt-5.4",
+            "catalog": invalid,
+        }})
+        assert any(f.key == "catalog" and f.severity == "error" for f in findings)
 
 
 def test_dynamic_section_accepts_arbitrary_keys():
@@ -170,5 +189,41 @@ def test_inline_secret_suffix_keys_warn():
 
 
 def test_non_secret_key_not_flagged():
-    cfg = {"sandbox": {"backend": "local"}, "models": {"orchestrator": "anthropic:x"}}
+    cfg = {"sandbox": {"backend": "local"}, "models": {"default": "anthropic:x"}}
     assert [f for f in lint_config(cfg) if "inline secret" in f.message] == []
+
+
+def test_sandbox_schema_is_the_retained_local_docker_surface():
+    retained = {
+        "backend": "docker",
+        "workdir": "/srv/maverick/work",
+        "timeout": 60,
+        "image": "firm-evaluator@sha256:abc",
+        "language": "python",
+        "require_container": True,
+        "allow_network": False,
+        "allow_root": False,
+        "pids_limit": 512,
+        "memory": "4g",
+        "cpus": "2",
+        "reuse_container": False,
+        "read_only_paths": ["policy"],
+    }
+    assert lint_config({"sandbox": retained}) == []
+
+    removed = lint_config({"sandbox": {
+        "runtime": "runsc",
+        "provider": "remote",
+        "cross_run_pool": True,
+        "host": "executor.example",
+    }})
+    assert {finding.key for finding in removed} == {
+        "runtime", "provider", "cross_run_pool", "host",
+    }
+
+
+def test_retired_repl_section_is_not_accepted():
+    findings = lint_config({"repl": {"enable": True}})
+    assert len(findings) == 1
+    assert findings[0].section == "repl"
+    assert findings[0].key is None

@@ -39,12 +39,12 @@
     },
     {
       "id": 3,
-      "title": "Goals by status (rate)",
+      "title": "Current goals by status",
       "type": "timeseries",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "targets": [
-        {"expr": "sum by (status) (rate(maverick_goals_total[10m]))", "legendFormat": "{{status}}"}
+        {"expr": "sum by (status) (maverick_goals_total)", "legendFormat": "{{status}}"}
       ]
     },
     {

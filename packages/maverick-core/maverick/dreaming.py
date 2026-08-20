@@ -39,7 +39,6 @@ broken or steered by injected text even with the LLM on.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -57,7 +56,6 @@ from .file_lock import (
     cross_process_lock,
     ensure_private_directory,
     ensure_private_file,
-    open_private_append,
     prepare_private_directory,
 )
 from .learning_guard import Halted, check_learning_halt
@@ -140,6 +138,9 @@ class DreamInsight:
     evidence: int = 1          # how many episodes back this insight
     channel: str | None = None # reflexion scope; None = unscoped local runs
     user_id: str | None = None # reflexion scope; None = unscoped local runs
+    # Current physical matter key (Goal.project_id). Missing/legacy insights are
+    # retained for inspection but never recalled or refreshed into live memory.
+    matter_id: int | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -201,6 +202,23 @@ def _tokens(s: str) -> set[str]:
         t for t in _TOKEN_RE.findall((s or "").lower())
         if len(t) >= 3 and t not in _STOP
     }
+
+
+def _exact_matter_id(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        matter_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return matter_id if matter_id > 0 else None
+
+
+def _exact_scope_text(value: Any) -> str | None:
+    """Return one canonical persisted authority value or refuse ambiguity."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return None
+    return None if "\x00" in value else value
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -296,6 +314,10 @@ def cluster_failures(
         return []
     clusters: list[list[dict]] = []
     for f in failures or []:
+        # Missing matter is not a generic/global bucket. Keep such rows only in
+        # the raw reflexion log for review; never pool them into an insight.
+        if _exact_matter_id(f.get("matter_id")) is None:
+            continue
         ft = _tokens(str(f.get("goal_text", "")))
         placed = False
         for cluster in clusters:
@@ -304,6 +326,10 @@ def cluster_failures(
                 continue
             if (head.get("channel"), head.get("user_id")) != (
                 f.get("channel"), f.get("user_id"),
+            ):
+                continue
+            if _exact_matter_id(head.get("matter_id")) != _exact_matter_id(
+                f.get("matter_id"),
             ):
                 continue
             if _jaccard(ft, _tokens(str(head.get("goal_text", "")))) >= similarity:
@@ -439,17 +465,22 @@ def synthesize_insight(
     user_ids = {f.get("user_id") for f in cluster}
     channel = next(iter(channels)) if len(channels) == 1 else None
     user_id = next(iter(user_ids)) if len(user_ids) == 1 else None
+    matter_ids = {
+        _exact_matter_id(f.get("matter_id")) for f in cluster
+        if _exact_matter_id(f.get("matter_id")) is not None
+    }
+    matter_id = next(iter(matter_ids)) if len(matter_ids) == 1 else None
     return DreamInsight(
         ts=now if now is not None else time.time(),
         kind=kind, domain=domain, text=text, evidence=len(cluster),
-        channel=channel, user_id=user_id,
+        channel=channel, user_id=user_id, matter_id=matter_id,
     )
 
 
 def promote_shared_insights(
     failures: list[dict], *, min_cluster: int = 2, now: float | None = None,
 ) -> list[DreamInsight]:
-    """Promote only generic failures into globally recallable insights.
+    """Promote generic failures only within one exact matter.
 
     Department-scoped failures may contain compartment-local paths, project
     names, or attacker-influenced reflections.  Keep those failures confined to
@@ -461,16 +492,30 @@ def promote_shared_insights(
     # per #1238) AND unscoped (no channel/user_id, per #1241): a department- or
     # user-scoped failure may carry compartment-local or attacker-influenced
     # text and must never cross into the globally-recallable pool.
-    generic_unscoped_failures = [
-        f for f in failures or []
-        if not f.get("domain")
-        and f.get("channel") is None
-        and f.get("user_id") is None
-    ]
-    for cluster in cluster_failures(generic_unscoped_failures, min_cluster=min_cluster):
-        promoted.append(synthesize_insight(
-            cluster, domain=None, now=now, kind="shared_pattern",
-        ))
+    by_matter: dict[int, list[dict]] = {}
+    for failure in failures or []:
+        matter_id = _exact_matter_id(failure.get("matter_id"))
+        if (
+            matter_id is None
+            or failure.get("domain")
+            or failure.get("channel") is not None
+            or failure.get("user_id") is not None
+        ):
+            continue
+        by_matter.setdefault(matter_id, []).append(failure)
+    for scoped_failures in by_matter.values():
+        for cluster in cluster_failures(
+            scoped_failures,
+            min_cluster=min_cluster,
+        ):
+            promoted.append(
+                synthesize_insight(
+                    cluster,
+                    domain=None,
+                    now=now,
+                    kind="shared_pattern",
+                )
+            )
     return promoted
 
 
@@ -488,17 +533,30 @@ def _atomic_write_lines(
     atomic_write_text_chunks(path, lines)
 
 
-def load_insights(path: Path | str | None = None) -> list[DreamInsight]:
+def load_insights(
+    path: Path | str | None = None,
+    *,
+    _strict_store: bool = False,
+) -> list[DreamInsight]:
     p = Path(path) if path is not None else insights_path()
     if not p.exists():
         return []
     out: list[DreamInsight] = []
     try:
+        from .learning_crypto import decode_json_record
+
         ensure_private_file(p)
         for raw in atomic_read_text(p).splitlines():
             try:
-                d = json.loads(raw)
-                if not isinstance(d, dict):
+                d = decode_json_record(raw)
+                if d is None:
+                    if _strict_store:
+                        from .learning_crypto import protected_learning_enabled
+
+                        if protected_learning_enabled() and raw.strip():
+                            raise RuntimeError(
+                                "dream insight store authentication failed"
+                            )
                     continue
                 # Old stores predate the write-time privacy boundary.
                 # Re-screen every persisted lesson before it can be
@@ -521,6 +579,7 @@ def load_insights(path: Path | str | None = None) -> list[DreamInsight]:
                     if "channel" in d else _LEGACY_SCOPE_UNKNOWN,
                     user_id=d.get("user_id")
                     if "user_id" in d else _LEGACY_SCOPE_UNKNOWN,
+                    matter_id=_exact_matter_id(d.get("matter_id")),
                 ))
             except (ValueError, TypeError):
                 continue
@@ -542,24 +601,30 @@ def append_insights(
     default_store = path is None
     path = Path(path) if path is not None else insights_path()
     try:
+        from .learning_crypto import encode_json_record
+
         if default_store:
             ensure_private_directory(path.parent)
         # Dedup/cap is one read-modify-write transaction.  Without the process
         # lock two schedulers can both read the same corpus and the later
         # replace silently drops the other's newly learned insight.
         with cross_process_lock(path, strict=True):
-            existing = load_insights(path)
+            existing = load_insights(path, _strict_store=True)
             written = 0
             refreshed = 0
             for ins in new or []:
+                matter_id = _exact_matter_id(ins.matter_id)
+                if matter_id is None:
+                    continue
                 safe_text = _sanitize(ins.text)[:1_000]
                 if not safe_text:
                     continue
-                ins = replace(ins, text=safe_text)
+                ins = replace(ins, text=safe_text, matter_id=matter_id)
                 it = _tokens(ins.text)
                 dup = next(
                     (e for e in existing
                      if e.domain == ins.domain
+                     and e.matter_id == ins.matter_id
                      and e.channel == ins.channel
                      and e.user_id == ins.user_id
                      and _containment(it, _tokens(e.text)) >= _DEDUP_THRESHOLD),
@@ -580,7 +645,10 @@ def append_insights(
             keep = existing[-max(1, max_insights):]
             _atomic_write_lines(
                 path,
-                (json.dumps(ins.to_dict(), default=str) + "\n" for ins in keep),
+                (
+                    encode_json_record(ins.to_dict()) + "\n"
+                    for ins in keep
+                ),
             )
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: insight write failed: %s", e)
@@ -592,6 +660,7 @@ def recall_insights(
     goal_text: str, *, domain: str | None = None, k: int = 2,
     path: Path | str | None = None, min_score: float = 0.05,
     channel: str | None = None, user_id: str | None = None,
+    matter_id: int | None = None,
 ) -> list[tuple[float, DreamInsight]]:
     """Top-k consolidated insights for this goal, same-department boosted.
 
@@ -599,7 +668,27 @@ def recall_insights(
     goal wording differs (the department IS the similarity signal there);
     cross-department insights must clear the lexical floor.
     """
-    entries = load_insights(path)
+    matter_id = _exact_matter_id(matter_id)
+    if matter_id is None:
+        return []
+    try:
+        from .security_defaults import secure_by_default
+
+        secure = bool(secure_by_default())
+    except Exception:
+        secure = True
+    if secure:
+        try:
+            from .matter_context import refresh_matter_context
+
+            context = refresh_matter_context()
+        except Exception:
+            return []
+        if context.matter_id != matter_id or (
+            domain is not None and context.domain != domain
+        ):
+            return []
+    entries = [e for e in load_insights(path) if e.matter_id == matter_id]
     if not entries:
         return []
     qt = _tokens(goal_text)
@@ -669,36 +758,50 @@ def prune_reflexions(
             ensure_private_file(p)
             with open(p, encoding="utf-8") as f:
                 raw_lines = [ln for ln in f if ln.strip()]
-            parsed: list[tuple[float, set[str], str]] = []
-            for ln in raw_lines:
-                try:
-                    d = json.loads(ln)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(d, dict):
+            parsed: list[
+                tuple[float, int, set[str], tuple[int | None, Any, Any], str]
+            ] = []
+            from .learning_crypto import decode_json_record
+
+            for sequence, ln in enumerate(raw_lines):
+                d = decode_json_record(ln)
+                if d is None:
                     continue
                 parsed.append((
                     float(d.get("ts", 0) or 0),
+                    sequence,
                     _tokens(
                         str(d.get("goal_text", "")) + " "
                         + str(d.get("failure_class", ""))
                     ),
+                    (
+                        _exact_matter_id(d.get("matter_id")),
+                        d.get("channel"), d.get("user_id"),
+                    ),
                     ln if ln.endswith("\n") else ln + "\n",
                 ))
             # Newest first so the duplicate survivor is the fresher lesson.
-            parsed.sort(key=lambda t: t[0], reverse=True)
-            kept: list[tuple[float, set[str], str]] = []
+            # The append sequence is the durable tie-breaker when two rapid
+            # writes share a wall-clock value (common on Windows).
+            parsed.sort(key=lambda t: (t[0], t[1]), reverse=True)
+            kept: list[
+                tuple[float, int, set[str], tuple[int | None, Any, Any], str]
+            ] = []
             for entry in parsed:
                 if len(kept) >= max(1, keep):
                     break
-                if any(_jaccard(entry[1], k[1]) >= dedup_threshold for k in kept):
+                if any(
+                    entry[3] == prior[3]
+                    and _jaccard(entry[2], prior[2]) >= dedup_threshold
+                    for prior in kept
+                ):
                     continue
                 kept.append(entry)
             dropped = len(parsed) - len(kept)
             if dropped <= 0:
                 return 0
             # Restore chronological order through a private atomic rewrite.
-            _atomic_write_lines(p, (ln for _, _, ln in reversed(kept)))
+            _atomic_write_lines(p, (ln for _, _, _, _, ln in reversed(kept)))
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: reflexion prune failed: %s", e)
         return 0
@@ -709,13 +812,15 @@ def _rewrite_insights(keep: list[DreamInsight], path: Path | str) -> bool:
     """Atomically replace the insight store with ``keep`` (chronological)."""
     p = Path(path)
     try:
+        from .learning_crypto import encode_json_record
+
         _atomic_write_lines(
             p,
-            (json.dumps(ins.to_dict(), default=str) + "\n"
+            (encode_json_record(ins.to_dict()) + "\n"
              for ins in sorted(keep, key=lambda i: i.ts)),
         )
         return True
-    except OSError as e:
+    except (OSError, RuntimeError) as e:
         log.warning("dreaming: insight rewrite failed: %s", e)
         return False
 
@@ -788,6 +893,7 @@ def resolve_contradictions(
                 newer_wins = sum(
                     1 for s in successes
                     if float(s.get("t", 0) or 0) > ins.ts
+                    and _exact_matter_id(s.get("project_id")) == ins.matter_id
                     and _covered(str(s.get("goal", "")), it)
                 )
                 if ins.kind in {"failure_pattern", "shared_pattern"} \
@@ -835,85 +941,6 @@ def prune_facts(
     return deleted
 
 
-# ---------- skill retirement (the forgetting loop) ----------
-
-def retire_stale_skills(
-    store: Path | str | None = None, *, min_uses: int = 5, below: float = 0.25,
-    stats_path: Path | None = None,
-) -> list[str]:
-    """Retire learned skills whose recall track record decayed.
-
-    Learning loops without forgetting loops degrade: a skill that keeps being
-    recalled but rarely helps (``skill_stats.evictable``: >= ``min_uses``
-    decided uses, win rate <= ``below``) is MOVED to ``<store>/retired/`` —
-    out of ``load_skills``' glob, so it stops being recalled — with a
-    ``retired.ndjson`` line recording when and why. Reversible by moving the
-    file back. Returns the retired skill names.
-    """
-    from .skill import stats as skill_stats
-    from .skill.distillation_local import _STORE
-    default_store = store is None
-    store_dir = Path(store) if store is not None else _STORE
-    if not store_dir.is_dir():
-        return []
-    try:
-        names = skill_stats.evictable(
-            path=stats_path, min_uses=min_uses, max_win_rate=below,
-        )
-    except Exception as e:  # pragma: no cover -- stats never block a dream
-        log.debug("dreaming: evictable lookup failed: %s", e)
-        return []
-    # Probation (the learning-side canary, half 1): a freshly-distilled skill
-    # that loses its FIRST few decided uses outright never earned its place —
-    # retire it before min_uses lets it linger. wins==0 keeps this strict.
-    try:
-        for md in sorted(store_dir.glob("*.md")):
-            name = md.stem
-            if name in names:
-                continue
-            st = skill_stats.get(name, path=stats_path)
-            if st and st.uses >= 3 and st.wins == 0 and st.losses >= 3:
-                names.append(name)
-    except Exception as e:  # pragma: no cover
-        log.debug("dreaming: probation scan failed: %s", e)
-    retired: list[str] = []
-    dest = store_dir / "retired"
-    for name in names:
-        src = store_dir / f"{name}.md"
-        if not src.is_file():
-            continue
-        try:
-            if default_store or not dest.exists():
-                # A missing subdirectory is ours to secure.  Never tighten a
-                # pre-existing caller-supplied store directory.
-                ensure_private_directory(dest)
-            else:
-                dest.mkdir(parents=True, exist_ok=True)
-            retired_skill = dest / src.name
-            os.replace(src, retired_skill)
-            ensure_private_file(retired_skill)
-            st = skill_stats.get(name, path=stats_path)
-            retired_log = dest / "retired.ndjson"
-            with cross_process_lock(retired_log, strict=True):
-                fd = open_private_append(
-                    retired_log, require_private_parent=default_store,
-                )
-                with os.fdopen(fd, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({
-                        "ts": time.time(), "name": name,
-                        "uses": getattr(st, "uses", 0),
-                        "wins": getattr(st, "wins", 0),
-                        "losses": getattr(st, "losses", 0),
-                        "reason": f"win rate <= {below} after >= {min_uses} uses",
-                    }) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-            retired.append(name)
-        except (OSError, RuntimeError) as e:
-            log.warning("dreaming: could not retire skill %s: %s", name, e)
-    return retired
-
-
 # ---------- rehearsal (practice while you sleep) ----------
 
 def build_rehearsal_cases(
@@ -935,19 +962,33 @@ def build_rehearsal_cases(
     trusted_failures = [
         f for f in failures
         if f.get("channel") is None and f.get("user_id") is None
+        and _exact_matter_id(f.get("matter_id")) is not None
+        and _exact_scope_text(f.get("owner")) is not None
+        and _exact_scope_text(f.get("domain")) is not None
     ]
 
     cases: list[dict] = []
-    for cluster in cluster_failures(trusted_failures, min_cluster=min_cluster):
-        newest = max(cluster, key=lambda f: float(f.get("ts", 0) or 0))
-        cases.append({
-            "ts": now if now is not None else time.time(),
-            "prompt": str(newest.get("goal_text", "")).strip(),
-            "scope": "local",
-            "domain": newest.get("domain"),
-            "failure_class": str(newest.get("failure_class", "unknown")),
-            "evidence": len(cluster),
-        })
+    by_authority: dict[tuple[int, str, str], list[dict]] = {}
+    for failure in trusted_failures:
+        authority = (
+            int(_exact_matter_id(failure.get("matter_id"))),
+            str(_exact_scope_text(failure.get("owner"))),
+            str(_exact_scope_text(failure.get("domain"))),
+        )
+        by_authority.setdefault(authority, []).append(failure)
+    for (matter_id, owner, domain), scoped in by_authority.items():
+        for cluster in cluster_failures(scoped, min_cluster=min_cluster):
+            newest = max(cluster, key=lambda f: float(f.get("ts", 0) or 0))
+            cases.append({
+                "ts": now if now is not None else time.time(),
+                "prompt": str(newest.get("goal_text", "")).strip(),
+                "scope": "local",
+                "matter_id": matter_id,
+                "owner": owner,
+                "domain": domain,
+                "failure_class": str(newest.get("failure_class", "unknown")),
+                "evidence": len(cluster),
+            })
     cases.sort(key=lambda c: -int(c.get("evidence", 0)))
     return [c for c in cases if c["prompt"]][:max(1, max_cases)]
 
@@ -957,11 +998,15 @@ def save_rehearsals(cases: list[dict], path: Path | str | None = None) -> int:
     default_store = path is None
     p = Path(path) if path is not None else rehearsals_path()
     try:
+        from .learning_crypto import encode_json_record
+
         if default_store:
             ensure_private_directory(p.parent)
         with cross_process_lock(p, strict=True):
+            if p.exists():
+                load_rehearsals(p, _strict_store=True)
             _atomic_write_lines(
-                p, (json.dumps(c, default=str) + "\n" for c in cases),
+                p, (encode_json_record(c) + "\n" for c in cases),
             )
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: rehearsal write failed: %s", e)
@@ -969,24 +1014,44 @@ def save_rehearsals(cases: list[dict], path: Path | str | None = None) -> int:
     return len(cases)
 
 
-def load_rehearsals(path: Path | str | None = None) -> list[dict]:
+def load_rehearsals(
+    path: Path | str | None = None,
+    *,
+    _strict_store: bool = False,
+) -> list[dict]:
     p = Path(path) if path is not None else rehearsals_path()
     if not p.exists():
         return []
     out: list[dict] = []
     try:
+        from .learning_crypto import decode_json_record
+
         ensure_private_file(p)
         for raw in atomic_read_text(p).splitlines():
-            try:
-                d = json.loads(raw)
-            except json.JSONDecodeError:
+            d = decode_json_record(raw)
+            if d is None:
+                if _strict_store:
+                    from .learning_crypto import protected_learning_enabled
+
+                    if protected_learning_enabled() and raw.strip():
+                        raise RuntimeError(
+                            "rehearsal store authentication failed"
+                        )
                 continue
-            if not isinstance(d, dict) or not str(d.get("prompt", "")).strip():
+            if not str(d.get("prompt", "")).strip():
                 continue
             # Legacy queues did not record whether prompt text came from
             # a local run or a remote channel/user. Refuse those ambiguous
             # cases instead of replaying potentially untrusted input.
-            if d.get("scope") == "local":
+            if (
+                d.get("scope") == "local"
+                and _exact_matter_id(d.get("matter_id")) is not None
+                and _exact_scope_text(d.get("owner")) is not None
+                and _exact_scope_text(d.get("domain")) is not None
+            ):
+                d["matter_id"] = _exact_matter_id(d.get("matter_id"))
+                d["owner"] = _exact_scope_text(d.get("owner"))
+                d["domain"] = _exact_scope_text(d.get("domain"))
                 out.append(d)
     except OSError:
         return []
@@ -1013,8 +1078,9 @@ def rehearsal_completed(output: str) -> bool:
 async def rehearse(
     agent: Any, *, path: Path | str | None = None, max_cases: int = 3,
     scorer: Any | None = None, min_confidence: float = 0.6,
+    matter_id: int | None = None, owner: str | None = None,
 ) -> tuple[int, int]:
-    """Run queued rehearsal cases through ``agent`` (an async ``str -> str``).
+    """Run one matter's queued cases through a matter-aware async ``agent``.
 
     Returns ``(passed, total)``. Gated by the calibration interlock — frozen
     calibration raises :class:`RehearsalFrozen` instead of practicing against
@@ -1023,6 +1089,10 @@ async def rehearse(
     scores it at/above ``min_confidence``; without one, the completion check
     alone grades.
     """
+    matter_id = _exact_matter_id(matter_id)
+    owner = _exact_scope_text(owner)
+    if matter_id is None or owner is None:
+        return (0, 0)
     check_learning_halt("dreaming", "rehearsal_start")
     try:
         from .calibration import learning_frozen
@@ -1034,7 +1104,11 @@ async def rehearse(
             "verifier calibration is frozen; refusing to rehearse against a "
             "distrusted grader (see maverick.calibration)."
         )
-    cases = load_rehearsals(path)[:max(1, max_cases)]
+    cases = [
+        case for case in load_rehearsals(path)
+        if _exact_matter_id(case.get("matter_id")) == matter_id
+        and _exact_scope_text(case.get("owner")) == owner
+    ][:max(1, max_cases)]
     if not cases:
         return (0, 0)
 
@@ -1042,7 +1116,15 @@ async def rehearse(
     for c in cases:
         try:
             check_learning_halt("dreaming", "rehearsal_case")
-            output = await agent(c["prompt"])
+            # Deliberately no one-argument fallback: a callback that cannot
+            # receive the matter key cannot safely create or execute a replay
+            # goal. The caller must propagate it into the new Goal.project_id.
+            output = await agent(
+                c["prompt"],
+                matter_id=matter_id,
+                owner=owner,
+                domain=str(c["domain"]),
+            )
             if not rehearsal_completed(output):
                 continue
             if scorer is not None:
@@ -1098,15 +1180,9 @@ def _maintenance_phases(
             cap=int(cfg.get("facts_cap", 2000)), now=now,
         )
 
-    # Per-user preference notes: distill explicit, deterministic preference
-    # statements from recent conversations into briefing notes injected on
-    # that user's future runs.
-    if world is not None and bool(cfg.get("user_notes", False)):
-        try:
-            from . import user_notes as _un
-            report.user_notes_written = _un.consolidate(world, path=user_notes_path)
-        except Exception as e:  # pragma: no cover -- notes never block a dream
-            log.debug("dreaming: user-note consolidation skipped: %s", e)
+    # Global per-user preference notes were retired from the firm runtime. They
+    # were not keyed by matter and could turn one client's wording into another
+    # matter's prompt overlay. Explicit erasure support remains for old stores.
 
 
 # ---------- the dream cycle ----------
@@ -1123,25 +1199,32 @@ def _replay_failures(reflexion_path: Path | str | None) -> list[dict]:
             "channel": getattr(r, "channel", None),
             "user_id": getattr(r, "user_id", None),
             "domain": getattr(r, "domain", None),
+            "matter_id": getattr(r, "matter_id", None),
+            "owner": getattr(r, "owner", None),
         }
         for r in _r.list_recent(**kwargs)
     ]
 
 
 def _distill_department_skills(
-    by_domain: dict[str | None, list[dict]], *, skill_store: Path | str | None,
+    by_scope: dict[tuple[int, str, str | None], list[dict]], *,
+    skill_store: Path | str | None,
     min_cluster: int,
 ) -> list[Path]:
-    """CONSOLIDATE: per-department gated distillation into learned skills.
+    """CONSOLIDATE: per-matter/owner/department gated skill distillation.
 
     Returns the paths of the skills written THIS cycle (the benchmark canary
     gate quarantines exactly these when the tracked suite is regressing)."""
     from .skill import distillation_v2 as _v2
     saved_paths: list[Path] = []
-    for trajectories in by_domain.values():
+    for (project_id, owner, _domain), trajectories in by_scope.items():
         if len(trajectories) < max(1, min_cluster):
             continue
-        kwargs: dict = {"min_examples": max(1, min_cluster)}
+        kwargs: dict = {
+            "min_examples": max(1, min_cluster),
+            "project_id": project_id,
+            "owner": owner,
+        }
         if skill_store is not None:
             kwargs["store"] = skill_store
         check_learning_halt("dreaming", "skill_promotion")
@@ -1191,7 +1274,7 @@ def _quarantine_new_skills(paths: list[Path]) -> int:
     return moved
 
 
-def _consolidate_learning(report, by_domain_success, failures, *,
+def _consolidate_learning(report, by_scope_success, failures, *,
                           skill_store, cfg, now,
                           llm=None, budget=None, shield=None) -> list[DreamInsight]:
     """Distill skills + synthesize insights from this cycle's labeled
@@ -1215,7 +1298,7 @@ def _consolidate_learning(report, by_domain_success, failures, *,
     min_cluster = int(cfg.get("min_cluster", 2))
     # CONSOLIDATE successes -> learned skills (evidence-gated + deduped).
     new_skills = _distill_department_skills(
-        by_domain_success, skill_store=skill_store, min_cluster=min_cluster,
+        by_scope_success, skill_store=skill_store, min_cluster=min_cluster,
     )
     # Benchmark canary: while the tracked suite is regressing, this cycle's
     # NEW skills are quarantined — never add learned behavior on red.
@@ -1231,10 +1314,15 @@ def _consolidate_learning(report, by_domain_success, failures, *,
     # only -- the shared/global pool below stays deterministic by design.
     use_llm = llm is not None and _llm_consolidation_authorized(cfg)
     new_insights: list[DreamInsight] = []
-    by_domain_failure: dict[str | None, list[dict]] = {}
+    by_matter_domain_failure: dict[tuple[int, str | None], list[dict]] = {}
     for f in failures:
-        by_domain_failure.setdefault(f.get("domain"), []).append(f)
-    for dom, fs in by_domain_failure.items():
+        matter_id = _exact_matter_id(f.get("matter_id"))
+        if matter_id is None:
+            continue
+        by_matter_domain_failure.setdefault(
+            (matter_id, f.get("domain")), [],
+        ).append(f)
+    for (_matter_id, dom), fs in by_matter_domain_failure.items():
         for cluster in cluster_failures(fs, min_cluster=min_cluster):
             ins = synthesize_insight(cluster, domain=dom, now=now)
             if use_llm:
@@ -1278,6 +1366,9 @@ def dream_cycle(
     Callers gate on :func:`enabled` (the CLI and any scheduler do); the cycle
     itself stays callable so tests and operators can dream on demand.
     """
+    # Compatibility-only argument from the retired tenant-global skill-stats
+    # store. It is deliberately ignored and must never recreate shared state.
+    del skill_stats_path
     check_learning_halt("dreaming", "start")
     cfg = {**settings(), **(settings_override or {})}
     report = DreamReport()
@@ -1310,12 +1401,12 @@ def dream_cycle(
             log.debug("dreaming: trajectory tool join skipped: %s", e)
         try:
             for g in world.list_goals(status="done", limit=max_goals, order="desc"):
-                # Learned skill files are tenant-scoped but remain shared by
-                # every owner inside that tenant. Never fold an owner-scoped
-                # user's goal title into that tenant-wide artifact; missing
-                # owner metadata is ambiguous and therefore skipped. A future
-                # owner-scoped store *and retrieval path* can relax this.
-                if getattr(g, "owner", None) != "":
+                matter_id = _exact_matter_id(getattr(g, "project_id", None))
+                raw_owner = getattr(g, "owner", None)
+                # Missing project_id is not a generic matter: it is excluded
+                # from every cross-run pool. Owner is retained as an exact
+                # cohort key (including the explicit local owner "").
+                if matter_id is None or raw_owner is None:
                     continue
                 successes.append({
                     "goal": getattr(g, "title", "") or "",
@@ -1326,6 +1417,8 @@ def dream_cycle(
                     "success": True,
                     "tools": tools_by_goal.get(getattr(g, "id", None), []),
                     "t": getattr(g, "updated_at", 0.0) or 0.0,
+                    "project_id": matter_id,
+                    "owner": str(raw_owner),
                     # Exact attribution when the goal row carries its
                     # department (schema v14); lexical fallback otherwise.
                     "domain": getattr(g, "domain", "") or None,
@@ -1338,16 +1431,18 @@ def dream_cycle(
 
     # Attribute experience to departments. Experience recorded by a domain
     # run carries its department; everything else is attributed lexically.
-    by_domain_success: dict[str | None, list[dict]] = {}
+    by_scope_success: dict[tuple[int, str, str | None], list[dict]] = {}
     for s in successes:
         dom = s.get("domain") or assign_domain(s["goal"], signatures)
-        by_domain_success.setdefault(dom, []).append(s)
+        by_scope_success.setdefault(
+            (int(s["project_id"]), str(s["owner"]), dom), [],
+        ).append(s)
     for f in failures:
         if not f.get("domain"):
             f["domain"] = assign_domain(str(f.get("goal_text", "")), signatures)
 
     new_insights = _consolidate_learning(
-        report, by_domain_success, failures,
+        report, by_scope_success, failures,
         skill_store=skill_store, cfg=cfg, now=now,
         llm=llm, budget=budget, shield=shield,
     )
@@ -1371,19 +1466,6 @@ def dream_cycle(
             path=rehearsals_path,
         )
 
-    # FORGET: retire learned skills whose recall track record decayed —
-    # learning loops without forgetting loops accumulate noise. Gated by the
-    # calibration interlock: skill win-rates are derived from verifier outcomes,
-    # so a frozen (distrusted) verifier must not drive DELETIONS either — the
-    # same reasoning that stops _consolidate_learning from ADDING learned state.
-    if bool(cfg.get("retire_skills", True)) and not report.learning_frozen:
-        check_learning_halt("dreaming", "retirement")
-        report.skills_retired = len(retire_stale_skills(
-            skill_store, min_uses=int(cfg.get("retire_min_uses", 5)),
-            below=float(cfg.get("retire_below", 0.25)),
-            stats_path=skill_stats_path,
-        ))
-
     check_learning_halt("dreaming", "maintenance")
     _maintenance_phases(
         report, cfg, successes, world,
@@ -1391,7 +1473,7 @@ def dream_cycle(
         user_notes_path=user_notes_path, now=now,
     )
 
-    touched = {d for d in by_domain_success if d} | {
+    touched = {scope[2] for scope in by_scope_success if scope[2]} | {
         i.domain for i in new_insights if i.domain
     }
     report.departments = sorted(touched)
@@ -1409,25 +1491,24 @@ def _audit_cycle(report: DreamReport) -> None:
     """Learning audit trail: one tamper-evident row per dream cycle.
 
     `maverick audit verify` then covers the learning system the same way it
-    covers tool calls -- provably governed learning. Never raises."""
-    try:
-        from .audit import EventKind, record
-        record(
-            EventKind.LEARNING_UPDATE, agent="dreaming",
-            insights_written=report.insights_written,
-            insights_expired=report.insights_expired,
-            insights_retired=report.insights_retired,
-            skills_distilled=report.skills_distilled,
-            skills_retired=report.skills_retired,
-            skills_quarantined=report.skills_quarantined,
-            rehearsals_queued=report.rehearsals_queued,
-            reflexions_pruned=report.reflexions_pruned,
-            facts_pruned=report.facts_pruned,
-            user_notes_written=report.user_notes_written,
-            departments=",".join(report.departments),
-        )
-    except Exception as e:  # pragma: no cover -- audit never blocks a dream
-        log.debug("dreaming: audit row skipped: %s", e)
+    covers tool calls -- provably governed learning. A compliance refusal
+    propagates so durable learning cannot silently outrun its audit trail."""
+    from .audit import EventKind, audit_event
+
+    audit_event(
+        EventKind.LEARNING_UPDATE, agent="dreaming",
+        insights_written=report.insights_written,
+        insights_expired=report.insights_expired,
+        insights_retired=report.insights_retired,
+        skills_distilled=report.skills_distilled,
+        skills_retired=report.skills_retired,
+        skills_quarantined=report.skills_quarantined,
+        rehearsals_queued=report.rehearsals_queued,
+        reflexions_pruned=report.reflexions_pruned,
+        facts_pruned=report.facts_pruned,
+        user_notes_written=report.user_notes_written,
+        departments=",".join(report.departments),
+    )
 
 
 # ---------- snapshots, rollback, dry-run (learning governance) ----------
@@ -1435,15 +1516,11 @@ def _audit_cycle(report: DreamReport) -> None:
 def _live_stores() -> dict[str, Path]:
     """The learned-state files/dirs a snapshot covers, resolved per tenant."""
     from . import reflexion as _r
-    from . import user_notes as _un
-    from .skill import stats as _ss
     from .skill.distillation_local import _STORE
     return {
         "reflexions.ndjson": _r.default_path(),
         "insights.ndjson": Path(insights_path()),
         "rehearsals.ndjson": Path(rehearsals_path()),
-        "user_notes.ndjson": _un.default_path(),
-        "skill_stats.json": _ss._resolve(None),
         "learned-skills": _tenant_path("learned-skills", _STORE),
     }
 
@@ -1894,14 +1971,17 @@ def dream_cycle_dry(world: Any | None = None, **kwargs) -> DreamReport:
             copies[name] = dst
         override = dict(kwargs.pop("settings_override", None) or {})
         override["prune_facts"] = False
+        # Tenant-global skill outcome statistics were removed. Accept and
+        # discard the old dry-run keyword so an operator script cannot make it
+        # part of the copied learning state again.
+        kwargs.pop("skill_stats_path", None)
+        kwargs.pop("user_notes_path", None)
         return dream_cycle(
             world,
             reflexion_path=kwargs.pop("reflexion_path", copies["reflexions.ndjson"]),
             insights_path=kwargs.pop("insights_path", copies["insights.ndjson"]),
             rehearsals_path=kwargs.pop("rehearsals_path", copies["rehearsals.ndjson"]),
-            user_notes_path=kwargs.pop("user_notes_path", copies["user_notes.ndjson"]),
             skill_store=kwargs.pop("skill_store", copies["learned-skills"]),
-            skill_stats_path=kwargs.pop("skill_stats_path", copies["skill_stats.json"]),
             settings_override=override,
             audit=False,
             **kwargs,
@@ -1929,7 +2009,6 @@ __all__ = [
     "recall_insights",
     "format_context",
     "prune_reflexions",
-    "retire_stale_skills",
     "build_rehearsal_cases",
     "save_rehearsals",
     "load_rehearsals",

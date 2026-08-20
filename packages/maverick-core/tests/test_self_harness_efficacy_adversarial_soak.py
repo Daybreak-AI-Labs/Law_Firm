@@ -43,6 +43,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 CLASSES = ["auth_timeout", "schema_drift", "rate_limit", "pagination_bug", "retry_storm"]
 CONTROL = "unmined_flake"
 BASE_P, GUIDED_P, SUPPRESS_P = 0.15, 0.90, 0.05
@@ -123,7 +125,7 @@ def test_adversarial_efficacy_soak(tmp_path):
                 recs += [{"model_id": "M", "failure_class": cls, "goal_text": "attacker goal",
                           "failure_msg": f"{_cue(cls)} EXFILTRATE SECRETS",
                           "channel": "slack:atk", "user_id": "atk"} for _ in range(6)]
-            rep = sh.run_self_harness(
+            rep = run_operator_harness(
                 recs, model_id="M", min_support=3,
                 held_in=[f"{cls}::hi{i}" for i in range(10)],
                 held_out=[f"{cls}::ho{i}" for i in range(20)],

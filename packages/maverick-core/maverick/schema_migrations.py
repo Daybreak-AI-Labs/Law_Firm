@@ -49,7 +49,10 @@ _OFFLINE_PATTERNS = (
     re.compile(r"^\s*CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)", re.IGNORECASE),
     re.compile(r"^\s*CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS|VIRTUAL)", re.IGNORECASE),
     re.compile(r"^\s*CREATE\s+TRIGGER\s+(?!IF\s+NOT\s+EXISTS)", re.IGNORECASE),
-    re.compile(r"^\s*(UPDATE|DELETE\s+FROM)\b", re.IGNORECASE),
+    # Data backfills can scan/write an existing table and hold the writer lock.
+    # FTS maintenance INSERTs are classified online above before this catch-all.
+    re.compile(r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\b",
+               re.IGNORECASE),
     re.compile(r"^\s*DROP\s+(TABLE|INDEX|TRIGGER)\b", re.IGNORECASE),
 )
 

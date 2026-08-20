@@ -56,9 +56,6 @@ def ctx(tmp_path: Path, fake_llm):
 
 
 class TestHostKey:
-    def test_http_fetch_parses_host(self):
-        assert nc.host_key("http_fetch", {"url": "https://EXAMPLE.com/a"}) == "http:example.com"
-
     def test_fixed_endpoint_tools(self):
         assert nc.host_key("arxiv", {}) == "svc:arxiv.org"
         assert nc.host_key("wikipedia", {}) == "svc:wikipedia.org"
@@ -67,11 +64,6 @@ class TestHostKey:
     def test_local_and_unknown_are_none(self):
         assert nc.host_key("read_file", {"path": "x"}) is None
         assert nc.host_key("totally_unknown", {}) is None
-
-    def test_unparseable_url_is_none(self):
-        assert nc.host_key("http_fetch", {"url": ""}) is None
-        assert nc.host_key("http_fetch", {}) is None
-
 
 class TestLimitContext:
     @pytest.mark.asyncio
@@ -191,7 +183,7 @@ def test_concurrent_loops_do_not_collide():
         barrier.wait()  # maximise interleaving of the two loops' registry access
         loop_sem = None
         for _ in range(50):
-            ctx = nc.limit("http_fetch", {"url": "https://example.com/x"})
+            ctx = nc.limit("arxiv", {})
             async with ctx:  # awaiting binds the semaphore to THIS loop
                 await asyncio.sleep(0)
             # limit() returns the cached per-loop semaphore; it must be stable

@@ -84,17 +84,17 @@ def test_apply_to_registry_wraps_named_tool():
 
 def test_apply_to_registry_glob_match():
     reg = ToolRegistry()
-    reg.register(_echo_tool("mcp_a__x"))
-    reg.register(_echo_tool("mcp_a__y"))
+    reg.register(_echo_tool("external_a_x"))
+    reg.register(_echo_tool("external_a_y"))
     reg.register(_echo_tool("shell"))
 
-    apply_to_registry(reg, limits={"mcp_*": (1, 60.0)})
+    apply_to_registry(reg, limits={"external_*": (1, 60.0)})
 
-    assert reg.get("mcp_a__x").fn({}) == "ok:"
-    err = reg.get("mcp_a__x").fn({})
-    assert err.startswith("ERROR: rate limit exceeded for mcp_a__x")
+    assert reg.get("external_a_x").fn({}) == "ok:"
+    err = reg.get("external_a_x").fn({})
+    assert err.startswith("ERROR: rate limit exceeded for external_a_x")
     # Sibling has its own bucket.
-    assert reg.get("mcp_a__y").fn({}) == "ok:"
+    assert reg.get("external_a_y").fn({}) == "ok:"
     # Non-matching name still works freely.
     for _ in range(5):
         assert reg.get("shell").fn({}) == "ok:"

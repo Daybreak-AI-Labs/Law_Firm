@@ -17,6 +17,12 @@ def _isolate(tmp_path, monkeypatch):
 def test_split_holds_end_to_end(tmp_path):
     ev = e2e.run_e2e(tmp_path)
     assert ev["proof"]["ok"] is True
+    assert ev["proof"]["worker_reverified_matter_context"] is True
+    assert ev["matter_context"] == {
+        "matter_id": 1,
+        "principal": "user:e2e",
+        "domain": "legal",
+    }
     # Control plane only enqueued — the goal was still pending after submit.
     assert ev["control_plane"]["submit_returned"] == "queued"
     assert ev["control_plane"]["goal_status_after_enqueue"] == "pending"

@@ -72,7 +72,7 @@ _ENV_PREFIX = "MAVERICK_LOCAL_RUNTIME_"
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off", ""})
 
-# Engine default ports (mirrors provider_local_first._LOCAL_PORTS).
+# Engine default ports for local runtime discovery.
 _DEFAULT_PORTS = {"vllm": 8000, "tgi": 8080, "llamacpp": 8080}
 
 DEFAULTS: dict = {

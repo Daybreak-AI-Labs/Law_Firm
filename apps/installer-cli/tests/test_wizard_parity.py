@@ -1,12 +1,6 @@
-"""Council pass: wizard parity with kernel features.
-
-Confirms the eight new wizard steps emit correct TOML, the three new
-channel adapters round-trip, and the `_safe_*` helpers replace the
-crash-on-bad-input ``int()`` / ``float()`` calls.
-"""
+"""Installer configuration parity with retained kernel features."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -45,8 +39,8 @@ def test_wizard_written_sections_are_known_to_config_lint():
     registry (migrate.KNOWN_SECTIONS, which config-lint sources) recognizes --
     otherwise an operator who enables a documented, wizard-offered feature gets
     a false "unknown config section" warning. Regression: [self_harness],
-    [self_improvement], [dreaming], [fleet_memory], [rehearsal], [memory_guard],
-    [actions], [domains], [fairness_monitor], [speculative] and [tax] all
+    [self_improvement], [dreaming], [rehearsal], [memory_guard],
+    [actions], [domains], [fairness_monitor] and [speculative] all
     shipped unrecognized (the section-parity test only checked the two
     registries against each other, not against what the wizard writes)."""
     import re
@@ -79,17 +73,11 @@ def test_model_risk_literal_sections_are_known_to_config_lint():
 
 @pytest.mark.parametrize("name", [
     "pick_web_search",
-    "pick_mcp_servers",
-    "pick_plugins",
     "pick_tool_acl",
     "pick_rate_limits",
     "pick_retention",
     "pick_persona",
-    "pick_notifications",
-    "pick_webhooks",
     "pick_self_learning",
-    "pick_automation_import",
-    "pick_event_triggers",
 ])
 def test_new_pick_exists(name):
     from maverick_installer import wizard
@@ -120,6 +108,101 @@ def test_collect_api_keys_prompts_for_openai_compatible_base_url(monkeypatch):
     assert any("OPENAI_COMPATIBLE_BASE_URL" in prompt for prompt in prompts)
 
 
+# ---------- one explicit run-wide model pin ----------
+
+def test_provider_and_model_pickers_have_no_vendor_default(monkeypatch):
+    from maverick_installer import wizard
+
+    seen_defaults: list[str | None] = []
+
+    def select(_message, choices, default=None):
+        seen_defaults.append(default)
+        return next(choice for choice in choices if choice.startswith("openai"))
+
+    monkeypatch.setattr(wizard, "_q_select", select)
+
+    providers = wizard.pick_providers()
+    run_model = wizard.pick_run_model(providers)
+
+    assert providers == ["openai"]
+    assert run_model.startswith("openai:")
+    assert seen_defaults == [None, None]
+
+
+@pytest.mark.parametrize(
+    ("providers", "run_model"),
+    [
+        (["anthropic"], ""),
+        (["anthropic"], "claude-sonnet-4-6"),
+        (["anthropic"], "openai:gpt-5.4"),
+        (["anthropic", "openai"], "anthropic:claude-sonnet-4-6"),
+        (["anthropic"], "anthropic:not-in-the-catalog"),
+    ],
+)
+def test_write_config_rejects_missing_or_mismatched_model_pin(
+    tmp_path: Path,
+    monkeypatch,
+    providers: list[str],
+    run_model: str,
+):
+    with pytest.raises(ValueError):
+        _write_full_config(
+            tmp_path,
+            monkeypatch,
+            providers=providers,
+            run_model=run_model,
+        )
+
+
+def test_invalid_model_pin_fails_before_credentials_are_written(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from maverick_installer import wizard
+
+    monkeypatch.setattr(wizard, "CONFIG_DIR", tmp_path / ".maverick")
+    monkeypatch.setattr(wizard, "CONFIG_FILE", tmp_path / ".maverick" / "config.toml")
+    monkeypatch.setattr(wizard, "ENV_FILE", tmp_path / ".maverick" / ".env")
+
+    with pytest.raises(ValueError):
+        wizard.write_config(
+            providers=["anthropic"],
+            run_model="openai:gpt-5.4",
+            safety={"profile": "balanced"},
+            budget={"max_dollars": 5.0},
+            sandbox={"backend": "local", "workdir": str(tmp_path / "work")},
+            keys={
+                "ANTHROPIC_API_KEY": "must-not-be-written",  # pragma: allowlist secret
+            },
+        )
+
+    assert not wizard.CONFIG_DIR.exists()
+
+
+def test_write_config_emits_only_one_global_model_pin(tmp_path: Path, monkeypatch):
+    parsed = _write_full_config(tmp_path, monkeypatch)
+
+    assert parsed["models"] == {"default": "anthropic:claude-sonnet-4-6"}
+
+
+def test_every_catalog_provider_emits_its_exact_selected_model(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from maverick_installer import models
+
+    for provider, info in models.PROVIDERS.items():
+        run_model = f"{provider}:{info['models'][0]['id']}"
+        parsed = _write_full_config(
+            tmp_path / provider,
+            monkeypatch,
+            providers=[provider],
+            run_model=run_model,
+        )
+        assert parsed["models"] == {"default": run_model}
+        assert set(parsed["providers"]) == {provider}
+
+
 # ---------- write_config emits new TOML sections ----------
 
 def _write_full_config(tmp_path: Path, monkeypatch, **overrides) -> dict:
@@ -129,8 +212,7 @@ def _write_full_config(tmp_path: Path, monkeypatch, **overrides) -> dict:
     monkeypatch.setattr(wizard, "ENV_FILE", tmp_path / ".env")
     base = dict(
         providers=["anthropic"],
-        role_models={},
-        channels={},
+        run_model="anthropic:claude-sonnet-4-6",
         safety={"profile": "balanced", "block_threshold": "high",
                 "scan_input": True, "scan_tool_calls": True, "scan_output": True},
         budget={"max_dollars": 5.0, "max_wall_seconds": 3600.0, "max_tool_calls": 500},
@@ -144,35 +226,14 @@ def _write_full_config(tmp_path: Path, monkeypatch, **overrides) -> dict:
     return tomllib.loads(body)
 
 
-def test_write_config_emits_mcp_servers(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        mcp_servers={"fs": {"command": "npx", "args": ["-y", "x"]}},
-    )
-    assert parsed["mcp_servers"]["fs"]["command"] == "npx"
-    assert parsed["mcp_servers"]["fs"]["args"] == ["-y", "x"]
-
-
-def test_write_config_emits_mcp_registries(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        mcp_registries=["https://registry.example.com/catalog",
-                        "https://internal.acme/catalog"],
-    )
-    assert parsed["mcp_registries"]["indexes"] == [
-        "https://registry.example.com/catalog", "https://internal.acme/catalog"]
-
-
 def test_write_config_emits_knowledge(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
-        knowledge={"enable": True, "embedder": "hosted", "store": "pgvector",
-                   "dsn": "postgresql://x"},
+        knowledge={"enable": True, "embedder": "local", "store": "sqlite"},
     )
     assert parsed["knowledge"]["enable"] is True
-    assert parsed["knowledge"]["embedder"] == "hosted"
-    assert parsed["knowledge"]["store"] == "pgvector"
-    assert parsed["knowledge"]["dsn"] == "postgresql://x"
+    assert parsed["knowledge"]["embedder"] == "local"
+    assert parsed["knowledge"]["store"] == "sqlite"
 
 
 def test_write_config_omits_knowledge_by_default(tmp_path: Path, monkeypatch):
@@ -181,36 +242,22 @@ def test_write_config_omits_knowledge_by_default(tmp_path: Path, monkeypatch):
     assert "knowledge" not in parsed
 
 
-def test_write_config_round_trips_the_vendor_acknowledgement(
-    tmp_path: Path, monkeypatch,
-):
-    """The wizard's answer has to reach the thing that enforces it.
-
-    build_embedder refuses a hosted provider unless this key is true, so a
-    wizard that asked the question and dropped the answer would leave the
-    operator with a knowledge base that will not index and no clue why.
-    """
+def test_write_config_builds_deterministic_on_box(tmp_path: Path, monkeypatch):
     from maverick import config
-    from maverick_knowledge.embed import HostedEmbedder, build_embedder
+    from maverick_knowledge.embed import DeterministicEmbedder, build_embedder
 
     parsed = _write_full_config(
         tmp_path, monkeypatch,
-        knowledge={"enable": True, "embedder": "hosted", "store": "sqlite",
-                   "allow_external_embedding": True},
+        knowledge={"enable": True, "embedder": "deterministic", "store": "sqlite"},
     )
-    assert parsed["knowledge"]["allow_external_embedding"] is True
 
     monkeypatch.setattr(config, "load_config", lambda *a, **k: parsed)
-    monkeypatch.delenv("MAVERICK_KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING", raising=False)
     monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
     resolved = config.get_knowledge()
-    assert resolved["allow_external_embedding"] is True
-    resolved["api_key"] = "k"
-    assert isinstance(build_embedder(resolved), HostedEmbedder)
+    assert isinstance(build_embedder(resolved), DeterministicEmbedder)
 
 
-def test_knowledge_defaults_refuse_external_embedding(monkeypatch):
-    """Answering no (or never being asked) leaves documents on the box."""
+def test_legacy_hosted_knowledge_config_fails_closed(monkeypatch):
     from maverick import config
     from maverick_knowledge.embed import build_embedder
 
@@ -218,11 +265,9 @@ def test_knowledge_defaults_refuse_external_embedding(monkeypatch):
         config, "load_config",
         lambda *a, **k: {"knowledge": {"enable": True, "embedder": "hosted"}},
     )
-    monkeypatch.delenv("MAVERICK_KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING", raising=False)
     monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
     resolved = config.get_knowledge()
-    assert resolved["allow_external_embedding"] is False
-    with pytest.raises(RuntimeError, match="sends document text to a third-party"):
+    with pytest.raises(RuntimeError, match="external embedder 'hosted' was removed"):
         build_embedder(resolved)
 
 
@@ -232,31 +277,6 @@ def test_write_config_emits_regulated_scalars(tmp_path: Path, monkeypatch):
         advanced={"compliance_disclosure_text": "AI assistant in use."},
     )
     assert parsed["compliance"]["disclosure_text"] == "AI assistant in use."
-
-
-def test_write_config_omits_mcp_registries_by_default(tmp_path: Path, monkeypatch):
-    # No override -> no [mcp_registries] section (discovery uses the built-in
-    # default index, so the config stays minimal).
-    parsed = _write_full_config(tmp_path, monkeypatch)
-    assert "mcp_registries" not in parsed
-
-
-def test_write_config_emits_template_registries(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        template_registries=["https://templates.example.com/catalog"],
-    )
-    assert parsed["template_registries"]["indexes"] == [
-        "https://templates.example.com/catalog"]
-    # default: omitted
-    assert "template_registries" not in _write_full_config(tmp_path, monkeypatch)
-
-
-def test_write_config_emits_plugins(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, plugins=["weather", "github-issues"],
-    )
-    assert parsed["plugins"]["enabled"] == ["weather", "github-issues"]
 
 
 def test_write_config_self_harness_ships_production_floors(tmp_path: Path, monkeypatch):
@@ -272,7 +292,7 @@ def test_write_config_self_harness_ships_production_floors(tmp_path: Path, monke
     for k in ("eval_corpus", "eval_budget_dollars", "mine_bucket_by",
               "semantic_mining", "efficacy_review", "promote_as_canary",
               "auto_run", "metamorphic", "relapse_failure_share",
-              "calibrate_judge", "transfer_auto", "corpus_harvest", "store",
+              "calibrate_judge", "corpus_harvest", "store",
               "candidates_per_signature", "retire_after_days"):
         assert k not in parsed["self_harness"]
 
@@ -292,7 +312,6 @@ def test_write_config_self_harness_advanced_knobs(tmp_path: Path, monkeypatch):
         "self_harness_metamorphic": True,
         "self_harness_relapse": True,
         "self_harness_calibrate_judge": True,
-        "self_harness_transfer_auto": True,
         "self_harness_corpus_harvest": "propose",
         "self_harness_store": "world",
         "self_harness_candidates": 3,
@@ -309,7 +328,6 @@ def test_write_config_self_harness_advanced_knobs(tmp_path: Path, monkeypatch):
     assert sh["metamorphic"] is True
     assert sh["relapse_failure_share"] == 0.5
     assert sh["calibrate_judge"] is True
-    assert sh["transfer_auto"] is True
     assert sh["corpus_harvest"] == "propose"
     assert sh["store"] == "world"
     assert sh["candidates_per_signature"] == 3
@@ -328,7 +346,6 @@ def test_write_config_self_harness_advanced_knobs(tmp_path: Path, monkeypatch):
     assert resolved["metamorphic"] is True
     assert resolved["relapse_failure_share"] == 0.5
     assert resolved["calibrate_judge"] is True
-    assert resolved["transfer_auto"] is True
     assert resolved["corpus_harvest"] == "propose"
     assert resolved["store"] == "world"
     assert resolved["candidates_per_signature"] == 3
@@ -354,15 +371,14 @@ def test_write_config_emits_self_learning(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
         self_learning={
-            "enable": True, "preflight": True, "create_tools": True,
-            "max_acquisitions": 3,
+            "enable": True,
+            "allow_provider_egress": False,
+            "distill_local": True,
         },
     )
     assert parsed["self_learning"]["enable"] is True
-    assert parsed["self_learning"]["create_tools"] is True
-    assert parsed["self_learning"]["max_acquisitions"] == 3
-    # The retired add_mcp_servers knob is no longer written.
-    assert "add_mcp_servers" not in parsed["self_learning"]
+    assert parsed["self_learning"]["allow_provider_egress"] is False
+    assert parsed["self_learning"]["distill_local"] is True
 
 
 def test_write_config_emits_durable_when_enabled(tmp_path: Path, monkeypatch):
@@ -384,46 +400,31 @@ def test_write_config_omits_durable_when_disabled(tmp_path: Path, monkeypatch):
     assert "durable" not in parsed
 
 
-def test_write_config_roundtrips_backslash_paths_and_allowlist(tmp_path: Path, monkeypatch):
-    """A Windows backslash workdir must round-trip (escaped TOML basic string)
-    and a channel allowed_user_ids must emit as an ARRAY. Regression: the raw
-    f'{k} = "{v}"' emit turned C:\\Users... into an invalid \\U escape (config
-    unreadable on Windows) and rendered a list as a quoted string."""
+def test_write_config_roundtrips_backslash_paths(tmp_path: Path, monkeypatch):
+    """A Windows backslash workdir must round-trip as a TOML string."""
     parsed = _write_full_config(
         tmp_path, monkeypatch,
         sandbox={"backend": "local", "workdir": r"C:\Users\me\maverick ws", "timeout": 60},
-        channels={"discord": {
-            "enabled": True,
-            "bot_token": "${DISCORD_BOT_TOKEN}",
-            "allowed_user_ids": ["111", "222"],
-        }},
     )
-    # Round-trips without TOMLDecodeError and preserves the backslashes.
     assert parsed["sandbox"]["workdir"] == r"C:\Users\me\maverick ws"
-    # The allowlist is a TOML array, not a stringified list.
-    assert parsed["channels"]["discord"]["allowed_user_ids"] == ["111", "222"]
 
 
 def test_write_config_emits_tool_acl(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
-        tool_acl={
-            "denied_tools": ["computer"],
-            "channels": {"telegram": {"denied_tools": ["shell"]}},
-        },
+        tool_acl={"denied_tools": ["web_search"]},
     )
-    assert parsed["security"]["denied_tools"] == ["computer"]
-    assert parsed["security"]["channels"]["telegram"]["denied_tools"] == ["shell"]
+    assert parsed["security"]["denied_tools"] == ["web_search"]
 
 
 def test_write_config_emits_rate_limits_with_glob(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
-        rate_limits={"web_search": "10/60", "mcp_*": "60/60"},
+        rate_limits={"web_search": "10/60", "http_*": "60/60"},
     )
     assert parsed["rate_limits"]["web_search"] == "10/60"
     # Glob keys must be quoted in TOML.
-    assert parsed["rate_limits"]["mcp_*"] == "60/60"
+    assert parsed["rate_limits"]["http_*"] == "60/60"
 
 
 def test_write_config_emits_retention(tmp_path: Path, monkeypatch):
@@ -444,33 +445,6 @@ def test_write_config_emits_persona(tmp_path: Path, monkeypatch):
     assert parsed["persona"]["style"] == "concise"
 
 
-def test_write_config_emits_notifications(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        notifications={"backend": "ntfy", "topic": "alerts"},
-    )
-    assert parsed["notifications"]["backend"] == "ntfy"
-    assert parsed["notifications"]["topic"] == "alerts"
-
-
-def test_write_config_emits_webhooks(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        webhooks={"outbound": ["https://a.example", "https://b.example"],
-                  "secret": "${MAVERICK_WEBHOOK_SECRET}"},
-    )
-    assert parsed["webhooks"]["outbound"] == ["https://a.example", "https://b.example"]
-    assert parsed["webhooks"]["secret"] == "${MAVERICK_WEBHOOK_SECRET}"
-
-
-def test_write_config_emits_deliverable_handoff(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        deliverables={"handoff_webhook": "https://sor.example/ingest"},
-    )
-    assert parsed["deliverables"]["handoff_webhook"] == "https://sor.example/ingest"
-
-
 def test_write_config_emits_personas(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
@@ -489,8 +463,7 @@ def test_write_config_emits_web_search_capability(tmp_path: Path, monkeypatch):
 def test_write_config_omits_empty_optional_sections(tmp_path: Path, monkeypatch):
     """Unspecified optionals should not emit empty sections."""
     parsed = _write_full_config(tmp_path, monkeypatch)
-    for sec in ("mcp_servers", "plugins", "security", "rate_limits",
-                "retention", "persona", "notifications", "webhooks",
+    for sec in ("security", "rate_limits", "retention", "persona",
                 "self_learning"):
         assert sec not in parsed, f"{sec} should be absent"
 
@@ -519,37 +492,16 @@ class _StubQ:
         )
 
 
-def test_pick_mcp_servers_skipped(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_mcp_servers
-    assert pick_mcp_servers() == {}
-
-
-def test_pick_plugins_returns_empty_when_no_entry_points(monkeypatch):
-    _StubQ(monkeypatch)
-    # Force empty entry_points discovery.
-    import maverick_installer.wizard as w
-    real_plugins = sys.modules.get("maverick.plugins")
-    try:
-        # Remove module so the import in pick_plugins re-imports / fails.
-        sys.modules.pop("maverick.plugins", None)
-        out = w.pick_plugins()
-        assert out == []
-    finally:
-        if real_plugins:
-            sys.modules["maverick.plugins"] = real_plugins
-
-
 def test_pick_tool_acl_skipped(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_tool_acl
-    assert pick_tool_acl(channels={}) == {}
+    assert pick_tool_acl() == {}
 
 
 def test_pick_rate_limits_skipped(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_rate_limits
-    assert pick_rate_limits(channels={}) == {}
+    assert pick_rate_limits() == {}
 
 
 def test_pick_retention_skipped(monkeypatch):
@@ -562,22 +514,6 @@ def test_pick_persona_skipped(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_persona
     assert pick_persona() == {}
-
-
-def test_pick_notifications_skipped(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_notifications
-    cfg, envs = pick_notifications()
-    assert cfg == {}
-    assert envs == []
-
-
-def test_pick_webhooks_skipped(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_webhooks
-    cfg, envs = pick_webhooks()
-    assert cfg == {}
-    assert envs == []
 
 
 def test_pick_web_search_skipped(monkeypatch):
@@ -597,19 +533,6 @@ def test_write_config_emits_tools_output_cache(tmp_path: Path, monkeypatch):
     assert parsed["tools"]["output_cache"] is True
 
 
-def test_write_config_tools_block_coexists(tmp_path: Path, monkeypatch):
-    # deferred_loading + output_cache share a single [tools] table.
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        advanced={
-            "deferred_tools": True,
-            "output_cache": True,
-        },
-    )
-    assert parsed["tools"]["deferred_loading"] is True
-    assert parsed["tools"]["output_cache"] is True
-
-
 def test_write_config_emits_consequence_when_enabled(tmp_path: Path, monkeypatch):
     # The Consequence Engine had a config knob + kernel reader but no wizard step,
     # so it was unreachable through the installer. Pin that it now emits.
@@ -624,31 +547,6 @@ def test_write_config_persists_consequence_opt_out(tmp_path: Path, monkeypatch):
     assert parsed["consequence"]["enable"] is False
 
 
-def test_write_config_emits_routing_energy_aware(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, advanced={"energy_aware": True},
-    )
-    assert parsed["routing"]["energy_aware"] is True
-    assert parsed["routing"]["allowed_providers"] == ["anthropic"]
-
-
-def test_write_config_emits_system_local_first(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, advanced={"local_first": True},
-    )
-    assert parsed["system"]["local_first"] is True
-    assert "local_first" not in parsed
-
-
-def test_write_config_emits_local_first_model_for_local_provider(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch, providers=["anthropic", "ollama"],
-        advanced={"local_first": True},
-    )
-    assert parsed["system"]["local_first"] is True
-    assert parsed["local_first"]["model"].startswith("ollama:")
-
-
 def test_write_config_emits_self_learning_distill_local(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,
@@ -658,19 +556,23 @@ def test_write_config_emits_self_learning_distill_local(tmp_path: Path, monkeypa
 
 
 def test_write_config_omits_new_knobs_when_off(tmp_path: Path, monkeypatch):
-    # Empty advanced -> no [system], no energy-aware-only [routing], no [tools].
+    # Empty advanced -> no retired routing/system tables and no [tools].
     parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
     assert "system" not in parsed
     assert "routing" not in parsed
     assert "tools" not in parsed
 
 
-def test_pick_advanced_includes_new_toggles(monkeypatch):
+def test_pick_advanced_includes_output_cache(monkeypatch):
     _StubQ(monkeypatch)
     from maverick_installer.wizard import pick_advanced
     adv = pick_advanced()
-    for key in ("output_cache", "local_first", "energy_aware"):
-        assert key in adv, f"{key} missing from pick_advanced()"
+    assert "output_cache" in adv
+    retired = {
+        "cost_aware", "local_first", "energy_aware", "hedge_requests",
+        "verify_ensemble",
+    }
+    assert not (retired & set(adv))
 
 
 def test_pick_self_learning_includes_distill_local(monkeypatch):
@@ -694,121 +596,33 @@ def test_pick_self_learning_defaults_to_safe_governed_learning(monkeypatch):
 
     assert result == {
         "enable": True,
-        "preflight": True,
-        "create_tools": False,
-        "provision_packs": True,
-            "allow_mcp_acquisition": False,
-            "allow_provider_egress": False,
+        "allow_provider_egress": False,
         "distill_local": True,
-        "max_acquisitions": 5,
     }
 
 
-def test_pick_finance_skipped(monkeypatch):
-    _StubQ(monkeypatch)
-    from maverick_installer.wizard import pick_finance
-    assert pick_finance() == {"enable": False}
+def test_retired_finance_suite_is_not_advertised_or_configurable():
+    import inspect
+
+    from maverick.migrate import KNOWN_SECTIONS
+    from maverick_installer import wizard
+
+    assert not hasattr(wizard, "pick_finance")
+    assert "finance" not in inspect.signature(wizard.write_config).parameters
+    assert {"finance", "finance_operations", "screening"}.isdisjoint(KNOWN_SECTIONS)
 
 
-def test_write_config_emits_finance_governance(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        finance={"enable": True, "regimes": ["sox", "gaap"],
-                 "require_human_above": 5000.0, "deny_above": 50000.0,
-                 "sdn_path": "/etc/ofac/sdn.txt"},
-    )
-    assert parsed["governance"]["require_human_min_risk"] == "high"
-    assert parsed["governance"]["require_human_above"]["*"] == 5000.0
-    assert parsed["governance"]["deny_above"]["*"] == 50000.0
-    assert parsed["finance"]["regimes"] == ["sox", "gaap"]
-    assert parsed["screening"]["sdn_path"] == "/etc/ofac/sdn.txt"
+def test_retired_governed_connector_writes_are_not_advertised_or_configurable():
+    import inspect
 
+    import maverick.config as config
+    from maverick.migrate import KNOWN_SECTIONS
+    from maverick_installer import wizard
 
-def test_write_config_emits_finance_operations_and_new_regimes(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path,
-        monkeypatch,
-        finance={
-            "enable": True,
-            "regimes": ["sox", "dora", "basel_iii", "ifrs_17", "pci"],
-            "require_human_above": 5000.0,
-            "deny_above": 0,
-            "sdn_path": "",
-            "operations_enable": True,
-            "federal_register_enable": True,
-            "texas_register_enable": True,
-            "regulatory_domains": ["finance", "money_transmitter"],
-            "regulatory_poll_seconds": 3600,
-            "control_test_interval_seconds": 86400,
-            "anomaly_enable": True,
-            "sanctions_max_age_hours": 72,
-            "control_owner": "Finance Assurance",
-        },
-    )
-    assert parsed["finance"]["regimes"] == [
-        "sox", "dora", "basel_iii", "ifrs_17", "pci",
-    ]
-    operations = parsed["finance_operations"]
-    assert operations["enable"] is True
-    assert operations["federal_register_enable"] is True
-    assert operations["texas_register_enable"] is True
-    assert operations["regulatory_domains"] == ["finance", "money_transmitter"]
-    assert operations["state_feeds"] == []
-    assert operations["control_owner"] == "Finance Assurance"
-
-
-def test_write_config_can_explicitly_disable_finance_operations(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(
-        tmp_path,
-        monkeypatch,
-        finance={
-            "enable": True,
-            "regimes": ["sox"],
-            "require_human_above": 0,
-            "deny_above": 0,
-            "sdn_path": "",
-            "operations_enable": False,
-        },
-    )
-    assert parsed["finance_operations"] == {"enable": False}
-
-
-def test_write_config_emits_require_fresh_human_approval(tmp_path: Path, monkeypatch):
-    # Opt-in per-action oversight: the [governance] scalar is emitted only when
-    # the wizard pick set it.
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        finance={"enable": True, "regimes": ["sox"], "require_human_above": 5000.0,
-                 "deny_above": 0, "require_fresh_human_approval": True, "sdn_path": ""},
-    )
-    assert parsed["governance"]["require_fresh_human_approval"] is True
-    # Absent by default (backwards compatible).
-    parsed2 = _write_full_config(
-        tmp_path, monkeypatch,
-        finance={"enable": True, "regimes": ["sox"], "require_human_above": 5000.0,
-                 "deny_above": 0, "sdn_path": ""},
-    )
-    assert "require_fresh_human_approval" not in parsed2["governance"]
-
-
-def test_write_config_omits_finance_when_off(tmp_path: Path, monkeypatch):
-    parsed = _write_full_config(tmp_path, monkeypatch)
-    assert "finance" not in parsed
-    assert "governance" not in parsed
-    assert "screening" not in parsed
-
-
-def test_write_config_finance_no_thresholds(tmp_path: Path, monkeypatch):
-    # require_human_above=0 means "pause all" -> rely on require_human_min_risk,
-    # no [governance.require_human_above] sub-table emitted.
-    parsed = _write_full_config(
-        tmp_path, monkeypatch,
-        finance={"enable": True, "regimes": ["sox"],
-                 "require_human_above": 0, "deny_above": 0, "sdn_path": ""},
-    )
-    assert parsed["governance"]["require_human_min_risk"] == "high"
-    assert "require_human_above" not in parsed["governance"]
-    assert "screening" not in parsed
+    assert not hasattr(wizard, "pick_governed_connectors")
+    assert "governed_connectors" not in inspect.signature(wizard.write_config).parameters
+    assert not hasattr(config, "get_governed_connectors")
+    assert "governed_connectors" not in KNOWN_SECTIONS
 
 
 # ---------- learning defaults: reasoning_reward + jit_rl opt-out, governance opt-in ----------
@@ -867,6 +681,13 @@ def test_write_config_omits_learning_knobs_by_default(tmp_path: Path, monkeypatc
     assert "reasoning_reward" not in parsed
     assert "jit_rl" not in parsed
     assert "calibration" not in parsed
+    assert "self_improvement" not in parsed
+
+
+def test_write_config_ignores_retired_factory_learning_knob(tmp_path: Path, monkeypatch):
+    parsed = _write_full_config(
+        tmp_path, monkeypatch, advanced={"factory_learning": False}
+    )
     assert "self_improvement" not in parsed
 
 

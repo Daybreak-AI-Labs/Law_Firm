@@ -1,12 +1,9 @@
 """Kernel-level department (suite) grant enforcement.
 
-The grant store moved from the dashboard into the kernel so the
-deploy/dispatch chokepoints gate EVERY caller (dashboard, CLI, future
-surfaces). Safety invariants under test:
+The grant store moved from the dashboard into the kernel so authenticated
+suite checks share one policy source. Safety invariants under test:
   * empty acting principal (host operator / auth off) -> unrestricted;
   * configured dashboard admins -> unrestricted;
-  * ``deploy_department`` raises DepartmentAccessError outside the grant;
-  * ``fleet.ensure_dispatch_allowed`` gates domain-bound agents only;
   * resolution chain: explicit grant -> registered resolver -> config default.
 """
 from __future__ import annotations
@@ -104,30 +101,3 @@ def test_register_grant_resolver_is_idempotent(monkeypatch):
     sg.register_grant_resolver(fn)
     sg.register_grant_resolver(fn)
     assert [fn] == sg._EXTRA_RESOLVERS
-
-
-def test_deploy_department_gates_on_owner_grant():
-    from maverick.departments import deploy_department
-    sg.set_suites("user:fin", ["finance"])
-    # Outside the grant: the KERNEL refuses, whatever the calling surface.
-    with pytest.raises(sg.DepartmentAccessError):
-        deploy_department("legal", "user:fin", save=False)
-    # Inside the grant: deploys.
-    fleet = deploy_department("finance", "user:fin", save=False)
-    assert fleet is not None and fleet.agents
-    # Host operator (empty owner) stays unrestricted — kernel rule 1.
-    assert deploy_department("legal", "", save=False) is not None
-
-
-def test_ensure_dispatch_allowed_gates_domain_bound_agents():
-    from maverick.fleet import FleetAgent, ensure_dispatch_allowed
-    sg.set_suites("user:fin", ["finance"])
-    legal = FleetAgent(name="legal_contracts", role="legal",
-                       domain="legal_contracts")
-    generic = FleetAgent(name="helper", role="ops")
-    with pytest.raises(sg.DepartmentAccessError):
-        ensure_dispatch_allowed("user:fin", legal)
-    ensure_dispatch_allowed("user:fin", FleetAgent(
-        name="finance_ap", role="finance", domain="finance_ap"))
-    ensure_dispatch_allowed("user:fin", generic)   # no domain -> never scoped
-    ensure_dispatch_allowed(None, legal)           # host operator -> never scoped

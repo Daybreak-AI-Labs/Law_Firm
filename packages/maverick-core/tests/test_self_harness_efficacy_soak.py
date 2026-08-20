@@ -33,6 +33,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 CLASSES = ["auth_timeout", "schema_drift", "rate_limit", "pagination_bug", "retry_storm"]
 CONTROL = "unmined_flake"           # never taught
 BASE_P, GUIDED_P = 0.15, 0.90
@@ -99,7 +101,7 @@ def test_million_trial_efficacy_soak(tmp_path):
             else:
                 def _propose(s, _c=cls):
                     return f"for {_c} failures, verify the precondition before acting"
-            rep = sh.run_self_harness(
+            rep = run_operator_harness(
                 recs, model_id="M", min_support=3,
                 held_in=[f"{cls}::hi{i}" for i in range(10)],
                 held_out=[f"{cls}::ho{i}" for i in range(20)],

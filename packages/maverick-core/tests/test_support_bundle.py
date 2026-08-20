@@ -11,12 +11,12 @@ def test_redacts_secret_named_keys():
     src = {
         "providers": {"anthropic": {"api_key": "sk-ant-SECRETVALUE"}},  # pragma: allowlist secret
         "federation": {"peers": [{"name": "vega", "token": "TOPSECRETTOKEN"}]},  # pragma: allowlist secret
-        "models": {"orchestrator": "anthropic:claude-opus-4-8"},  # kept
+        "models": {"default": "anthropic:claude-opus-4-8"},  # kept
     }
     out = support_bundle._redact(src)
     assert out["providers"]["anthropic"]["api_key"] == "[REDACTED]"
     assert out["federation"]["peers"][0]["token"] == "[REDACTED]"
-    assert out["models"]["orchestrator"] == "anthropic:claude-opus-4-8"
+    assert out["models"]["default"] == "anthropic:claude-opus-4-8"
     assert "SECRETVALUE" not in json.dumps(out)
     assert "TOPSECRETTOKEN" not in json.dumps(out)
 

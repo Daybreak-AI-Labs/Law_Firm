@@ -3,7 +3,6 @@ import subprocess
 
 import pytest
 from maverick.sandbox.docker import DockerBackend
-from maverick.sandbox.podman import PodmanBackend
 
 
 def _capture_run_argv(monkeypatch, Backend, verify_attr, tmp_path, **kw):
@@ -22,24 +21,24 @@ def _capture_run_argv(monkeypatch, Backend, verify_attr, tmp_path, **kw):
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX-only uid/gid")
-@pytest.mark.parametrize("Backend,verify", [
-    (DockerBackend, "_verify_docker"),
-    (PodmanBackend, "_verify_podman"),
-])
-def test_runs_non_root_by_default(monkeypatch, tmp_path, Backend, verify):
+def test_runs_non_root_by_default(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_SANDBOX_ALLOW_ROOT", raising=False)
-    args = _capture_run_argv(monkeypatch, Backend, verify, tmp_path)
+    args = _capture_run_argv(
+        monkeypatch, DockerBackend, "_verify_docker", tmp_path
+    )
     assert "--user" in args
     assert args[args.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
 
 
-@pytest.mark.parametrize("Backend,verify", [
-    (DockerBackend, "_verify_docker"),
-    (PodmanBackend, "_verify_podman"),
-])
-def test_allow_root_field_drops_user_flag(monkeypatch, tmp_path, Backend, verify):
+def test_allow_root_field_drops_user_flag(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_SANDBOX_ALLOW_ROOT", raising=False)
-    args = _capture_run_argv(monkeypatch, Backend, verify, tmp_path, allow_root=True)
+    args = _capture_run_argv(
+        monkeypatch,
+        DockerBackend,
+        "_verify_docker",
+        tmp_path,
+        allow_root=True,
+    )
     assert "--user" not in args
 
 
@@ -140,7 +139,8 @@ def test_build_sandbox_parses_string_false_docker_controls(monkeypatch, tmp_path
         "\n".join([
             "[sandbox]",
             'backend = "docker"',
-            f'workdir = "{tmp_path}"',
+            f'workdir = "{tmp_path.as_posix()}"',
+            f'image = "python@sha256:{"a" * 64}"',
             'allow_network = "${MAV_ALLOW_NETWORK}"',
             'allow_root = "false"',
         ])
@@ -178,58 +178,7 @@ def test_build_sandbox_parses_string_false_docker_controls(monkeypatch, tmp_path
         )
 
 
-# ---- gVisor runtime (docker --runtime=runsc) ----
-
-def test_no_runtime_flag_by_default(monkeypatch, tmp_path):
-    args = _capture_run_argv(monkeypatch, DockerBackend, "_verify_docker", tmp_path)
-    assert "--runtime" not in args
-
-
-def test_runtime_field_injects_runsc(monkeypatch, tmp_path):
-    args = _capture_run_argv(monkeypatch, DockerBackend, "_verify_docker", tmp_path,
-                             runtime="runsc")
-    assert "--runtime" in args
-    assert args[args.index("--runtime") + 1] == "runsc"
-    # must precede the image (the positional that ends the docker-run flags)
-    assert args.index("--runtime") < args.index("python:3.12-slim")
-
-
-def test_build_sandbox_gvisor_uses_runsc(monkeypatch, tmp_path):
-    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
-    monkeypatch.setattr(
-        "maverick.sandbox.validate_docker_gvisor_runtime",
-        lambda runtime: str(runtime or "runsc"),
-    )
-    from maverick.sandbox import build_sandbox
-    sb = build_sandbox(workdir=tmp_path, backend="gvisor")
-    assert isinstance(sb, DockerBackend)
-    assert sb.runtime == "runsc"
-
-
-@pytest.mark.parametrize("runtime", ["runc", "not-runsc", "gvisorless-runc"])
-def test_build_sandbox_gvisor_refuses_untrusted_runtime_alias(
-    monkeypatch, tmp_path, runtime
-):
-    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
-    from maverick.sandbox import SandboxPolicyError, build_sandbox
-
-    with pytest.raises(SandboxPolicyError, match="not an approved gVisor runtime"):
-        build_sandbox(
-            workdir=tmp_path,
-            backend="gvisor",
-            sandbox_config={"runtime": runtime},
-        )
-
-
-def test_build_sandbox_docker_has_no_runtime(monkeypatch, tmp_path):
-    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
-    from maverick.sandbox import build_sandbox
-    sb = build_sandbox(workdir=tmp_path, backend="docker")
-    assert isinstance(sb, DockerBackend)
-    assert sb.runtime is None
-
-
-# ---- warm-container reuse ("sandbox pool") ----
+# ---- within-run warm-container reuse ----
 
 def _record_all_runs(monkeypatch):
     """Capture every subprocess.run argv; return the list."""

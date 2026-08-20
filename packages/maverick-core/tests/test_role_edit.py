@@ -7,7 +7,6 @@ from maverick.role_edit import (
     ROLES,
     list_roles,
     override_effort,
-    override_model,
     remove_role_override,
     resolved_role,
     role_addendum,
@@ -97,20 +96,16 @@ class TestViews:
         assert flagged["orchestrator"] is False
 
 
-class TestModelEffortOverride:
+class TestEffortOverride:
     def test_override_round_trips(self):
-        write_role_override("coder", {"model": "anthropic:claude-opus-4-8", "effort": "high"})
-        assert override_model("coder") == "anthropic:claude-opus-4-8"
+        write_role_override("coder", {"effort": "high"})
         assert override_effort("coder") == "high"
 
-    def test_get_role_model_prefers_override(self, tmp_path, monkeypatch):
-        cfg = tmp_path / "config.toml"
-        cfg.write_text('[models]\ncoder = "global:sonnet"\n')
-        monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
-        from maverick.config import get_role_model
-        assert get_role_model("coder") == "global:sonnet"      # global config default
-        write_role_override("coder", {"model": "tenant:opus"})
-        assert get_role_model("coder") == "tenant:opus"        # per-tenant override wins
+    def test_per_role_model_override_is_rejected(self):
+        errors = validate_role("coder", {"model": "tenant:opus"})
+        assert errors == ["per-role model selection is not supported"]
+        with pytest.raises(ValueError, match="per-role model selection"):
+            write_role_override("coder", {"model": "tenant:opus"})
 
     def test_effort_for_role_prefers_override(self, monkeypatch):
         from maverick.effort import effort_for_role
@@ -124,20 +119,17 @@ class TestModelEffortOverride:
 
     def test_validation(self):
         assert validate_role("coder", {"effort": "bogus"})         # unknown level
-        assert validate_role("coder", {"model": "x" * 999})        # too long
-        assert validate_role("coder", {"effort": "high", "model": "ok"}) == []
+        assert validate_role("coder", {"model": "anthropic:x"})    # retired axis
+        assert validate_role("coder", {"effort": "high"}) == []
 
     def test_resolved_role_exposes_overrides(self):
-        write_role_override("writer", {"model": "tenant:m", "effort": "low"})
+        write_role_override("writer", {"effort": "low"})
         view = resolved_role("writer")
-        assert view["model_override"] == "tenant:m"
+        assert "model_override" not in view
         assert view["effort_override"] == "low"
-        assert view["model"] == "tenant:m"          # effective reflects the override
         assert view["is_override"] is True
 
     def test_clearing_all_fields_removes_override(self):
-        write_role_override("analyst", {"model": "m", "effort": "high"})
-        assert override_model("analyst") == "m"
-        write_role_override("analyst", {"model": "", "effort": "", "system_addendum": ""})
-        assert override_model("analyst") is None
+        write_role_override("analyst", {"effort": "high"})
+        write_role_override("analyst", {"effort": "", "system_addendum": ""})
         assert resolved_role("analyst")["is_override"] is False

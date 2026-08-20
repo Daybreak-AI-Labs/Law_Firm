@@ -1,17 +1,14 @@
 """Specialist routing: rank packs by relevance to a task.
 
-The roster is 1,118 specialists. ``list_specialists`` lets the orchestrator
-drill down suite-by-suite, but there was no way to search the whole roster by
-what the task actually IS -- so an ambiguous or cross-suite request forced the
-model to guess the suite and browse it. This module is the deterministic
-pre-filter: a dependency-free lexical retriever (weighted TF-IDF over each
-pack's name, description, and persona) that narrows 1,118 packs to the handful
-worth showing. The LLM still makes the final pick; it just picks from a relevant
-shortlist instead of a haystack.
+This is the deterministic pre-filter for the retained legal roster: a
+dependency-free lexical retriever (weighted TF-IDF over each pack's name,
+description, and persona) that narrows the roster to a short list. The model
+still makes the final selection.
 
-Pure and offline (no embeddings, no provider key), so it is testable and always
-available. Embeddings would rank better on paraphrase and are a natural upgrade,
-but the lexical baseline is what makes routing measurable today.
+Routing is deliberately lexical and process-local. The former semantic router
+could initialize an optional model by repository id, download weights, and keep
+a tenant-global embedding cache. Client-matter semantic recall now exists only
+behind the pinned local knowledge embedder and an exact MatterContext.
 """
 from __future__ import annotations
 
@@ -100,105 +97,29 @@ class DomainRouter:
         return scored[:k]
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if na and nb else 0.0
-
-
-class EmbeddingRouter:
-    """Semantic index over the roster: cosine similarity of a query to each
-    pack's embedded text. Mirrors maverick.skill.embeddings -- uses a real
-    sentence-transformer when one is installed, and is a no-op otherwise (so the
-    caller falls back to lexical). The embedder is injectable for testing."""
-
-    def __init__(self, domains: dict[str, DomainProfile], embed_fn=None):
-        if embed_fn is None:
-            from .skill.embeddings import embed as embed_fn  # lazy: optional dep
-        self.names = sorted(domains)
-        texts = [_doc_text(domains[n]) for n in self.names]
-        vecs = embed_fn(texts) if texts else None
-        # available iff the embedder produced a vector per pack.
-        self.vectors = (dict(zip(self.names, vecs, strict=False))
-                        if vecs and len(vecs) == len(self.names) else None)
-        self._embed_fn = embed_fn
-
-    @property
-    def available(self) -> bool:
-        return self.vectors is not None
-
-    def score_all(self, query: str) -> dict[str, float]:
-        if not self.available or not (query or "").strip():
-            return {}
-        qv = self._embed_fn([query])
-        if not qv:
-            return {}
-        q = qv[0]
-        return {n: c for n in self.names
-                if (c := _cosine(q, self.vectors[n])) > 0}
-
-
-def _doc_text(p: DomainProfile) -> str:
-    """The text embedded for a pack -- name, description, then persona."""
-    return f"{p.name.replace('_', ' ')}. {p.description} {p.persona}"
-
-
-def _blend(lexical: dict[str, float], semantic: dict[str, float],
-           alpha: float) -> dict[str, float]:
-    """Max-normalise each score set to [0,1] and blend: alpha*semantic +
-    (1-alpha)*lexical over the union of candidates. With no semantic scores this
-    returns the lexical ranking unchanged."""
-    if not semantic:
-        return lexical
-    lmax = max(lexical.values(), default=0.0) or 1.0
-    smax = max(semantic.values(), default=0.0) or 1.0
-    out: dict[str, float] = {}
-    for n in set(lexical) | set(semantic):
-        out[n] = alpha * (semantic.get(n, 0.0) / smax) + \
-            (1 - alpha) * (lexical.get(n, 0.0) / lmax)
-    return out
-
-
-# Default blend weight: semantic leads (paraphrase), lexical keeps exact
-# name/term matches influential.
-_ALPHA = 0.6
-
 _LEX: DomainRouter | None = None
-_EMB: EmbeddingRouter | None = None
 _KEY: tuple | None = None
 
 
 def _indexes(domains: dict[str, DomainProfile]):
-    """Build (and process-cache) the lexical + embedding indexes for a roster."""
-    global _LEX, _EMB, _KEY
+    """Build and process-cache the lexical index for one roster."""
+    global _LEX, _KEY
     key = tuple(sorted(domains))
     if _LEX is None or key != _KEY:
         _LEX = DomainRouter(domains)
-        try:
-            _EMB = EmbeddingRouter(domains)
-        except Exception:  # embeddings are best-effort; lexical always works
-            _EMB = None
         _KEY = key
-    return _LEX, _EMB
+    return _LEX
 
 
-def rank_specialists(query: str, k: int = 10,
-                     domains: dict[str, DomainProfile] | None = None,
-                     *, alpha: float = _ALPHA) -> list[tuple[str, float]]:
-    """Rank the roster for ``query``, hybrid (semantic + lexical) when an
-    embedding model is installed, pure lexical otherwise. Cached per roster."""
+def rank_specialists(
+    query: str,
+    k: int = 10,
+    domains: dict[str, DomainProfile] | None = None,
+) -> list[tuple[str, float]]:
+    """Rank the retained roster using the cached lexical index."""
     if domains is None:
         domains = available_domains()
-    lex, emb = _indexes(domains)
-    lexical = lex.score_all(query)
-    semantic = emb.score_all(query) if (emb and emb.available) else {}
-    blended = _blend(lexical, semantic, alpha)
-    scored = sorted(((n, s) for n, s in blended.items() if s > 0),
-                    key=lambda x: (-x[1], x[0]))
-    return scored[:k]
+    return _indexes(domains).rank(query, k=k)
 
 
-__all__ = ["DomainRouter", "EmbeddingRouter", "rank_specialists"]
+__all__ = ["DomainRouter", "rank_specialists"]

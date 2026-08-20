@@ -66,13 +66,13 @@ def test_sandbox_isolation_accepts_supported_backend(monkeypatch):
 
     monkeypatch.setattr(
         "maverick.config.load_config",
-        lambda *a, **k: {"sandbox": {"backend": "gvisor"}},
+        lambda *a, **k: {"sandbox": {"backend": "docker"}},
     )
 
     checks = {c.name: c for c in verify_deployment()}
 
     assert checks["Sandbox isolation"].passed is True
-    assert checks["Sandbox isolation"].detail == "backend = gvisor"
+    assert checks["Sandbox isolation"].detail == "backend = docker"
 
 
 @requires_crypto

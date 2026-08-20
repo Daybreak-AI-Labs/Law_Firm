@@ -154,7 +154,6 @@ def test_anthropic_cache_write_priced_at_configured_ttl(monkeypatch):
     # hardcoded the 5m 1.25x rate, under-counting 1h cache-write spend by ~37.5%
     # in the cross-run provider-cap ledger. Force the interactive default TTL.
     monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
-    monkeypatch.delenv("MAVERICK_CODING_MODE", raising=False)  # -> "1h"
     resp = _Resp(_UsageAnthropic(inp=1_000, out=100), cache_creation=2_000_000)
     cost = _response_call_cost("claude-opus-4-8", resp)  # (5.0, 25.0)
     # 1h TTL bills cache writes at 2.0x, not 1.25x.

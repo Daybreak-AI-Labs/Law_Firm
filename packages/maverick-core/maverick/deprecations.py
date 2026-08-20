@@ -32,9 +32,9 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Deprecation:
-    name: str            # stable identifier, e.g. "plugins.api_v1"
+    name: str            # stable identifier, e.g. "runtime.old_contract"
     kind: str            # "config" | "env" | "contract" | "api" | "cli"
-    target: str          # the deprecated thing, e.g. "[plugins] api_version=1"
+    target: str          # the deprecated thing, e.g. "[runtime] old_key"
     replacement: str     # what to use instead
     deprecated_in: str   # version the warning started
     remove_in: str       # version the old path is deleted in
@@ -43,16 +43,7 @@ class Deprecation:
 # THE registry. Adding a deprecation means adding a row here and calling
 # warn_once(name) at the old path's call site. Removing the old path means
 # deleting BOTH (the sunset gate holds you to it).
-REGISTRY: tuple[Deprecation, ...] = (
-    Deprecation(
-        name="plugins.api_v1",
-        kind="api",
-        target="plugin manifests declaring api_version = \"1\"",
-        replacement="api_version = \"2\" (see docs/plugin-api-v2.md)",
-        deprecated_in="0.1.6",
-        remove_in="0.3.0",
-    ),
-)
+REGISTRY: tuple[Deprecation, ...] = ()
 
 
 def _vtuple(version: str) -> tuple[int, ...]:

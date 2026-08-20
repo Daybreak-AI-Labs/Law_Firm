@@ -1,14 +1,13 @@
-# Legal — Tower 8 (Legal Operations) — Conflicts-Check.
-# Reuses the quarantine/capability compartment primitive for ethical walls.
+# Legal — Tower 8 (Legal Operations) — Conflicts review.
 name = "legal_conflicts"
 compartment = "legal_ops"
-description = "Run conflicts checks before matter intake; set up ethical walls."
+description = "Attorney review of durable conflict preflight results and supplied reports."
 
-persona = """You are the Conflicts-Check specialist. Run conflict-of-interest checks before a
-matter opens and propose the ethical-wall setup (Model Rules 1.7/1.9/1.10/1.11/1.18,
-imputation/screening). You analyze and DRAFT; CLEARING a conflict is a human (attorney/GC)
-decision -- you never clear one yourself. Surface every potential conflict, even the marginal
-ones. Research and analysis, not legal advice."""
+persona = """You are the Conflicts-Review specialist. Review the opaque result produced by
+the qualified-attorney conflict preflight plus a conflict report supplied inside the exact
+active matter. Never retrieve, expose, or infer another matter's client or party content.
+Research public professional-conduct authority where needed and draft an analysis under Model
+Rules 1.7, 1.9, 1.10, 1.11, and 1.18. Only an attorney or GC may clear the conflict."""
 
 allow_tools = ["read_file", "web_search", "knowledge_search"]
 max_risk = "low"
@@ -26,16 +25,16 @@ gate = "review"
 
 [[workflow]]
 name = "Capture parties"
-instruction = "Read the intake to identify the prospective client, adverse parties, and related entities."
+instruction = "Read the in-matter conflict report and the opaque durable preflight result supplied by the qualified-attorney intake path."
 tools = ["read_file"]
 [[workflow]]
-name = "Search prior matters"
-instruction = "Search firm records and public sources for prior or current representations touching these parties."
-tools = ["knowledge_search", "web_search"]
+name = "Confirm scope"
+instruction = "Confirm that every supplied fact belongs to the exact active matter. Do not search for or retrieve another matter's content; use web_search only for public authority."
+tools = ["web_search"]
 [[workflow]]
 name = "Analyze under rules"
-instruction = "Assess each hit under Model Rules 1.7, 1.9, 1.10, 1.11, and 1.18, including imputation."
-tools = ["knowledge_search"]
+instruction = "Assess the supplied preflight/report findings under Model Rules 1.7, 1.9, 1.10, 1.11, and 1.18, including imputation, using only exact-matter or approved public sources."
+tools = ["knowledge_search", "web_search"]
 [[workflow]]
 name = "Surface conflicts"
 instruction = "List every potential conflict including marginal ones and propose the ethical-wall and screening setup."

@@ -1,40 +1,37 @@
 # maverick-installer
 
-The interactive setup wizard. Until the Maverick distribution names are
-reserved and protected on public PyPI, install it from the same pinned source
-checkout as the kernel:
+The private law-firm setup wizard. Install it only as part of the five-package
+release cohort from the same reviewed repository commit:
 
 ```bash
-pip install -e ./packages/maverick-core
-pip install -e ./apps/installer-cli
+python scripts/install_release_cohort.py --source-root . \
+  --target-python python --core-extra release-runtime
 maverick init
 ```
 
-A standalone `maverick-init` entry point is also exposed (same flags).
+The standalone `maverick-init` entry point invokes the same wizard.
+
+The recorded deployment choices are exactly `local`, `docker`, and `vps`.
+Docker is an operator-built private image: no public image is published or
+trusted. Secure/container-required operation also requires the sandbox image to
+be an immutable `repository@sha256:<digest>` or local `sha256:<image-id>`.
 
 ## Modes
 
-`maverick init` first asks how you want to set up:
+- **consumer** collects the operator name, one provider, one exact run-wide
+  `provider:model` pin, provider credential or local endpoint, workspace, and
+  hard budget using firm-safe defaults.
+- **advanced** exposes retained provider, model, sandbox, budget, authentication,
+  audit, encryption, knowledge, and local-learning controls.
+- `--fast` writes reviewed defaults without prompts only when
+  `MAVERICK_MODEL_OVERRIDE=provider:model` explicitly selects the run model; it
+  never guesses a vendor and does not approve public provider or host egress.
+- `--resume` resumes an interrupted advanced run.
+- `--from-file PATH` installs one bounded regular configuration file from the
+  exact bytes read from an identity-bound handle; symlinks and changed sources
+  are rejected.
 
-- **consumer** (default) — four questions (name, API key, working
-  directory, budget) with safe defaults. About a minute. This is what
-  the desktop GUI installer runs too, via the same code path.
-- **advanced** — pick every provider and per-role model, channels,
-  safety profile, sandbox backend, budget, capabilities, web search,
-  MCP servers, plugins, tool ACLs, rate limits, retention, persona,
-  and notifications.
-
-## Flags
-
-```bash
-maverick init --fast     # skip every prompt; write recommended defaults
-maverick init --resume   # resume an advanced run from the last unanswered question
-```
-
-Both flags work via `maverick init` and the standalone `maverick-init`.
-
-## Output
-
-Writes `~/.maverick/config.toml` (0o600) and, when you enter any keys,
-`~/.maverick/.env` (0o600). The agent reads from there. Re-running the
-wizard overwrites both.
+The wizard writes `~/.maverick/config.toml` and, when secrets were entered,
+`~/.maverick/.env`, with private permissions. A changed file is backed up before
+atomic replacement. Re-run `maverick config-lint` and `maverick doctor` after
+every configuration change.

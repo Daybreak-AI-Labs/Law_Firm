@@ -5,12 +5,12 @@ mounted vault instead of only the process environment. The default backend is
 ``env`` -- byte-for-byte the old ``os.environ.get`` behavior -- so existing
 installs are unchanged.
 
-The ``file`` backend reads Docker/Kubernetes-style secret files (one secret per
-file under a directory). This is how Vault Agent, the Secrets Store CSI driver,
-Docker secrets, and ``podman --secret`` deliver material: the orchestrator
-writes ``<dir>/MAVERICK_OIDC_CLIENT_SECRET`` and the value never appears in the
-process environment (so it can't leak via ``/proc/<pid>/environ``, ``ps -E``, a
-crash dump, or a child process that inherits the env).
+The ``file`` backend reads mounted secret files (one secret per file under a
+directory). This is how Vault Agent and Docker secrets deliver material: the
+orchestrator writes ``<dir>/MAVERICK_OIDC_CLIENT_SECRET`` and the value never
+appears in the process environment (so it can't leak via
+``/proc/<pid>/environ``, ``ps -E``, a crash dump, or a child process that
+inherits the env).
 
 Resolution for a name, in order:
   1. the configured backend (``file``), if it holds the secret;

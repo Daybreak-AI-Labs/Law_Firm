@@ -122,15 +122,7 @@ jobs:
               sys.exit(1)
           print("detect-secrets: no new secrets vs audited baseline")
           PY
-      - name: Plugin compatibility matrix (no enabled plugin may be API-incompatible)
-        # Inspects every installed maverick entry point's manifest against
-        # SUPPORTED_API_MAJORS + the permission grants. In this repo's CI the
-        # install is plugin-free, so this validates the gate machinery; a
-        # deployment pipeline runs the same command against its real install.
-        run: |
-          pip install -e ./packages/maverick-core -q
-          python -m maverick.plugin_matrix --ci
-      - name: Specialist catalog gate (1,000 packs, zero envelope errors)
+      - name: Legal profile catalog gate (31 profiles, zero envelope errors)
         # Every domain pack must keep a non-empty tool allowlist, a valid
         # risk ceiling, a working persona, and its deny list -- the honest-
         # counting receipt behind the catalog claim. Errors fail the build.
@@ -138,22 +130,18 @@ jobs:
       - name: Reachability ledger (nothing goes dark unnoticed)
         # Two defect classes shared one root cause: nobody could answer "does
         # production reach this?", so everyone guessed, and the guesses went
-        # both ways. A strategy review cited sigstore_signing.py as shipped
-        # capability (roadmap-tagged, no production importer) and in the same
-        # pass skipped erasure_verify.py as unbuilt (also roadmap-tagged, but
-        # it backs a shipping CLI command). The roadmap header was the only
-        # signal and it is wrong ~80% of the time in both directions.
+        # both ways. Roadmap headers and old documentation are not evidence of
+        # a production caller; the import graph and reviewed entry points are.
         #
         # This walks the import graph from real entry points and fails when a
         # module loses its last caller, or when a new one arrives that nothing
         # reaches. Regenerate with `--regen` after reviewing the diff.
         run: python -m maverick.reachability --ci
       - name: Tool dispatch contract (no ungated path to the registry)
-        # Agent._run_tool runs eleven gates. It was not the only way into the
-        # tool registry: a census found four dispatch sites and one gated. The
-        # live ungated one (flow/execution.py, bound at automation_queue)
-        # reached every registered connector -- stripe, gmail, s3, salesforce,
-        # sap, workday -- with a partial check and NO audit row.
+        # Agent._run_tool is the governed way into the fixed firm registry. A
+        # historical indirect dispatcher could bypass part of that envelope;
+        # the remote producer and broad connector surfaces it reached have
+        # since been removed.
         #
         # The missing row is the structural problem. The attestation asserts
         # "no RECORDED action violated the policy envelope", so an unrecorded
@@ -166,8 +154,9 @@ jobs:
         # enterprise.py sells one property -- "sensitive data physically cannot
         # reach a third-party API" -- and documented it as enforced "at each
         # tool's request". The check existed at 11 call sites; 87 of the 94
-        # modules that make outbound HTTP had none, including gmail,
-        # salesforce, slack_bot and the knowledge-store embedder.
+        # modules that made outbound HTTP had none. Retired remote connectors
+        # are gone; this gate protects every retained send path and any future
+        # one before it can enter the reviewed firm runtime.
         #
         # egress_guard moved enforcement to the send path of httpx, requests
         # and urllib, which covers every connector including ones not yet
@@ -195,17 +184,10 @@ jobs:
         # reaches an entry's remove_in, this fails until the old path AND its
         # registry entry are deleted together -- deprecations can't rot.
         run: python -m maverick.deprecations --ci
-      - name: gRPC API v1 stability contract (no breaking proto changes)
-        # Parses maverick.proto into a structural inventory and diffs it
-        # against the committed golden: additive changes pass, removals /
-        # renumbers / type changes / rpc-shape changes fail. Breaking the v1
-        # contract requires a maverick.v2 package, not an edit.
-        run: python -m maverick.grpc_api.contract --check
       - name: Accessibility audit (static WCAG pass over dashboard templates)
         # Offline structural a11y checks (img alt, form labels, lang, focus
         # order, heading levels) over the shipped HTML — keeps the dashboard
-        # from regressing on the basics without a browser/Node. Complements
-        # the live `a11y` tool (pa11y/axe).
+        # from regressing on the basics without a browser/Node.
         run: python -m maverick.a11y_audit --ci
       - name: Failure-policy gate (audit-subsystem broad excepts are classified)
         # Requires every broad `except` in maverick/audit/* to declare its
@@ -309,24 +291,23 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-dashboard \
-            -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
             -e ./apps/installer-cli
           python -m pip check
           # Install the network-facing deps at the patched floors declared in
-          # the package extras, plus twilio (which pulls requests/urllib3), so
-          # pip-audit sees the real surface we ship -- not a stale bare env.
+          # the retained package manifests, so pip-audit sees the real surface
+          # we ship -- not a stale bare env.
           python -m pip install \
             'fastapi>=0.110' 'uvicorn>=0.27' 'jinja2>=3.1' \
             'httpx>=0.27' 'python-multipart>=0.0.31' \
             'starlette>=1.3.1' 'requests>=2.33.0' 'urllib3>=2.7.0' \
-            'pillow>=12.3.0' 'pypdf>=6.14.2' 'aiohttp>=3.14.1' \
-            'click>=8.3.3' 'cryptography>=48.0.1' 'twilio>=9.0'
+            'pillow>=12.3.0' 'pypdf>=6.14.2' \
+            'click>=8.3.3' 'cryptography>=48.0.1'
           python -m pip check
       - name: pip-audit (known CVEs in dependencies)
         # BLOCKING: the dependency floors are now bumped past every CVE this
-        # surfaced (including aiohttp/cryptography/pillow/python-multipart/
-        # requests/starlette/urllib3). A new
+        # surfaced (including cryptography/pillow/python-multipart/requests/
+        # starlette/urllib3). A new
         # advisory should fail the build and prompt a floor bump -- that's the
         # whole point of the gate. Re-add `|| true` only as a temporary
         # measure if an upstream CVE lands with no fix available yet.
@@ -501,7 +482,6 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-dashboard \
-            -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
             -e ./apps/installer-cli \
             pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]'
@@ -594,7 +574,6 @@ jobs:
             -e ./packages/maverick-core \
             -e ./packages/maverick-shield \
             -e ./packages/maverick-dashboard \
-            -e ./packages/maverick-mcp \
             -e ./packages/maverick-knowledge \
             -e ./apps/installer-cli \
             pytest pytest-asyncio pytest-timeout 'pyjwt[crypto]'
@@ -685,12 +664,10 @@ jobs:
             sleep $((n*15))
           done
       - name: Smoke run
-        # Beyond --help: dashboard and mcp import maverick-dashboard /
-        # maverick-mcp. Before those packages were added to the image they
-        # exited 2 ("Install: pip install ..."). These prove they're present.
+        # Beyond --help, prove the dashboard package and knowledge runtime are
+        # present in the built image.
         run: |
           docker run --rm maverick:ci --help
           docker run --rm maverick:ci dashboard --help
-          docker run --rm maverick:ci mcp --help
           docker run --rm --entrypoint python maverick:ci -c \
             "import maverick_knowledge"

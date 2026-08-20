@@ -13,7 +13,7 @@ from maverick.world_model import SCHEMA_VERSION, WorldModel
 
 
 def test_schema_version_is_current(tmp_path):
-    assert SCHEMA_VERSION == 31  # bump when adding a migration
+    assert SCHEMA_VERSION == 40  # bump when adding a migration
     assert WorldModel(tmp_path / "w.db").schema_version == SCHEMA_VERSION
 
 
@@ -163,6 +163,42 @@ def test_new_artifact_version_invalidates_signoff(tmp_path):
             "approved",
             expected_updated_at=reviewed.updated_at,
         )
+
+
+@pytest.mark.parametrize("mutation", ["title", "domain", "matter", "parent", "attachment"])
+def test_every_release_payload_mutation_invalidates_signoff(tmp_path, mutation):
+    w = WorldModel(tmp_path / "w.db")
+    first_matter = w.create_project("First", owner="user:alice")
+    second_matter = w.create_project("Second", owner="user:alice")
+    gid = w.create_goal(
+        "Privileged memo",
+        domain="legal",
+        owner="user:alice",
+        project_id=first_matter,
+    )
+    w.set_goal_status(gid, "done", result="reviewed draft")
+    w.record_signoff(gid, "approved", decided_by="user:alice")
+
+    if mutation == "title":
+        w.set_goal_title(gid, "Changed privileged memo")
+    elif mutation == "domain":
+        w.set_goal_domain(gid, "legal_briefs")
+    elif mutation == "matter":
+        assert w.set_goal_project(gid, second_matter, principal="user:alice")
+    elif mutation == "parent":
+        parent = w.create_goal("Parent", owner="user:alice", project_id=first_matter)
+        w.set_goal_parent(gid, parent)
+    else:
+        w.add_attachment(
+            gid,
+            "evidence.txt",
+            "text/plain",
+            8,
+            "0" * 64,
+            str(tmp_path / "sealed-attachment"),
+        )
+
+    assert w.signoff_for(gid) is None
 
 
 def test_artifact_versioning_and_latest(tmp_path):

@@ -1,9 +1,7 @@
-"""Q2 2026 batch 2: per-channel/user ACLs, file_cache, observability,
-canaries, audit erase, skill-index spec doc."""
+"""Q2 2026 batch 2: ACLs, file cache, observability, canaries, and audit erase."""
 from __future__ import annotations
 
 import importlib
-import json
 from pathlib import Path
 
 import pytest
@@ -303,31 +301,3 @@ def test_audit_erase_logs_only_redacted_subject(tmp_path, caplog):
     assert "channel=tg" not in log_output
     assert "user_id=" not in log_output
     assert "subject_hash=" in log_output
-
-
-# ---------- skill-index spec doc ----------
-
-def test_skill_index_spec_doc_exists():
-    p = REPO_ROOT / "docs" / "specs" / "skill-index.md"
-    assert p.is_file()
-    body = p.read_text()
-    for section in ("Top-level shape", "Required fields", "Client behavior",
-                    "Federation", "Trust model"):
-        assert section in body
-
-
-def test_skill_index_example_parses_as_json():
-    """The example JSON in the spec should be valid JSON the client can read."""
-    p = REPO_ROOT / "docs" / "specs" / "skill-index.md"
-    body = p.read_text()
-    # Extract the first ```json block.
-    import re
-    m = re.search(r"```json\s*\n(.*?)```", body, flags=re.DOTALL)
-    assert m is not None, "no ```json block found in skill-index.md"
-    data = json.loads(m.group(1))
-    assert data["v"] == 1
-    assert isinstance(data["skills"], list)
-    assert len(data["skills"]) >= 1
-    skill = data["skills"][0]
-    for required in ("name", "version", "summary", "source", "sha256", "triggers"):
-        assert required in skill

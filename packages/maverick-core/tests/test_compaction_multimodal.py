@@ -5,12 +5,19 @@ import base64
 import json
 import struct
 
+import pytest
 from maverick.compaction.multimodal import (
     _dimensions,
     _human_size,
     compact_media,
     stub_for_block,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_run_model(monkeypatch):
+    """Media-description seams use the same exact run-wide model pin."""
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "fake:test")
 
 
 def _png_bytes(w: int = 800, h: int = 600, pad: int = 200_000) -> bytes:
@@ -82,13 +89,14 @@ class TestStub:
         assert "removed during compaction" in stub["text"]
 
     def test_llm_description_via_seam(self, monkeypatch, fake_llm, make_llm_response):
-        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_VISION", "testprov:tiny-vision")
+        monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "testprov:tiny-vision")
         fake_llm.scripted = [make_llm_response("login page with an error toast")]
         block = _image_block(_png_bytes())
         stub = stub_for_block(block, llm=fake_llm)
         assert "described: login page with an error toast" in stub["text"]
         # The original media block went through the injected seam, with the
-        # configured vision role model -- nothing hardcoded.
+        # exact run pin acting in the vision role -- nothing hardcoded.
         assert fake_llm.calls[0]["messages"][0]["content"][0] is block
         assert fake_llm.calls[0]["model"] == "testprov:tiny-vision"
 

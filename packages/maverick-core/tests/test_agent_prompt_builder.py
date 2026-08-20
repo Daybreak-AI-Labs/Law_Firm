@@ -2,8 +2,8 @@
 
 ``agent.select_base_template`` was lifted out of ``Agent._build_system`` as the
 first side-effect-free collaborator in the god-module decomposition. These pin
-its branch behavior so the extraction is provably byte-identical to the inline
-code it replaced (the orchestrator/worker/coding-mode selection).
+its branch behavior so the extraction remains explicit for orchestrators and
+workers after the interactive coding-agent surface was retired.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from maverick.agent import (
     ORCHESTRATOR_SYSTEM_TEMPLATE,
     WORKER_SYSTEM_TEMPLATE,
     apply_global_overlays,
-    apply_memory_brief,
     apply_role_overlays,
     apply_skill_overlays,
     select_base_template,
@@ -23,52 +22,29 @@ class _FakeSkill:
         self.name = name
 
 
-def test_orchestrator_template_when_not_coding():
-    out = select_base_template(
-        role="orchestrator", depth=0, max_depth=5, coding_enabled=False)
+def test_orchestrator_template():
+    out = select_base_template(role="orchestrator", depth=0, max_depth=5)
     assert out == ORCHESTRATOR_SYSTEM_TEMPLATE.format(max_depth=5)
 
 
 def test_worker_template_for_other_roles():
-    out = select_base_template(
-        role="researcher", depth=2, max_depth=5, coding_enabled=False)
+    out = select_base_template(role="researcher", depth=2, max_depth=5)
     assert out == WORKER_SYSTEM_TEMPLATE.format(
         role="researcher", depth=2, max_depth=5)
 
-
-def test_coding_mode_overrides_role():
-    from maverick.coding_mode import CODER_CODING_MODE_TEMPLATE
-    out = select_base_template(
-        role="orchestrator", depth=0, max_depth=5, coding_enabled=True)
-    assert out == CODER_CODING_MODE_TEMPLATE.format(
-        role="orchestrator", depth=0, max_depth=5)
-    # Coding mode overrides the role -> NOT the prose orchestrator template.
-    assert out != ORCHESTRATOR_SYSTEM_TEMPLATE.format(max_depth=5)
-
-
-def test_coding_mode_worker_is_also_coder():
-    from maverick.coding_mode import CODER_CODING_MODE_TEMPLATE
-    out = select_base_template(
-        role="coder", depth=1, max_depth=3, coding_enabled=True)
-    assert out == CODER_CODING_MODE_TEMPLATE.format(
-        role="coder", depth=1, max_depth=3)
-
-
 # ---- apply_global_overlays (second PromptBuilder collaborator) ----
 
-def test_overlays_append_persona_style_habits_in_order(monkeypatch):
+def test_overlays_append_persona_and_style_in_order(monkeypatch):
     monkeypatch.setattr("maverick.persona.render_persona_prompt", lambda: "P")
     monkeypatch.setattr("maverick.styles.render_active_style_prompt", lambda: "S")
-    monkeypatch.setattr("maverick.data_engine.enabled", lambda: True)
-    monkeypatch.setattr("maverick.procedural_memory.recall_prompt", lambda: "H")
-    # base + persona + style + habits, in that exact order.
-    assert apply_global_overlays("BASE") == "BASEPSH"
+    # Global procedural memory is intentionally absent: only operator-curated
+    # persona and style overlays may enter every matter prompt.
+    assert apply_global_overlays("BASE") == "BASEPS"
 
 
 def test_overlays_skip_empty_and_disabled(monkeypatch):
     monkeypatch.setattr("maverick.persona.render_persona_prompt", lambda: "")
     monkeypatch.setattr("maverick.styles.render_active_style_prompt", lambda: "")
-    monkeypatch.setattr("maverick.data_engine.enabled", lambda: False)
     assert apply_global_overlays("BASE") == "BASE"
 
 
@@ -77,21 +53,8 @@ def test_overlays_fail_open_on_error(monkeypatch):
         raise RuntimeError("overlay source down")
     monkeypatch.setattr("maverick.persona.render_persona_prompt", boom)
     monkeypatch.setattr("maverick.styles.render_active_style_prompt", lambda: "S")
-    monkeypatch.setattr("maverick.data_engine.enabled", lambda: False)
     # Persona raises -> that overlay is skipped; style still applies; no raise.
     assert apply_global_overlays("BASE") == "BASES"
-
-
-def test_overlays_habits_skipped_when_data_engine_off(monkeypatch):
-    monkeypatch.setattr("maverick.persona.render_persona_prompt", lambda: "")
-    monkeypatch.setattr("maverick.styles.render_active_style_prompt", lambda: "")
-    monkeypatch.setattr("maverick.data_engine.enabled", lambda: False)
-    # recall_prompt must NOT be consulted when the data engine is off.
-    monkeypatch.setattr(
-        "maverick.procedural_memory.recall_prompt",
-        lambda: (_ for _ in ()).throw(AssertionError("should not be called")),
-    )
-    assert apply_global_overlays("BASE") == "BASE"
 
 
 # ---- apply_role_overlays (third PromptBuilder collaborator) ----
@@ -160,32 +123,3 @@ def test_skill_overlays_fail_open_on_missing_store(monkeypatch):
     monkeypatch.setattr("maverick.skills.available_skills", boom)
     # FileNotFoundError/ImportError/ValueError are swallowed -> no-op.
     assert apply_skill_overlays("BASE", brief="x", use_skills=True) == ("BASE", [])
-
-
-# ---- apply_memory_brief (fifth PromptBuilder collaborator) ----
-
-def test_memory_brief_appended_for_root_agent(monkeypatch):
-    monkeypatch.setattr("maverick.tools.memory.memory_brief", lambda: "MEM")
-    assert apply_memory_brief("BASE", depth=0) == "BASE\n\nMEM"
-
-
-def test_memory_brief_skipped_for_deep_workers(monkeypatch):
-    # depth > 0 -> the memory tool is not even consulted.
-    monkeypatch.setattr(
-        "maverick.tools.memory.memory_brief",
-        lambda: (_ for _ in ()).throw(AssertionError("must not be called")),
-    )
-    assert apply_memory_brief("BASE", depth=2) == "BASE"
-
-
-def test_memory_brief_empty_is_noop(monkeypatch):
-    monkeypatch.setattr("maverick.tools.memory.memory_brief", lambda: "")
-    assert apply_memory_brief("BASE", depth=0) == "BASE"
-
-
-def test_memory_brief_fails_open(monkeypatch):
-    def boom():
-        raise RuntimeError("memory store down")
-    monkeypatch.setattr("maverick.tools.memory.memory_brief", boom)
-    # Never blocks a run: a memory error leaves base unchanged.
-    assert apply_memory_brief("BASE", depth=0) == "BASE"

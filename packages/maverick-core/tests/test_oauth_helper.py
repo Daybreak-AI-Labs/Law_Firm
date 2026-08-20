@@ -148,7 +148,7 @@ def test_token_post_rejects_private_resolved_host(monkeypatch):
         mod._post_form("https://localhost/token", {"grant_type": "refresh_token"})
 
 
-def test_registered():
+def test_preserved_oidc_utility_is_not_model_registered():
     from maverick.tools import base_registry
 
     class _W:
@@ -158,7 +158,7 @@ def test_registered():
         pass
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
-    assert "oauth_helper" in names
+    assert "oauth_helper" not in names
 
 
 def test_vault_enabled_requires_provider_without_plaintext_fallback(monkeypatch, tmp_path):

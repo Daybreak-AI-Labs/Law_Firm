@@ -557,47 +557,37 @@ def default_agent_runner(
     allowed_suites: frozenset[str] | None = None,
     concurrency_principal: str | None = None,
 ) -> AgentRunner:
-    """Production ``agent_runner``: an agent node becomes a governed goal.
+    """Return the retired production binding for autonomous agent nodes.
 
-    Creates a goal from the (rendered) brief, runs it through the durable runner,
-    and grounds a terminal outcome (done=1.0 / not=0.0) as the node's signal.
-    Best-effort: a runner failure yields a failure result + a 0.0 outcome rather
-    than raising into the flow."""
+    A flow node supplies only a rendered brief and transient data. It carries no
+    existing durable goal id, matter id, specialist domain, or authenticated
+    matter principal. Minting an unbound goal here would bypass the mandatory
+    :class:`~maverick.matter_context.MatterContext` boundary. Until the durable
+    flow schema can reference an already-authorized matter goal, production
+    agent nodes fail closed without opening the runner, model, or sandbox.
+
+    Injected ``agent_runner`` callables remain available to the pure local flow
+    interpreter and its tests; only this former production execution adapter is
+    retired.
+    """
+    del (
+        world,
+        owner,
+        budget_dollars,
+        budget_wall_seconds,
+        channel,
+        user_id,
+        allowed_suites,
+        concurrency_principal,
+    )
+
     def run(brief: str, data: dict, wall: float | None = None) -> tuple[Any, float | None]:
-        gid = world.create_goal(str(brief)[:200], str(brief)[:8000], owner=owner)
-        # A per-node timeout bounds this goal's wall so a timed-out node's goal
-        # self-terminates instead of running to the default cap after the flow
-        # gave up on it (kernel rule 3 still holds -- this only ever lowers it).
-        ws = min(budget_wall_seconds, wall) if (wall and wall > 0) else budget_wall_seconds
-        try:
-            from ..runner import run_goal_in_thread
-            result = run_goal_in_thread(
-                gid,
-                max_dollars=budget_dollars,
-                max_wall_seconds=ws,
-                channel=channel,
-                user_id=user_id,
-                allowed_suites=allowed_suites,
-                concurrency_principal=(concurrency_principal or owner or user_id),
-            )
-        except Exception as e:  # pragma: no cover -- runner wiring varies by env
-            return (f"agent step failed: {type(e).__name__}: {e}", 0.0)
-        g = world.get_goal(gid)
-        outcome = 1.0 if (g and g.status == "done") else 0.0
-        # Attribute this goal's tool usage back to the node (from the ContextVar
-        # _call_agent published), so the self-rewrite pass can infer which tool a
-        # reliably-one-tool agent node should harden into. Only on SUCCESS: a node
-        # with retries invokes this runner once PER ATTEMPT, so recording every
-        # attempt would let one retried run masquerade as many "runs" and inflate
-        # the inference support -- and a failed attempt's tools are noise anyway.
-        # A reliable node (the only harden candidate) succeeds ~once per run, so
-        # this yields ~one tool record per logical run, aligned with node_outcomes.
-        fid, nid, revision, cohort = _active_node.get()
-        if fid and nid and outcome == 1.0:
-            _capture_node_tools(
-                fid, nid, gid, revision=revision, cohort=cohort,
-            )
-        return (result if result is not None else (g.result if g else ""), outcome)
+        del brief, data, wall
+        return (
+            "agent step unavailable: a pre-bound durable matter goal is required",
+            0.0,
+        )
+
     return run
 
 

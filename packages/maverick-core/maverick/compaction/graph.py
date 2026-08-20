@@ -5,7 +5,7 @@ entity-relation graph: subject-relation-object triples plus a rendered text
 digest the model can read back. Extraction reuses the deterministic
 relation-verb heuristic from ``maverick.tools.knowledge_graph`` (no model
 needed), and when an ``llm`` seam is injected it additionally asks the
-configured summarizer role model to emit ``S | R | O`` lines, which the same
+selected run model, acting as summarizer, to emit ``S | R | O`` lines, which the same
 heuristic parser folds in — so the llm can only ADD triples, never change the
 deterministic baseline.
 

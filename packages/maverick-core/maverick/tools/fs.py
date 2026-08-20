@@ -130,118 +130,9 @@ def write_text_contained(sandbox, target: Path, content: str) -> None:
 
 
 
-def _is_test_path(rel_path: str) -> bool:
-    """Heuristic: is this path a test file the benchmark grader uses?
-
-    Wave 10 (S1): we block read access to these in opaque benchmark
-    mode so the agent can't hardcode to gold expected values it spied
-    in the assertion bodies.
-
-    Wave 12 hardening pass: any path UNDER a tests/ directory is
-    blocked, not just files that match the test-naming heuristic. The
-    prior rule (file matches test_*.py AND lives in tests/) left
-    tests/conftest.py, tests/__init__.py, tests/helpers.py, and the
-    FAIL_TO_PASS support files readable — these typically contain the
-    expected-value tables and parametrize IDs the agent must not see.
-    """
-    p = rel_path.lower().replace("\\", "/")
-    parts = [x for x in p.split("/") if x]
-    name = parts[-1] if parts else ""
-    in_test_dir = any(seg in {"tests", "test", "__tests__", "spec", "specs"}
-                      for seg in parts[:-1])
-    # Wave 12: ANY file under tests/ is gated.
-    if in_test_dir:
-        return True
-    test_file = (
-        name.startswith("test_")
-        or name.endswith("_test.py")
-        or name.endswith(".test.js")
-        or name.endswith(".test.ts")
-        or name.endswith(".spec.js")
-        or name.endswith(".spec.ts")
-        or name.endswith("test.go")
-        or name.endswith("_spec.rb")
-        or name.endswith("Test.java")
-        or name.endswith("Tests.java")
-    )
-    return test_file
-
-
-def _is_dotgit_path(rel_path: str) -> bool:
-    """Wave 12 (council F9d): block reads under `.git/`.
-
-    The .git directory leaks the gold answer via refs/objects:
-      - `.git/refs/heads/main` → gold commit SHA
-      - `.git/objects/<sha>` → raw object contents (the patch)
-      - `.git/HEAD`, `.git/packed-refs` → ref enumeration
-    The shell tool already blocks `git log -p` / `git show` / `git
-    cat-file`; this closes the corresponding file-read backdoor.
-    """
-    p = rel_path.replace("\\", "/")
-    parts = [x for x in p.split("/") if x]
-    return any(seg == ".git" for seg in parts)
-
-
-def _is_opaque_blocked(rel_path: str) -> bool:
-    """Return True if `rel_path` should be blocked under opaque benchmark
-    mode. Combines the test-path and .git-path checks."""
-    import os as _os
-    opaque = _os.environ.get("MAVERICK_BENCHMARK_OPAQUE", "1") != "0"
-    coding = _os.environ.get(
-        "MAVERICK_CODING_MODE", ""
-    ).lower() in ("1", "true", "yes")
-    if not (opaque and coding):
-        return False
-    return _is_test_path(rel_path) or _is_dotgit_path(rel_path)
-
-
-def _is_opaque_blocked_resolved(sandbox, rel_path: str) -> bool:
-    """Wave 12 hardening pass: re-check the opacity gate on the CANONICAL
-    resolved path so symlink trickery cannot bypass it.
-
-    The raw-input check `_is_opaque_blocked(rel_path)` catches the
-    direct case (`.git/HEAD`, `tests/test_foo.py`). But the agent
-    could do `ln -s .git safe_dir` then `read_file("safe_dir/HEAD")` —
-    raw input contains neither `.git` nor `tests/`. After
-    `_safe_resolve` follows the symlink, we re-derive the workspace-
-    relative form and re-run the gate so the canonical location is
-    what's checked.
-    """
-    if _is_opaque_blocked(rel_path):
-        return True
-    try:
-        workdir = Path(sandbox.workdir).resolve()
-        candidate = (workdir / rel_path).resolve()
-        rel = candidate.relative_to(workdir).as_posix()
-    except (ValueError, OSError):
-        # Can't resolve cleanly — let downstream _safe_resolve produce
-        # the proper error.
-        return False
-    return _is_opaque_blocked(rel)
-
-
 def read_file(sandbox) -> Tool:
     def fn(args: dict) -> str:
         path_arg = args["path"]
-        # Wave 10 (S1) + Wave 12 (F9d) + Wave 12 hardening: block test
-        # AND .git/ reads in opaque mode, on the CANONICAL resolved
-        # path so symlinks can't bypass.
-        if _is_opaque_blocked_resolved(sandbox, path_arg):
-            if _is_dotgit_path(path_arg):
-                return (
-                    f"ERROR: read_file({path_arg!r}) blocked in benchmark "
-                    "opaque mode. The .git directory leaks the gold "
-                    "answer via refs/objects; derive your fix from the "
-                    "code under test, not from git's internal storage. "
-                    "(Override by setting MAVERICK_BENCHMARK_OPAQUE=0.)"
-                )
-            return (
-                f"ERROR: read_file({path_arg!r}) blocked in benchmark "
-                "opaque mode. The test files contain the grader's "
-                "expected values; derive your fix from the production "
-                "code under test, not from inspecting the assertions. "
-                "(Override by setting MAVERICK_BENCHMARK_OPAQUE=0.)"
-            )
         try:
             target = _safe_resolve(sandbox, path_arg)
         except ValueError as e:
@@ -265,16 +156,7 @@ def read_file(sandbox) -> Tool:
         name="read_file",
         description=(
             "Read a file from the workspace, returning its contents. "
-            "Use this aggressively during LOCALIZE to understand code "
-            "BEFORE editing — never write a SEARCH/REPLACE block from "
-            "memory or from an LLM-summarized view of the file. The "
-            "SEARCH section must match the file's exact bytes including "
-            "whitespace, indentation, and line endings. Files >8KB are "
-            "truncated; chain multiple calls if you need more. In "
-            "benchmark opaque mode (SWE-bench Pro / Verified), reads "
-            "under `tests/`, `test/`, and `.git/` are blocked — the "
-            "tests directory holds the grader's expected values and "
-            ".git can leak the gold answer via refs/objects."
+            "Files larger than the configured read ceiling are truncated."
         ),
         input_schema={
             "type": "object",
@@ -326,12 +208,7 @@ def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
             "Write content to a file in the workspace, creating the "
             "file (and any missing parent directories) if it doesn't "
             "exist, or OVERWRITING the entire file if it does. Use "
-            "`str_replace_editor` or SEARCH/REPLACE blocks for "
-            "surgical edits to existing files — write_file is for "
-            "creating NEW files (e.g. a `reproduce.py` script during "
-            "LOCALIZE) or for files small enough that a full rewrite "
-            "is appropriate. Avoid using write_file on existing "
-            "production code — it's easy to drop content accidentally."
+            "structured editing for surgical changes to existing files."
         ),
         input_schema={
             "type": "object",
@@ -368,11 +245,6 @@ def list_dir(sandbox) -> Tool:
             return f"ERROR: {target} not found"
         if not target.is_dir():
             return f"ERROR: {target} is not a directory"
-        # Mirror read_file's opaque-mode gate: list_dir was the unguarded twin,
-        # so list_dir(".git/refs/heads") / list_dir("tests") leaked the gold
-        # branch + the grader's FAIL_TO_PASS test filenames in benchmark mode.
-        if _is_opaque_blocked_resolved(sandbox, args.get("path", ".")):
-            return "ERROR: list_dir blocked in benchmark opaque mode (.git/tests)"
         workdir = Path(sandbox.workdir).resolve()
         # Verify + list through one directory descriptor so a symlink swapped in
         # after the path check can't redirect the listing outside the workspace.

@@ -4,8 +4,7 @@ Covers:
   * SSE goal-event stream concurrency cap (503 past the limit).
   * Per-client goal rate limiting (one client's flood doesn't 429 another).
   * A2A JSON-RPC body-size cap (oversized body rejected with 413).
-  * /healthz minimal payload when ANY auth mechanism is configured
-    (static token, OIDC, or reverse-proxy SSO).
+  * /healthz minimal payload when named authentication is configured.
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ def test_sse_stream_returns_503_when_cap_exhausted(monkeypatch, tmp_path):
     gid = w.create_goal("g", "d")
     w.set_goal_status(gid, "done")
 
-    from maverick_dashboard import app as dash_app
+    from maverick_dashboard import api
 
     # Simulate the cap being fully consumed by other live streams: the route
     # checks ``sem.locked()`` and returns 503 before ever acquiring, so a stub
@@ -46,9 +45,9 @@ def test_sse_stream_returns_503_when_cap_exhausted(monkeypatch, tmp_path):
         def locked(self):
             return True
 
-    monkeypatch.setattr(dash_app, "_get_sse_semaphore", lambda: _FullSem())
+    monkeypatch.setattr(api, "_get_sse_semaphore", lambda: _FullSem())
 
-    r = _client().get(f"/api/goal/{gid}/events/stream")
+    r = _client().get(f"/api/v1/goals/{gid}/events/stream")
     assert r.status_code == 503
     assert r.headers.get("Retry-After") == "5"
 
@@ -59,13 +58,13 @@ def test_sse_stream_serves_when_capacity_available(monkeypatch, tmp_path):
     w.append_event(gid, "planner", "plan", "hi")
     w.set_goal_status(gid, "done")
 
-    from maverick_dashboard import app as dash_app
+    from maverick_dashboard import api
     # Fresh, fully-available semaphore.
-    monkeypatch.setattr(dash_app, "_get_sse_semaphore", lambda: asyncio.Semaphore(4))
+    monkeypatch.setattr(api, "_get_sse_semaphore", lambda: asyncio.Semaphore(4))
 
-    r = _client().get(f"/api/goal/{gid}/events/stream")
+    r = _client().get(f"/api/v1/goals/{gid}/events/stream")
     assert r.status_code == 200
-    assert "event: terminal" in r.text
+    assert "event: end" in r.text
 
 
 # ---------- task 2: per-client goal rate limiting ----------
@@ -201,18 +200,6 @@ def test_healthz_hides_db_path_under_oidc_on_db_failure(monkeypatch, tmp_path):
     assert r.status_code == 503
     assert r.json() == {"status": "degraded"}
     assert "secret" not in r.text        # no DB path leaks
-
-
-def test_healthz_redacts_under_proxy_sso_without_token(monkeypatch, tmp_path):
-    # A reverse-proxy-SSO deployment also runs token-less.
-    _setup(monkeypatch, tmp_path)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
-    monkeypatch.setattr("maverick.proxy_auth.proxy_auth_enabled", lambda: True)
-
-    r = _client().get("/healthz")
-    assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
-    assert "checks" not in r.json()
 
 
 def test_rate_limit_dict_does_not_grow_unbounded(monkeypatch, tmp_path):

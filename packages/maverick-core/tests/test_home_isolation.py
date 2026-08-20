@@ -1,7 +1,7 @@
 """The suite must never touch the invoking user's real ``~/.maverick``.
 
-Many modules freeze ``Path.home()``-derived paths into module-level constants
-at import time (``world_model.DEFAULT_DB``, ``skills.SKILLS_DIR``, ...), so
+Some modules freeze ``Path.home()``-derived paths into module-level constants
+at import time (for example ``world_model.DEFAULT_DB``), so
 per-test ``HOME`` monkeypatches run too late to protect the real home in a
 full-suite run: the first collected import bakes the real path into the
 constant. The repo-root ``conftest.py`` redirects ``HOME`` before any
@@ -41,18 +41,10 @@ def test_world_model_default_db_is_isolated():
     )
 
 
-def test_import_frozen_path_constants_are_isolated():
-    from maverick import self_learning, skills
-    from maverick.skill import stats as skill_stats
+def test_skill_loader_has_no_frozen_global_user_store():
+    from maverick import skills
 
-    real = str(_real_home())
-    frozen = {
-        "skills.SKILLS_DIR": skills.SKILLS_DIR,
-        "skill_stats.DEFAULT_PATH": skill_stats.DEFAULT_PATH,
-        "self_learning.LEARNED_PATH": self_learning.LEARNED_PATH,
-    }
-    leaked = {name: p for name, p in frozen.items() if str(p).startswith(real)}
-    assert not leaked, f"import-frozen paths point into the real home: {leaked}"
+    assert not hasattr(skills, "SKILLS_DIR")
 
 
 def test_runtime_home_is_isolated():

@@ -7,11 +7,12 @@
 #   maverick_tokens_total{direction="input|output"}
 #   maverick_concurrent_goals
 #   maverick_max_concurrent_goals
-#   maverick_auth_failures_total{reason="bad_token|scim_bad_token|..."}
+#   maverick_auth_failures_total{reason="bad_token|oidc_invalid|..."}
 #   maverick_queue_jobs{status="pending|running|failed|done"}
 #   maverick_data_disk_free_bytes
 #   maverick_world_db_bytes            # SQLite backend only
 #   maverick_user_spend_dollars_today{principal="..."}
+#   maverick_metrics_backend_up{backend="world|queue"}
 #
 # Apply as a PrometheusRule (Prometheus Operator) or inline under
 # rule_files: in a plain Prometheus config.
@@ -24,7 +25,7 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Maverick target {{ $labels.instance }} is down"
-          description: "Prometheus cannot scrape Maverick for 2m. Check the pod/health."
+          description: "Prometheus cannot scrape Maverick for 2m. Check the service and /healthz."
 
       - alert: MaverickConcurrencySaturated
         # In-flight goals pinned at the global cap -> new work is queued/blocked.
@@ -33,7 +34,15 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Maverick at max concurrency for 10m"
-          description: "concurrent_goals has been at the cap; consider raising MAVERICK_MAX_CONCURRENT_GOALS or scaling out (requires Postgres)."
+          description: "concurrent_goals has been at the cap; inspect active matter work and worker logs before raising MAVERICK_MAX_CONCURRENT_GOALS."
+
+      - alert: MaverickBackendDegraded
+        expr: maverick_metrics_backend_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Maverick metrics backend {{ $labels.backend }} is unavailable"
+          description: "The dashboard is scrapeable but its world or queue backend could not be queried. Check /healthz, database connectivity, and queue storage."
 
   - name: maverick.cost
     rules:
@@ -44,23 +53,24 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Maverick LLM spend > $20/hr"
-          description: "Sustained spend rate is high. Check budget caps and per-tenant quotas."
+          description: "Sustained spend rate is high. Check the firm budget cap and per-goal spend."
 
   - name: maverick.reliability
     rules:
-      - alert: MaverickGoalFailureRate
-        # >25% of completed goals failing/blocked over 30m.
+      - alert: MaverickGoalFailureShare
+        # The goal series is a current-state gauge, not an event counter. Alert
+        # when more than 25% of terminal goals currently sit failed/blocked.
         expr: |
           (
-            sum(increase(maverick_goals_total{status=~"failed|blocked"}[30m]))
+            sum(maverick_goals_total{status=~"failed|blocked"})
             /
-            clamp_min(sum(increase(maverick_goals_total{status=~"done|failed|blocked"}[30m])), 1)
+            clamp_min(sum(maverick_goals_total{status=~"done|failed|blocked"}), 1)
           ) > 0.25
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: "Maverick goal failure rate > 25%"
-          description: "A quarter of recently-completed goals failed or were blocked. Check logs, provider health, and the shield."
+          summary: "Maverick terminal-goal failure share > 25%"
+          description: "More than a quarter of current terminal goals are failed or blocked. Check logs, provider health, and the shield."
 
   - name: maverick.capacity
     rules:
@@ -78,12 +88,12 @@ groups:
       - alert: MaverickJobQueueDeadLetter
         # Jobs exhausted their retries and landed in the failed (dead-letter)
         # state — silent data loss unless someone looks.
-        expr: sum(increase(maverick_queue_jobs{status="failed"}[15m])) > 0
+        expr: sum(maverick_queue_jobs{status="failed"}) > 0
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: "Maverick job-queue dead-letter growing"
-          description: "One or more jobs exhausted retries in the last 15m. Inspect `maverick failed` / the job store."
+          summary: "Maverick job queue contains dead-letter jobs"
+          description: "One or more jobs exhausted retries. Inspect worker logs and the signed audit trail; clear queue state only after remediation."
 
   - name: maverick.storage
     rules:
@@ -100,7 +110,7 @@ groups:
   - name: maverick.security
     rules:
       - alert: MaverickAuthFailureSpike
-        # A burst of rejected dashboard/SCIM auth attempts — credential stuffing
+        # A burst of rejected dashboard authentication attempts — credential stuffing
         # or a misconfigured client hammering a bad token. > 30/min over 5m.
         expr: sum(rate(maverick_auth_failures_total{reason!="none"}[5m])) * 60 > 30
         for: 5m

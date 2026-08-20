@@ -17,6 +17,35 @@ import types
 
 from maverick import context_compactor as cc
 from maverick import reflexion
+from maverick.learning_crypto import encode_json_record
+from maverick.matter_context import MatterContext, matter_context_scope
+
+_MATTER_ID = 478
+
+
+def _matter_context() -> MatterContext:
+    return MatterContext(
+        matter_id=_MATTER_ID,
+        client_id=47,
+        principal="user:attorney@example.test",
+        membership_role="attorney",
+        domain="legal_intake",
+        jurisdiction="Tennessee",
+        purpose="goal-execution",
+        source="context-memory-test",
+    )
+
+
+def _recall(goal_text: str, **kwargs):
+    context = _matter_context()
+    with matter_context_scope(context, authority_resolver=lambda: context):
+        return reflexion.recall(goal_text, matter_id=_MATTER_ID, **kwargs)
+
+
+def _sealed_lines(rows) -> str:
+    return "\n".join(
+        encode_json_record({**row, "matter_id": _MATTER_ID}) for row in rows
+    ) + "\n"
 
 # --- Task 1: embedding ranking keeps head turns on vector shortfall ------
 
@@ -102,27 +131,27 @@ def test_recall_prefers_recent_on_equal_similarity(tmp_path):
         failure_class="agent_error",
         failure_msg="stale",
         reflection="old lesson",
+        matter_id=_MATTER_ID,
         path=path,
     )
     # Force timestamps: rewrite with explicit ts so the test is deterministic.
-    import json
     lines = [
-        json.dumps({
+        {
             "ts": now - 10_000, "goal_text": "fix the parser bug now",
             "failure_class": "agent_error", "failure_msg": "stale",
             "reflection": "old lesson", "tools_used": [],
             "channel": None, "user_id": None,
-        }),
-        json.dumps({
+        },
+        {
             "ts": now, "goal_text": "fix the parser bug now please",
             "failure_class": "agent_error", "failure_msg": "fresh",
             "reflection": "new lesson", "tools_used": [],
             "channel": None, "user_id": None,
-        }),
+        },
     ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.write_text(_sealed_lines(lines), encoding="utf-8")
 
-    hits = reflexion.recall("fix the parser bug now", path=path, k=2)
+    hits = _recall("fix the parser bug now", path=path, k=2)
     assert hits
     # The fresher lesson outranks the older one despite similar similarity.
     assert hits[0][1].failure_msg == "fresh"
@@ -130,7 +159,6 @@ def test_recall_prefers_recent_on_equal_similarity(tmp_path):
 
 def test_recall_dedupes_near_identical_lessons(tmp_path):
     path = tmp_path / "reflexions.ndjson"
-    import json
     now = time.time()
     rows = [
         {"ts": now, "goal_text": "deploy the service to staging",
@@ -146,11 +174,9 @@ def test_recall_dedupes_near_identical_lessons(tmp_path):
          "failure_class": "agent_error", "failure_msg": "distinct",
          "reflection": "x", "tools_used": [], "channel": None, "user_id": None},
     ]
-    path.write_text(
-        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8",
-    )
+    path.write_text(_sealed_lines(rows), encoding="utf-8")
 
-    hits = reflexion.recall("deploy the service to staging", path=path, k=5)
+    hits = _recall("deploy the service to staging", path=path, k=5)
     msgs = [h[1].failure_msg for h in hits]
     # The two identical "deploy ... staging" goals must collapse to one.
     assert msgs.count("dup-a") + msgs.count("dup-b") == 1
@@ -168,10 +194,9 @@ def test_recall_scan_cap_streams_without_reading_all_lines(tmp_path, monkeypatch
             return False
 
         def __iter__(self):
-            import json
             now = time.time()
             for i in range(5):
-                yield json.dumps({
+                yield encode_json_record({
                     "ts": now + i,
                     "goal_text": f"target goal {i}",
                     "failure_class": "agent_error",
@@ -180,6 +205,7 @@ def test_recall_scan_cap_streams_without_reading_all_lines(tmp_path, monkeypatch
                     "tools_used": [],
                     "channel": None,
                     "user_id": None,
+                    "matter_id": _MATTER_ID,
                 }) + "\n"
 
         def readlines(self):
@@ -193,13 +219,12 @@ def test_recall_scan_cap_streams_without_reading_all_lines(tmp_path, monkeypatch
     real_open = builtins.open
     monkeypatch.setattr(builtins, "open", fake_open)
 
-    hits = reflexion.recall("target goal", path=path, scan_cap=2, k=5)
+    hits = _recall("target goal", path=path, scan_cap=2, k=5)
     assert [hit[1].failure_msg for hit in hits] == ["kept-4", "kept-3"]
 
 
 def test_recall_scan_cap_limits_considered_lines(tmp_path):
     path = tmp_path / "reflexions.ndjson"
-    import json
     now = time.time()
     rows = []
     # Old, highly-relevant lesson buried beyond the scan cap.
@@ -216,11 +241,9 @@ def test_recall_scan_cap_limits_considered_lines(tmp_path):
             "reflection": "x", "tools_used": [], "channel": None,
             "user_id": None,
         })
-    path.write_text(
-        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8",
-    )
+    path.write_text(_sealed_lines(rows), encoding="utf-8")
 
-    hits = reflexion.recall(
+    hits = _recall(
         "optimize the image resizer pipeline", path=path, scan_cap=3,
     )
     # With scan_cap=3 the buried first line is never considered.

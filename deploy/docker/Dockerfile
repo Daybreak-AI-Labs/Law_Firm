@@ -32,7 +32,6 @@ COPY scripts/install_release_cohort.py ./scripts/install_release_cohort.py
 COPY packages/maverick-core ./packages/maverick-core
 COPY packages/maverick-shield ./packages/maverick-shield
 COPY packages/maverick-dashboard ./packages/maverick-dashboard
-COPY packages/maverick-mcp ./packages/maverick-mcp
 COPY packages/maverick-knowledge ./packages/maverick-knowledge
 COPY apps/installer-cli ./apps/installer-cli
 
@@ -59,7 +58,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Resolve only against the builder's wheelhouse. The requirements file names
-# all eight exact cohort distributions, and --no-index prevents a sibling name
+# all five exact cohort distributions, and --no-index prevents a sibling name
 # from falling back to a public lookalike.
 COPY --from=wheel-builder /wheelhouse /wheelhouse
 COPY requirements/ci.txt /tmp/requirements/ci.txt
@@ -70,12 +69,11 @@ RUN python -m pip install --upgrade 'pip==26.1.2' \
         --constraint /tmp/requirements/ci.txt \
         --requirement /wheelhouse/cohort-requirements.txt \
     && python -m pip check \
-    && python -c "import maverick, maverick_shield, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer" \
+    && python -c "import maverick, maverick_shield, maverick_dashboard, maverick_knowledge, maverick_installer" \
     && python -c "from maverick.providers import verify_release_runtime; verify_release_runtime()" \
     && rm -rf /wheelhouse /tmp/requirements/ci.txt
 
-# Run as an unprivileged user. Enterprise container policies (and most
-# Kubernetes Pod Security Standards) reject containers running as root.
+# Run as an unprivileged user. The firm container policy rejects root.
 # uid/gid 1000 is conventional and stable so volume ownership is predictable.
 # The state dir (~/.maverick -> /home/maverick/.maverick) and /workspace are
 # owned by this user; mount host volumes with matching ownership.
@@ -88,9 +86,9 @@ ENV HOME=/home/maverick
 USER maverick
 WORKDIR /workspace
 
-# Health is deployment-mode-specific. Dashboard deployments probe /livez in
-# their Compose/Kubernetes/Helm definitions; the base CLI/worker image declares
-# no HTTP health check because those valid modes do not listen on port 8765.
+# Health is deployment-mode-specific. Dashboard deployments probe /livez; the
+# base CLI/worker image declares no HTTP health check because those valid modes
+# do not listen on port 8765.
 
 # Default entrypoint is the maverick CLI. First run — if config is missing —
 # helpfully points the user at `maverick init`.

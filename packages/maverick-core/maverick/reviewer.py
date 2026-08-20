@@ -181,21 +181,13 @@ async def review_diff(
     """Run the reviewer over a diff. Conservative: any parsing failure
     -> reject (treats the failure as a blocker comment).
 
-    Cross-family verifier guard applies here too (a same-family reviewer
-    can be jailbroken in lockstep with the proposer per the alignment-
-    faking research).
+    Client-matter review uses the run's same explicitly pinned provider/model;
+    it never copies the brief or diff to a second provider family.
     """
     if not diff or not diff.strip():
         return ReviewVerdict.empty_pass()
 
-    # Reuse verifier role's model selection + cross-family swap.
-    from .verifier import _cross_family_fallback, _same_family
-
     model = model_for_role("reviewer") or model_for_role("verifier")
-    if proposer_model and _same_family(proposer_model, model):
-        cross = _cross_family_fallback(model)
-        if cross is not None:
-            model = cross
 
     user_msg = (
         f"GOAL BRIEF:\n{brief}\n\n"

@@ -67,20 +67,12 @@ class DockerBackend:
     # value ("" / None) disables either cap.
     memory: str | None = "4g"
     cpus: str | None = None
-    # Run as the invoking user (uid:gid) by default instead of root, matching
-    # DevcontainerBackend -- root in the container owns the writable
-    # ``-v {workdir}:/workspace`` mount on the host. Set
+    # Run as the invoking user (uid:gid) by default instead of root: root in the
+    # container owns the writable ``-v {workdir}:/workspace`` mount on the host. Set
     # ``[sandbox] allow_root = true`` (or MAVERICK_SANDBOX_ALLOW_ROOT) to keep
     # root for images that require it.
     allow_root: bool = False
-    # Container runtime (``docker run --runtime``). None = Docker's default
-    # (runc). Set to ``runsc`` for the **gVisor** application kernel, which
-    # interposes a userspace kernel between the container and the host —
-    # stronger isolation for a possibly prompt-injected agent than seccomp +
-    # caps alone. The ``gvisor`` backend wires this in; the runtime must be
-    # installed and registered with the Docker daemon.
-    runtime: str | None = None
-    # Warm-container reuse (the "sandbox pool" perf win): instead of a fresh
+    # Within-run warm-container reuse: instead of a fresh
     # ``docker run --rm`` per command (a cold start every time), keep ONE
     # container alive and ``docker exec`` into it, so the 2nd..Nth command in a
     # run skip container startup. Opt-in (``[sandbox] reuse_container``); the
@@ -155,8 +147,6 @@ class DockerBackend:
         # read-only overlays, so an absent cache is equivalent to ``()``.
         for source, destination in getattr(self, "_read_only_mounts", ()):
             flags.extend(["-v", f"{source}:{destination}:ro"])
-        if self.runtime:
-            flags.extend(["--runtime", str(self.runtime)])
         if self.pids_limit:
             flags.extend(["--pids-limit", str(self.pids_limit)])
         if self.memory:

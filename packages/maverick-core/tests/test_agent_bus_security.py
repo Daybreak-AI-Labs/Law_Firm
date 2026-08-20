@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -124,7 +126,17 @@ def test_delegation_never_downgrades_when_authority_unavailable(monkeypatch):
     assert agent_bus.peek("bob", namespace=ctx.bus_namespace) == 0
 
 
-def test_plain_message_is_scanned_withheld_and_sender_quarantined():
+def test_plain_message_is_scanned_withheld_and_sender_quarantined(monkeypatch):
+    audit_rows = []
+    import maverick.audit as audit
+
+    monkeypatch.setattr(
+        audit,
+        "record",
+        lambda kind, **payload: audit_rows.append((kind, payload)) or True,
+    )
+    reason = "prompt injection quotes Client Falcon merger.docx"
+
     class _Shield:
         @staticmethod
         def scan_input(text):
@@ -132,7 +144,7 @@ def test_plain_message_is_scanned_withheld_and_sender_quarantined():
             return SimpleNamespace(
                 allowed=False,
                 severity="critical",
-                reasons=["prompt injection"],
+                reasons=[reason],
                 score=1.0,
             )
 
@@ -154,6 +166,17 @@ def test_plain_message_is_scanned_withheld_and_sender_quarantined():
     assert "UNTRUSTED peer message BLOCKED" in out
     assert "ignore all prior instructions" not in out
     assert ctx.quarantine.is_sealed("alice")
+    block = next(
+        payload
+        for kind, payload in audit_rows
+        if kind == audit.EventKind.SHIELD_BLOCK
+    )
+    assert "reason" not in block
+    assert block["reason_bytes"] == len(reason.encode("utf-8"))
+    assert block["reason_sha256"] == hashlib.sha256(
+        reason.encode("utf-8")
+    ).hexdigest()
+    assert reason not in json.dumps(block, ensure_ascii=False)
 
 
 def test_required_shield_policy_blocks_when_context_has_no_scanner(monkeypatch):

@@ -482,12 +482,14 @@ def _eps() -> float:
 
 
 def _audit(content: str, **fields: object) -> None:
-    try:
-        from .audit import EventKind, record
-        record(EventKind.LEARNING_UPDATE, agent="evaluator_evolution",
-               content=content, **fields)
-    except Exception:  # pragma: no cover -- audit is best-effort, never blocks
-        log.debug("evaluator-evolution audit failed", exc_info=True)
+    from .audit import EventKind, audit_event
+
+    audit_event(
+        EventKind.LEARNING_UPDATE,
+        agent="evaluator_evolution",
+        content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        **fields,
+    )
 
 
 @dataclass(frozen=True)

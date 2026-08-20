@@ -3,8 +3,7 @@
 Upgrades change what config means; this is the tool that walks an existing
 ``~/.maverick/config.toml`` forward. Three honest pieces:
 
-* **Advisories** — real, currently-known migration paths (e.g. the Twilio
-  WhatsApp adapter → the first-party Cloud API adapter). Advisories never
+* **Advisories** — real, currently-known migration paths. Advisories never
   rewrite config; they tell the operator what to change and why.
 * **Config lint** — unknown top-level sections (typos: ``[budgets]`` for
   ``[budget]``) flagged against the known-section table, since a misspelled
@@ -37,33 +36,32 @@ log = logging.getLogger(__name__)
 # When adding a new config section, add it here or migrate will lint it.
 KNOWN_SECTIONS = frozenset({
     "a2a", "adaptive_compute", "agent", "agent_factory",
-    "analytics", "approval", "assessments", "automation_import",
+    "approval", "assessments",
     "approval_delegation", "attachments", "audit", "auth", "autonomy",
     "deployment",
     "benchmark", "billing", "budget", "cache", "calendar", "calibration",
-    "capabilities", "catalogs", "channels", "client", "coding", "compaction",
+    "capabilities", "client", "coding", "compaction",
     "compliance", "computer_use", "connections", "consequence", "containment",
     "context", "credit", "data_engine",
-    "dashboard", "director", "durable", "ebpf_monitor", "effort", "egress",
+    "dashboard", "director", "durable", "effort", "egress",
     "emergent_codec", "emergent_protocol",
-    "email", "encryption", "energy", "enterprise", "entity_graph",
+    "email", "encryption", "enterprise", "entity_graph",
     "erp",
-    "experience", "features", "federation", "finance", "finance_operations", "flows", "github",
-    "governance", "governed_connectors", "governed_records", "grpc", "grpc_dispatch", "intake",
+    "experience", "features", "federation", "firm", "flows", "github",
+    "governance", "governed_records", "intake",
     "kms", "knowledge",
-    "langchain", "latency", "limits", "local_first", "local_runtime",
-    "logging", "lsp", "mcp_registries", "mcp_servers", "memory",
-    "model_cost_tiers", "model_proxy", "models", "notifications", "oauth", "observability",
+    "limits", "local_runtime",
+    "logging", "lsp", "memory",
+    "models", "oauth", "observability",
     "paper_review",
     "operations_scientist",
-    "perf", "persona", "planning", "plugins", "privacy",
-    "privacy_ops", "provider_failover", "providers", "queue", "quotas", "reflexion",
-    "repl", "harness_refine", "session_tree",
-    "retention", "role_assignments", "roles", "routing", "safety",
-    "sandbox", "screening", "search", "security", "self_learning",
-    "sharing", "shield", "skill_synthesis", "skills",
-    "system", "telemetry", "template_registries", "tenancy", "thinking",
-    "tools", "tui", "value", "verification", "voice", "webhooks", "workforce",
+    "perf", "persona", "planning", "privacy",
+    "privacy_ops", "providers", "queue", "quotas", "reflexion",
+    "retention", "role_assignments", "roles", "safety",
+    "sandbox", "search", "security", "self_learning",
+    "sharing", "shield", "skills",
+    "telemetry", "tenancy", "thinking",
+    "tools", "tui", "verification",
     "workspace", "world_model", "threat_hunt",
     "evidence_graph",
     # Registry drift, again: these are all read by real load_config() call sites
@@ -73,11 +71,11 @@ KNOWN_SECTIONS = frozenset({
     # with actively-wrong suggestions ("self_harness -> did you mean
     # self_learning?", which is a *different* feature). The self-learning
     # lifecycle (self_harness/self_improvement/dreaming/rehearsal/
-    # memory_guard) plus actions/domains/fairness_monitor/tax.
+    # memory_guard) plus actions/domains/fairness_monitor.
     # Guarded against future drift by test_wizard_parity's wizard-section check.
-    "actions", "domains", "dreaming", "earned_autonomy", "fairness_monitor",
+    "actions", "domains", "dreaming", "fairness_monitor",
     "memory_guard", "rehearsal",
-    "self_harness", "self_improvement", "tax",
+    "self_harness", "self_improvement",
     # Structured rubric verifier + JitRL test-time adaptation: read by
     # load_config (config.get_reasoning_reward / get_jit_rl) and written by the
     # wizard's advanced opt-out steps.

@@ -16,6 +16,12 @@ from maverick.compaction.learned import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_run_model(monkeypatch):
+    """Compaction LLM seams always receive an exact run-wide model pin."""
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "fake:test")
+
+
 class FixedRng:
     """Injectable PRNG: scripted ``random()`` values, fixed ``randrange`` pick."""
 
@@ -156,10 +162,11 @@ class TestLearnedSummarizer:
         # The transcript went through the seam.
         assert "step 0" in fake_llm.calls[0]["messages"][0]["content"]
 
-    def test_uses_configured_summarizer_role_model(
+    def test_uses_selected_run_model_as_summarizer(
         self, monkeypatch, tmp_path, fake_llm, make_llm_response,
     ):
-        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_SUMMARIZER", "testprov:tiny-sum")
+        monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "testprov:tiny-sum")
         fake_llm.scripted = [make_llm_response("digest")]
         ls = LearnedSummarizer(
             llm=fake_llm, ledger=OutcomeLedger(path=tmp_path / "l.json"))

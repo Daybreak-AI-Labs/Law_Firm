@@ -1,21 +1,20 @@
 # maverick-core
 
-The Maverick agent kernel. A recursive multi-agent swarm with persistent
-world model, shared blackboard, hard budget caps, and closed-loop skill
+The Maverick law-firm kernel: matter-bound orchestration, a durable world model,
+hard budget and egress caps, attorney release gates, and governed local
 learning.
 
-See the [top-level README](../../README.md) and
-[`ARCHITECTURE.md`](../../ARCHITECTURE.md) for the full picture.
+See the [top-level README](../../README.md) and the retained
+[architecture](../../docs/architecture.md) for the full picture.
 
-This package installs on its own (PyPI publish is pending the first tagged
-release; install from a source clone for now):
+Do not install this package alone or from a public index. Install the complete
+five-package cohort from one reviewed private checkout:
 
 ```bash
-pip install -e packages/maverick-core   # `pip install maverick-agent` once published
-export ANTHROPIC_API_KEY=sk-ant-...
-maverick start "your goal"
+python scripts/install_release_cohort.py --source-root . \
+  --target-python python --core-extra release-runtime
 ```
 
-But you probably want `pipx install maverick-agent` (once published) +
-`maverick init` instead, which also pulls in the safety layer and configures
-per-role model choice.
+Install the five-package release cohort from one reviewed checkout for the
+dashboard, Shield, knowledge, and installer surfaces described in the top-level
+README.

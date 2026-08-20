@@ -1,10 +1,6 @@
 # Dependency-vulnerability exceptions for the cross-ecosystem OSV gate.
 #
-# There are currently NONE, and that is the desired state. The previous list
-# was seventeen entries deep, every one of them a transitive dependency of the
-# Tauri 2 Linux desktop stack (glib, the GTK3 bindings, proc-macro-error, and
-# the unic crates via urlpattern). That whole surface left with the desktop
-# app, so the exceptions left with it.
+# There are currently NONE, and that is the desired state.
 #
 # If you add one: no application or service dependency belongs here, only a
 # transitive one you cannot move off; give it a reason naming the blocker, and

@@ -1,171 +1,143 @@
-# External security audit — readiness & scope
+# External security review: scope and reproducible checks
 
-This document is the entry point for an **independent penetration test or
-security review** of Maverick. It defines what to attack, what the existing
-controls are and how to verify them, what we already test, and where the
-known residual risks are. It is the operational companion to two existing
-docs — read those first:
+This page is the starting point for an independent security review of the
+Bjerken and Day firm build. Read the [threat model](threat-model.md) first.
 
-- [`SECURITY.md`](../SECURITY.md) — reporting, coordinated disclosure, and
-  the execution-posture caveat (the single most important thing to understand).
-- [`threat-model.md`](./threat-model.md) — the STRIDE model, trust
-  boundaries, and in-scope/out-of-scope assets.
+The central assertion to attack is narrow: client work must not be read,
+executed, transmitted, or released without current named-user authority in the
+exact matter and the required attorney gate.
 
-> **The one-line posture:** by default the agent executes model-generated
-> shell commands, and with the default `local` sandbox backend those run on
-> the host. The Shield is optional and fails *open*. So a successful prompt
-> injection on the default config is host code execution — **the operator
-> chooses the blast radius** via the sandbox backend. An auditor should test
-> both the hardened (container backend, shield present) and default
-> (`local`, no shield) configurations and report findings against each.
+## Priority review surfaces
 
----
+| Priority | Surface | Expected invariant |
+| --- | --- | --- |
+| 1 | Dashboard identity and object authorization | A named user sees only matters for which durable membership permits the requested action; denials do not reveal object existence. |
+| 2 | Goal runner, queue producer, and worker | No matterless job runs. Principal, matter, client metadata, legal domain, jurisdiction, role, and egress policy are revalidated before external work. |
+| 3 | Attorney review and release | Signoff is bound to the immutable release payload; later mutations invalidate it; release produces durable audit evidence. |
+| 4 | Model, web-search, and connector egress | `local_only` matters cannot transmit client data. Approved-service traffic is host/scheme constrained and uses verified TLS outside loopback. |
+| 5 | Attachments and knowledge ingestion | Matter access is enforced; filenames and archives are bounded; untrusted PDF/DOCX parsing is isolated and fails closed. |
+| 6 | Storage, audit, and disaster recovery | Sensitive state is encrypted, the audit chain is verifiable, backups exclude key material, and restore authenticates before staging. |
+| 7 | Runtime/tool supply chain | The model-visible tool ceiling is fixed. External plugins, remote skills/catalogs, MCP, gRPC execution, and matterless producers are absent. |
 
-## 1. Scope
+## Installation for review
 
-### In scope — priority targets
-
-Ordered roughly by blast radius. Each links to the control that's supposed to
-contain it (§3) and the tests that exercise it (§4).
-
-| # | Surface | Entry point | Primary control |
-|---|---------|-------------|-----------------|
-| 1 | **Sandbox escape / unsandboxed exec** | `sandbox.exec()` → backend | Single chokepoint; container flags (`--network=none`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--pids-limit`, non-root `--user`) |
-| 2 | **Prompt injection → tool abuse** | model input, tool output, fetched pages | Agent Shield (`scan_input`/`scan_tool_call`/`scan_output`) + `jailbreak_heuristics` |
-| 3 | **SSRF** (cloud-metadata, internal hosts) | `http_fetch`, `web_search`, browser tool | `_ssrf` DNS-rebind-pinned client; private-IP block unless `MAVERICK_FETCH_ALLOW_PRIVATE=1` |
-| 4 | **Secret exfiltration** | tool stdout, logs, audit, replay export | `maverick.secrets.scrub` + `maverick.safety.secret_detector`; env scrubbing in `LocalBackend` |
-| 5 | **MCP supply chain** | MCP server command / tool descriptions | `pin_sha256` command hash-pinning; tool-description scan at registration |
-| 6 | **Channel webhook spoofing / double-spend** | SMS/WhatsApp/Telegram/Bluesky inbound | HMAC verification (fail-closed 401); atomic dedup; per-channel sender allowlist |
-| 7 | **Audit-log tampering / repudiation** | `~/.maverick/audit/*.ndjson` | Ed25519 hash-chain (opt-in `[audit] sign`), cross-file anchors, fsync durability |
-| 8 | **AuthN/AuthZ bypass** | dashboard, MCP HTTP | Fail-closed bearer tokens (`MAVERICK_DASHBOARD_TOKEN`, `MAVERICK_MCP_TOKEN`) |
-| 9 | **Plugin / skill code execution** | pip entry-points, installed skills | Default-deny plugin allowlist (`MAVERICK_PLUGINS_ALLOW`); skill-body scan + hash-pin at install |
-| 10 | **Resource exhaustion / DoS** | long inputs, runaway loops, fork bombs | `Budget` caps; ReDoS-hardened regexes; sandbox `pids_limit`/timeouts; killswitch `~/.maverick/HALT` |
-
-### Out of scope
-
-See [`threat-model.md` § Out-of-scope](./threat-model.md). In short: local-root
-attackers, hardware attacks, compromised provider APIs, and untrusted plugins
-the operator chose to allowlist.
-
----
-
-## 2. Trust boundaries & assets
-
-See [`threat-model.md`](./threat-model.md) for the diagram and the full asset
-list (`~/.maverick/.env` keys, session cookies, audit log, world-model DB).
-The boundaries an auditor will cross most often: **untrusted text → model**
-(injection), **model → sandbox** (exec), and **sandbox/tools → network**
-(SSRF / exfil).
-
----
-
-## 3. Security controls inventory
-
-Each control, where it lives, and how to confirm it's active.
-
-| Control | Location | Verify |
-|---------|----------|--------|
-| Shell chokepoint (no direct `subprocess` in tools) | `maverick/sandbox/` | CI `lint` job greps `shell=True` outside `sandbox/` and fails the build |
-| Container isolation flags | `sandbox/docker.py`, `podman.py` | `test_sandbox_backend_coverage.py`, `test_server_sandbox.py` |
-| SSRF DNS-rebind pinning | `maverick/tools/_ssrf.py` | `test_ssrf_guard.py`, `test_ssrf_pinning.py` |
-| Secret redaction (+ ReDoS-hardened) | `maverick/secrets.py`, `safety/secret_detector.py` | `test_secrets_scrub_fuzz.py`, `test_replay_export_scrub.py` |
-| Env scrubbing for child shells | `sandbox/local.py` `scrub_env()` | `test_tool_subprocess_hardening.py` |
-| Shield injection detection | `maverick-shield/` | `test_builtin_rules.py`, `test_cascade.py`, `test_deobfuscation.py`, `test_injection_corpus.py` |
-| Audit Ed25519 hash-chain + anchors | `maverick/audit/` | `test_audit_anchor.py`, `test_audit_reanchor.py`, `test_audit_durability.py` |
-| Fail-closed auth (dashboard/MCP) | dashboard `app.py`, `mcp/http_transport.py` | `test_tier0_security.py`, MCP test suites |
-| Webhook HMAC + atomic dedup | `maverick/webhooks.py` | `test_security_invariants.py`, channel test suites |
-| Plugin default-deny | `maverick/plugins.py` | `test_tier0_security.py` |
-| Budget caps | `maverick/budget.py` | budget test suites |
-| Static-analysis gates (SAST, secrets, CVEs) | `.github/workflows/ci.yml` | see §4 |
-
----
-
-## 4. Reproducible verification harness
-
-Everything below runs offline and **incurs no model/API cost**. This is the
-same battery CI runs on every PR, plus the manual sweeps.
-
-### Setup
+Use an isolated environment and verify imports resolve to this checkout before
+believing test results:
 
 ```bash
-pip install -e ./packages/maverick-core
-pip install --no-deps -e ./packages/maverick-shield \
-                      -e ./packages/maverick-dashboard \
-                      -e ./packages/maverick-mcp
-pip install pytest pytest-asyncio
+python -m venv .venv-audit
+.venv-audit/bin/python -m pip install -e ./packages/maverick-core
+.venv-audit/bin/python -m pip install --no-deps \
+  -e ./packages/maverick-shield \
+  -e ./packages/maverick-knowledge \
+  -e ./packages/maverick-dashboard \
+  -e ./apps/installer-cli
+.venv-audit/bin/python -c "import maverick; print(maverick.__file__)"
 ```
 
-### Static-analysis gates (blocking in CI)
+On Windows, use `.venv-audit\\Scripts\\python.exe` in place of
+`.venv-audit/bin/python`.
+
+## Focused invariant suite
+
+Run these before the broad package suites:
 
 ```bash
-# SAST — high-severity, shipped source (tests excluded by design)
+python -m pytest -q \
+  packages/maverick-core/tests/test_matter_context.py \
+  packages/maverick-core/tests/test_runner_matter_context.py \
+  packages/maverick-core/tests/test_worker_matter_context.py \
+  packages/maverick-core/tests/test_queue_dispatcher.py \
+  packages/maverick-core/tests/test_matterless_producers_retired.py
+
+python -m pytest -q \
+  packages/maverick-core/tests/test_firm_tool_registry.py \
+  packages/maverick-core/tests/test_matter_egress.py \
+  packages/maverick-core/tests/test_ssrf_guard.py \
+  packages/maverick-core/tests/test_ssrf_pinning.py
+
+python -m pytest -q \
+  packages/maverick-core/tests/test_parser_isolation.py \
+  packages/maverick-core/tests/test_attachments.py \
+  packages/maverick-core/tests/test_docx_redline.py \
+  packages/maverick-core/tests/test_privacy_ops.py \
+  packages/maverick-knowledge/tests/test_parse.py
+
+python -m pytest -q \
+  packages/maverick-core/tests/test_backup.py \
+  packages/maverick-core/tests/test_world_encryption_coverage.py \
+  packages/maverick-core/tests/test_approval_audit_outbox.py \
+  packages/maverick-core/tests/test_signoff_audit_outbox.py
+
+python -m pytest -q \
+  packages/maverick-dashboard/tests/test_authz_project_scoping.py \
+  packages/maverick-dashboard/tests/test_named_auth_boundary.py \
+  packages/maverick-dashboard/tests/test_release_boundary.py \
+  packages/maverick-dashboard/tests/test_matter_attorney_release.py
+```
+
+Then run each retained package suite and preserve the full logs, interpreter
+version, dependency inventory, commit id, and configuration used.
+
+## Static and supply-chain checks
+
+Use the versions pinned by CI and treat tool absence as “not measured,” not a
+pass:
+
+```bash
+python -m ruff check .
 python -m bandit -q -r packages apps -lll -ii -s B613 -x '*/tests/*,*/test_*.py'
-
-# Secret scanning — fails on any new secret vs the audited baseline
-detect-secrets scan --baseline .secrets.baseline   # then diff hashes; see ci.yml lint job
-
-# Dependency CVEs
-pip-audit
-
-# Source-hygiene gates (shell=True confinement, bare tomllib)
-ruff check .
+detect-secrets scan --baseline .secrets.baseline
+python -m pip_audit
+python -m maverick.reachability --ci
+python -m maverick.domain_lint
 ```
 
-### Security test suites by area
+Build every retained wheel, install those wheels into a second clean
+environment, run `pip check`, resolve `maverick.__file__`, and smoke-test the
+operator CLI and dashboard entry point. Editable-install success alone does not
+prove package completeness.
 
-```bash
-cd packages/maverick-core
-pytest tests/ -q -k "ssrf"                       # SSRF guard + DNS-rebind pinning
-pytest tests/ -q -k "sandbox or subprocess"      # sandbox isolation + env scrub
-pytest tests/ -q -k "audit"                      # Ed25519 chain, anchors, durability
-pytest tests/ -q -k "scrub or redact or secret"  # secret redaction + ReDoS fuzz
-pytest tests/ -q -k "inject or security or hardening or tier0"  # injection + invariants
-cd ../maverick-shield && pytest tests/ -q        # shield detection + injection corpus
-```
+## Adversarial cases an auditor should add
 
-### ReDoS sweep (regex DoS)
+- Revoke membership after enqueue and immediately before model/tool dispatch.
+- Move a goal to a different matter, client, domain, or jurisdiction after the
+  producer signs the queue envelope.
+- Insert the shared dashboard bearer into `matter_memberships` and attempt to
+  execute.
+- Mutate every field covered by an attorney signoff, then attempt release.
+- Attempt cross-matter attachment enumeration and download using guessed ids.
+- Redirect an approved host to loopback/private addresses and disable TLS
+  verification on an external HTTPS destination.
+- Feed malformed PDFs/DOCX files, oversized ZIP metadata, high-ratio ZIP bombs,
+  child stdout/stderr floods, and parser timeouts.
+- Restore a backup with the wrong encryption key, a modified GCM tag, a changed
+  manifest, traversal names, duplicate entries, and the live data-root key
+  directory included.
+- Try to import or advertise removed MCP, gRPC, external-plugin, catalog, and
+  runtime-acquisition modules from a built wheel.
 
-The redactors and detection rules run on attacker-influenced text, so every
-regex over untrusted input must be sub-quadratic. To re-run the dynamic sweep
-that found the fixed `url_credentials` and `env_secret` holes: collect every
-compiled `re.Pattern` from `maverick.safety`, `maverick_shield`,
-and `maverick.tools`, then time `pattern.search`
-on long single-character runs (`"a"`, `"A"`, `"\n"`, `"\t"`, `" "`, …) at N
-and 2N — a time ratio near 4× on doubling signals O(N²). `scrub()` /
-`redact()` should stay linear (~130 ms on a 500 KB run). See
-`test_secrets_scrub_fuzz.py::test_secret_redactors_do_not_redos_on_long_runs`
-for the committed regression form.
+## Evidence limits
 
----
+Passing repository tests establishes only the named regression contracts.
+Static checks do not establish runtime isolation, and proof fixtures do not
+establish customer outcomes or model quality. Record skipped tests and platform-
+specific exclusions. A clean report still requires independent penetration
+testing, deployment configuration review, key-custody review, backup/restore
+exercise, and counsel-owned policy controls.
 
-## 5. Known residual risks
+## Known residuals to evaluate
 
-We track these openly rather than hide them. None is a Critical/RCE on a
-hardened config; an auditor should still try to escalate each.
+- Application-layer egress enforcement is defense in depth, not a packet-level
+  boundary. Validate host/container/VPC default-deny policy independently.
+- Local administrators can replace code and read process memory.
+- Approved providers can see data deliberately sent to them; vendor trust and
+  retention terms remain organizational risks.
+- Parser child-process isolation is weaker than a dedicated VM/container.
+- Co-located audit-signing keys do not provide credible third-party attribution.
+- Secure defaults can be explicitly weakened for development; production
+  startup must prove the intended posture rather than infer it from defaults.
 
-- **Default `local` backend = host exec.** By design (see `SECURITY.md`).
-  Injection on the default config reaches the host. Mitigation is operator
-  choice of a container backend; the consumer wizard fails closed.
-- **Shield fails open.** If `agent-shield` isn't installed, only the ~20-rule
-  built-in fallback applies (the full SDK is ~115 patterns). The fallback is
-  weaker on novel obfuscation; `test_injection_corpus.py` documents exactly
-  what it does/doesn't catch, including `xfail`-tracked gaps.
-- **`jailbreak_heuristics` precision.** The weighted scorer over-flags some
-  benign instruction-shaped text (e.g. "ignore the instructions in the old
-  README"); a false-positive-tuning pass is outstanding.
-- **Audit tamper-evidence is opt-in.** Plain NDJSON unless `[audit] sign =
-  true`; third-party attribution requires an externally-held pubkey.
-- **Plugin permissions are enforced by default.** A plugin requesting an
-  ungranted permission is skipped (not loaded) unless `enforce_permissions =
-  false` downgrades it to advisory; the default-deny load allowlist is a second,
-  independent gate.
-
----
-
-## 6. Reporting
-
-Use the process in [`SECURITY.md`](../SECURITY.md): GitHub Security
-Advisories (preferred) or the security email, **not** a public issue.
-Coordinated-disclosure window is 90 days. Please report against the config
-you tested (hardened vs. default) and include the `maverick version` output.
-```
+Report vulnerabilities through the private process in `SECURITY.md`, not a
+public issue. Include the exact commit, platform, configuration, and a minimal
+reproducer.

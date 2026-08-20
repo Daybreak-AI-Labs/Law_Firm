@@ -3,11 +3,12 @@ set, everyone is limited to it, and it is a hard cap at model resolution (not
 just a UI hint)."""
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 _ORIGIN = {"origin": "http://testserver"}
-_SONNET = "claude-sonnet-4-6"
-_OPUS = "claude-opus-4-8"
+_SONNET = "anthropic:claude-sonnet-4-6"
+_OPUS = "anthropic:claude-opus-4-8"
 
 
 def _client():
@@ -20,9 +21,6 @@ def _iso(monkeypatch, tmp_path):
     import maverick.runtime_overrides as ro
     monkeypatch.setattr(ro, "OVERRIDES_PATH", tmp_path / "runtime-overrides.toml")
     monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE", raising=False)
-    for r in ("ORCHESTRATOR", "CODER", "WRITER", "SUMMARIZER", "RESEARCHER",
-              "ANALYST", "VERIFIER"):
-        monkeypatch.delenv(f"MAVERICK_MODEL_OVERRIDE_{r}", raising=False)
 
 
 def _prep(monkeypatch, tmp_path):
@@ -35,29 +33,32 @@ def _prep(monkeypatch, tmp_path):
     dash_app._world_cache.clear()
 
 
-def test_allowlist_caps_role_resolution(monkeypatch, tmp_path):
+def test_allowlist_denies_instead_of_substituting(monkeypatch, tmp_path):
     _iso(monkeypatch, tmp_path)
-    from maverick.llm import model_for_role
-    from maverick.runtime_overrides import allowed_models, set_allowed_models
-    # Baseline: no allow-list, the orchestrator keeps its Opus default.
+    from maverick.llm import ModelNotAllowedError, model_for_role
+    from maverick.runtime_overrides import (
+        allowed_models,
+        set_allowed_models,
+        set_default_model,
+    )
+    set_default_model(_OPUS)
     assert allowed_models() == set()
     assert model_for_role("orchestrator") == _OPUS
-    # Cap to Sonnet only: every role collapses onto the one allowed model,
-    # including roles whose default (Opus/Haiku) is now disallowed.
+    # A disallowed exact pin is rejected; policy never silently substitutes the
+    # only allowed model.
     set_allowed_models([_SONNET])
-    for role in ("orchestrator", "coder", "writer", "summarizer"):
-        assert model_for_role(role) == _SONNET
+    with pytest.raises(ModelNotAllowedError):
+        model_for_role("orchestrator")
 
 
 def test_allowlist_lets_an_allowed_default_through(monkeypatch, tmp_path):
     _iso(monkeypatch, tmp_path)
     from maverick.llm import model_for_role
-    from maverick.runtime_overrides import set_allowed_models
-    # Opus is allowed, so the orchestrator's Opus default is untouched, while a
-    # role defaulting to a disallowed model is capped to the lone allowed one.
+    from maverick.runtime_overrides import set_allowed_models, set_default_model
+    set_default_model(_OPUS)
     set_allowed_models([_OPUS])
     assert model_for_role("orchestrator") == _OPUS
-    assert model_for_role("summarizer") == _OPUS  # Haiku default not allowed
+    assert model_for_role("summarizer") == _OPUS
 
 
 def test_settings_page_renders_allowlist_section(monkeypatch, tmp_path):
@@ -66,7 +67,7 @@ def test_settings_page_renders_allowlist_section(monkeypatch, tmp_path):
     assert r.status_code == 200
     assert 'action="/settings/models/allowed"' in r.text
     # a checkbox per catalogue model, posting under the "models" field
-    assert 'name="models" value="claude-opus-4-8"' in r.text
+    assert 'name="models" value="anthropic:claude-opus-4-8"' in r.text
     assert 'name="models" value="openai:gpt-5.4"' in r.text
 
 
@@ -105,15 +106,6 @@ def test_pin_allowed_default_succeeds(monkeypatch, tmp_path):
     assert r.status_code == 303
     from maverick.runtime_overrides import default_model_override
     assert default_model_override() == _SONNET
-
-
-def test_role_pin_disallowed_is_rejected(monkeypatch, tmp_path):
-    _prep(monkeypatch, tmp_path)
-    from maverick.runtime_overrides import set_allowed_models
-    set_allowed_models([_SONNET])
-    r = _client().post("/settings/models/roles", data={"coder": _OPUS},
-                       headers=_ORIGIN, follow_redirects=False)
-    assert r.status_code == 400
 
 
 def test_clearing_allowlist_removes_the_restriction(monkeypatch, tmp_path):

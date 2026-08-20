@@ -3,18 +3,16 @@
 Two defect classes in this repo share one root cause: nobody could answer that
 question, so everyone guessed, and the guesses went both ways.
 
-* **Unreached code cited as substrate.** A strategy review cited
-  ``sigstore_signing.py`` as shipped capability. Its own header reads
-  "roadmap: 2027 H2" and nothing in production imports it. In the same review,
-  ``erasure_verify.py`` was skipped as unbuilt -- it is tagged 2028 H2 and
-  backs the shipping ``maverick erase-verify`` command.
-* **Documentation drift.** ``FEATURES.md`` opens with "what Maverick does
-  today" and names modules that nothing calls.
+* **Unreached code cited as substrate.** Historical strategy reviews treated
+  roadmap-tagged, zero-caller modules as shipped capabilities while skipping
+  ``erasure_verify.py`` as unbuilt -- even though it backs the retained
+  ``maverick erase-verify`` command.
+* **Documentation drift.** Retired feature catalogues named modules that
+  nothing called.
 
-The ``roadmap: 20XX HN`` header was the only signal available, and it is
-useless: 232 modules carry one and most of them ARE reachable from production.
-A tag that is wrong ~80% of the time, in both directions, is worse than no tag,
-because it looks like evidence.
+A ``roadmap: 20XX HN`` header does not establish whether runtime entry points
+can reach a module. Treating schedule metadata as reachability evidence caused
+errors in both directions.
 
 This module answers the question structurally instead. It walks the import
 graph from real entry points and classifies every non-test module:
@@ -59,14 +57,13 @@ ENTRY_POINTS = {
         "maverick.cli",              # the `maverick` console script
         "maverick.agent",            # the kernel
         "maverick.orchestrator",     # goal execution
+        "maverick.arq_worker",       # optional signed Redis queue worker
         "maverick_dashboard.app",    # the FastAPI app
-        "maverick.mcp_server",       # `maverick mcp`
     ),
 }
 
 PACKAGES = ("maverick-core", "maverick-dashboard", "maverick-shield",
-            "maverick-channels", "maverick-knowledge",
-            "maverick-mcp")
+            "maverick-knowledge")
 
 
 def _module_name(path: Path) -> str | None:

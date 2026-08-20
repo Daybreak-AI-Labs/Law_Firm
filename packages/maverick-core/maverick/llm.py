@@ -1,4 +1,4 @@
-"""Multi-provider LLM facade.
+"""Explicit-provider LLM facade.
 
 Dispatches to provider-specific clients based on the ``provider:model-id``
 spec. Bare model ids (no colon) default to anthropic for backward
@@ -10,10 +10,11 @@ Provider clients (in ``maverick.providers``):
   - openrouter  (any/model) OpenAI-compatible via openrouter.ai
   - ollama      (llama*, qwen*, phi*, ...) OpenAI-compatible via localhost:11434
 
-The agent kernel only sees the ``LLM`` class; it doesn't know or care
-which provider runs a given call. A run can route the orchestrator to
-Anthropic Opus, workers to local Ollama, and the summarizer to OpenAI
-gpt-4o-mini — all in the same swarm.
+The agent kernel only sees the ``LLM`` class; it doesn't know or care which
+provider runs a given call.  In the secure firm runtime every call must match
+one operator-pinned ``provider:model`` selection for the run.  Calls are never
+silently replayed to a fallback provider, duplicated for latency hedging, or
+rerouted by cost, battery, reachability, or agent role.
 """
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ from .budget import Budget, _cache_write_mult_from_ttl
 from .pricing import (
     ModelPrice,
     PriceUse,
-    UnverifiedRateError,
     VersionedPricingProvider,
     load_pricing_evidence_pack,
 )
@@ -319,8 +319,8 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
 
 
 # Curated model catalog for the dashboard's model pickers: provider -> model
-# ids. The dashboard renders these as ``provider:<id>`` specs (bare for
-# anthropic, the default provider) and also lets the operator type any other
+# ids. The dashboard renders every entry as an exact ``provider:<id>`` spec
+# and also lets the operator type any other
 # id. Admins extend the list via ``[models] catalog`` in config.toml. Prices
 # live in MODEL_PRICING_PROVIDER; a model without a verified quote may be shown
 # in a picker but cannot be billed.
@@ -348,14 +348,12 @@ PROVIDER_LABELS: dict[str, str] = {
 
 
 def catalog_specs() -> list[tuple[str, str]]:
-    """Every built-in model as ``(spec, provider_label)``. Anthropic ids stay
-    bare (the default provider); others carry the ``provider:`` prefix the
-    resolver expects. The dashboard merges ``[models] catalog`` on top."""
+    """Every built-in model as exact ``(provider:model, provider_label)``."""
     out: list[tuple[str, str]] = []
     for provider, ids in MODEL_CATALOG.items():
         plabel = PROVIDER_LABELS.get(provider, provider)
         for mid in ids:
-            spec = mid if provider == "anthropic" else f"{provider}:{mid}"
+            spec = f"{provider}:{mid}"
             out.append((spec, plabel))
     return out
 
@@ -413,6 +411,65 @@ class ModelNotAllowedError(PermissionError):
     """A requested model is outside the operator's active hard allow-list."""
 
 
+class ModelSelectionError(PermissionError):
+    """The secure firm runtime lacks one exact operator-pinned model."""
+
+
+def _secure_model_policy_enabled() -> bool:
+    try:
+        from .security_defaults import secure_by_default
+
+        return secure_by_default()
+    except Exception:
+        # A policy-resolution failure must not enable implicit provider choice.
+        return True
+
+
+def _configured_run_model(
+    *,
+    config: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the single operator-pinned model for a run, if configured.
+
+    The secure firm boundary deliberately ignores role-specific model settings:
+    one prompt may flow through several agent roles, but it must not thereby
+    cross a provider/model boundary.  The CLI's run-wide override wins, then an
+    explicit ``[models] default``, then the dashboard's global default pin.
+    """
+    global_override = os.environ.get("MAVERICK_MODEL_OVERRIDE")
+    if global_override and global_override.strip():
+        return global_override.strip()
+
+    try:
+        if config is None:
+            from .config import load_config
+
+            config = load_config() or {}
+        raw = (config.get("models") or {}).get("default")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    except Exception:
+        if _secure_model_policy_enabled():
+            raise ModelSelectionError(
+                "secure model selection could not read [models] default"
+            ) from None
+
+    try:
+        from .runtime_overrides import default_model_override
+
+        pinned = default_model_override()
+        if pinned:
+            return pinned
+    except RuntimeOverridesSecurityError:
+        raise
+    except Exception:
+        if _secure_model_policy_enabled():
+            raise ModelSelectionError(
+                "secure model selection could not read the dashboard default"
+            ) from None
+    return None
+
+
 def _allowed_model_specs() -> set[str]:
     """Canonical active allow-list; empty means unrestricted.
 
@@ -425,14 +482,55 @@ def _allowed_model_specs() -> set[str]:
     return {_canonical_spec(spec) for spec in allowed_models()}
 
 
-def require_model_allowed(spec: str) -> str:
+def require_model_allowed(
+    spec: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> str:
     """Return canonical ``provider:model`` after enforcing the hard allow-list.
 
     Unlike role routing's convenience fallback, an explicit dispatch choice
     must never be silently replaced: callers that pin a forbidden model receive
     a policy error before provider/client work begins.
     """
-    canonical = _canonical_spec(spec)
+    requested = str(spec or "").strip()
+    if _secure_model_policy_enabled():
+        configured = _configured_run_model(config=config)
+        if not configured:
+            raise ModelSelectionError(
+                "secure firm execution requires one explicit [models] default "
+                "in provider:model form"
+            )
+        if ":" not in configured or not all(
+            part.strip() for part in configured.split(":", 1)
+        ):
+            raise ModelSelectionError(
+                "secure firm execution requires [models] default in exact "
+                "provider:model form"
+            )
+        if _canonical_spec(configured).casefold() == "openrouter:auto":
+            raise ModelSelectionError(
+                "openrouter:auto delegates model choice upstream and is not "
+                "an exact provider:model pin"
+            )
+        if ":" not in requested or not all(
+            part.strip() for part in requested.split(":", 1)
+        ):
+            raise ModelSelectionError(
+                "secure model dispatch requires an exact provider:model"
+            )
+        if _canonical_spec(requested) != _canonical_spec(configured):
+            raise ModelSelectionError(
+                "requested model does not match the run's configured "
+                "provider:model"
+            )
+
+    canonical = _canonical_spec(requested)
+    if canonical.casefold() == "openrouter:auto":
+        raise ModelSelectionError(
+            "openrouter:auto delegates model choice upstream and is not an "
+            "exact provider:model pin"
+        )
     allowed = _allowed_model_specs()
     if allowed and canonical not in allowed:
         raise ModelNotAllowedError(
@@ -473,15 +571,12 @@ def _explicit_model_for_role(
             return spec
     except Exception:
         pass
-    # Dashboard-pinned model (set from the settings page; lives in
-    # ~/.maverick/runtime-overrides.toml, never config.toml). A per-role pin
-    # wins over the global default pin. Below the user's config.toml [models]
-    # above, above the built-in ROLE_MODELS defaults -- an explicit UI choice
-    # that still yields to a more specific config [models].<role>.
+    # Dashboard-pinned global model (set from the settings page; lives in
+    # ~/.maverick/runtime-overrides.toml, never config.toml).
     try:
-        from .runtime_overrides import default_model_override, role_model_override
+        from .runtime_overrides import default_model_override
 
-        pinned = role_model_override(role) or default_model_override()
+        pinned = default_model_override()
         if pinned:
             return pinned
     except Exception:  # pragma: no cover -- never let the overlay break resolution
@@ -489,93 +584,32 @@ def _explicit_model_for_role(
     return None
 
 
-def _resolve_model_for_role(role: str) -> str:
-    """Return the model spec for a role (may be 'provider:id' or bare id).
+def _resolve_model_for_role(
+    role: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Resolve one deterministic model without live or role-based routing.
 
-    Resolution order:
-      1. Per-role env override `MAVERICK_MODEL_OVERRIDE_<ROLE>` (set by
-         best-of-N to swap models per attempt).
-      2. Global override `MAVERICK_MODEL_OVERRIDE` (set by the CLI's
-         `maverick --model <id>` flag) -- an explicit, run-wide choice that
-         beats config so the documented flag actually applies to every agent.
-      3. ``~/.maverick/config.toml`` -> ``[models]`` -> role
-      4. Dashboard role/default pin from ``runtime-overrides.toml``
-      5. Local-first router (opt-in)
-      6. Cost-aware router (opt-in: `MAVERICK_COST_ROUTING=1` or
-         `[routing] cost_aware = true`) -- among the user's configured
-         providers, the cheapest one at the role's capability tier.
-      7. ``ROLE_MODELS`` defaults, optionally energy-adjusted
-      8. ``DEFAULT_MODEL``
-
-    The user's explicit choices (1-4) always win; the router only gets a
-    say when no model was pinned, and it returns None (defers to 7) unless
-    the operator opted in. This keeps "users own model choice" intact.
+    Secure firm execution requires the global run pin returned by
+    :func:`_configured_run_model`.  Explicit per-role selection and built-in
+    role defaults remain only for deliberately insecure legacy/dev mode.
     """
-    explicit = _explicit_model_for_role(role)
-    if explicit:
-        return explicit
-    # Local-first (opt-in, off by default). When [system] local_first is on and
-    # a configured local model's server is reachable, keep the work on-machine;
-    # returns None otherwise, so this is a no-op for the default install and
-    # gracefully falls through to remote.
-    try:
-        from .provider_local_first import pick_local
-        local = pick_local(role)
-        if local:
-            return local
-    except Exception:  # pragma: no cover -- never let local-first break resolution
-        pass
-    # Cost-aware routing (opt-in, off by default). pick() returns None when
-    # disabled or when no provider is configured, so this is a no-op for the
-    # default install.
-    try:
-        from .cost.router import pick, signal_for_role
-        routed = pick(signal_for_role(role))
-        if routed:
-            return routed
-    except Exception:  # pragma: no cover -- never let routing break resolution
-        pass
-    final = ROLE_MODELS.get(role, DEFAULT_MODEL)
-    # Energy-aware downgrade (opt-in, off by default): on a laptop low on
-    # battery, step the default-tier model down (Opus->Sonnet->Haiku) to extend
-    # runtime, then revert on wall power. No-op unless [routing] energy_aware is
-    # on AND battery is low, and only on the default path -- an explicit
-    # override/config/router choice above is never downgraded.
-    try:
-        from .energy_aware_router import route as _energy_route
-        cheaper = _cheaper_model(final)
-        if cheaper != final:
-            final = _energy_route(final, cheaper)
-    except Exception:  # pragma: no cover -- never let energy routing break resolution
-        pass
-    return final
+    if _secure_model_policy_enabled():
+        selected = _configured_run_model(config=config)
+        if not selected:
+            raise ModelSelectionError(
+                "secure firm execution requires one explicit [models] default "
+                "in provider:model form"
+            )
+        return selected
+    explicit = _explicit_model_for_role(role, config=config)
+    return explicit or ROLE_MODELS.get(role, DEFAULT_MODEL)
 
 
 def _apply_allowed_model_policy(final: str) -> str:
-    """Apply the dashboard's hard model allow-list to one resolved spec."""
-    try:
-        from .runtime_overrides import allowed_models
-
-        allow = allowed_models()
-        if allow:
-            allow_canon = {_canonical_spec(a) for a in allow}
-            # Compare canonically: a bare ("claude-sonnet-4-6") and a
-            # provider-qualified ("anthropic:claude-sonnet-4-6") spelling of the
-            # same model must not read as a mismatch, or an operator-allowed
-            # model gets wrongly rejected and silently substituted.
-            if _canonical_spec(final) not in allow_canon:
-                if _canonical_spec(DEFAULT_MODEL) in allow_canon:
-                    final = DEFAULT_MODEL
-                else:
-                    # Cost-aware fallback: the CHEAPEST allowed model, not
-                    # sorted(allow)[0] -- lexicographic-first could force a cheap
-                    # bulk role onto the most expensive allowed model.
-                    final = _cheapest_allowed(allow)
-    except RuntimeOverridesSecurityError:
-        raise
-    except Exception:  # pragma: no cover -- allow-list never breaks resolution
-        pass
-    return final
+    """Enforce the hard allow-list without substituting another model."""
+    return require_model_allowed(final)
 
 
 def offline_model_for_role(
@@ -590,14 +624,13 @@ def offline_model_for_role(
     live cost routing, and battery state.  Those mutable probes belong to
     ``maverick doctor``; preflight must remain deterministic and network-free.
     """
-    explicit = _explicit_model_for_role(role, config=config)
-    final = explicit or ROLE_MODELS.get(role, DEFAULT_MODEL)
-    return _apply_allowed_model_policy(final)
+    final = _resolve_model_for_role(role, config=config)
+    return require_model_allowed(final, config=config)
 
 
 def model_for_role(role: str) -> str:
-    """Resolve the live model route and enforce the admin hard allow-list."""
-    return _apply_allowed_model_policy(_resolve_model_for_role(role))
+    """Resolve the run's one pinned model and enforce the hard allow-list."""
+    return require_model_allowed(_resolve_model_for_role(role))
 
 
 def _canonical_spec(spec: str) -> str:
@@ -605,77 +638,6 @@ def _canonical_spec(spec: str) -> str:
     spelling of the same model compares equal in the admin allow-list check."""
     provider, model_id = _parse_spec(spec)
     return f"{provider}:{model_id}"
-
-
-def _cheapest_allowed(allow: list[str]) -> str:
-    """The cheapest model in ``allow`` by billable output price (input price as
-    a tie-break), name-sorted for determinism. Unknown-priced models rank last,
-    but subscription/self-hosted provider prefixes that the budget layer prices
-    at zero must win over paid hosted models. The allow-list fallback uses this
-    instead of ``sorted(allow)[0]`` (lexicographic, cost-blind)."""
-
-    def rank(spec: str):
-        price = _allowlist_rank_price(spec)
-        out_in = (price[1], price[0]) if price else (float("inf"), float("inf"))
-        return (*out_in, spec)
-
-    return min(allow, key=rank)
-
-
-def _allowlist_rank_price(spec: str) -> tuple[float, float] | None:
-    """Return the price used for allow-list fallback ranking.
-
-    Keep this in step with ``budget._lookup_price`` for billable choices that
-    are known to be free or explicitly priced. Genuinely unknown hosted models
-    still rank last instead of inheriting the budget fallback estimate, because
-    an allow-list fallback should not prefer an unverified price over a known
-    cheap model.
-    """
-    provider, model_id = _parse_spec(spec)
-    if provider == "codex_cli":
-        return 0.0, 0.0
-    for key in (spec, model_id):
-        try:
-            quote = model_price_quote(key)
-        except UnverifiedRateError:
-            return None
-        if quote is not None:
-            return quote.rates
-    if provider in ("ollama", "vllm", "tgi"):
-        return 0.0, 0.0
-    return None
-
-
-def _allowlist_filter_fallbacks(models: list[str]) -> list[str]:
-    """Drop failover fallbacks outside the admin allow-list (no-op when none set).
-
-    ``model_for_role`` enforces the ``[access] allowed_models`` cap on role
-    resolution, but provider-failover chains are dispatched straight from config
-    without passing back through it -- so a transient error on the primary could
-    fail over to a model the operator's "hard cap" forbids (a governance bypass).
-    Failover must not introduce a disallowed model the base call wouldn't run, so
-    we filter the *fallbacks*; the primary is left untouched (it is what the
-    non-failover path runs anyway).
-    """
-    allow = _allowed_model_specs()
-    if not allow:
-        return models
-    return [m for m in models if _canonical_spec(m) in allow]
-
-
-def _fallback_chain_for_dispatch(
-    raw_primary: str,
-    canonical_primary: str,
-) -> list[str]:
-    """Resolve a configured chain without making aliases a config footgun."""
-    from .provider_failover import fallback_models
-
-    chain = fallback_models(raw_primary)
-    if not chain and raw_primary != canonical_primary:
-        # Preserve exact-key compatibility while also finding chains declared
-        # under the canonical spelling of an alias/bare primary pin.
-        chain = fallback_models(canonical_primary)
-    return _allowlist_filter_fallbacks(chain)
 
 
 def _record_provider_call(provider: str) -> None:
@@ -722,12 +684,9 @@ def _circuit_open(provider: str) -> bool:
 def _enforce_circuit(provider: str) -> None:
     """Fast-fail BEFORE dispatch when this provider's breaker is OPEN.
 
-    Raises ``CircuitOpen`` -- a transient provider signal the failover chain
-    treats as retryable (``should_retry_llm_error`` lets it through since it is
-    not a budget/egress/preflight/consent control error, and ``classify_error``
-    buckets it ``"other"``, in the default failover set). So a configured chain
-    moves to the next model and, chain or not, a dead-provider timeout is
-    skipped. No outcome is recorded (the call never ran). Fails safe: a
+    Raises ``CircuitOpen`` rather than dispatching. The exception propagates;
+    the firm runtime never substitutes another provider/model. No outcome is
+    recorded (the call never ran). Fails safe: a
     breaker-internal error proceeds (see ``_circuit_open``)."""
     if _circuit_open(provider):
         from .circuit_breaker import CircuitOpen
@@ -751,8 +710,7 @@ def _enforce_provider_cap(provider: str, projected_dollars: float = 0.0) -> None
 
     Raises ``ProviderCapExceeded`` when the provider's period spend has reached
     its cap -- OR when ``projected_dollars`` (this call's estimated cost) would
-    push it over -- so a failover chain moves to the next provider, or (no chain)
-    the call fails closed. Projecting the pending call closes the gap where a
+    push it over, so the call fails closed. Projecting the pending call closes the gap where a
     single large call or concurrent calls, each seeing under-cap recorded spend,
     blew past the ceiling. A NO-OP unless a cap is configured for this provider,
     so the default install is unchanged. ProviderCapExceeded is deliberately NOT
@@ -773,42 +731,6 @@ def _record_provider_spend(provider: str, dollars: float) -> None:
         record(provider, dollars)
     except Exception:  # pragma: no cover -- accounting never blocks a call
         pass
-
-
-def _hedge_ms() -> float | None:
-    """Tail-latency hedging delay (ms): opt-in, default OFF.
-
-    When set, ``complete_async`` fires a *backup* request this many ms after the
-    primary and takes whichever succeeds first, cancelling the laggard — the
-    "tail at scale" hedge for tightening p99 on a provider with variable latency.
-    It trades extra spend on slow calls for latency, so it is off unless an
-    operator opts in via ``MAVERICK_LLM_HEDGE_MS`` or ``[latency] hedge_ms``.
-    Returns the delay in ms, or ``None`` (disabled / non-positive / unparseable),
-    in which case the single-call path runs unchanged.
-    """
-    raw: object = os.environ.get("MAVERICK_LLM_HEDGE_MS")
-    if raw is None or str(raw).strip() == "":
-        try:
-            from .config import load_config
-            raw = (load_config() or {}).get("latency", {}).get("hedge_ms")
-        except Exception:  # pragma: no cover -- config is best-effort here
-            raw = None
-    if raw is None or str(raw).strip() == "":
-        return None
-    try:
-        v = float(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    return v if v > 0 else None
-
-
-def _cheaper_model(model: str) -> str:
-    """One tier cheaper for energy-aware downgrade: Opus->Sonnet->Haiku."""
-    if model == MODEL_OPUS or model == MODEL_OPUS_FAST:
-        return MODEL_SONNET
-    if model == MODEL_SONNET:
-        return MODEL_HAIKU
-    return model
 
 
 def _parse_spec(spec: str) -> tuple[str, str]:
@@ -1322,31 +1244,9 @@ class LLM:
         model: str | None = None,
         on_delta=None,
         effort: str | None = None,
-        _no_failover: bool = False,
     ) -> LLMResponse:
         raw_requested_model = model or self.model
         requested_model = require_model_allowed(raw_requested_model)
-        # Provider failover (opt-in, default off): when a fallback chain is
-        # configured for this model, try each in turn. No chain -> this block is
-        # skipped and the original single-call path below runs unchanged.
-        if not _no_failover:
-            from .failover_policy import order_chain, policy_should_retry
-            from .provider_failover import failover
-            _chain = _fallback_chain_for_dispatch(
-                raw_requested_model, requested_model
-            )
-            _chain = [require_model_allowed(candidate) for candidate in _chain]
-            if _chain:
-                # The policy engine narrows WHICH errors fail over and skips
-                # cooling-down models; with no [provider_failover.policy] both
-                # collapse to the v1 behavior.
-                return failover([
-                    (m, (lambda m=m: self.complete(
-                        system, messages, tools=tools, budget=budget,
-                        max_tokens=max_tokens, thinking_budget=thinking_budget,
-                        model=m, on_delta=on_delta, effort=effort, _no_failover=True)))
-                    for m in order_chain([requested_model, *_chain])
-                ], should_retry=policy_should_retry)
         provider, model_id = _parse_spec(requested_model)
         # Provider-qualified spec for the pricing/ledger paths
         # (_estimate_call_cost / _call_spend): _lookup_price's self-hosted $0
@@ -1482,27 +1382,9 @@ class LLM:
         thinking_budget: int | None = None,
         model: str | None = None,
         effort: str | None = None,
-        _no_failover: bool = False,
     ) -> LLMResponse:
         raw_requested_model = model or self.model
         requested_model = require_model_allowed(raw_requested_model)
-        # Provider failover (opt-in, default off) — see complete(). No configured
-        # chain -> skipped, and the original single-call path below is unchanged.
-        if not _no_failover:
-            from .failover_policy import order_chain, policy_should_retry
-            from .provider_failover import afailover
-            _chain = _fallback_chain_for_dispatch(
-                raw_requested_model, requested_model
-            )
-            _chain = [require_model_allowed(candidate) for candidate in _chain]
-            if _chain:
-                return await afailover([
-                    (m, (lambda m=m: self.complete_async(
-                        system, messages, tools=tools, budget=budget,
-                        max_tokens=max_tokens, thinking_budget=thinking_budget,
-                        model=m, effort=effort, _no_failover=True)))
-                    for m in order_chain([requested_model, *_chain])
-                ], should_retry=policy_should_retry)
         provider, model_id = _parse_spec(requested_model)
         # Provider-qualified spec for the pricing/ledger paths -- see complete().
         _price_spec = f"{provider}:{model_id}"
@@ -1523,8 +1405,8 @@ class LLM:
             model_id, system, messages, tools, max_tokens, thinking_budget))
         _run_preflight(model_id, system, messages, tools, max_tokens)
         client = self._get_client(provider)
-        # Circuit-breaker enforcement -- see complete(). OPEN fast-fails with a
-        # failover-retryable CircuitOpen before dispatch; fails safe.
+        # Circuit-breaker enforcement -- see complete(). OPEN fast-fails before
+        # dispatch and never selects a second provider.
         _enforce_circuit(provider)
         import time as _time
         # complete_async is the PRIMARY agent-loop path; the sync complete()
@@ -1587,51 +1469,8 @@ class LLM:
                         model=model_id, **_ekw,
                     )
 
-                hedge = _hedge_ms()
-                if hedge is None:
-                    _resp = await _call()
-                    return _resp
-                # Tail-latency hedge (opt-in): race the primary against a backup
-                # fired `hedge` ms later; first success wins, the laggard is
-                # cancelled. The race is bounded by the remaining wall budget via
-                # a SpanBudget so a hedge can never run past the goal's wall cap,
-                # and the remaining budget is stamped on the current trace span.
-                import asyncio as _asyncio
-
-                from .latency_best_of_n import AllAttemptsFailed, race_first_success
-                from .latency_span_budget import SpanBudget, tag_span_budget
-
-                race_budget_ms: float | None = None
-                if budget is not None and budget.max_wall_seconds:
-                    span = SpanBudget(
-                        max(0.0, (budget.max_wall_seconds - budget.elapsed()) * 1000.0)
-                    )
-                    tag_span_budget(span)
-                    # An already-spent wall (remaining() == 0.0) must bound the
-                    # race at zero -- it is not "no budget" (None = unbounded).
-                    race_budget_ms = span.remaining()
-
-                async def _backup():
-                    await _asyncio.sleep(hedge / 1000.0)
-                    _backup_held = (
-                        budget.reserve(_est_cost) if budget is not None else 0.0
-                    )
-                    try:
-                        return await _call()
-                    finally:
-                        _release_budget_hold(budget, _backup_held)
-
-                try:
-                    _resp = await race_first_success(
-                        [_call, _backup], budget_ms=race_budget_ms
-                    )
-                    return _resp
-                except AllAttemptsFailed as e:
-                    # Both the primary and the hedge failed: surface the real
-                    # provider error (chained as __cause__) so failover/retry
-                    # classification upstream sees the provider's exception, not
-                    # the race wrapper.
-                    raise (e.__cause__ or e) from None
+                _resp = await _call()
+                return _resp
         except Exception:
             _err = True
             raise

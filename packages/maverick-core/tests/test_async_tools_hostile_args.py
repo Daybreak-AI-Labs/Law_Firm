@@ -18,12 +18,6 @@ import pytest
 
 # ---- websocket: non-string url must not AttributeError on .strip() ----------
 
-@pytest.mark.parametrize("bad_url", [123, 1.5, True, ["x"], {"a": 1}])
-def test_websocket_nonstring_url(bad_url):
-    from maverick.tools.websocket_tool import websocket_tool
-
-    out = asyncio.run(websocket_tool().fn({"url": bad_url}))
-    assert isinstance(out, str) and out.startswith("ERROR")
 
 
 # ---- send_to_agent: non-string to_id must not AttributeError ---------------

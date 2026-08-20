@@ -1,12 +1,4 @@
-"""Supervisor binding (Layer C): governed fleet runs + oversight status.
-
-`capability_for_role` narrows a grant by an RBAC role; the runner threads a
-`capability` into the SwarmContext so the root agent runs least-privileged;
-`fleet run` creates a goal + run-index entry under the agent principal; and
-`fleet status` lists those runs with their live status + governance denials.
-
-Offline (no live LLM): the actual swarm run is monkeypatched out.
-"""
+"""Least-privilege role capabilities are preserved in the firm runner."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -65,6 +57,24 @@ def test_capability_for_role_default_principal(monkeypatch):
 
 # --- runner threads capability into the SwarmContext -----------------------
 
+def _allow_test_matter(monkeypatch):
+    from maverick.matter_context import MatterContext
+
+    monkeypatch.setattr(
+        "maverick.matter_context.resolve_goal_matter_context",
+        lambda _world, _goal_id, *, principal, source: MatterContext(
+            matter_id=1,
+            client_id=1,
+            principal=principal,
+            membership_role="attorney",
+            domain="legal",
+            jurisdiction="US",
+            purpose="goal-execution",
+            source=source,
+        ),
+    )
+
+
 def test_run_goal_in_thread_threads_capability_into_ctx(monkeypatch):
     """The capability handed to the runner reaches SwarmContext.capability,
     so the root agent runs least-privileged under it (no real LLM runs)."""
@@ -106,9 +116,15 @@ def test_run_goal_in_thread_threads_capability_into_ctx(monkeypatch):
     monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: object())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
+    _allow_test_matter(monkeypatch)
 
     cap = Capability(principal="agent:acme.bob", allow_tools=frozenset({"read_file"}))
-    status = runner.run_goal_in_thread(7, capability=cap, user_id="agent:acme.bob")
+    status = runner.run_goal_in_thread(
+        7,
+        capability=cap,
+        user_id="agent:acme.bob",
+        concurrency_principal="user:alice",
+    )
     assert status == "done"
     assert captured["cap"] is cap
     assert captured["cap"].principal == "agent:acme.bob"
@@ -140,8 +156,12 @@ def test_run_goal_in_thread_closes_sandbox(monkeypatch):
     monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: FakeSandbox())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: object())
     monkeypatch.setattr(orchestrator, "run_goal_sync", lambda *args, **kwargs: None)
+    _allow_test_matter(monkeypatch)
 
-    assert runner.run_goal_in_thread(7) == "done"
+    assert runner.run_goal_in_thread(
+        7,
+        concurrency_principal="user:alice",
+    ) == "done"
     assert closed == {"sandbox": True, "world": True}
 
 def test_run_goal_in_thread_default_capability_is_none(monkeypatch):
@@ -169,42 +189,8 @@ def test_run_goal_in_thread_default_capability_is_none(monkeypatch):
     monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: object())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
+    _allow_test_matter(monkeypatch)
 
-    runner.run_goal_in_thread(7)
+    runner.run_goal_in_thread(7, concurrency_principal="user:alice")
     assert captured["cap"] is None
-
-
-# --- fleet run -------------------------------------------------------------
-
-def _make_fleet(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    _cfg(monkeypatch, {
-        "roles": {
-            "analyst": {"allow_tools": ["read_file", "search"]},
-            "engineer": {"allow_tools": ["read_file", "write_file"]},
-        },
-    })
-    from maverick.fleet import Fleet, FleetAgent, save_fleet
-    save_fleet(Fleet(name="acme", owner="user:alice", agents=(
-        FleetAgent("researcher", "analyst"),
-        FleetAgent("coder", "engineer"),
-    )))
-
-
-
-
-
-
-
-
-
-
-
-
-# --- fleet status ----------------------------------------------------------
-
-
-
-
 

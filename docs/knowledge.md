@@ -1,76 +1,52 @@
 # The knowledge plane
 
-Per-domain document recall (RAG) for the workforce: a specialist agent grounds
-its answers in the documents its department is allowed to see, via the
-`knowledge_search` tool. Knowledge is an **opt-in extra** — the kernel never
-requires `maverick-knowledge`, and RAG is off until you enable it.
+Matter-scoped document recall (RAG) for legal work: an agent grounds its
+answers in public reference material plus documents from the one active matter,
+via the `knowledge_search` tool. The knowledge package is an optional install,
+but a legal profile that declares matter knowledge fails closed before model
+work when the package or its exact-matter collection is unavailable.
 
 ```toml
 [knowledge]
 enable   = true
-embedder = "local"     # hosted | cohere | local | deterministic
+embedder = "local"     # local | deterministic (tests only)
 store    = "sqlite"
+model    = "D:/firm-models/legal-embedder" # absolute existing directory
+model_digest = "sha256:<canonical model-tree digest>"
 ```
 
 ## Storage: pick a backend per deployment
 
-One `VectorStore` protocol, three interchangeable backends. Choice is a config
-line, not a fork — the agent-facing behaviour is identical.
+The firm build deliberately ships one file-backed store.
 
 | Backend    | When                                            | Notes |
 |------------|-------------------------------------------------|-------|
-| **sqlite** (default) | Single box, SMB, air-gapped                | Dependency-free brute-force cosine, sealed by the platform's encryption-at-rest. Comfortable to a few million chunks per tenant. |
+| **sqlite** (default) | Single box or encrypted local volume | Dependency-free brute-force cosine. Chunk text, vectors, and provenance metadata are sealed before SQLite writes them. Plaintext mode is refused. |
 
-We do **not** ship a managed-only vector service as the default: the platform
-sells "your data never leaves your boundary," so the knowledge store — the
-client's most sensitive documents — must be self-hostable. A hosted backend can
-be added later as an option, never the baseline.
+Collection identifiers remain visible for lookup, so they must be opaque keys,
+never client names. File-backed collections are accepted only as
+`matter:<numeric-id>:<source>` or `public:<source>`.
 
 ## Embedders
 
-`hosted` (Voyage, needs `VOYAGE_API_KEY`), `cohere`, `local` (on-box
-sentence-transformers, no key), or `deterministic` (a hashing stub — offline and
-keyless, but low recall quality; for tests and smoke runs only). **Meaningful
-semantic recall needs `local` or `hosted`.** If you change embedder or model,
-the vector dimension changes — re-embed the corpus (the store raises rather than
-silently returning garbage on a dim mismatch).
+`local` uses on-box sentence-transformers and sends no document content to an
+embedding vendor. `deterministic` is an offline hashing stub for tests and smoke
+runs only. Hosted Voyage and Cohere embedding code and configuration were
+removed from the firm build. Stale hosted configuration is rejected rather than
+silently reinterpreted.
 
-`model` and `dim` default **per embedder** — `local` resolves to
-`all-MiniLM-L6-v2` at 384 dimensions, `hosted` to `voyage-3` at 1024 — so
-picking an embedder is enough. Set them explicitly only to override.
+`local` has no downloadable model default. An operator must provision an
+absolute local directory, verify it out of band, and configure the canonical
+SHA-256 tree digest returned by
+`maverick_knowledge.local_embed.model_tree_digest(path)`. The loader forces
+Hugging Face and Transformers offline mode, uses `local_files_only`, disables
+remote code, and admits safetensors weights only; repository ids, symlinks,
+pickle weights, native libraries, and custom-code metadata are rejected. If the
+model tree changes after admission, the run stops before embedding client text.
 
-### The hosted embedders send the documents themselves
-
-This is worth stating separately because it is easy to file under the same
-heading as the LLM call, and it is not the same thing. When a role is routed to
-a cloud model, what leaves is a *prompt* — and
-`[privacy] redact_egress` will minimize it on the way out. When you index a
-matter with a hosted embedder, what leaves is **the documents**, in full, one
-chunk at a time. That path has no redaction knob, and it never went through one:
-`maybe_redact_egress` is wired into the LLM chokepoint only.
-
-So the hosted providers are gated on saying so out loud:
-
-```toml
-[knowledge]
-embedder                  = "hosted"
-allow_external_embedding  = true    # or MAVERICK_KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING=1
-```
-
-Without it `build_embedder` refuses, and names `local` as the alternative that
-embeds on-box with no egress at all. `local` and `deterministic` need no
-acknowledgement — nothing leaves.
-
-Every batch that does leave writes a `knowledge_egress` row on the signed audit
-chain: provider, vendor host, model, chunk count, byte count, and a SHA-256 over
-the batch. The chunk text is **not** in the record — the event exists to
-document the departure, not to copy it. The row is written *before* the request,
-so a batch still appears if the vendor errors or the connection drops; the bytes
-were on the wire either way. If the audit subsystem refuses to write, the batch
-does not go out.
-
-For privileged client material, `local` is the setting that needs no argument:
-it embeds on the box, needs no key, and nothing leaves.
+The default configured vector dimension is 384. If the pinned model uses a
+different dimension, set `dim` and re-embed the corpus; the store raises on a
+dimension mismatch rather than returning arbitrary results.
 
 ## Governance
 
@@ -93,9 +69,9 @@ compliance flows:
 - **Knowledge-only cleanup.** `maverick knowledge residual --channel X --user Y`
   and `maverick knowledge erase-subject ...` for targeted checks and removals.
 
-Retrieval respects the compartment bulkheads: a pack's `knowledge_search` is
-bound to its own `knowledge_sources`, so a finance specialist never retrieves
-another department's documents.
+Retrieval respects ethical walls: the tool is registered only when a run has a
+durable matter id, and it searches only the exact matter namespace plus shipped
+public reference namespaces. A caller cannot supply a collection name.
 
 ## Starter corpora
 

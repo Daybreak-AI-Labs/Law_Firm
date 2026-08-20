@@ -18,17 +18,8 @@ def _crypto_works() -> bool:
 
 # --- offensive C1: compute SymPy path must bound exponentiation ---
 
-@pytest.mark.parametrize("expr", ["9**9**9**9", "2**1000000", "(10**100)**100"])
-def test_compute_rejects_unbounded_pow(expr):
-    from maverick.tools.compute import compute
-    # Must return promptly with an error, not hang/OOM the worker.
-    out = compute().fn({"op": "evaluate", "expr": expr})
-    assert out.startswith("ERROR")
 
 
-def test_compute_allows_small_pow():
-    from maverick.tools.compute import compute
-    assert compute().fn({"op": "evaluate", "expr": "2**10"}).strip().startswith("1024")
 
 
 # --- offensive HIGH-2: scrub_env strips connection-string secrets too ---
@@ -94,16 +85,6 @@ def test_swarm_total_spawn_cap():
     assert ctx.try_reserve_spawns(2) is True
     assert ctx.try_reserve_spawns(1) is True
     assert ctx.try_reserve_spawns(1) is False  # would exceed cap of 3
-
-
-# --- API-contract MEDIUM: SSRF override is honored uniformly ---
-
-def test_is_blocked_host_respects_override(monkeypatch):
-    from maverick.tools.http_fetch import is_blocked_host
-    monkeypatch.delenv("MAVERICK_FETCH_ALLOW_PRIVATE", raising=False)
-    assert is_blocked_host("127.0.0.1") is True
-    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
-    assert is_blocked_host("127.0.0.1") is False
 
 
 # --- architecture H2: shared env_bool ---

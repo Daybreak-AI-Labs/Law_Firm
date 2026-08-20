@@ -11,6 +11,8 @@ Mirrors ``tests/test_capability.py``'s ``_agent(tmp_path)`` + ``_run_tool``
 setup; hermetic (no real LLM, no network).
 """
 
+import hashlib
+
 import pytest
 from maverick.capability import Capability
 from maverick.tools import Tool
@@ -165,7 +167,10 @@ async def test_path_denial_is_audited(tmp_path, monkeypatch):
     assert denied, "path denial was not written to the audit log"
     assert denied[0]["tool"] == "write_file"
     assert denied[0]["principal"] == "agent:coder-1"
-    assert denied[0]["path"] == "etc/evil"
+    assert "path" not in denied[0]
+    assert denied[0]["path_bytes"] == len(b"etc/evil")
+    assert denied[0]["path_sha256"] == hashlib.sha256(b"etc/evil").hexdigest()
+    assert "etc/evil" not in repr(denied[0])
 
 
 @pytest.mark.asyncio
@@ -234,7 +239,7 @@ async def test_sandbox_read_only_path_blocks_in_process_write_tool(tmp_path):
         {"path": "evidence/PR_DIFF.patch", "content": "tampered"},
     )
 
-    assert "DENIED by sandbox policy" in out
+    assert "is read-only" in out
     assert "evidence/PR_DIFF.patch" in out
     assert calls == []
 
@@ -264,7 +269,13 @@ async def test_sandbox_read_only_path_denial_is_audited(tmp_path, monkeypatch):
         if kind == EventKind.SANDBOX_DENIED
     ]
     assert denied
-    assert denied[0]["path"] == "evidence/PR_DIFF.patch"
+    path = "evidence/PR_DIFF.patch"
+    assert "path" not in denied[0]
+    assert denied[0]["path_bytes"] == len(path.encode("utf-8"))
+    assert denied[0]["path_sha256"] == hashlib.sha256(
+        path.encode("utf-8")
+    ).hexdigest()
+    assert path not in repr(denied[0])
     assert denied[0]["reason"] == "read_only_path"
 
 
@@ -368,24 +379,17 @@ def test_every_known_in_process_workspace_writer_has_mutating_path_metadata():
         "ast_edit",
         "apply_patch",
         "spreadsheet",
-        "sql_query",
         "ocr",
         "wasm_run",
         "diagram",
         "latex",
-        "speak",
-        "html_to_app",
         "workspace_snapshot",
         "android",
-        "memory",
-        "browser",
         "oauth_helper",
     }
     assert expected == _IN_PROCESS_WORKSPACE_WRITERS
     declared = {
         "apply_patch",
-        "memory",
-        "browser",
         "oauth_helper",
     } | {
         name
@@ -484,8 +488,6 @@ async def test_snapshot_archive_store_honors_protected_workspace(
     [
         ("diagram", {"engine": "dot", "source": "digraph {}", "format": "svg"}, "diagram.svg"),
         ("latex", {"op": "render", "latex": "x"}, "doc.pdf"),
-        ("speak", {"text": "hello"}, "speech-1.mp3"),
-        ("html_to_app", {"op": "scaffold", "html": "<p>x</p>", "dest": "evidence/app"}, "evidence"),
         (
             "wasm_run",
             {"op": "run", "module": "module.wasm", "dirs": ["evidence"]},
@@ -547,7 +549,7 @@ async def test_sql_query_falsy_non_none_write_mode_cannot_mutate_protected_db(
         },
     )
 
-    assert "DENIED by sandbox policy" in out
+    assert "sql_query is permanently read-only" in out
     with sqlite3.connect(database) as conn:
         assert conn.execute("SELECT COUNT(*) FROM controls").fetchone()[0] == 0
 
@@ -578,7 +580,7 @@ async def test_sql_query_default_read_only_mode_can_read_protected_db(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_sql_query_write_honors_protected_wal_sidecar(tmp_path):
+async def test_sql_query_has_no_write_mode_even_with_unprotected_main_db(tmp_path):
     import sqlite3
 
     agent = _agent(tmp_path)
@@ -598,74 +600,9 @@ async def test_sql_query_write_honors_protected_wal_sidecar(tmp_path):
         },
     )
 
-    assert "DENIED by sandbox policy" in out
+    assert "permanently read-only" in out
     with sqlite3.connect(database) as conn:
         assert conn.execute("SELECT COUNT(*) FROM controls").fetchone()[0] == 0
-
-
-@pytest.mark.asyncio
-async def test_configured_memory_root_honors_protected_workspace(
-    tmp_path,
-    monkeypatch,
-):
-    memory_root = tmp_path / "evidence" / "memory"
-    monkeypatch.setenv("MAVERICK_MEMORY_DIR", str(memory_root))
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-
-    out = await agent._run_tool(
-        "memory",
-        {"command": "create", "path": "proof.md", "file_text": "tampered"},
-    )
-
-    assert "DENIED by sandbox policy" in out
-    assert not (memory_root / "proof.md").exists()
-
-
-@pytest.mark.asyncio
-async def test_memory_view_does_not_create_missing_configured_root(
-    tmp_path,
-    monkeypatch,
-):
-    memory_root = tmp_path / "evidence" / "memory"
-    monkeypatch.setenv("MAVERICK_MEMORY_DIR", str(memory_root))
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-
-    out = await agent._run_tool("memory", {"command": "view"})
-
-    assert "DENIED" not in out
-    assert "memory is empty" in out
-    assert not memory_root.exists()
-
-
-@pytest.mark.asyncio
-async def test_configured_browser_state_honors_protected_workspace(
-    tmp_path,
-    monkeypatch,
-):
-    state = tmp_path / "evidence" / "browser-state.json"
-    monkeypatch.setenv("MAVERICK_BROWSER_STATE", str(state))
-    monkeypatch.delenv("MAVERICK_BROWSER_NO_PERSIST", raising=False)
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("evidence",)
-    calls: list[dict] = []
-    agent.tools.register(
-        Tool(
-            name="browser",
-            description="browser spy",
-            fn=lambda payload: calls.append(payload) or "ran",
-            input_schema={"type": "object", "properties": {}},
-        )
-    )
-
-    out = await agent._run_tool(
-        "browser",
-        {"action": "navigate", "url": "https://example.test"},
-    )
-
-    assert "DENIED by sandbox policy" in out
-    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -717,55 +654,6 @@ async def test_ocr_url_temp_write_honors_read_only_workspace_root(tmp_path):
 
     assert "DENIED by sandbox policy" in out
     assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_speak_dynamic_default_is_frozen_before_hooks(
-    tmp_path,
-    monkeypatch,
-):
-    from maverick import hooks
-    from maverick.hooks import HookEvent
-
-    agent = _agent(tmp_path)
-    agent.ctx.sandbox.read_only_paths = ("speech-2.mp3",)
-    calls: list[dict] = []
-
-    def run_speak(payload):
-        output = payload.get("output")
-        if not output:
-            index = 1
-            while (tmp_path / f"speech-{index}.mp3").exists():
-                index += 1
-            output = f"speech-{index}.mp3"
-        calls.append(dict(payload))
-        (tmp_path / output).write_text("audio", encoding="utf-8")
-        return f"wrote {output}"
-
-    agent.tools.register(
-        Tool(
-            name="speak",
-            description="speak race spy",
-            fn=run_speak,
-            input_schema={"type": "object", "properties": {}},
-        )
-    )
-
-    async def race_after_policy(ctx):
-        if ctx.event == HookEvent.PRE_TOOL_USE:
-            (tmp_path / "speech-1.mp3").write_text(
-                "concurrent",
-                encoding="utf-8",
-            )
-        return True
-
-    monkeypatch.setattr(hooks, "dispatch", race_after_policy)
-
-    out = await agent._run_tool("speak", {"text": "hello"})
-
-    assert "DENIED" not in out
-    assert calls[0]["output"] == "speech-1.mp3"
-    assert not (tmp_path / "speech-2.mp3").exists()
 
 
 @pytest.mark.asyncio

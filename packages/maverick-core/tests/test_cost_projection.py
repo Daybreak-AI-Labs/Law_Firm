@@ -22,9 +22,14 @@ ROLES = {
 
 @pytest.fixture
 def pinned(monkeypatch):
-    """Pin the model/price tables and silence every other resolution layer."""
+    """Pin compatibility model/price tables for projection arithmetic.
+
+    Secure one-pin selection is covered separately; these tests isolate the
+    estimator's role-token defaults and pricing math.
+    """
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "0")
     for var in (
-        "MAVERICK_MODEL_OVERRIDE", "MAVERICK_COST_ROUTING",
+        "MAVERICK_MODEL_OVERRIDE",
         "MAVERICK_MODEL_OVERRIDE_CODER", "MAVERICK_MODEL_OVERRIDE_WRITER",
         "MAVERICK_MODEL_OVERRIDE_SUMMARIZER", "MAVERICK_MODEL_OVERRIDE_RESEARCHER",
         "MAVERICK_MODEL_OVERRIDE_MYSTERY",
@@ -39,7 +44,7 @@ def pinned(monkeypatch):
 def test_estimate_step_math(pinned):
     est = cp.estimate_step("coder", "x" * 4000, expected_output_tokens=500)
     assert est.role == "coder"
-    assert est.model == "m-coder"
+    assert est.model == "anthropic:m-coder"
     assert est.in_tokens == 1000 + cp.STEP_OVERHEAD_TOKENS
     assert est.out_tokens == 500
     expected = (est.in_tokens / 1e6) * 2.0 + (500 / 1e6) * 10.0
@@ -119,7 +124,7 @@ def test_unknown_model_falls_back_to_documented_rate(pinned, monkeypatch):
     from maverick.budget import _FALLBACK_PRICE_IN, _FALLBACK_PRICE_OUT
     est = cp.estimate_step("mystery", "x" * 4000, expected_output_tokens=1000)
     expected = (est.in_tokens / 1e6) * _FALLBACK_PRICE_IN + (1000 / 1e6) * _FALLBACK_PRICE_OUT
-    assert est.model == "model-nobody-prices-xyz"
+    assert est.model == "anthropic:model-nobody-prices-xyz"
     assert est.dollars == pytest.approx(expected)
 
 

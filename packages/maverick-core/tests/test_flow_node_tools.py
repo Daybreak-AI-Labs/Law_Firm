@@ -2,6 +2,7 @@
 consistent, and let it drive a no-prompt / autonomous harden (agent -> action)."""
 from __future__ import annotations
 
+import pytest
 from maverick.flow import evolve, node_tools
 from maverick.flow.ir import NODE_ACTION, NODE_AGENT, Flow, FlowNode
 
@@ -103,10 +104,7 @@ def test_driver_publishes_the_active_node_to_the_runner(tmp_path, monkeypatch):
     assert seen["node"] == ("f", "a", "", "")
 
 
-def test_tool_capture_records_only_on_success_not_per_retry(tmp_path, monkeypatch):
-    # A node with retries invokes the runner once PER ATTEMPT; recording every
-    # attempt would let one retried run look like many. Only a SUCCESSFUL attempt
-    # records, so a run yields ~one tool row -- aligned with node_outcomes.
+def test_retired_default_agent_runner_records_no_tool_trajectory(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_TRAJECTORY_CAPTURE", "1")
@@ -116,19 +114,14 @@ def test_tool_capture_records_only_on_success_not_per_retry(tmp_path, monkeypatc
     monkeypatch.setattr(trajectory_store, "tools_for_goal", lambda gid, **k: ["summarize_tool"])
     w = world_model.WorldModel(tmp_path / "world.db")
 
-    def succeed(gid, **kw):
-        w.set_goal_status(gid, "done", result="ok")
-        return "ok"
-    monkeypatch.setattr("maverick.runner.run_goal_in_thread", succeed)
+    monkeypatch.setattr(
+        "maverick.runner.run_goal_in_thread",
+        lambda *_args, **_kwargs: pytest.fail("retired adapter reached runner"),
+    )
     run = execution.default_agent_runner(w)
     token = execution._active_node.set(("f", "a", "", ""))
     try:
-        run("brief", {})                              # two successful runs -> two rows
-        run("brief", {})
-        monkeypatch.setattr("maverick.runner.run_goal_in_thread",
-                            lambda gid, **kw: "boom")  # goal never 'done' -> outcome 0.0
-        run("brief", {})                              # two FAILED runs -> no rows
         run("brief", {})
     finally:
         execution._active_node.reset(token)
-    assert len(node_tools._rows_for("f", "a")) == 2   # only the two successes recorded
+    assert node_tools._rows_for("f", "a") == []

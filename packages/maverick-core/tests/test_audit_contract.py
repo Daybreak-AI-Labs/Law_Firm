@@ -225,7 +225,10 @@ def test_gate_exits_non_zero_when_it_inspects_nothing(monkeypatch, capsys) -> No
 
 def test_gate_inspects_a_real_and_substantial_tree() -> None:
     violations, inspected = audit_contract.scan()
-    assert inspected > 500, inspected
+    # The firm-only prune deliberately removed hundreds of runtime modules;
+    # keep this non-vacuity floor below the current tree while still requiring
+    # a substantial production census.
+    assert inspected > 400, inspected
     # The baseline is debt, not an exemption: every entry must still be a real
     # site, or the ratchet is hiding a fix nobody recorded.
     known = audit_contract.load_baseline()

@@ -1,4 +1,4 @@
-"""Migration governance: checksum immutability, head parity, additive-only.
+"""Migration governance: checksum immutability, head parity, safe evolution.
 
 The guard test (real ladders vs the committed lock) keeps migrations.lock.json
 honest; the rest exercise the logic on synthetic ladders."""
@@ -67,6 +67,38 @@ def test_new_destructive_version_is_rejected():
     lads["sqlite"][2] = ["ALTER TABLE goals DROP COLUMN z"]  # non-additive
     probs = mg.lock_problems(lock, lads)
     assert any("destructive" in p for p in probs)
+
+
+def test_exact_reviewed_v39_transfer_retirement_can_be_locked():
+    released = {"sqlite": {1: []}}
+    lads = {"sqlite": {
+        1: [],
+        39: ["DROP TABLE IF EXISTS harness_transfer_tried"],
+    }}
+    lock = _lock_from(released)
+
+    problems = mg.lock_problems(lock, lads)
+
+    assert problems == [
+        "new migration version(s) detected — run `--regen` and commit "
+        "migrations.lock.json so the addition is reviewed",
+    ]
+    assert mg.regen_blockers(lads, lock) == []
+
+
+def test_v39_transfer_retirement_allowlist_is_exact():
+    released = {"sqlite": {1: []}}
+    lads = {"sqlite": {
+        1: [],
+        39: [
+            "DROP TABLE IF EXISTS harness_transfer_tried",
+            "DROP TABLE client_matters",
+        ],
+    }}
+    lock = _lock_from(released)
+
+    assert any("destructive" in p for p in mg.lock_problems(lock, lads))
+    assert any("destructive" in p for p in mg.regen_blockers(lads, lock))
 
 
 @pytest.mark.parametrize("stmt", [

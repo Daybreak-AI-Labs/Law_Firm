@@ -7,6 +7,9 @@ policy => unchanged behaviour.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 from maverick.tools import Tool
 
@@ -104,13 +107,78 @@ async def test_require_human_runs_with_grant(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_deny_is_audited(monkeypatch, tmp_path):
     _gov(monkeypatch, {"deny_actions": ["ping"]})
+    from maverick import governance
+
+    reason = "denial quoted Client Falcon merger.docx and USD matter terms"
+    monkeypatch.setattr(
+        governance,
+        "evaluate",
+        lambda *args, **kwargs: governance.Verdict(
+            governance.Decision.DENY,
+            reason,
+            "deny_actions",
+        ),
+    )
     seen = []
     import maverick.audit as audit
     monkeypatch.setattr(audit, "record",
-                        lambda kind, **kw: seen.append((kind, kw)))
+                        lambda kind, **kw: seen.append((kind, kw)) or True)
     await _agent(tmp_path)._run_tool("ping", {})
-    kinds = [k for k, _ in seen]
-    assert audit.EventKind.GOVERNANCE_DENIED in kinds
+    payload = next(
+        kw for kind, kw in seen if kind == audit.EventKind.GOVERNANCE_DENIED
+    )
+    assert payload["rule"] == "deny_actions"
+    assert "reason" not in payload
+    assert payload["reason_bytes"] == len(reason.encode("utf-8"))
+    assert payload["reason_sha256"] == hashlib.sha256(
+        reason.encode("utf-8")
+    ).hexdigest()
+    assert reason not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_rehearsal_audit_commits_reason_without_client_text(monkeypatch, tmp_path):
+    import importlib
+
+    import maverick.audit as audit
+    from maverick import rehearsal, rehearsal_runtime
+
+    reason = "learned hold quotes Client Falcon merger.docx privilege analysis"
+    monkeypatch.setattr(rehearsal, "enabled", lambda: True)
+    tool_risk_module = importlib.import_module("maverick.safety.tool_risk")
+    monkeypatch.setattr(tool_risk_module, "tool_risk", lambda _name: "high")
+    monkeypatch.setattr(
+        rehearsal_runtime,
+        "gate_tool",
+        lambda **_kwargs: rehearsal.RehearsalVerdict(
+            rehearsal.BLOCK,
+            0.1,
+            0.0,
+            10,
+            True,
+            reason,
+        ),
+    )
+    seen = []
+    monkeypatch.setattr(
+        audit,
+        "record",
+        lambda kind, **payload: seen.append((kind, payload)) or True,
+    )
+
+    denial = _agent(tmp_path)._rehearsal_denial("shell")
+
+    assert denial is not None and reason in denial
+    payload = next(
+        row for kind, row in seen if kind == audit.EventKind.SHIELD_BLOCK
+    )
+    assert payload["stage"] == "rehearsal"
+    assert payload["decision"] == rehearsal.BLOCK
+    assert "reason" not in payload
+    assert payload["reason_bytes"] == len(reason.encode("utf-8"))
+    assert payload["reason_sha256"] == hashlib.sha256(
+        reason.encode("utf-8")
+    ).hexdigest()
+    assert reason not in json.dumps(payload, ensure_ascii=False)
 
 
 @pytest.mark.asyncio

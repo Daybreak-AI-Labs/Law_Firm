@@ -12,8 +12,10 @@ from maverick.attachments import (
     MAX_GOAL_BYTES,
     AttachmentRejected,
     content_blocks_for_goal,
+    read_bytes,
     store,
 )
+from maverick.crypto_at_rest import is_sealed
 from maverick.world_model import WorldModel
 
 
@@ -30,11 +32,31 @@ def test_store_text_writes_to_disk(tmp_path):
     assert out.mime == "text/plain"
     assert out.size_bytes == len(data)
     assert out.path.exists()
-    assert out.path.read_bytes() == data
-    # sha-prefixed dest avoids name collisions.
-    assert out.path.name.startswith(out.sha256[:16] + "-")
+    durable = out.path.read_bytes()
+    assert durable != data
+    assert is_sealed(durable)
+    assert read_bytes(out.path, out.sha256) == data
+    # The durable pathname is content-addressed without leaking the client name.
+    assert out.path.name == out.sha256
+    assert "notes.txt" not in str(out.path)
     assert file_lock.private_path_is_restricted(out.path.parent, 0o700)
     assert file_lock.private_path_is_restricted(out.path)
+
+
+def test_firm_attachment_store_has_no_object_mirror(monkeypatch, tmp_path):
+    import maverick.attachments as attachment_module
+
+    monkeypatch.setenv("MAVERICK_ATTACH_S3_BUCKET", "must-not-be-used")
+    out = attachment_module.store(
+        42,
+        "privileged.txt",
+        "text/plain",
+        b"attorney work product",
+        root=tmp_path,
+    )
+    assert out.path.is_file()
+    assert not hasattr(attachment_module, "s3_fetch")
+    assert not hasattr(attachment_module, "s3_mirror_enabled")
 
 
 def test_default_attachment_root_resolves_per_tenant_context(tmp_path, monkeypatch):
@@ -46,20 +68,24 @@ def test_default_attachment_root_resolves_per_tenant_context(tmp_path, monkeypat
     first_token = maverick_paths.set_tenant("tenant-a")
     try:
         first = store(1, "report.txt", "text/plain", b"tenant a")
+        assert read_bytes(first.path, first.sha256) == b"tenant a"
     finally:
         maverick_paths.reset_tenant(first_token)
 
     second_token = maverick_paths.set_tenant("tenant-b")
     try:
         second = store(1, "report.txt", "text/plain", b"tenant b")
+        assert read_bytes(second.path, second.sha256) == b"tenant b"
     finally:
         maverick_paths.reset_tenant(second_token)
 
     assert first.path != second.path
     assert tmp_path / "tenants" / "tenant-a" / "attachments" in first.path.parents
     assert tmp_path / "tenants" / "tenant-b" / "attachments" in second.path.parents
-    assert first.path.read_bytes() == b"tenant a"
-    assert second.path.read_bytes() == b"tenant b"
+    assert first.path.read_bytes() != b"tenant a"
+    assert second.path.read_bytes() != b"tenant b"
+    assert is_sealed(first.path.read_bytes())
+    assert is_sealed(second.path.read_bytes())
 
 
 @pytest.mark.parametrize(
@@ -95,7 +121,7 @@ def test_store_rejects_filename_that_overflows_content_address_component(tmp_pat
     with pytest.raises(AttachmentRejected, match="too long"):
         store(
             goal_id=1,
-            filename="a" * 239,
+            filename="a" * 256,
             mime="text/plain",
             data=b"safe text",
             root=tmp_path,
@@ -106,10 +132,10 @@ def test_store_refuses_planted_content_address_without_overwriting(tmp_path):
     data = b"expected content"
     digest = hashlib.sha256(data).hexdigest()
     goal_dir = file_lock.ensure_private_directory(tmp_path / "7")
-    planted = goal_dir / f"{digest[:16]}-report.txt"
+    planted = goal_dir / digest
     file_lock.atomic_create_bytes(planted, b"attacker content")
 
-    with pytest.raises(AttachmentRejected, match="content-address mismatch"):
+    with pytest.raises(AttachmentRejected, match="plaintext|content-address mismatch"):
         store(
             goal_id=7,
             filename="report.txt",
@@ -121,13 +147,29 @@ def test_store_refuses_planted_content_address_without_overwriting(tmp_path):
     assert planted.read_bytes() == b"attacker content"
 
 
+def test_read_bytes_rejects_tampered_ciphertext(tmp_path):
+    out = store(
+        goal_id=8,
+        filename="privileged.txt",
+        mime="text/plain",
+        data=b"attorney work product",
+        root=tmp_path,
+    )
+    ciphertext = bytearray(out.path.read_bytes())
+    ciphertext[-1] ^= 1
+    out.path.write_bytes(ciphertext)
+
+    with pytest.raises(AttachmentRejected, match="authenticated or decrypted"):
+        read_bytes(out.path, out.sha256)
+
+
 def test_store_refuses_planted_symlink_without_touching_referent(tmp_path):
     data = b"expected content"
     digest = hashlib.sha256(data).hexdigest()
     goal_dir = file_lock.ensure_private_directory(tmp_path / "7")
     referent = tmp_path / "referent.txt"
     referent.write_bytes(b"do not overwrite")
-    planted = goal_dir / f"{digest[:16]}-report.txt"
+    planted = goal_dir / digest
     try:
         os.symlink(referent, planted)
     except (OSError, NotImplementedError):
@@ -279,7 +321,7 @@ def test_text_attachment_is_not_vision_block(tmp_path):
         goal_id=gid, filename=out.filename, mime=out.mime,
         size_bytes=out.size_bytes, sha256=out.sha256, path=str(out.path),
     )
-    # Text attachments are reachable via list_attachments + read_file,
+    # Text attachments are reachable via list_attachments + read_attachment,
     # not auto-embedded.
     blocks = content_blocks_for_goal(wm, gid)
     assert blocks == []
@@ -302,6 +344,41 @@ def test_list_attachments_tool_returns_metadata(tmp_path):
     result = tool.fn({})
     assert "a.txt" in result
     assert "text/plain" in result
+    assert str(out.path) not in result
+
+
+def test_read_attachment_tool_is_goal_bound_and_decrypts(tmp_path):
+    from maverick.tools.attachments import read_attachment_tool
+
+    wm = WorldModel(path=tmp_path / "w.db")
+    goal_id = wm.create_goal("attached", "")
+    other_goal_id = wm.create_goal("other", "")
+    out = store(
+        goal_id=goal_id,
+        filename="client-note.txt",
+        mime="text/plain",
+        data=b"confidential client note",
+        root=tmp_path / "attach",
+    )
+    attachment_id = wm.add_attachment(
+        goal_id=goal_id,
+        filename=out.filename,
+        mime=out.mime,
+        size_bytes=out.size_bytes,
+        sha256=out.sha256,
+        path=str(out.path),
+    )
+
+    result = read_attachment_tool(wm, goal_id).fn(
+        {"attachment_id": attachment_id}
+    )
+    assert "confidential client note" in result
+    assert "untrusted attachment data" in result
+    assert str(out.path) not in result
+    denied = read_attachment_tool(wm, other_goal_id).fn(
+        {"attachment_id": attachment_id}
+    )
+    assert "no such attachment" in denied
 
 
 def test_list_attachments_tool_no_goal(tmp_path):

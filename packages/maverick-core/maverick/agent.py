@@ -44,12 +44,11 @@ Your depth in the swarm: {depth} (root = 0, max = {max_depth})
 You have a single sub-goal. Plan briefly, then act.
 
 Tools you can call include:
-  - File / shell / read / write for the sandbox.
   - `ask_user` to queue a question for the user (async). Use sparingly, batch.
   - `spawn_subagent` to delegate a focused sub-task to a child specialist.
   - `spawn_swarm` to fan out INDEPENDENT sub-tasks in PARALLEL.
-  - `memory` for durable, cross-session notes: consult it for long-horizon work and record lasting learnings (conventions, decisions, dead ends) — not scratch.
-  - `mcp_<server>__<tool>` for any external MCP servers wired into config.
+  - The read-only legal, matter-knowledge, citation, attachment, spreadsheet,
+    and approved-web tools explicitly granted by the active legal profile.
 
 Rules:
 1. Do the work YOURSELF by default. Only `spawn_swarm` when a sub-task is genuinely heavy AND independent AND needs its own context window — not merely because your task "has several aspects". Over-decomposing front-loads the whole budget on fan-out so nobody is left to synthesize the answer. The deeper you are, the more you should be a leaf: at depth ≥ 1, prefer doing the research yourself over spawning more children.
@@ -71,32 +70,22 @@ Standard playbook:
 5. If you are blocked on info only the user can give, use `ask_user` (batched).
 6. End with `FINAL:` followed by your synthesized answer.
 
-Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
-
 You have a maximum spawn depth of {max_depth}. Use it wisely.
 
 Available roles for children: researcher, coder, writer, analyst, summarizer, revisor.
 
-External MCP tools (if any) appear as `mcp_<server>__<tool>`."""
+Only the tools explicitly granted by the active legal profile are available."""
 
 
 def select_base_template(
-    *, role: str, depth: int, max_depth: int, coding_enabled: bool,
+    *, role: str, depth: int, max_depth: int,
 ) -> str:
     """Pick the base system template for an agent. Pure: no env/config reads.
 
-    Coding mode, when enabled, overrides role: the orchestrator emits the FINAL
-    and must speak unified diffs, not prose, or the patch validator and
-    test-driven verifier operate on prose and reject every output (Wave 9). With
-    coding mode off it is the orchestrator template for the planner and the
-    worker template for every other role. First side-effect-free seam extracted
-    from ``Agent._build_system`` (god-module decomposition: PromptBuilder).
+    The orchestrator receives its planning template and every other role its
+    specialist template. Interactive software-engineering mode is not part of
+    the law-firm runtime.
     """
-    if coding_enabled:
-        from .coding_mode import CODER_CODING_MODE_TEMPLATE
-        return CODER_CODING_MODE_TEMPLATE.format(
-            role=role, depth=depth, max_depth=max_depth,
-        )
     if role == "orchestrator":
         return ORCHESTRATOR_SYSTEM_TEMPLATE.format(max_depth=max_depth)
     return WORKER_SYSTEM_TEMPLATE.format(role=role, depth=depth, max_depth=max_depth)
@@ -105,11 +94,8 @@ def select_base_template(
 def apply_global_overlays(base: str) -> str:
     """Append the swarm-wide additive prompt overlays to ``base``.
 
-    Persona, output style, and the learned-habits prior are global (config /
-    data-engine state, not agent-specific), each optional and fail-open. Order
-    is preserved from the original inline assembly. Second PromptBuilder
-    collaborator extracted from ``Agent._build_system``; self-independent, so it
-    is a free function rather than a method.
+    Persona and output style are operator-curated global settings, each optional
+    and fail-open. Client-derived global habit overlays are intentionally absent.
     """
     # Persona (optional, additive).
     try:
@@ -127,18 +113,6 @@ def apply_global_overlays(base: str) -> str:
         style = render_active_style_prompt()
         if style:
             base = base + style
-    except Exception:
-        pass
-
-    # Learned-habits prior (the Hippocampus, additive): when the data engine
-    # is on, surface the strongest causally-beneficial habits it has
-    # consolidated so the agent prefers what has worked. No-op unless
-    # [data_engine] is enabled and procedural memory exists; fail-open.
-    try:
-        from . import data_engine
-        if data_engine.enabled():
-            from .procedural_memory import recall_prompt
-            base = base + recall_prompt()
     except Exception:
         pass
 
@@ -181,10 +155,9 @@ def apply_skill_overlays(
 ) -> tuple[str, list]:
     """Append relevant prior-run skills to ``base``; return ``(base, skills)``.
 
-    Returns the recalled skill objects so the caller can record their use and
-    attribute this run's outcome to them — the stats + ``skills_used``
-    bookkeeping stays in the caller to preserve the original all-or-nothing
-    semantics (names are read inside the caller's fail-safe block). No-op when
+    Returns the recalled skill objects so the caller can retain run-local
+    provenance for governed-action lineage. No tenant-global use/outcome
+    statistics are written. No-op when
     skills are disabled or none are relevant; fail-open on a missing/invalid
     skill store. Fourth PromptBuilder collaborator from ``Agent._build_system``.
     """
@@ -203,28 +176,6 @@ def apply_skill_overlays(
     except (ImportError, FileNotFoundError, ValueError):
         pass
     return base, []
-
-
-def apply_memory_brief(base: str, *, depth: int) -> str:
-    """Append the cross-session memory presence hint (root agent only).
-
-    Depth-gated to the root agent (``depth == 0``) so deep workers keep lean,
-    focused context (they can still use the ``memory`` tool directly). Surfaces
-    only a safe presence hint — memory filenames/contents are model-writable and
-    re-enter through the tool's scanned, redacted path, never directly here.
-    Empty memory -> no change; fail-open. Fifth PromptBuilder collaborator from
-    ``Agent._build_system``.
-    """
-    if depth != 0:
-        return base
-    try:
-        from .tools.memory import memory_brief
-        brief = memory_brief()
-        if brief:
-            base = base + "\n\n" + brief
-    except Exception:  # pragma: no cover -- never block a run
-        pass
-    return base
 
 
 # #611: fraction of the budget reserved for the TOP-level goal's synthesis /
@@ -339,17 +290,7 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
         operation_argument="op",
         known_operations=frozenset({"info", "read", "write", "set_cell"}),
     ),
-    "sql_query": _FileToolPolicy(
-        (
-            # The runtime defaults None to read-only, then applies bool(value).
-            # Schema-valid booleans are represented precisely here; malformed
-            # direct calls are handled by the custom extractor below.
-            _rule("database", operations={None, True}),
-            _rule("database", operations={False}, mutates=True),
-        ),
-        operation_argument="read_only",
-        known_operations=frozenset({None, True, False}),
-    ),
+    "sql_query": _FileToolPolicy((_rule("database"),)),
     "image_content_classifier": _FileToolPolicy((_rule("file"),)),
     "ocr": _FileToolPolicy(
         (
@@ -368,7 +309,6 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
         operation_argument="op",
         known_operations=frozenset({"extract", "extract_url"}),
     ),
-    "transcribe_audio": _FileToolPolicy((_rule("source"),)),
     "wasm_run": _FileToolPolicy(
         (
             _rule("module", operations={"run"}),
@@ -388,19 +328,6 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
         (_rule("out", operations={"render"}, mutates=True, default="doc.pdf"),),
         operation_argument="op",
         known_operations=frozenset({"mathml", "render"}),
-    ),
-    "speak": _FileToolPolicy((_rule("output", mutates=True),)),
-    "html_to_app": _FileToolPolicy(
-        (
-            _rule(
-                "dest",
-                operations={"scaffold"},
-                mutates=True,
-                mutates_subtree=True,
-            ),
-        ),
-        operation_argument="op",
-        known_operations=frozenset({"analyze", "scaffold"}),
     ),
     "workspace_snapshot": _FileToolPolicy(
         (
@@ -435,44 +362,6 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
             }
         ),
     ),
-    # Memory paths are rooted by operator configuration rather than
-    # relative to workdir and need a custom extractor below.
-    "memory": _FileToolPolicy(
-        (),
-        operation_argument="command",
-        known_operations=frozenset(
-            {"view", "create", "str_replace", "insert", "delete", "rename"}
-        ),
-    ),
-    # Persistence is opt-in, but when configured the browser can checkpoint
-    # after navigation, explicit save/close, or interpreter exit. The target is
-    # operator-selected and therefore resolved by a custom extractor.
-    "browser": _FileToolPolicy(
-        (),
-        operation_argument="action",
-        known_operations=frozenset(
-            {
-                "navigate",
-                "click",
-                "type",
-                "fill_form",
-                "press",
-                "scroll",
-                "screenshot",
-                "observe",
-                "extract_text",
-                "extract_html",
-                "find_text",
-                "wait_for",
-                "go_back",
-                "go_forward",
-                "current_url",
-                "list_links",
-                "save_session",
-                "close",
-            }
-        ),
-    ),
     "oauth_helper": _FileToolPolicy(
         (),
         operation_argument="op",
@@ -487,17 +376,12 @@ _IN_PROCESS_WORKSPACE_WRITERS = frozenset(
         "ast_edit",
         "apply_patch",
         "spreadsheet",
-        "sql_query",
         "ocr",
         "wasm_run",
         "diagram",
         "latex",
-        "speak",
-        "html_to_app",
         "workspace_snapshot",
         "android",
-        "memory",
-        "browser",
         "oauth_helper",
     }
 )
@@ -512,8 +396,6 @@ _IN_PROCESS_WORKSPACE_WRITERS = frozenset(
 # allow-all" convention), so this is a no-op unless capability enforcement was
 # opted in AND the active grant restricts hosts.
 _NET_TOOL_URL_ARGS: dict[str, str] = {
-    "http_fetch": "url",
-    "browser": "url",
     "oidc": "token_url",
     "oauth_helper": "token_url",
 }
@@ -542,12 +424,6 @@ def _default_workspace_path(
     """Resolve a tool's real default destination without executing it."""
     if name == "diagram" and rule.argument == "out":
         return f"diagram.{str(args.get('format') or 'svg').strip().lower()}"
-    if name == "speak" and rule.argument == "output":
-        base = Path(sandbox.workdir)
-        index = 1
-        while (base / f"speech-{index}.mp3").exists():
-            index += 1
-        return f"speech-{index}.mp3"
     return rule.default
 
 
@@ -556,22 +432,9 @@ def _normalize_file_tool_args(
     args: dict[str, Any],
     sandbox: Any,
 ) -> dict[str, Any]:
-    """Freeze dynamic path defaults once for policy, audit, hooks, and dispatch.
-
-    ``speak`` historically searched for the next free ``speech-N.mp3`` both in
-    the path gate and again inside the tool. A file appearing between those two
-    searches could shift the actual destination onto a protected next name.
-    Supplying the admitted name explicitly makes the checked and written path
-    identical.
-    """
-    if name != "speak" or args.get("output"):
-        return args
-    normalized = dict(args)
-    rule = _FILE_TOOL_POLICIES["speak"].paths[0]
-    output = _default_workspace_path(name, rule, normalized, sandbox)
-    if output:
-        normalized["output"] = output
-    return normalized
+    """Freeze any dynamic path defaults before policy and dispatch."""
+    del name, sandbox
+    return args
 
 
 def _one_workspace_access(
@@ -586,92 +449,20 @@ def _one_workspace_access(
     )
 
 
-def _memory_path_accesses(
-    args: dict[str, Any],
-    sandbox: Any,
-    *,
-    mutating_only: bool,
-) -> list[_ResolvedWorkspacePath] | None:
-    """Resolve configured long-term-memory paths without granting its root."""
-    command = str(args.get("command") or "").strip()
-    mutating = {"create", "str_replace", "insert", "delete", "rename"}
-    if mutating_only and command not in mutating:
-        return []
-    try:
-        from .tools.memory import _memory_root, _resolve
-
-        root = _memory_root().resolve()
-        if command == "rename":
-            targets = [
-                _resolve(root, args.get("old_path") or args.get("path") or ""),
-                _resolve(root, args.get("new_path") or ""),
-            ]
-        elif command in {
-            "view",
-            "create",
-            "str_replace",
-            "insert",
-            "delete",
-        }:
-            targets = [_resolve(root, args.get("path") or "")]
-        else:
-            return []
-    except (OSError, RuntimeError, ValueError):
-        return None
-    recursive = command in {"delete", "rename"}
-    return [
-        _one_workspace_access(
-            sandbox,
-            target,
-            mutates_subtree=recursive,
-        )
-        for target in targets
-    ]
-
-
 def _sql_query_path_accesses(
     args: dict[str, Any],
     sandbox: Any,
     *,
     mutating_only: bool,
 ) -> list[_ResolvedWorkspacePath] | None:
-    """Mirror sql_query's coercion and include SQLite's writable sidecars."""
+    """Resolve the database read; sql_query has no writable mode."""
     raw = args.get("database")
     if not isinstance(raw, str) or not raw:
         return None
-    read_only_arg = args.get("read_only")
-    read_only = True if read_only_arg is None else bool(read_only_arg)
-    if mutating_only and read_only:
+    if mutating_only:
         return []
     path = _workspace_relative_path(sandbox, raw)
-    accesses = [_ResolvedWorkspacePath(path)]
-    if not read_only:
-        # A writable connection may create rollback/WAL coordination files
-        # beside the main DB. Protecting one of those exact evidence paths must
-        # be as effective as protecting the main database itself.
-        accesses.extend(
-            _ResolvedWorkspacePath(path + suffix)
-            for suffix in ("-journal", "-wal", "-shm")
-        )
-    return accesses
-
-
-def _browser_path_accesses(
-    args: dict[str, Any],
-    sandbox: Any,
-    *,
-    mutating_only: bool,
-) -> list[_ResolvedWorkspacePath] | None:
-    """Resolve the opt-in browser state file that any live session may save."""
-    del mutating_only  # every started persistent session may save at exit
-    if not args.get("action"):
-        return []
-    if os.environ.get("MAVERICK_BROWSER_NO_PERSIST") == "1":
-        return []
-    state = os.environ.get("MAVERICK_BROWSER_STATE", "")
-    if not state:
-        return []
-    return [_one_workspace_access(sandbox, Path(state).expanduser())]
+    return [_ResolvedWorkspacePath(path)]
 
 
 def _oauth_path_accesses(
@@ -729,9 +520,7 @@ def _workspace_path_accesses_for_tool(
         ]
 
     custom = {
-        "memory": _memory_path_accesses,
         "sql_query": _sql_query_path_accesses,
-        "browser": _browser_path_accesses,
         "oauth_helper": _oauth_path_accesses,
     }.get(name)
     if custom is not None:
@@ -886,18 +675,37 @@ def _tool_call_failed(output: str) -> bool:
     return tool_result_failed(output)
 
 
-def _audit_summary(value: Any, limit: int = 200) -> str:
-    """Short, whitespace-collapsed, length-bounded text for the audit log.
-
-    Used for the ``input_summary`` / ``output_summary`` of TOOL_CALL /
-    TOOL_RESULT events. The audit writer scrubs secrets before signing, so this
-    only needs to bound size, not redact."""
+def _audit_content_metadata(value: Any, *, prefix: str) -> dict[str, Any]:
+    """Content-free byte count and canonical digest for a tool payload."""
     try:
-        s = value if isinstance(value, str) else json.dumps(value, default=str)
+        if isinstance(value, str):
+            encoded = value.encode("utf-8")
+        elif isinstance(value, bytes):
+            encoded = value
+        else:
+            encoded = json.dumps(
+                value,
+                default=str,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
     except Exception:  # pragma: no cover -- unserializable arg
-        s = repr(value)
-    s = " ".join((s or "").split())
-    return s[:limit] + ("…" if len(s) > limit else "")
+        encoded = repr(value).encode("utf-8", errors="replace")
+    return {
+        f"{prefix}_bytes": len(encoded),
+        f"{prefix}_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _secure_defaults_active() -> bool:
+    """Resolve the firm posture without letting config errors weaken it."""
+    try:
+        from .security_defaults import secure_by_default
+
+        return bool(secure_by_default())
+    except Exception:
+        return True
 
 
 def _tool_status(output: str) -> str:
@@ -1020,6 +828,34 @@ def _last_assistant_text(messages: list[dict]) -> str:
     return ""
 
 
+def _final_marker_end(text: str) -> int | None:
+    """Return the end of the last structural ``FINAL:`` marker.
+
+    Markers must start at column zero and may not occur inside a fenced code
+    block. This small parser keeps persisted/tool text from redefining control
+    flow while avoiding the retired software-engineering patch machinery.
+    """
+    offset = 0
+    last: int | None = None
+    fence_char = ""
+    fence_len = 0
+    for raw_line in (text or "").splitlines(keepends=True):
+        line = raw_line.rstrip("\r\n")
+        stripped = line.strip()
+        if fence_char:
+            if stripped and set(stripped) == {fence_char} and len(stripped) >= fence_len:
+                fence_char = ""
+                fence_len = 0
+        else:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                fence_char = stripped[0]
+                fence_len = len(stripped) - len(stripped.lstrip(fence_char))
+            elif line.startswith("FINAL:"):
+                last = offset + len("FINAL:")
+        offset += len(raw_line)
+    return last
+
+
 def _assemble_assistant_content(resp: Any, final_dropped_tools: bool) -> list[dict]:
     """Rebuild the assistant message content blocks from an LLM response,
     preserving Anthropic's exact thinking-block order/signatures (interleaved
@@ -1105,13 +941,6 @@ class AgentResult:
     # Verifier signals (only populated on the orchestrator's FINAL).
     verifier_confidence: float = 1.0
     verifier_critique: str = ""
-    # Wave 12: rendered unified diff produced by the FINAL handler
-    # (SEARCH/REPLACE blocks applied + `git diff` rendered, or unified
-    # diff extracted from FINAL). Best-of-N reads this directly instead
-    # of re-extracting from prose at orchestrator.py:364 — the prior
-    # path silently dropped SR-only candidates that produced a perfect
-    # rendered diff but had no `--- a/` substring in `result`.
-    final_patch: str | None = None
 
 
 def _final_uncertainty_reasons(
@@ -1119,18 +948,13 @@ def _final_uncertainty_reasons(
     verifier_rejected: bool,
     verifier_incomplete: bool,
     disagreement: float,
-    coding: bool,
 ) -> list[str]:
     """Reasons the orchestrator cannot cleanly stand behind a FINAL.
 
-    Empty list means nothing to flag: a clean verification, or a
-    sub-agent / coding-mode answer we must not wrap in prose (it may be a
-    patch). The swarm-disagreement signal is added only as colour when we
-    are *already* flagging uncertainty, so a reconciled-and-verified
+    Empty means nothing to flag. The swarm-disagreement signal is added only
+    when verification already raised uncertainty, so a reconciled and verified
     answer is never noised up.
     """
-    if coding:
-        return []
     reasons: list[str] = []
     if verifier_rejected:
         reasons.append("an internal self-check did not pass after one revision")
@@ -1185,16 +1009,16 @@ def _risk_proportional_verify_enabled() -> bool:
         return False
 
 
-def _final_is_low_risk(final: str | None, *, coding: bool, tool_calls: int) -> bool:
+def _final_is_low_risk(final: str | None, *, tool_calls: int) -> bool:
     """Cheap, conservative test: safe to skip LLM verification on this answer?
 
     Low-risk means a short, prose-only answer the agent reached without
-    touching any tools -- a pure-knowledge reply. A coding task, any tool
-    use, an embedded code block / diff / edit, or a long multi-part answer
+    touching any tools -- a pure-knowledge reply. Any tool use, an embedded
+    code block / diff / edit, or a long multi-part answer
     all fall through to full verification. Intentionally narrow: it gates
     a quality check, so it only fires when skipping is clearly safe.
     """
-    if coding or not final:
+    if not final:
         return False
     if tool_calls > 0:
         return False
@@ -1219,7 +1043,6 @@ class Agent:
         persona: str | None = None,
         knowledge_sources: list[str] | None = None,
         domain_effort: str | None = None,
-        autonomy=None,
     ):
         self.ctx = ctx
         self.role = role
@@ -1247,20 +1070,6 @@ class Agent:
         # parent's domain so a Rung-2 sector seal catches the whole sub-tree.
         # None == unsectored (the orchestrator and ad-hoc agents).
         self.domain = domain if domain is not None else getattr(parent, "domain", None)
-        # Per-agent autonomy profile (the agent-as-employee authority dial,
-        # maverick.agent_autonomy). The factory's spawn-from-profile sets it from
-        # the pack's [autonomy] block; a child inherits its parent's so a sub-tree
-        # shares the hire's authority. None == the default SUGGEST profile.
-        self._autonomy = autonomy if autonomy is not None else getattr(parent, "_autonomy", None)
-        # Workforce overrides are tied to the profile's original hire, not to an
-        # ad-hoc child role. Otherwise a model-selected spawn_subagent role could
-        # layer a more permissive [workforce.agents.<role>] override over an
-        # inherited low-authority profile. Explicit profile spawns establish a new
-        # override anchor; inherited profiles keep their parent's anchor.
-        self._autonomy_name = (
-            role if autonomy is not None
-            else getattr(parent, "_autonomy_name", role)
-        )
         # Optional domain-pack persona, appended to the system prompt below.
         self._domain_persona = persona
         # Domain knowledge collections this agent may query (the DomainProfile's
@@ -1407,7 +1216,7 @@ class Agent:
 
     def _build_tools(self) -> ToolRegistry:
         # Honor [capabilities] from config: these gate the optional
-        # high-impact tools (computer_use / browser / web_search / mobile).
+        # high-impact tools (web_search and mobile).
         # Without this, enabling them in config (or the wizard) was a no-op --
         # base_registry's enable_* flags defaulted off and nothing set them.
         # The [security] ACL still applies on top (a capability can be enabled
@@ -1420,15 +1229,11 @@ class Agent:
         reg = base_registry(
             self.ctx.world,
             self.ctx.sandbox,
-            mcp_clients=self.ctx.mcp_clients,
             goal_id=self.ctx.goal_id,
             channel=self.ctx.channel,
             user_id=self.ctx.user_id,
             budget=self.ctx.budget,
-            enable_computer_use=bool(caps.get("computer_use", False)),
-            enable_browser=bool(caps.get("browser", False)),
             enable_web_search=bool(caps.get("web_search", False)),
-            enable_mobile_tools=bool(caps.get("mobile_tools", False)),
         )
         # Cross-agent bus tools, bound to this agent's id so send records
         # the right sender and recv drains the right inbox.
@@ -1453,72 +1258,19 @@ class Agent:
         # agent's collections when a knowledge base is configured for the run.
         kb = getattr(self.ctx, "knowledge", None)
         sources = self.knowledge_sources or ([self.domain] if self.domain else [])
-        if kb is not None and sources:
+        matter_id = getattr(self.ctx, "matter_id", None)
+        if kb is not None and sources and matter_id is not None:
             from .tools.knowledge import knowledge_search_tool
-            reg.register(knowledge_search_tool(kb, sources))
-        # Self-learning: bound to this agent so governed capability discovery
-        # can run by default. Executable tool creation and MCP acquisition stay
-        # behind their separate high-authority opt-ins.
-        try:
-            from . import self_learning
-            if self_learning.enabled():
-                from .tools.learn import learn_capability
-                reg.register(learn_capability(self))
-        except Exception as e:  # pragma: no cover -- never block tool build
-            log.debug("self_learning tool registration skipped: %s", e)
-        # Programmatic tool calling (opt-in): a sandboxed Python script that
-        # orchestrates declared tool calls, keeping their raw outputs out of the
-        # model's context. Powerful (runs code + tools), so off unless enabled
-        # via [capabilities] code_exec or MAVERICK_CODE_EXEC.
-        code_exec_on = caps.get("code_exec", False) or (
-            os.environ.get("MAVERICK_CODE_EXEC", "").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
-        if code_exec_on:
-            from .tools.code_exec import code_exec_tool
-            reg.register(code_exec_tool(self))
-        # Deferred tool loading (default ON): hide the SaaS-connector long
-        # tail behind the find_tools meta-tool so the model's catalog stays
-        # lean -- 470+ connector schemas rode EVERY model turn at consumer
-        # defaults (observed: 601 tools offered per call), dominating context
-        # cost. The mechanism (ToolRegistry.enable_deferred / find_tools)
-        # already existed and was tested; nothing wired it. Everything
-        # registered above (file/shell/spawn/bus/memory/MCP/...) stays
-        # visible; only base_registry's marked long tail defers, and run()
-        # still executes ANY registered tool, so execution semantics are
-        # unchanged. Disable via [capabilities] deferred_tools = false or
-        # MAVERICK_DEFERRED_TOOLS=0.
-        env_dt = os.environ.get("MAVERICK_DEFERRED_TOOLS", "").strip().lower()
-        if env_dt in {"0", "false", "no", "off"}:
-            deferred_on = False
-        elif env_dt in {"1", "true", "yes", "on"}:
-            deferred_on = True
-        else:
-            deferred_on = bool(caps.get("deferred_tools", True))
-        deferrable = getattr(reg, "deferrable_names", None) or set()
-        if deferred_on and deferrable:
-            from .tools.find_tools import find_tools
-            reg.register(find_tools(reg))
-            reg.enable_deferred(core={t.name for t in reg.all()} - set(deferrable))
+            reg.register(knowledge_search_tool(kb, sources, matter_id=matter_id))
+        # Runtime capability acquisition is intentionally absent from the firm
+        # profile. Local improvement remains an offline candidate/evaluation/
+        # promotion workflow; an executing matter agent cannot install skills,
+        # start external servers, or generate a live tool.
         return reg
 
     def _build_system(self) -> str:
-        # Wave 9 fix: coding mode applies to the ORCHESTRATOR too, not
-        # just workers. The orchestrator emits the FINAL; if it's still
-        # using ORCHESTRATOR_SYSTEM_TEMPLATE (prose-oriented), the patch
-        # validator + test-driven verifier both operate on prose, every
-        # extract_unified_diff returns None, every git apply --check
-        # rejects -> Wave 8 contributes negative value. (council code
-        # reviewer finding #1)
-        try:
-            from .coding_mode import from_env as _cm_from_env
-            _coding_cfg = _cm_from_env()
-        except Exception:
-            _coding_cfg = None
-
         base = select_base_template(
             role=self.role, depth=self.depth, max_depth=self.ctx.max_depth,
-            coding_enabled=bool(_coding_cfg is not None and _coding_cfg.enabled),
         )
 
         # Swarm-wide additive overlays (persona, output style, learned-habits
@@ -1531,24 +1283,18 @@ class Agent:
         base = apply_role_overlays(
             base, role=self.role, domain_persona=self._domain_persona)
 
-        # Skills from prior runs (fourth PromptBuilder collaborator). The seam
-        # renders + returns the recalled skills; the stats/ctx bookkeeping stays
-        # here, all-or-nothing inside one fail-safe block, exactly as before.
+        # Skills from prior runs (fourth PromptBuilder collaborator). Keep only
+        # run-local provenance for governed-action lineage; the removed global
+        # skill-statistics store must not receive client-derived outcomes.
         base, _skills = apply_skill_overlays(
             base, brief=self.brief, use_skills=self.ctx.use_skills,
             depth=self.depth)
         if _skills:
             try:
-                from .skill import stats as skill_stats
                 names = [s.name for s in _skills]
-                skill_stats.record_use(names)
                 self.ctx.skills_used.update(names)
             except Exception:
                 pass
-
-        # Cross-session memory presence hint (fifth PromptBuilder collaborator,
-        # root agent only).
-        base = apply_memory_brief(base, depth=self.depth)
 
         base = self._with_harness_addendum(base)
         return base
@@ -1616,8 +1362,17 @@ class Agent:
             except Exception:  # pragma: no cover -- config never blocks a turn
                 pass
             self._thinking_base = base
-        # Adaptive controller (opt-in, default off): trims/raises by recent
-        # success rate. Disabled or low-data -> returns `base` unchanged.
+        # The former adaptive controller consumed tenant-global outcome stats.
+        # Firm execution keeps the operator-selected budget fixed so one
+        # matter's outcomes cannot silently change another matter's spend.
+        try:
+            from .security_defaults import secure_by_default
+
+            if secure_by_default():
+                return base
+        except Exception:
+            return base
+        # Explicit legacy mode retains the old adaptive behavior.
         from .thinking_budget import adjust
         return adjust(self.role, base)
 
@@ -1633,218 +1388,6 @@ class Agent:
             return max_output_tokens(self.model)
         except Exception:  # pragma: no cover -- sizing never blocks a turn
             return 4096
-
-    def _extract_and_apply_patch(self, final: str):
-        """Wave 11: unify SEARCH/REPLACE and unified-diff extraction.
-
-        Returns (patch_str_or_None, sr_summary_or_None). The patch is
-        the rendered unified diff (suitable for `git apply --check` /
-        the CSV). The `sr_summary` is the ApplySummary when blocks
-        were applied to disk, None when only a unified diff was found.
-
-        Caller is responsible for resetting the workdir AFTER capturing
-        the patch.
-
-        Wave 11: also runs `ast.parse` on every modified Python file
-        before rendering the diff. SyntaxError gets surfaced via a
-        synthesized ApplySummary so the agent re-emits, instead of
-        submitting a patch that breaks pytest collection (32% of Opus
-        4.1 / 57% of Gemini failures on Pro per Scale's Table 4).
-        """
-        from pathlib import Path as _Path
-
-        from .coding_mode import (
-            _ast_check_python_files,
-            extract_unified_diff,
-        )
-        from .edit_format import (
-            ApplyResult,
-            ApplySummary,
-            SearchReplaceBlock,
-            apply_blocks,
-            parse_blocks,
-            render_diff,
-        )
-
-        workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
-        blocks = parse_blocks(final)
-        if blocks:
-            import subprocess as _sub
-            import tempfile as _tempfile
-
-            sandbox = self.ctx.sandbox
-            has_exec = sandbox is not None and hasattr(sandbox, "exec")
-            apply_workdir = workdir
-            temp_root = None
-            used_temp_worktree = False
-
-            if has_exec:
-                # SEARCH/REPLACE application is necessarily host-local
-                # because it rewrites files via pathlib.  Do it in a
-                # disposable git worktree so exec-backed sandboxes (ssh,
-                # k8s, firecracker/E2B) cannot leave attacker-influenced
-                # edits behind in a host checkout while _reset_workdir()
-                # resets a different backend filesystem.
-                temp_root = _tempfile.TemporaryDirectory(
-                    prefix="maverick-sr-worktree-"
-                )
-                candidate = _Path(temp_root.name) / "worktree"
-                hooks_dir = _Path(temp_root.name) / "hooks"
-                try:
-                    hooks_dir.mkdir(mode=0o700)
-                    wt = _sub.run(
-                        [
-                            "git", "-c", f"core.hooksPath={hooks_dir}",
-                            "-C", str(workdir), "worktree", "add",
-                            "--detach", "--quiet", str(candidate), "HEAD",
-                        ],
-                        capture_output=True, timeout=60,
-                    )
-                    if wt.returncode != 0:
-                        raise RuntimeError(
-                            wt.stderr.decode("utf-8", errors="replace")
-                        )
-                    apply_workdir = candidate
-                    used_temp_worktree = True
-                except Exception as exc:
-                    temp_root.cleanup()
-                    summary = ApplySummary()
-                    summary.results.append(ApplyResult(
-                        ok=False,
-                        block=SearchReplaceBlock(
-                            path="<sandboxed search/replace>",
-                            search="", replace="",
-                        ),
-                        reason=(
-                            "SEARCH/REPLACE requires a disposable local git "
-                            f"worktree when sandbox.exec is available: {exc}"
-                        ),
-                    ))
-                    return None, summary
-
-            try:
-                summary = apply_blocks(blocks, apply_workdir, atomic=True)
-                if not summary.ok:
-                    return None, summary
-                touched_paths = sorted(summary.files_touched)
-                syntax_errors = _ast_check_python_files(
-                    apply_workdir, touched_paths
-                )
-                if syntax_errors:
-                    # Roll back the SR application so the next attempt sees
-                    # HEAD, then synthesise a failure summary the caller
-                    # can convert into a repair prompt.  Disposable
-                    # worktrees are cleaned below; only reset the real
-                    # workdir on the legacy no-exec path.
-                    if not used_temp_worktree:
-                        self._reset_workdir()
-                    summary.results.append(ApplyResult(
-                        ok=False,
-                        block=SearchReplaceBlock(
-                            path="<syntax check>", search="", replace="",
-                        ),
-                        reason=(
-                            "Python syntax errors after applying: "
-                            + "; ".join(syntax_errors)
-                        ),
-                    ))
-                    return None, summary
-                patch = render_diff(apply_workdir, paths=touched_paths)
-                return patch, summary
-            finally:
-                if used_temp_worktree:
-                    try:
-                        _sub.run(
-                            [
-                                "git", "-C", str(workdir), "worktree",
-                                "remove", "--force", str(apply_workdir),
-                            ],
-                            capture_output=True, timeout=30,
-                        )
-                    except Exception:
-                        pass
-                if temp_root is not None:
-                    temp_root.cleanup()
-        return extract_unified_diff(final), None
-
-    def _reset_workdir(self) -> None:
-        """Revert the sandbox workdir to a clean HEAD.
-
-        CLAUDE.md rule 4: route git plumbing through ``sandbox.exec`` so
-        it operates on the configured backend's filesystem (ssh/k8s/fc),
-        not the host. ``reset --hard`` then ``clean -fd`` in one shell
-        string; we only need the exit code, so the 8000-char output
-        truncation is irrelevant here. Falls back to host ``subprocess``
-        only when there's no sandbox or it lacks ``exec``.
-        """
-        sandbox = self.ctx.sandbox
-        if sandbox is not None and hasattr(sandbox, "exec"):
-            try:
-                sandbox.exec("git reset --hard HEAD && git clean -fd", timeout=30)
-            except Exception:
-                pass
-            return
-        import subprocess as _sub
-        from pathlib import Path as _Path
-        workdir = _Path(getattr(sandbox, "workdir", "."))
-        try:
-            _sub.run(
-                ["git", "-C", str(workdir), "reset", "--hard", "HEAD"],
-                capture_output=True, timeout=20,
-            )
-            _sub.run(
-                ["git", "-C", str(workdir), "clean", "-fd"],
-                capture_output=True, timeout=20,
-            )
-        except Exception:
-            pass
-
-    def _git_apply(self, patch: str) -> bool:
-        """Apply ``patch`` to the sandbox workdir; return whether it applied.
-
-        CLAUDE.md rule 4: run ``git apply`` on the configured backend.
-        ``sandbox.exec`` runs a shell string and can't pipe stdin, so we
-        write the patch to a temp file inside the workdir and
-        ``git apply <tmpfile>``, then clean the temp file up. Falls back
-        to host ``subprocess`` (piping via stdin) only when there's no
-        sandbox or it lacks ``exec``.
-        """
-        from pathlib import Path as _Path
-        sandbox = self.ctx.sandbox
-        workdir = _Path(getattr(sandbox, "workdir", "."))
-        if sandbox is not None and hasattr(sandbox, "exec"):
-            import os as _os
-            import tempfile as _tempfile
-            tmp_path = None
-            try:
-                with _tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".patch", dir=str(workdir),
-                    delete=False, encoding="utf-8",
-                ) as tmp:
-                    tmp.write(patch)
-                    tmp_path = tmp.name
-                import shlex as _shlex
-                rel = _shlex.quote(_os.path.basename(tmp_path))
-                res = sandbox.exec(f"git apply {rel}", timeout=30)
-                return getattr(res, "exit_code", 1) == 0
-            except Exception:
-                return False
-            finally:
-                if tmp_path is not None:
-                    try:
-                        _os.unlink(tmp_path)
-                    except OSError:
-                        pass
-        import subprocess as _sub
-        try:
-            ap = _sub.run(
-                ["git", "-C", str(workdir), "apply", "-"],
-                input=patch.encode("utf-8"),
-                capture_output=True, timeout=30,
-            )
-            return ap.returncode == 0
-        except Exception:
-            return False
 
     def _maybe_seal(self, quarantine, verdict) -> None:
         """Conservatively escalate a shield block to a Rung-1 seal.
@@ -2030,8 +1573,13 @@ class Agent:
             f"(principal={cap.principal})",
         )
         from .audit import EventKind
-        self._audit_tool_event(EventKind.CAPABILITY_DENIED, tool=name,
-                   principal=cap.principal, path=denied)
+        self._audit_tool_event(
+            EventKind.CAPABILITY_DENIED,
+            tool=name,
+            principal=cap.principal,
+            matter_id=getattr(self.ctx, "matter_id", None),
+            **_audit_content_metadata(denied, prefix="path"),
+        )
         return (
             f"⚠ DENIED by capability policy: principal {cap.principal!r} is "
             f"not granted path {denied!r} for tool {name!r}. "
@@ -2090,8 +1638,9 @@ class Agent:
         self._audit_tool_event(
             EventKind.SANDBOX_DENIED,
             tool=name,
-            path=rendered,
+            matter_id=getattr(self.ctx, "matter_id", None),
             reason="read_only_path",
+            **_audit_content_metadata(rendered, prefix="path"),
         )
         return (
             f"DENIED by sandbox policy: path {rendered!r} is read-only. "
@@ -2261,77 +1810,6 @@ class Agent:
                     _GovDecision.DENY,
                     "governance evaluation error (failed closed)", "error",
                 )
-        # Per-agent autonomy level (the agent-as-employee authority dial):
-        # compose strictest-wins with the org governance verdict. Only
-        # consequential (non-low-risk) tools are gated -- reading/searching is
-        # always allowed regardless of the hire's rung. Independent of whether an
-        # [governance] policy is set; no-op unless [workforce] levels is enabled.
-        # Once the client enables this enforcement layer, an evaluation failure
-        # must refuse the action. Otherwise a classifier/profile bug would turn
-        # the authority dial into an execution bypass.
-        _autonomy_levels_enabled = False
-        try:
-            from . import agent_autonomy as _aa
-            from .governance import Decision as _GD
-            from .governance import Verdict as _GV
-            from .safety.tool_risk import risk_rank as _rr
-            from .safety.tool_risk import tool_risk as _tr
-            _autonomy_levels_enabled = _aa.levels_enabled()
-            _risk = _tr(name)
-            # Disabled => the gate is a strict no-op (kernel rule 1: byte-for-byte
-            # historical behaviour). Low-risk tools (reads/searches) and the
-            # coordination control-plane (spawn/bus/delegate -- how the workforce
-            # communicates) are never gated by the dial.
-            if (_autonomy_levels_enabled and _rr(_risk) > 0
-                    and name not in _aa.COORDINATION_TOOLS):
-                _al = _aa.decide(getattr(self, "_autonomy_name", self.role),
-                                 getattr(self, "_autonomy", None),
-                                 action=name, risk=_risk)
-                _amap = {"allow": _GD.ALLOW, "require_human": _GD.REQUIRE_HUMAN,
-                         "deny": _GD.DENY}
-                _adec = _amap.get(_al.decision, _GD.REQUIRE_HUMAN)
-                if _adec is not _GD.ALLOW:
-                    _rank = {_GD.ALLOW: 0, _GD.REQUIRE_HUMAN: 1, _GD.DENY: 2}
-                    if _gov is None or _rank[_adec] > _rank[_gov.decision]:
-                        _gov = _GV(_adec, f"autonomy level: {_al.reason}",
-                                   f"autonomy:{_al.level.value}")
-        except Exception:
-            if _autonomy_levels_enabled:
-                log.warning(
-                    "autonomy: level evaluation failed for %r; failing closed",
-                    name,
-                    exc_info=True,
-                )
-                self.ctx.blackboard.post(
-                    self.name,
-                    "error",
-                    f"tool={name} DENIED: autonomy evaluation unavailable",
-                )
-                from .audit import EventKind, audit_event
-
-                audit_event(
-                    EventKind.GOVERNANCE_DENIED,
-                    agent=self.name,
-                    goal_id=self.ctx.goal_id,
-                    tool=name,
-                    principal=(
-                        getattr(cap, "principal", None)
-                        if cap is not None else None
-                    ),
-                    rule="autonomy:error",
-                    reason="autonomy level evaluation failed closed",
-                )
-                return (
-                    "⚠ DENIED by autonomy policy (autonomy:error): "
-                    "authority evaluation was unavailable, so the tool was not "
-                    "executed."
-                )
-            log.warning(
-                "autonomy: level evaluation unavailable while disabled for %r; "
-                "skipping",
-                name,
-                exc_info=True,
-            )
         if _gov is None or _gov.decision is _GovDecision.ALLOW:
             return None
         from .audit import EventKind
@@ -2343,10 +1821,16 @@ class Agent:
             )
             # tamper-evident record of the denial; a refusal propagates
             from .audit import EventKind, audit_event
-            audit_event(EventKind.GOVERNANCE_DENIED, agent=self.name,
-                        goal_id=self.ctx.goal_id, tool=name,
-                        principal=_principal, rule=_gov.rule,
-                        reason=_gov.reason)
+            audit_event(
+                EventKind.GOVERNANCE_DENIED,
+                agent=self.name,
+                goal_id=self.ctx.goal_id,
+                matter_id=getattr(self.ctx, "matter_id", None),
+                tool=name,
+                principal=_principal,
+                rule=_gov.rule,
+                **_audit_content_metadata(_gov.reason, prefix="reason"),
+            )
             return (
                 f"⚠ DENIED by org policy ({_gov.rule}): {_gov.reason}. "
                 "The tool was not executed."
@@ -2367,8 +1851,6 @@ class Agent:
                 # When the operator opts into per-action oversight, a prior
                 # persistent ledger grant must NOT silently satisfy the
                 # Art-14 gate -- demand a fresh human decision each time. The
-                # autonomy dial can drive REQUIRE_HUMAN with no [governance]
-                # policy set (_gov_policy None), so guard the attribute read.
                 consult_ledger=not (
                     _gov_policy.require_fresh_human_approval if _gov_policy else False
                 ),
@@ -2384,9 +1866,10 @@ class Agent:
         )
         from .audit import EventKind, audit_event
         audit_event(EventKind.GOVERNANCE_DENIED, agent=self.name,
-               goal_id=self.ctx.goal_id, tool=name,
+               goal_id=self.ctx.goal_id,
+               matter_id=getattr(self.ctx, "matter_id", None), tool=name,
                principal=_principal, rule=_gov.rule,
-               reason="human approval not granted")
+               reason_code="human_approval_not_granted")
         # Human-override ingestion: the operator's "no" is itself a
         # learning signal — recallable on the next similar goal and
         # consolidated by dreaming. No-op unless [reflexion] is on.
@@ -2429,9 +1912,168 @@ class Agent:
         a healthy one.
         """
         from .audit import audit_event
+        payload.setdefault("matter_id", getattr(self.ctx, "matter_id", None))
         audit_event(kind, agent=self.name, goal_id=self.ctx.goal_id, **payload)
 
+    def _shield_input_denial(
+        self,
+        name: str,
+        args: dict,
+        *,
+        quarantine: Any,
+        shield: Any | None,
+        secure: bool,
+    ) -> str | None:
+        """Return a content-free denial when tool input cannot be trusted."""
+        if shield is None:
+            if not secure:
+                return None
+            self._audit_tool_event(
+                "shield_block",
+                stage="tool_input",
+                name=name,
+                status="scanner_unavailable",
+            )
+            return "⚠ Tool execution denied: Shield is unavailable."
+        try:
+            verdict = shield.scan_tool_call(name, args)
+        except Exception:
+            if not secure:
+                return None
+            self._audit_tool_event(
+                "shield_block",
+                stage="tool_input",
+                name=name,
+                status="scanner_error",
+            )
+            return "⚠ Tool execution denied: Shield input scan failed."
+        if verdict.allowed:
+            return None
+        self.ctx.blackboard.post(self.name, "error", f"tool={name} BLOCKED by Shield")
+        self._audit_tool_event(
+            "shield_block",
+            stage="tool_input",
+            name=name,
+            status="denied",
+            severity=str(getattr(verdict, "severity", "unknown")),
+            reason_count=len(getattr(verdict, "reasons", ()) or ()),
+        )
+        self._maybe_seal(quarantine, verdict)
+        return (
+            f"⚠ BLOCKED by Shield ({verdict.severity}). "
+            "The tool was not executed."
+        )
+
+    def _shield_output_denial(
+        self,
+        name: str,
+        output: str,
+        *,
+        quarantine: Any,
+        shield: Any | None,
+        secure: bool,
+    ) -> str | None:
+        """Withhold output on every firm-mode scanner absence/error/denial."""
+        if shield is None:
+            return "⚠ Tool result withheld: Shield is unavailable." if secure else None
+        try:
+            verdict = shield.scan_output(output)
+        except Exception:
+            if not secure:
+                log.warning(
+                    "shield.scan_output raised on tool=%s output (legacy fail-open)",
+                    name,
+                )
+                self.ctx.blackboard.post(
+                    self.name,
+                    "warning",
+                    f"tool={name} shield output-scan errored (legacy fail-open)",
+                )
+                return None
+            self.ctx.blackboard.post(
+                self.name,
+                "error",
+                f"tool={name} OUTPUT WITHHELD: Shield scan failed",
+            )
+            self._audit_tool_event(
+                "tool_result",
+                name=name,
+                status="shield_scan_error_withheld",
+                **_audit_content_metadata(output, prefix="output"),
+            )
+            return "⚠ Tool result withheld: Shield output scan failed."
+        if verdict.allowed:
+            return None
+        self.ctx.blackboard.post(self.name, "error", f"tool={name} OUTPUT BLOCKED by Shield")
+        self._maybe_seal(quarantine, verdict)
+        self._audit_tool_event(
+            "tool_result",
+            name=name,
+            status="shield_withheld",
+            **_audit_content_metadata(output, prefix="output"),
+        )
+        return (
+            f"⚠ Tool output BLOCKED by Shield ({verdict.severity}). "
+            "Result withheld."
+        )
+
     async def _run_tool(self, name: str, args: dict) -> str:
+        """Revalidate the exact matter authority before every secure dispatch."""
+        if not _secure_defaults_active():
+            return await self._run_tool_authorized(name, args)
+
+        from .matter_context import (
+            MatterContextError,
+            matter_context_scope,
+            require_matter_context,
+            resolve_goal_matter_context,
+        )
+
+        try:
+            bound = require_matter_context()
+            fresh = resolve_goal_matter_context(
+                self.ctx.world,
+                self.ctx.goal_id,
+                principal=bound.principal,
+                purpose=bound.purpose,
+                source="tool-dispatch-refresh",
+            )
+            # Egress mode and membership role are deliberately refreshed.  The
+            # immutable identity of the authority may never change underneath
+            # a run; a changed matter policy is rebound for the actual tool.
+            if (
+                fresh.matter_id != bound.matter_id
+                or fresh.client_id != bound.client_id
+                or fresh.principal != bound.principal
+                or fresh.domain != bound.domain
+                or fresh.jurisdiction != bound.jurisdiction
+                or fresh.purpose != bound.purpose
+            ):
+                raise MatterContextError("durable matter tool authority changed")
+        except Exception:
+            self._audit_tool_event(
+                "tool_denied",
+                name=name,
+                status="matter_authority_unavailable",
+            )
+            return "⚠ Tool execution denied: current matter authority could not be verified."
+
+        def _refresh_tool_authority():
+            return resolve_goal_matter_context(
+                self.ctx.world,
+                self.ctx.goal_id,
+                principal=bound.principal,
+                purpose=bound.purpose,
+                source="tool-external-dispatch-refresh",
+            )
+
+        with matter_context_scope(
+            fresh,
+            authority_resolver=_refresh_tool_authority,
+        ):
+            return await self._run_tool_authorized(name, args)
+
+    async def _run_tool_authorized(self, name: str, args: dict) -> str:
         # Record the tool name on this agent's action sequence so a parent can
         # capture per-sub-agent trajectories (maverick.credit.build_subtrajectories).
         # Tool NAMES only -- never args -- so this carries no secrets. Lazy-init
@@ -2453,24 +2095,15 @@ class Agent:
                 )
         args = _normalize_file_tool_args(name, args, self.ctx.sandbox)
         shield = self.ctx.shield
-        if shield is not None:
-            verdict = shield.scan_tool_call(name, args)
-            if not verdict.allowed:
-                self.ctx.blackboard.post(
-                    self.name, "error",
-                    f"tool={name} BLOCKED by Shield: {'; '.join(verdict.reasons)}",
-                )
-                # tamper-evident record of the shield block; a refusal propagates
-                from .audit import EventKind, audit_event
-                audit_event(EventKind.SHIELD_BLOCK, agent=self.name,
-                       goal_id=self.ctx.goal_id, stage="tool",
-                       reason="; ".join(verdict.reasons),
-                       score=getattr(verdict, "score", None))
-                self._maybe_seal(q, verdict)
-                return (
-                    f"⚠ BLOCKED by Shield ({verdict.severity}): "
-                    f"{'; '.join(verdict.reasons)}. The tool was not executed."
-                )
+        secure = _secure_defaults_active()
+        if denial := self._shield_input_denial(
+            name,
+            args,
+            quarantine=q,
+            shield=shield,
+            secure=secure,
+        ):
+            return denial
 
         # P0 capability layer: a per-agent grant (attenuated from the parent
         # on spawn) gates the tool surface. None == unrestricted, so this is a
@@ -2494,23 +2127,16 @@ class Agent:
             return d
         if (d := self._read_only_path_denial(name, args)) is not None:
             return d
-        # Operating-Twin pre-execution gates (governed rehearsal defaults on;
-        # both fail open on internal errors):
-        # rehearsal holds an elevated-risk tool the world-model can't vouch for;
-        # a learned guardrail holds an action the data engine has causally shown
-        # lowers outcomes (self-correcting -- dropped when the harm is gone).
+        # Operating-Twin pre-execution gate: rehearsal holds an elevated-risk
+        # tool the world-model cannot vouch for. The retired global flywheel no
+        # longer injects cross-matter procedural guardrails here.
         if (d := self._twin_denial(name)) is not None:
             return d
-        # The browser can follow redirects and later URL-less actions read or
-        # interact with the current page. Pass the active host scope into the
-        # tool so it can gate the final/current page host before returning
-        # content or continuing a restricted session. This must happen before
-        # the host-scope check so the (possibly rewritten) args carry forward.
         args = self._with_capability_host_scope(name, args, cap)
         if (d := self._capability_host_denial(name, args, cap)) is not None:
             return d
 
-        # Autonomy servo (Loop 2): low run-trust tightens the risk ceiling.
+        # Run-local trust servo: low confidence only tightens the risk ceiling.
         if (d := self._autonomy_denial(name, cap)) is not None:
             return d
 
@@ -2519,70 +2145,29 @@ class Agent:
         if (d := await self._governance_denial(name, args, cap)) is not None:
             return d
 
-        # PreToolUse hooks: any registered hook can BLOCK the call by
-        # returning a non-zero exit code (shell hook) or a falsy value
-        # (Python callable). Modeled on Claude Code's hook surface.
-        from .hooks import HookContext, HookEvent
-        from .hooks import dispatch as _dispatch_hooks
-        pre_ctx = HookContext(
-            event=HookEvent.PRE_TOOL_USE,
-            tool_name=name, tool_args=args,
-            goal_id=self.ctx.goal_id, agent_role=self.role,
-        )
-        if not await _dispatch_hooks(pre_ctx):
-            self.ctx.blackboard.post(
-                self.name, "error",
-                f"tool={name} BLOCKED by PreToolUse hook",
-            )
-            return "⚠ BLOCKED by hook. The tool was not executed."
-
         # Success-path audit (who-did-what-when): a tamper-evident record that
         # this tool call executed, on the same signed chain as the denial events.
-        self._audit_tool_event("tool_call", name=name,
-                               input_summary=_audit_summary(args))
+        self._audit_tool_event(
+            "tool_call",
+            name=name,
+            **_audit_content_metadata(args, prefix="input"),
+        )
 
         output = await self.tools.run(name, args)
 
-        post_ctx = HookContext(
-            event=HookEvent.POST_TOOL_USE,
-            tool_name=name, tool_args=args, tool_result=output,
-            goal_id=self.ctx.goal_id, agent_role=self.role,
-        )
-        await _dispatch_hooks(post_ctx)
         # Council finding: tool output flowed back to the LLM unscanned,
         # so a malicious file contents / shell stdout containing
         # `FINAL: <exfil>` or jailbreak instructions hit the next turn.
         # Wrap the output in a clearly-delimited block so the agent
         # treats it as data, and scan it through the shield.
-        if shield is not None:
-            try:
-                out_verdict = shield.scan_output(output)
-                if not out_verdict.allowed:
-                    self.ctx.blackboard.post(
-                        self.name, "error",
-                        f"tool={name} OUTPUT BLOCKED by Shield: "
-                        f"{'; '.join(out_verdict.reasons)}",
-                    )
-                    self._maybe_seal(q, out_verdict)
-                    return (
-                        f"⚠ Tool output BLOCKED by Shield ({out_verdict.severity}): "
-                        f"{'; '.join(out_verdict.reasons)}. Result withheld."
-                    )
-            except Exception as e:  # shield must never block tools on its own bug
-                # Fail-open, but NOT silently: a scanner that reliably throws
-                # on a crafted output would otherwise disable output gating for
-                # that call with zero trace. Surface it so the bypass is
-                # observable (warn + blackboard), per the "warn, don't fail
-                # silent" contract.
-                log.warning(
-                    "shield.scan_output raised on tool=%s output (fail-open): %s: %s",
-                    name, type(e).__name__, e,
-                )
-                self.ctx.blackboard.post(
-                    self.name, "warning",
-                    f"tool={name} shield output-scan errored (fail-open): "
-                    f"{type(e).__name__}",
-                )
+        if denial := self._shield_output_denial(
+            name,
+            output,
+            quarantine=q,
+            shield=shield,
+            secure=secure,
+        ):
+            return denial
         # Defense-in-depth: redact secrets in tool output BEFORE it returns to
         # the model / blackboard / channel. `cat .env`, a DB row, or an API
         # response can carry a key the shield's scan_output doesn't classify
@@ -2607,11 +2192,14 @@ class Agent:
             f"{output}\n"
             f"</tool_output {nonce}>"
         )
-        # Success-path audit: the tool's outcome (ok/error) + a bounded output
-        # summary, completing the TOOL_CALL/TOOL_RESULT pair on the signed chain.
-        self._audit_tool_event("tool_result", name=name,
-                               status=_tool_status(output),
-                               output_summary=_audit_summary(output))
+        # Success-path audit carries structural metadata only. Legal tool input
+        # and output bytes never belong in the live plaintext audit window.
+        self._audit_tool_event(
+            "tool_result",
+            name=name,
+            status=_tool_status(output),
+            **_audit_content_metadata(output, prefix="output"),
+        )
         # Loop guard: detect a repeated identical FAILURE from the raw result
         # (before framing) and, past threshold, append a nudge OUTSIDE the data
         # block -- it's trusted loop-control guidance, not tool output.
@@ -2761,9 +2349,8 @@ class Agent:
         return acts[-2] if acts and len(acts) >= 2 else ""
 
     def _twin_denial(self, name: str) -> str | None:
-        """The Operating-Twin pre-execution gates, first hold wins: rehearsal
-        (world-model can't vouch) then learned guardrails (causally harmful)."""
-        return self._rehearsal_denial(name) or self._guardrail_denial(name)
+        """Return a governed rehearsal hold, if one applies."""
+        return self._rehearsal_denial(name)
 
     def _rehearsal_denial(self, name: str) -> str | None:
         """Hold an elevated-risk tool the rehearsal twin can't vouch for.
@@ -2784,57 +2371,23 @@ class Agent:
             v = gate_tool(domain=self.domain, role=self.role,
                           last_tool=self._last_tool(), tool_name=name)
             if v.decision == rehearsal.PROCEED:
-                try:  # pin the prediction as earned-autonomy evidence
-                    # (default-off, module self-gated). Only PROCEED verdicts:
-                    # they used to vanish, and they are exactly the predictions
-                    # reality later grades -- a held action never executes, so
-                    # its prediction must not be scored against the outcome.
-                    from .earned_autonomy import capture_prediction
-                    capture_prediction(
-                        v, principal=getattr(self, "_autonomy_name", self.role),
-                        action=name, risk="high",
-                        goal_id=int(self.ctx.goal_id or 0),
-                        episode_id=int(getattr(self.ctx, "episode_id", 0) or 0))
-                except Exception:  # pragma: no cover -- never breaks the loop
-                    pass
                 return None
             # tamper-evident record of the hold; a refusal propagates
             from .audit import EventKind, audit_event
-            audit_event(EventKind.SHIELD_BLOCK, agent=self.name, goal_id=self.ctx.goal_id,
-                   stage="rehearsal", reason=f"{v.decision}: {v.reason}")
+            audit_event(
+                EventKind.SHIELD_BLOCK,
+                agent=self.name,
+                goal_id=self.ctx.goal_id,
+                matter_id=getattr(self.ctx, "matter_id", None),
+                stage="rehearsal",
+                decision=v.decision,
+                **_audit_content_metadata(v.reason, prefix="reason"),
+            )
             return (
                 f"⚠ Held by pre-execution rehearsal ({v.decision}): {v.reason}. "
                 "The tool was not executed; choose another approach or seek approval."
             )
         except Exception:  # pragma: no cover -- rehearsal must never break the loop
-            return None
-
-    def _guardrail_denial(self, name: str) -> str | None:
-        """Hold an action a learned guardrail flags as causally harmful.
-
-        No-op unless ``[data_engine]`` is enabled (guardrails are its output);
-        consults the registry the flywheel writes; any error fails open. Unlike a
-        hand-written deny-list, the guardrail carries the causal effect that
-        justifies it and is auto-dropped when the harm is gone.
-        """
-        try:
-            from . import data_engine
-            if not data_engine.enabled():
-                return None
-            from .negative_knowledge import shared
-            g = shared().consult(name)
-            if g is None:
-                return None
-            # tamper-evident record of the hold; a refusal propagates
-            from .audit import EventKind, audit_event
-            audit_event(EventKind.SHIELD_BLOCK, agent=self.name, goal_id=self.ctx.goal_id,
-                   stage="guardrail", reason=g.rule)
-            return (
-                f"⚠ Held by a learned guardrail: {g.rule}. The tool was not executed; "
-                "choose another approach (this rule was learned from real outcomes and "
-                "is dropped automatically once the harm is gone)."
-            )
-        except Exception:  # pragma: no cover -- guardrails must never break the loop
             return None
 
     def _capture_trajectory_step(self, step_index, tool_name, tool_succeeded,
@@ -3027,7 +2580,8 @@ class Agent:
         # document content blocks on the first user message so the agent can
         # see them (PDFs are budgeted against the driving model's context
         # window). Everything else (audio, video, Office docs, text) is
-        # reachable via `list_attachments` + `read_file` / `transcribe_audio`
+        # reachable via the goal-bound `read_attachment` tool (and explicit
+        # local media processing where enabled)
         # (opt-in so we don't blow token budget on huge media).
         image_blocks: list[dict] = []
         if self.depth == 0 and self.ctx.goal_id is not None:
@@ -3132,7 +2686,7 @@ class Agent:
             # vs. paying full-price input tokens for a 100k history.
             # Default path is the heuristic shrink; an operator can opt into a
             # richer strategy via [context] compaction_strategy (heuristic /
-            # learned / multimodal / streaming / graph) — all registered in the
+            # learned / multimodal / graph) — all registered in the
             # one compaction.plugins dispatcher, which fails safe to heuristic
             # on an unknown name — or into the ledger-learned v6 picker via
             # [compaction] hybrid (an explicit strategy name always wins). The
@@ -3200,8 +2754,7 @@ class Agent:
             # respond to, not the orphan tools.
             final_dropped_tools = False
             if resp.text and resp.tool_calls:
-                from .coding_mode import has_final_marker as _has_final
-                if _has_final(resp.text):
+                if _final_marker_end(resp.text) is not None:
                     resp.tool_calls = []
                     final_dropped_tools = True
 
@@ -3209,31 +2762,17 @@ class Agent:
             messages.append({"role": "assistant", "content": assistant_content})
 
             if resp.text:
-                # Wave 12 hotfix: the prompt instructs the model to "End
-                # your turn with `FINAL:`" — many models emit a brief
-                # reasoning line BEFORE FINAL: (e.g. "Target: foo.py:bar
-                # — fix is X. FINAL: ..."). The prior `startswith` check
-                # missed those entirely; the SR block went to the
-                # blackboard as a plain observation, was never applied,
-                # and the orchestrator returned the raw SR text as
-                # `final` with `final_patch=None` — silent score loss.
+                # Models sometimes emit a brief reasoning line before the
+                # structural FINAL marker. Use the last line-anchored marker
+                # outside fenced content rather than a brittle startswith.
                 # Use the LAST line-anchored FINAL: marker OUTSIDE any
                 # fenced code block. Skipping code-block markers
                 # prevents attacker-controlled quoted content (file
                 # bodies, tool output) from redefining the final
                 # answer mid-response.
-                from .coding_mode import find_final_marker_end as _final_end
-                _fe = _final_end(resp.text)
+                _fe = _final_marker_end(resp.text)
                 if _fe is not None:
                     final = resp.text[_fe:].strip()
-                    # May 26 council fix: clear any stale `_final_patch`
-                    # from a previous FINAL attempt. If a prior FINAL was
-                    # rejected (defensive/validate) and the revised
-                    # FINAL has no apply-check (because _patch_validated
-                    # was True), the verifier/return branches would read
-                    # the STALE patch from the earlier FINAL and submit
-                    # it — wrong patch attribution.
-                    self._final_patch = None
                     # May 26 council fix (agent-loop audit #4): also
                     # clear `_already_verified` so the revised FINAL
                     # gets verified afresh. Without this, a rejected
@@ -3243,192 +2782,6 @@ class Agent:
                     # `verifier_confidence=1.0` (the fallback when
                     # verdict is None) regardless of actual quality.
                     self._already_verified = False
-                    # #612: `_patch_validated` was sticky for the whole run
-                    # (only ever set True), so after one rejected patch a
-                    # later genuinely-different FINAL would skip its own
-                    # apply-check / diff extraction. Reset it alongside
-                    # `_already_verified` so each new FINAL re-validates the
-                    # patch it actually carries.
-                    self._patch_validated = False
-
-                    # Wave 8: coding-mode patch self-validation. If the
-                    # workdir is a git repo AND the FINAL contains a
-                    # unified diff, run `git apply --check` BEFORE
-                    # declaring FINAL. A rejected patch loops back with
-                    # the git error as critique -- catches the
-                    # ~30% of SWE-bench failures that are unapplyable
-                    # patches without burning a verifier round.
-                    coding_cfg = None
-                    try:
-                        from .coding_mode import (
-                            from_env as _cm_from_env,
-                        )
-                        from .coding_mode import (
-                            validate_patch,
-                        )
-                        coding_cfg = _cm_from_env()
-                    except Exception:
-                        pass
-
-                    if (coding_cfg is not None and coding_cfg.enabled
-                            and coding_cfg.require_apply_check
-                            and not getattr(self, "_patch_validated", False)):
-                        from pathlib import Path as _Path
-                        workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
-                        # Wave 11: prefer SEARCH/REPLACE over unified-diff.
-                        from .edit_format import repair_prompt_for_failure
-                        # Serialize the apply->reset on the SHARED sandbox.workdir
-                        # with the same lock the verifier branch below uses.
-                        # require_apply_check runs for every coding-mode agent
-                        # regardless of depth/role, so concurrent coder children
-                        # under spawn_swarm would otherwise interleave apply +
-                        # `git reset --hard` on one git tree and corrupt each
-                        # other's edits. (Sequential with the verifier branch's
-                        # own `async with`, so no nested/reentrant acquire.)
-                        async with self.ctx.workdir_lock:
-                            # Offload blocking git/subprocess work to a thread so
-                            # it doesn't stall the event loop (freezing every other
-                            # concurrent sub-agent, the channel server, and the
-                            # dashboard) while the lock is held. Mirrors the
-                            # asyncio.to_thread wrap in tools/agent_bus_tool.py.
-                            patch, sr_summary = await asyncio.to_thread(
-                                self._extract_and_apply_patch, final)
-                            # Reset workdir AFTER capturing the diff so the
-                            # verifier branch (and downstream evaluators) see
-                            # HEAD when they re-apply.
-                            if sr_summary is not None:
-                                await asyncio.to_thread(self._reset_workdir)
-                                try:
-                                    self.ctx.blackboard.post(
-                                        self.name, "tool_signal",
-                                        "search_replace_used=1",
-                                    )
-                                except Exception:
-                                    pass
-                        if patch is None and sr_summary is not None:
-                            self._patch_validated = True
-                            bb.post(
-                                self.name, "verify",
-                                f"SEARCH/REPLACE apply failed: "
-                                f"{sr_summary.summary_text()}",
-                            )
-                            first_fail = next(
-                                (r for r in sr_summary.results if not r.ok),
-                                None,
-                            )
-                            critique = (
-                                "Your FINAL SEARCH/REPLACE block(s) did "
-                                "not apply.\n\n" + sr_summary.summary_text()
-                            )
-                            if first_fail is not None:
-                                critique += "\n\n" + repair_prompt_for_failure(
-                                    first_fail,
-                                )
-                            messages.append({"role": "user", "content": critique})
-                            continue
-                        if patch is None:
-                            self._patch_validated = True
-                            bb.post(
-                                self.name, "verify",
-                                "no valid SEARCH/REPLACE or unified diff in "
-                                "FINAL; asking for revision",
-                            )
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    "Your FINAL did not contain valid edits. "
-                                    "Use SEARCH/REPLACE format (preferred):\n\n"
-                                    "path/to/file.py\n"
-                                    "<<<<<<< SEARCH\n"
-                                    "<exact existing lines>\n"
-                                    "=======\n"
-                                    "<new lines>\n"
-                                    ">>>>>>> REPLACE\n\n"
-                                    "Multiple blocks allowed, each can target "
-                                    "a different file. Or as a fallback, a "
-                                    "unified diff in ```diff fences."
-                                ),
-                            })
-                            continue
-                        # Stash the rendered patch so the verifier branch
-                        # doesn't have to re-parse.
-                        self._final_patch = patch
-                        # Wave 11: defensive validation BEFORE git apply
-                        # --check. Catches grader-fatal patches (test
-                        # files, dep pins, cheating-detector overlap)
-                        # so we ask for revision instead of submitting
-                        # something the grader will silently zero out.
-                        try:
-                            from .coding_mode import (
-                                defensive_validate,
-                                get_gold_patch,
-                            )
-                            def_check = defensive_validate(
-                                patch,
-                                fail_to_pass=coding_cfg.fail_to_pass,
-                                pass_to_pass=coding_cfg.pass_to_pass,
-                                gold_patch=get_gold_patch(),
-                                opaque=(os.environ.get(
-                                    "MAVERICK_BENCHMARK_OPAQUE", "1",
-                                ) != "0"),
-                            )
-                        except Exception:
-                            def_check = None
-                        if def_check is not None and not def_check.ok:
-                            # May 26 smoke fix: DO NOT set
-                            # `_patch_validated = True` here. The flag
-                            # short-circuits the entire SR-extract-apply
-                            # block on the next iteration, so when the
-                            # agent revises in response to the critique,
-                            # the new SR blocks are silently ignored
-                            # (workdir untouched, no patch produced).
-                            # Fired on pallets/flask-5014 — agent
-                            # produced correct fix, cheating detector
-                            # false-positive rejected it, then the
-                            # agent's revision attempt was no-op'd.
-                            bb.post(
-                                self.name, "verify",
-                                f"patch rejected by defensive validator: "
-                                f"{def_check.blocked_paths or def_check.warnings}",
-                            )
-                            messages.append({
-                                "role": "user",
-                                "content": def_check.critique(),
-                            })
-                            continue
-                        # Wave 12 hardening: when defensive validate
-                        # passes (ok=True) but emitted warnings (WARN
-                        # path — conftest.py / pyproject.toml etc.),
-                        # post the advisory to the blackboard so it
-                        # shows up in trace; we still ACCEPT the patch.
-                        if def_check is not None and def_check.warnings:
-                            bb.post(
-                                self.name, "verify",
-                                f"defensive warnings (accepted anyway): "
-                                f"{def_check.warnings}",
-                            )
-                        validation = validate_patch(patch, workdir)
-                        if not validation.valid:
-                            self._patch_validated = True  # one retry max
-                            bb.post(
-                                self.name, "verify",
-                                f"patch rejected: {validation.reason}",
-                            )
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    "Your FINAL patch did not pass "
-                                    "`git apply --check`.\n\n"
-                                    f"Reason: {validation.reason}\n\n"
-                                    f"git stderr:\n{validation.git_apply_stderr}\n\n"
-                                    "Re-examine the exact line content via "
-                                    "`read_file`, fix the edits, and respond "
-                                    "with a new FINAL using SEARCH/REPLACE "
-                                    "blocks (preferred) or a unified diff."
-                                ),
-                            })
-                            continue
-
                     # Karpathy SOTA-review item: verifier role exists in
                     # prompt strings only -- no code actually runs a
                     # second-pass check. Now we do, but only on the
@@ -3452,206 +2805,10 @@ class Agent:
                         and not getattr(self, "_already_verified", False)
                         and self.ctx.goal_id is not None
                     ):
-                        # Wave 8: when SWE-bench-style ground-truth tests
-                        # are provided, run them as the verifier instead
-                        # of (or alongside) the LLM judge. Ground truth
-                        # >> opinion; this is how OpenHands gets to 72%.
-                        if (coding_cfg is not None and coding_cfg.enabled
-                                and (coding_cfg.fail_to_pass or coding_cfg.pass_to_pass)):
-                            async with self.ctx.workdir_lock:
-                                from pathlib import Path as _Path
-
-                                from .coding_mode import run_failing_tests
-                                workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
-                                # Wave 11: reuse the patch produced by the
-                                # validate branch above (SEARCH/REPLACE or
-                                # unified-diff). If the validate branch was
-                                # skipped (e.g. require_apply_check=False),
-                                # extract here.
-                                patch = getattr(self, "_final_patch", None)
-                                if patch is None:
-                                    patch, _ = await asyncio.to_thread(
-                                        self._extract_and_apply_patch, final)
-                                    if patch is not None:
-                                        # We applied to disk; reset for the
-                                        # verifier's own apply.
-                                        await asyncio.to_thread(self._reset_workdir)
-                                if patch is None:
-                                    if not getattr(self, "_patch_validated", False):
-                                        self._patch_validated = True
-                                        bb.post(
-                                            self.name, "verify",
-                                            "no valid diff in FINAL; asking for revision",
-                                        )
-                                        messages.append({
-                                            "role": "user",
-                                            "content": (
-                                                "Your FINAL did not contain valid "
-                                                "edits. Use SEARCH/REPLACE blocks "
-                                                "(preferred) or a unified diff in "
-                                                "```diff fences."
-                                            ),
-                                        })
-                                        continue
-                                    # Already revised once; surface and exit.
-                                    return AgentResult(
-                                        final=final, role=self.role, name=self.name,
-                                        verifier_confidence=0.0,
-                                        verifier_critique="no valid diff in FINAL",
-                                    )
-
-                                apply_ok = await asyncio.to_thread(self._git_apply, patch)
-
-                                # Wave 10 (D10): only run tests when apply
-                                # succeeded. Running tests on HEAD when apply
-                                # failed wastes a full test run (minutes on
-                                # SWE-bench), reports all FAIL_TO_PASS as
-                                # failing for the wrong reason, then misleads
-                                # the revision pass.
-                                if not apply_ok:
-                                    test_result = None  # type: ignore[assignment]
-                                else:
-                                    try:
-                                        # run_failing_tests shells out to pytest --
-                                        # minutes on SWE-bench. Off-load it so the
-                                        # whole event loop isn't frozen for the
-                                        # duration.
-                                        test_result = await asyncio.to_thread(
-                                            run_failing_tests,
-                                            workdir,
-                                            coding_cfg.fail_to_pass,
-                                            coding_cfg.pass_to_pass,
-                                            self.ctx.sandbox,
-                                            language=coding_cfg.language,
-                                        )
-                                    finally:
-                                        # Always revert the workdir so the next
-                                        # attempt reads HEAD, not the post-patch
-                                        # tree. Without this, successive
-                                        # revisions see corrupted state and
-                                        # compound the error.
-                                        await asyncio.to_thread(self._reset_workdir)
-
-                                if not apply_ok:
-                                    # Wave 10 (D10): tests were skipped because
-                                    # the patch wouldn't apply. Tell the agent
-                                    # so it doesn't 'fix' a working patch into
-                                    # a broken one based on apply-fail noise.
-                                    if not getattr(self, "_patch_validated", False):
-                                        self._patch_validated = True
-                                        bb.post(
-                                            self.name, "verify",
-                                            "patch failed to apply pre-test; "
-                                            "asking proposer to revise",
-                                        )
-                                        messages.append({
-                                            "role": "user",
-                                            "content": (
-                                                "Your patch could not be applied "
-                                                "via `git apply`. Re-examine the "
-                                                "current file contents with "
-                                                "`read_file` and produce a fresh "
-                                                "unified diff against HEAD."
-                                            ),
-                                        })
-                                        continue
-                                    # Already retried once; surface and exit.
-                                    return AgentResult(
-                                        final=final, role=self.role, name=self.name,
-                                        verifier_confidence=0.0,
-                                        verifier_critique="patch did not apply",
-                                    )
-
-                                bb.post(
-                                    self.name, "verify",
-                                    f"test-driven verifier: {test_result.summary()}",
-                                )
-                                # Calibration auto-collection: tests are GROUND
-                                # TRUTH here, so also ask the LLM verifier and
-                                # record (confidence, correct) -- this is how the
-                                # calibration interlock learns whether the judge
-                                # still tracks reality. Opt-in (one extra verifier
-                                # call) + fail-open.
-                                try:
-                                    from . import calibration
-                                    if calibration.collect_from_coding_enabled():
-                                        from .verifier import verify_proposal
-                                        _cv = await verify_proposal(
-                                            self.brief, final, self.ctx.llm,
-                                            self.ctx.budget, proposer_model=self.model,
-                                        )
-                                        calibration.record_sample(
-                                            _cv.confidence, test_result.all_pass,
-                                            source="coding",
-                                        )
-                                except Exception:  # pragma: no cover -- never break the loop
-                                    pass
-                                if test_result.all_pass:
-                                    # Tests pass → accept FINAL. Skip LLM verifier.
-                                    self._already_verified = True
-                                    return AgentResult(
-                                        final=final, role=self.role, name=self.name,
-                                        verifier_confidence=test_result.score,
-                                        verifier_critique=test_result.summary(),
-                                        final_patch=getattr(self, "_final_patch", None),
-                                    )
-                                # Tests failed → revise. Wave 9 (council H2):
-                                # do NOT leak raw assertion bodies to the
-                                # agent in benchmark mode -- that's a recipe
-                                # for hardcoding to the test's expected value.
-                                # Wave 11 (PROBE-lite): classify the failure
-                                # type and surface a targeted hint without
-                                # leaking expected values.
-                                opaque = os.environ.get("MAVERICK_BENCHMARK_OPAQUE", "1") != "0"
-                                from .coding_mode import classify_failure
-                                fail_class, fail_hint = classify_failure(
-                                    test_result.raw_output,
-                                )
-                                class_line = (
-                                    f"Dominant failure class: {fail_class}.\n{fail_hint}"
-                                    if fail_class != "other" else ""
-                                )
-                                if opaque:
-                                    critique = (
-                                        "Your patch did not pass the required tests.\n\n"
-                                        f"{test_result.summary()}\n\n"
-                                        f"{class_line}\n\n"
-                                        "Revise based on your understanding of the "
-                                        "code, not from inspecting the failing "
-                                        "tests' expected values. Respond with a "
-                                        "new FINAL using SEARCH/REPLACE blocks."
-                                    ).strip()
-                                else:
-                                    critique = (
-                                        "Your patch did not pass the required tests.\n\n"
-                                        f"{test_result.summary()}\n\n"
-                                        f"{class_line}\n\n"
-                                        f"Recent test output:\n{test_result.raw_output}\n\n"
-                                        "Inspect the failing tests, revise your patch, "
-                                        "and respond with a new FINAL using "
-                                        "SEARCH/REPLACE blocks."
-                                    ).strip()
-                                # Wave 9 fix (#2): one retry max so a flaky
-                                # verifier or unfixable instance doesn't loop
-                                # forever. The retry IS re-verified.
-                                if getattr(self, "_patch_validated", False):
-                                    # Already revised once; accept whatever this is.
-                                    self._already_verified = True
-                                    return AgentResult(
-                                        final=final, role=self.role, name=self.name,
-                                        verifier_confidence=test_result.score,
-                                        verifier_critique=test_result.summary(),
-                                        final_patch=getattr(self, "_final_patch", None),
-                                    )
-                                self._patch_validated = True
-                                messages.append({"role": "user", "content": critique})
-                                continue
-
                         if (
                             _risk_proportional_verify_enabled()
                             and _final_is_low_risk(
                                 final,
-                                coding=bool(coding_cfg and coding_cfg.enabled),
                                 tool_calls=self.ctx.budget.tool_calls,
                             )
                         ):
@@ -3665,17 +2822,12 @@ class Agent:
                             try:
                                 from .verifier import verify_final
                                 verifier_attempted = True
-                                # Loop 1: a high-disagreement swarm fan-out asks
-                                # FINAL to face the cross-family ensemble.
                                 verdict = await verify_final(
                                     self.brief, final, self.ctx.llm, self.ctx.budget,
                                     proposer_model=self.model,
-                                    force_ensemble=bool(
-                                        getattr(self.ctx, "escalate_verification", False)
-                                    ),
                                 )
-                                # Stamp the verdict so the autonomy servo (Loop 2)
-                                # can tighten the leash on low-confidence runs.
+                                # Stamp the verdict so the run-local trust servo
+                                # can tighten the risk ceiling.
                                 self.ctx.last_verifier_confidence = verdict.confidence
                             except BudgetExceeded:
                                 verdict = None
@@ -3697,14 +2849,12 @@ class Agent:
                                     disagreement=float(
                                         getattr(self.ctx, "last_disagreement", 0.0) or 0.0
                                     ),
-                                    coding=bool(coding_cfg and coding_cfg.enabled),
                                 )
                                 return AgentResult(
                                     final=_final_with_uncertainty_note(final, _reasons),
                                     role=self.role, name=self.name,
                                     verifier_confidence=verdict.confidence,
                                     verifier_critique=verdict.critique,
-                                    final_patch=getattr(self, "_final_patch", None),
                                 )
                             self._already_verified = True
                             self._verifier_revision_used = True
@@ -3762,15 +2912,6 @@ class Agent:
                     self.ctx.world.append_message(
                         self.ctx.goal_id, f"agent:{self.name}", final
                     )
-                    # Stop hooks: the agent has decided on FINAL. Post-style
-                    # (non-blocking) -- observers/loggers, cannot veto.
-                    from .hooks import HookEvent
-                    from .hooks import emit as _emit_hook
-                    await _emit_hook(
-                        HookEvent.STOP,
-                        goal_id=self.ctx.goal_id, agent_role=self.role,
-                        extra={"name": self.name, "final": final},
-                    )
                     self._score_step(step_index=step, is_final=True)
                     if verification_skipped:
                         _vconf, _vcrit = 0.9, (
@@ -3793,14 +2934,12 @@ class Agent:
                         disagreement=float(
                             getattr(self.ctx, "last_disagreement", 0.0) or 0.0
                         ),
-                        coding=bool(coding_cfg and coding_cfg.enabled),
                     )
                     return AgentResult(
                         final=_final_with_uncertainty_note(final, _reasons),
                         role=self.role, name=self.name,
                         verifier_confidence=_vconf,
                         verifier_critique=_vcrit,
-                        final_patch=getattr(self, "_final_patch", None),
                     )
                 bb.post(self.name, "observation", resp.text[:1000])
 
@@ -4041,31 +3180,6 @@ class Agent:
             if blocked:
                 return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
 
-        # Wave 12 hotfix: when the agent loop exhausts max_steps without
-        # emitting FINAL, the workdir may STILL contain edits made via
-        # `str_replace_editor` (the secondary tool channel). The May 26
-        # smoke surfaced 3/6 instances where the agent edited via the
-        # tool but never produced a FINAL — those instances reported
-        # `no-diff` even though the patch was already on disk.
-        # Salvage that work by rendering the workdir as the final_patch
-        # if there are uncommitted changes.
-        try:
-            from pathlib import Path as _Path
-
-            from .edit_format import render_diff
-            workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
-            if (workdir / ".git").exists():
-                rendered = render_diff(workdir)
-                if rendered and rendered.strip():
-                    return AgentResult(
-                        error=f"hit max_steps={self.max_steps}; "
-                              "captured workdir diff as final_patch",
-                        final_patch=rendered,
-                        role=self.role,
-                        name=self.name,
-                    )
-        except Exception:
-            pass
         return AgentResult(
             error=f"hit max_steps={self.max_steps}",
             role=self.role,

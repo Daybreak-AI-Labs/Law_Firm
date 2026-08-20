@@ -12,13 +12,16 @@ class _Profile:
 
 
 PROFILES = {"finance_gl_close": _Profile("SOX ICFR control testing and reconciliation")}
+MATTER_ID = 101
+OWNER = "user:alice"
 
 
 def _two_clustered_failures(path):
     for goal in ("erp export timed out on batches", "erp export timed out in demo"):
         reflexion.record(goal_text=goal, failure_class="agent_error",
                          failure_msg="timeout", reflection="r",
-                         domain="finance_gl_close", path=path)
+                         domain="finance_gl_close", matter_id=MATTER_ID,
+                         owner=OWNER, path=path)
 
 
 def _run(tmp_path):
@@ -61,12 +64,14 @@ def test_frozen_verifier_does_not_retire_insights(tmp_path):
     dreaming.append_insights([dreaming.DreamInsight(
         ts=100.0, kind="failure_pattern", domain="finance_gl_close",
         text="erp export timeout batch reconciliation failed repeatedly",
-        evidence=3,
+        evidence=3, matter_id=MATTER_ID,
     )], path=ipath)
     # Two successes NEWER than the insight whose tokens it fully covers -> the
     # unfrozen path retires it (min_successes=2).
-    successes = [{"t": 200.0, "goal": "erp export"},
-                 {"t": 200.0, "goal": "erp export"}]
+    successes = [
+        {"t": 200.0, "goal": "erp export", "project_id": MATTER_ID},
+        {"t": 200.0, "goal": "erp export", "project_id": MATTER_ID},
+    ]
     cfg = {"contradiction_successes": 2, "prune": False, "user_notes": False}
 
     def run(frozen):

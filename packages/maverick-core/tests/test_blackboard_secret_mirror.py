@@ -2,10 +2,10 @@
 
 Security finding (round 7, adversarial): Blackboard.post() mirrored content
 verbatim into world.goal_events (persisted to world.db and streamed live to
-the dashboard), the replay trace, and the observation channel -- none
-redacted. An agent that reports a credential it found ("the DB password is X")
-leaked that secret to disk and to any dashboard viewer, even in a fully local
-deployment, and regardless of the audit log's own redaction.
+the dashboard) and the observation channel. An agent that reports a credential
+it found ("the DB password is X") leaked that secret to disk and to any
+dashboard viewer, even in a fully local deployment, and regardless of the audit
+log's own redaction.
 
 The in-memory blackboard (the agents' shared working memory) stays verbatim so
 agent workflows that legitimately pass a value between siblings are unbroken --
@@ -70,25 +70,15 @@ def test_redaction_failure_fails_closed_for_every_mirror(tmp_path, monkeypatch):
         lambda kind, agent, content: published.append((kind, agent, content)),
     )
 
-    class Trace:
-        def __init__(self):
-            self.rows = []
-
-        def record(self, kind, **payload):
-            self.rows.append((kind, payload["agent"], payload["content"]))
-
     world = WorldModel(tmp_path / "world.db")
     goal_id = world.create_goal("redaction-failure", "")
-    trace = Trace()
     bb = Blackboard()
     bb.attach_world(world, goal_id)
-    bb.attach_trace(trace)
 
     raw = f"detector failed while processing {_SECRET}"
     bb.post("guard", "error", raw, provenance="safety")
 
     placeholder = Blackboard._REDACTION_UNAVAILABLE_CONTENT
     assert [event.content for event in world.goal_events(goal_id)] == [placeholder]
-    assert [row[2] for row in trace.rows] == [placeholder]
     assert [row[2] for row in published] == [placeholder]
     assert _SECRET in bb.entries[0].content

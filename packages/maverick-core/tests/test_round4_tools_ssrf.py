@@ -1,5 +1,4 @@
-"""Audit round 4: SSRF-pin enterprise connectors + web_archive, strip
-gold-patch env from the non-opaque sandbox shell.
+"""Audit round 4: SSRF-pin REST connectors and strip gold-patch env.
 
 Three fixes under test:
   1. ``scrub_env`` strips ``MAVERICK_GOLD_PATCH`` for *every* sandbox shell,
@@ -9,8 +8,6 @@ Three fixes under test:
      IP-pin), so a connector host that resolves to a private/metadata address
      can't exfil the bearer token. Surfaced as a clean ``ERROR: blocked host``.
   3. The GraphQL connector takes the same SSRF-safe path.
-  4. ``web_archive`` routes JSON fetches through ``http_fetch.guarded_urlopen``
-     (per-hop redirect revalidation) instead of a raw ``urlopen``.
 """
 from __future__ import annotations
 
@@ -63,8 +60,6 @@ def test_rest_connector_blocks_private_host(monkeypatch):
     assert "blocked host (SSRF guard)" in out
     # The bearer token must not leak into the error surface.
     assert "secret-bearer" not in out
-
-
 def test_graphql_connector_blocks_private_host(monkeypatch):
     from maverick.tools._rest_connector import make_graphql_tool
     monkeypatch.setenv("GB_BASE", "http://169.254.169.254/graphql")
@@ -77,34 +72,4 @@ def test_graphql_connector_blocks_private_host(monkeypatch):
     assert "blocked host (SSRF guard)" in out
     assert "secret-bearer" not in out
 
-
-# --- fix 4: web_archive fetches go through the guarded opener ---------------
-
-def test_web_archive_routes_through_guarded_urlopen(monkeypatch):
-    import json as _json
-
-    from maverick.tools import http_fetch, web_archive
-
-    called = {}
-
-    class _FakeResp:
-        status = 200
-
-        def read(self):
-            return _json.dumps({"archived_snapshots": {}}).encode()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def _fake_guarded(req, *, timeout, allow_http=False):
-        called["url"] = req.full_url
-        return _FakeResp()
-
-    monkeypatch.setattr(http_fetch, "guarded_urlopen", _fake_guarded)
-    code, data = web_archive._http_get_json(web_archive._avail_url("https://x.test"))
-    assert called.get("url", "").startswith("https://archive.org/wayback/available")
-    assert code == 200
-    assert data == {"archived_snapshots": {}}
+# End retained connector SSRF tests.

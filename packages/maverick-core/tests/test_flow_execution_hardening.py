@@ -734,18 +734,12 @@ def test_failed_action_result_is_not_published_as_flow_output(tmp_path, monkeypa
     assert "result" not in run.data
 
 
-def test_default_agent_runner_propagates_flow_execution_identity(tmp_path, monkeypatch):
-    from maverick import world_model
+def test_default_agent_runner_requires_prebound_matter_goal(monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("retired flow agent adapter performed goal work")
 
-    world = world_model.WorldModel(tmp_path / "world.db")
-    captured = {}
-
-    def fake_run(goal_id, **kwargs):
-        captured.update(kwargs)
-        world.set_goal_status(goal_id, "done", result="ok")
-        return "done"
-
-    monkeypatch.setattr("maverick.runner.run_goal_in_thread", fake_run)
+    world = type("World", (), {"create_goal": unexpected, "get_goal": unexpected})()
+    monkeypatch.setattr("maverick.runner.run_goal_in_thread", unexpected)
     runner = execution.default_agent_runner(
         world,
         owner="user:alice",
@@ -759,15 +753,8 @@ def test_default_agent_runner_propagates_flow_execution_identity(tmp_path, monke
 
     result, outcome = runner("do work", {}, wall=10)
 
-    assert (result, outcome) == ("done", 1.0)
-    assert captured == {
-        "max_dollars": 1.25,
-        "max_wall_seconds": 10,
-        "channel": "api",
-        "user_id": "alice",
-        "allowed_suites": frozenset({"finance"}),
-        "concurrency_principal": "user:alice",
-    }
+    assert "pre-bound durable matter goal is required" in result
+    assert outcome == 0.0
 
 
 def test_default_action_runner_uses_registry_dict_contract_for_async_tool(monkeypatch):

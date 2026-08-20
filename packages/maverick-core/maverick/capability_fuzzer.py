@@ -286,7 +286,7 @@ def main(argv=None) -> int:
 
     from .capability import Capability
 
-    granted = {"fs.read", "fs.write", "shell.exec", "web_search", "http_fetch"}
+    granted = {"fs.read", "fs.write", "shell.exec", "web_search", "knowledge_search"}
     cap = Capability(
         principal="fuzzer",
         allow_tools=frozenset(granted),

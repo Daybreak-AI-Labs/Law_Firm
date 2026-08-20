@@ -193,10 +193,10 @@ class Entitlements:
 # naming + SKU map: docs/product-portfolio.md ("Canonical naming, editions & SKU map").
 DEFAULT_PLANS: dict[str, Entitlements] = {
     "free": Entitlements("free", frozenset({"core"}), 5.0, 1),
-    "pro": Entitlements("pro", frozenset({"core", "grpc", "channels"}), 100.0, 5),
+    "pro": Entitlements("pro", frozenset({"core", "channels"}), 100.0, 5),
     "enterprise": Entitlements(
         "enterprise",
-        frozenset({"core", "grpc", "channels", "sso", "audit_export", "self_host"}),
+        frozenset({"core", "channels", "sso", "audit_export", "self_host"}),
         0.0, 0,
     ),
 }

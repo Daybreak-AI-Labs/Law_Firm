@@ -1,15 +1,12 @@
 """Q2 2026 batch 1: cross-agent bus, kv_memory, clipboard, preview_diff,
-PII detector, arxiv tool, voice tools, push notifications, cookbook."""
+PII detector, arxiv tool, and local voice tools."""
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
 
 # ---------- cross-agent bus ----------
 
@@ -384,110 +381,20 @@ def test_kv_memory_requires_active_goal():
 
 # ---------- clipboard ----------
 
-def test_clipboard_kill_switch(monkeypatch):
-    monkeypatch.setenv("MAVERICK_CLIPBOARD_DISABLE", "1")
-    from maverick.tools.clipboard import clipboard
-    assert "disabled" in clipboard().fn({"op": "read"}).lower()
 
 
-def test_clipboard_read_via_pyperclip(monkeypatch):
-    monkeypatch.delenv("MAVERICK_CLIPBOARD_DISABLE", raising=False)
-    fake_pyperclip = MagicMock()
-    fake_pyperclip.paste.return_value = "from clipboard"
-    with patch.dict("sys.modules", {"pyperclip": fake_pyperclip}):
-        # Force reload to pick up the mock.
-        import importlib
-
-        import maverick.tools.clipboard as _clip_mod
-        importlib.reload(_clip_mod)
-        out = _clip_mod.clipboard().fn({"op": "read"})
-    assert out == "from clipboard"
 
 
-def test_clipboard_unknown_op():
-    from maverick.tools.clipboard import clipboard
-    assert "unknown op" in clipboard().fn({"op": "explode"}).lower()
 
 
 # ---------- preview_diff ----------
 
-def test_preview_diff_not_a_git_repo(tmp_path):
-    from maverick.tools.preview_diff import preview_diff
-
-    class _Sandbox:
-        workdir = str(tmp_path)
-
-    out = preview_diff(_Sandbox()).fn({})
-    assert "not a git repo" in out
 
 
-def test_preview_diff_no_changes(tmp_path):
-    # Init a git repo with one committed file, no changes.
-    if not _git_available():
-        pytest.skip("git not installed")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.t"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    # Test env may force commit signing; disable it for the throwaway repo.
-    subprocess.run(["git", "-C", str(tmp_path), "config", "commit.gpgsign", "false"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "tag.gpgsign", "false"], check=True)
-    (tmp_path / "a.txt").write_text("hi\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(tmp_path), "commit", "-q", "-m", "init"],
-        check=True,
-    )
-
-    from maverick.tools.preview_diff import preview_diff
-
-    class _Sandbox:
-        workdir = str(tmp_path)
-
-    out = preview_diff(_Sandbox()).fn({})
-    assert "(no changes)" in out
 
 
-def test_preview_diff_shows_unstaged_changes(tmp_path):
-    if not _git_available():
-        pytest.skip("git not installed")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.t"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    # Test env may force commit signing; disable it for the throwaway repo.
-    subprocess.run(["git", "-C", str(tmp_path), "config", "commit.gpgsign", "false"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "tag.gpgsign", "false"], check=True)
-    (tmp_path / "a.txt").write_text("line1\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(tmp_path), "commit", "-q", "-m", "init"],
-        check=True,
-    )
-    # Modify file in worktree (unstaged).
-    (tmp_path / "a.txt").write_text("line1\nline2\n")
-    from maverick.tools.preview_diff import preview_diff
-
-    class _Sandbox:
-        workdir = str(tmp_path)
-
-    out = preview_diff(_Sandbox()).fn({})
-    assert "+line2" in out
 
 
-def test_preview_diff_disables_ext_diff_and_textconv(tmp_path):
-    from maverick.tools.preview_diff import preview_diff
-
-    class _Sandbox:
-        workdir = str(tmp_path)
-
-    (tmp_path / ".git").mkdir()
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = subprocess.CompletedProcess(
-            args=["git", "diff"], returncode=0, stdout=b"", stderr=b""
-        )
-        preview_diff(_Sandbox()).fn({})
-    cmd = run_mock.call_args.args[0]
-    assert "--no-ext-diff" in cmd
-    assert "--no-textconv" in cmd
 
 
 def _git_available() -> bool:
@@ -609,166 +516,3 @@ def test_pii_overlap_cluster_redacts_later_tail():
 
 
 # ---------- arxiv tool ----------
-
-def test_arxiv_search_requires_query():
-    from maverick.tools.arxiv import arxiv
-    out = arxiv().fn({"op": "search", "query": ""})
-    assert "requires query" in out
-
-
-def test_arxiv_fetch_requires_id():
-    from maverick.tools.arxiv import arxiv
-    out = arxiv().fn({"op": "fetch", "arxiv_id": ""})
-    assert "requires arxiv_id" in out
-
-
-def test_arxiv_parser_handles_real_atom():
-    from maverick.tools.arxiv import _parse_atom
-    # A trimmed-down arxiv-shaped response.
-    xml = """
-    <feed>
-      <entry>
-        <id>http://arxiv.org/abs/2106.09685v3</id>
-        <title>LoRA: Low-Rank Adaptation of Large Language Models</title>
-        <summary>We propose Low-Rank Adaptation, or LoRA, which freezes...</summary>
-        <published>2021-06-17T17:01:48Z</published>
-        <name>Edward J. Hu</name>
-        <name>Yelong Shen</name>
-      </entry>
-    </feed>
-    """
-    entries = _parse_atom(xml)
-    assert len(entries) == 1
-    e = entries[0]
-    assert e["arxiv_id"] == "2106.09685"
-    assert "LoRA" in e["title"]
-    assert "Hu" in e["authors"]
-
-
-# ---------- voice tools ----------
-
-def test_voice_transcribe_requires_source():
-    from maverick.tools.voice import transcribe_audio
-    out = transcribe_audio().fn({"source": ""})
-    assert "source is required" in out
-
-
-def test_voice_transcribe_missing_file():
-    from maverick.tools.voice import transcribe_audio
-    out = transcribe_audio().fn({"source": "/no/such/audio.mp3"})
-    assert "not found" in out
-
-
-def test_voice_speak_requires_text():
-    from maverick.tools.voice import speak
-    out = speak().fn({"text": ""})
-    assert "text is required" in out
-
-
-def test_voice_speak_caps_text_length():
-    from maverick.tools.voice import speak
-    out = speak().fn({"text": "x" * 5000})
-    assert "too long" in out
-
-
-# ---------- notifications ----------
-
-def test_notifications_no_backends_no_op():
-    from maverick.notifications import notify
-    assert notify("hi", backends=["none"]) == 0
-
-
-def test_notifications_unknown_backend_logs(monkeypatch):
-    from maverick.notifications import notify
-    fired = notify("hi", backends=["garbage"], async_dispatch=False)
-    assert fired == 0  # nothing succeeded
-
-
-def test_notifications_dispatch_with_ntfy_topic_env(monkeypatch):
-    """With MAVERICK_NTFY_TOPIC + no SDK, dispatch attempts the call."""
-    monkeypatch.setenv("MAVERICK_NTFY_TOPIC", "test-topic")
-    from maverick import notifications
-
-    posted: list[tuple[str, str]] = []
-
-    def _fake_post(url, content=None, headers=None, timeout=None):
-        posted.append((url, headers.get("Title", "")))
-        resp = MagicMock()
-        resp.status_code = 200
-        return resp
-
-    with patch("httpx.post", side_effect=_fake_post):
-        fired = notifications.notify(
-            "test body", title="Hello", backends=["ntfy"], async_dispatch=False,
-        )
-    assert fired == 1
-    assert len(posted) == 1
-    assert "test-topic" in posted[0][0]
-
-
-# ---------- cookbook + failure-modes docs ----------
-
-COOKBOOK_RECIPES = [
-    "pr-review.md", "dep-migrate.md", "repo-onboarding.md",
-    "issue-triage.md", "research.md",
-    # Quick hits (under 60 seconds).
-    "commit-message.md", "explain-error.md", "regex-builder.md",
-    "changelog-entry.md", "docstring-pass.md", "test-naming.md",
-    "env-audit.md",
-]
-
-
-@pytest.mark.parametrize("name", ["index.md", *COOKBOOK_RECIPES])
-def test_cookbook_recipe_exists(name):
-    p = REPO_ROOT / "docs" / "cookbook" / name
-    assert p.is_file(), f"missing cookbook recipe: {name}"
-    body = p.read_text()
-    # Each recipe must have a "Goal text" or be the index.
-    if name == "index.md":
-        return
-    assert "## Goal text" in body or "Goal text" in body
-
-
-def test_cookbook_has_at_least_12_recipes():
-    assert len(COOKBOOK_RECIPES) >= 12
-    # And each is linked from the index so users can find it.
-    index = (REPO_ROOT / "docs" / "cookbook" / "index.md").read_text()
-    for name in COOKBOOK_RECIPES:
-        assert f"({name})" in index or f"(./{name})" in index, (
-            f"recipe not linked from index: {name}"
-        )
-
-
-def test_failure_modes_doc_exists():
-    p = REPO_ROOT / "docs" / "performance" / "failure-modes.md"
-    assert p.is_file()
-    body = p.read_text()
-    # Must enumerate every ErrorClass.
-    for cls in (
-        "rate_limit", "transient_network", "server_5xx",
-        "content_filter", "auth", "context_overflow",
-        "malformed_response", "unknown",
-    ):
-        assert cls in body
-
-
-# ---------- tool registry ----------
-
-def test_q2_tools_registered():
-    """All Q2 batch tools must appear in the default registry."""
-    from maverick.tools import base_registry
-
-    class _FakeSandbox:
-        workdir = "."
-
-    class _FakeWorld:
-        pass
-
-    reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
-    names = {t.name for t in reg.all()}
-    for expected in (
-        "clipboard", "preview_diff", "arxiv",
-        "transcribe_audio", "speak",
-        # kv_memory needs a non-None world+goal_id; skip in this no-goal test.
-    ):
-        assert expected in names, f"missing tool: {expected}"

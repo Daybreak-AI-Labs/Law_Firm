@@ -42,13 +42,6 @@ atexit.register(shutil.rmtree, _session_home, True)
 # DEFAULT itself is covered by test_secure_defaults.py, which overrides this.
 os.environ.setdefault("MAVERICK_SECURE_DEFAULT", "0")
 
-# Voice STT model auto-fetch ships ON so the dashboard mic works out of the
-# box, but a test that wanders into the local STT chain must never download a
-# ~150 MB Whisper model from Hugging Face. Tests of the auto-fetch mechanics
-# set this env themselves (against a mocked urlopen).
-os.environ.setdefault("MAVERICK_VOICE_AUTO_FETCH", "0")
-
-
 @pytest.fixture(autouse=True)
 def _isolate_dynamic_maverick_home(tmp_path, monkeypatch):
     """Give every package a fresh dynamic home, including on Windows.

@@ -25,7 +25,7 @@ _FILES = sorted(builtin_skills_dir().glob("*.md"))
 
 def test_skills_library_present():
     # The council shipped 20 cross-cutting + 41 suite-specific skills.
-    assert len(_FILES) >= 60, f"expected >=60 skills, found {len(_FILES)} in {builtin_skills_dir()}"
+    assert len(_FILES) == 45, f"expected 45 reviewed skills, found {len(_FILES)} in {builtin_skills_dir()}"
 
 
 @pytest.mark.parametrize("path", _FILES, ids=[p.stem for p in _FILES])
@@ -49,7 +49,7 @@ def test_builtin_skills_load_when_enabled(monkeypatch, tmp_path):
     # whole library is recalled through available_skills (the agent path).
     monkeypatch.setenv("MAVERICK_BUILTIN_SKILLS", "1")
     builtin = {s.name for s in load_builtin_skills()}
-    assert len(builtin) >= 60
+    assert len(builtin) == 45
     avail = {s.name for s in available_skills(skills_dir=tmp_path / "empty-user-dir")}
     assert builtin <= avail, "available_skills must include the shipped library when enabled"
 

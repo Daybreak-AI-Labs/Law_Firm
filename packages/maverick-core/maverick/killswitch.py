@@ -16,6 +16,7 @@ something expensive or wrong.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -25,6 +26,8 @@ from pathlib import Path
 from .paths import data_dir
 
 log = logging.getLogger(__name__)
+
+_SAFE_HALT_SOURCES = {"manual", "operator", "system", "test"}
 
 
 def _authority_barrier():
@@ -89,23 +92,41 @@ def halt(reason: str, source: str = "manual") -> None:
             pass
     except Exception:
         log.exception("killswitch: commit barrier unavailable during halt")
-    log.warning("killswitch: halt set (%s, source=%s)", reason, source)
+    reason_encoded = reason.encode("utf-8")
+    reason_sha256 = hashlib.sha256(reason_encoded).hexdigest()
+    safe_source = source if source in _SAFE_HALT_SOURCES else "other"
+    log.warning(
+        "killswitch: halt set (source=%s, reason_bytes=%d, reason_sha256=%s)",
+        safe_source,
+        len(reason_encoded),
+        reason_sha256,
+    )
     from .audit import EventKind, audit_event
 
-    # Page the operator even when the configured audit guarantee refuses its
-    # row. The halt remains armed either way, then the refusal propagates so the
-    # caller cannot mistake an unrecorded stop for a fully recorded one.
+    # Emit a local structural alert even when the configured audit guarantee
+    # refuses its row. The halt remains armed either way, then the refusal
+    # propagates so the caller cannot mistake an unrecorded stop for a fully
+    # recorded one.
     try:
-        audit_event(EventKind.HALT, source=source, detail=reason)
+        audit_event(
+            EventKind.HALT,
+            source=safe_source,
+            reason_bytes=len(reason_encoded),
+            reason_sha256=reason_sha256,
+        )
     finally:
-        # A halt stops all work, so this is the canonical event an SRE must hear
-        # about. No-op unless [alerts] is enabled; paging never blocks the halt.
+        # A halt stops all work, so emit a local structural alert. Alerting
+        # never blocks the halt and never receives the raw reason.
         try:
             from .ops_alert import alert
             alert(
                 "killswitch_tripped",
-                f"{reason} (source={source})",
                 severity="critical",
+                fields={
+                    "source": safe_source,
+                    "reason_bytes": len(reason_encoded),
+                    "reason_sha256": reason_sha256,
+                },
             )
         except Exception:  # pragma: no cover -- alerting never blocks the halt
             pass

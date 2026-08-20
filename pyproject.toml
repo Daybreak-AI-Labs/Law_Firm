@@ -7,7 +7,6 @@ members = [
     "packages/maverick-core",
     "packages/maverick-shield",
     "packages/maverick-dashboard",
-    "packages/maverick-mcp",
     "packages/maverick-knowledge",
     "apps/installer-cli",
 ]
@@ -16,7 +15,6 @@ members = [
 maverick-agent = { workspace = true }
 maverick-shield = { workspace = true }
 maverick-dashboard = { workspace = true }
-maverick-mcp-server = { workspace = true }
 maverick-knowledge = { workspace = true }
 maverick-installer = { workspace = true }
 

@@ -4,7 +4,6 @@ Config (``~/.maverick/config.toml``):
 
     [rate_limits]
     web_search = "10/60"      # 10 calls per 60 seconds
-    http_fetch = "20/60"
     shell      = "30/60"
     "mcp_*"    = "60/60"      # glob -- applies to any matching tool name
 

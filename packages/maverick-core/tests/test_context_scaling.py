@@ -23,6 +23,13 @@ class TestModelWindow:
         _clear_env(monkeypatch)
         assert cs.model_window("gemini-3-pro") == 1_000_000
 
+    def test_provider_qualified_model_matches_bare_capability(self, monkeypatch):
+        _clear_env(monkeypatch)
+        assert context_limit("anthropic:claude-sonnet-4-6") == context_limit(
+            "claude-sonnet-4-6"
+        )
+        assert cs.history_turns("anthropic:claude-sonnet-4-6") == 50
+
     def test_env_override_wins(self, monkeypatch):
         _clear_env(monkeypatch)
         monkeypatch.setenv("MAVERICK_MODEL_CONTEXT_WINDOW", "750000")
@@ -100,6 +107,28 @@ class TestDeclaredWindows:
             lambda: {"context": {"model_windows": {"weird": "not-a-number"}}},
         )
         assert context_limit("weird") == 32_000  # falls to the safe default
+
+    def test_exact_qualified_declaration_precedes_bare_declaration(self, monkeypatch):
+        import maverick.config as config
+        monkeypatch.setattr(
+            config,
+            "load_config",
+            lambda: {
+                "context": {
+                    "model_windows": {
+                        "claude-sonnet-4-6": 190_000,
+                        "anthropic:claude-sonnet-4-6": 210_000,
+                    },
+                },
+            },
+        )
+        assert context_limit("anthropic:claude-sonnet-4-6") == 210_000
+        assert context_limit("claude-sonnet-4-6") == 190_000
+
+    def test_unknown_qualified_model_keeps_safe_fallback(self, monkeypatch):
+        import maverick.config as config
+        monkeypatch.setattr(config, "load_config", dict)
+        assert context_limit("custom:totally-made-up-model-xyz") == 32_000
 
 
 class TestAgentWiring:

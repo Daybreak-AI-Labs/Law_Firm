@@ -21,6 +21,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 MAX = sh._MAX_LINES_PER_MODEL
 
 
@@ -39,7 +41,7 @@ def _promote(model, line_key, store):
     ctrl = si.SelfImprovementController(frozen_fn=lambda: False, ledger=si.PromotionLedger())
     recs = [{"model_id": model, "failure_class": line_key,
              "goal_text": f"task run {i}", "failure_msg": line_key} for i in range(3)]
-    sh.run_self_harness(
+    run_operator_harness(
         recs, model_id=model, min_support=3, held_in=["a", "b"],
         held_out=["c", "d", "e", "f", "g"], score_with=lambda a, c: 0.95,
         score_without=lambda a, c: 0.4, controller=ctrl, path=store)

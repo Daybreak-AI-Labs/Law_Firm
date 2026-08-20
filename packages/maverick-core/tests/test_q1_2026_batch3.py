@@ -179,15 +179,14 @@ def test_retry_classifier_next_delay_is_jittered():
 def test_wizard_run_accepts_fast_flag(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv(
+        "MAVERICK_MODEL_OVERRIDE", "anthropic:claude-sonnet-4-6"
+    )
     from maverick_installer import wizard
     # Patch CONFIG_DIR / FILES so we write to tmp_path.
     wizard.CONFIG_DIR = tmp_path / ".maverick"
     wizard.CONFIG_FILE = wizard.CONFIG_DIR / "config.toml"
     wizard.ENV_FILE = wizard.CONFIG_DIR / ".env"
-    # Fast setup now picks the sandbox by Docker availability; pin it up so
-    # this test deterministically exercises the full docker-config path.
-    monkeypatch.setattr(wizard, "_docker_available", lambda: True)
-
     rc = wizard.run(fast=True)
     assert rc == 0
     # Config got written.
@@ -196,7 +195,7 @@ def test_wizard_run_accepts_fast_flag(tmp_path, monkeypatch):
     assert "[providers.anthropic]" in body
     assert "[safety]" in body
     assert "[sandbox]" in body
-    assert "backend = \"docker\"" in body
+    assert "backend = \"local\"" in body
     # ENV stored the key.
     assert wizard.ENV_FILE.exists()
     env_body = wizard.ENV_FILE.read_text()
@@ -221,10 +220,3 @@ def test_wizard_run_default_still_interactive(tmp_path, monkeypatch):
 def test_conventional_commits_workflow_exists():
     repo_root = Path(__file__).resolve().parents[3]
     assert (repo_root / ".github" / "workflows" / "conventional-commits.yml").is_file()
-
-
-def test_starter_goals_doc_exists():
-    repo_root = Path(__file__).resolve().parents[3]
-    # Moved out of docs/templates/ -> docs/ so MkDocs (which excludes the
-    # templates/ dir) actually builds + serves the page. See fix/docs-accuracy.
-    assert (repo_root / "docs" / "starter-goals.md").is_file()

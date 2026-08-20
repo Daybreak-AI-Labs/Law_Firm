@@ -3,15 +3,11 @@ requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# PyPI distribution name, reserved for when this ships publicly -- nothing is
-# published under it today (pypi.org/project/maverick-agent 404s as of July
-# 2026), so read this as the intended name, not a live one. The bare 'maverick'
-# name was squatted on PyPI, hence the suffix. The Python *import* name stays as
-# `maverick` (see [tool.setuptools.packages.find]) and the CLI installs as
-# `maverick` (see [project.scripts]).
+# Internal distribution identifier for the firm's reviewed wheel cohort.  The
+# Python import remains ``maverick`` and the operator CLI remains ``maverick``.
 name = "maverick-agent"
 version = "0.1.7"
-description = "Recursive multi-agent swarm for long-horizon work"
+description = "Governed matter-bound agent kernel for law firms"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
@@ -38,7 +34,7 @@ dependencies = [
     "idna>=3.15",
     "tomli>=2.0; python_version<'3.11'",
     # zoneinfo has no bundled database on Windows and minimal Linux images may
-    # omit the system database. Finance off-hours rules require IANA zones.
+    # omit the system database. Time-based firm policy requires IANA zones.
     "tzdata>=2026.3",
 ]
 
@@ -54,52 +50,15 @@ xai        = ["openai>=1.30"]
 gemini     = ["openai>=1.30"]
 tgi        = ["openai>=1.30"]
 vllm       = ["openai>=1.30"]
-chroma     = ["chromadb>=0.4"]
-qdrant     = ["qdrant-client>=1.6", "fastembed>=0.3"]
-weaviate   = ["weaviate-client>=4.5"]
-saml       = ["pysaml2>=7.3"]
-grpc       = ["grpcio>=1.60", "grpcio-tools>=1.60"]
 queue      = ["arq>=0.25"]
-zstd       = ["zstandard>=0.20"]
 perf-fastjson = ["orjson>=3.9"]
-modal      = ["modal>=0.60"]
-ros        = ["roslibpy>=1.5"]
-serial     = ["pyserial>=3.5"]
-i2c        = ["smbus2>=0.4"]
-sensors    = ["psutil>=5.9"]
-duckdb     = ["duckdb>=0.9"]
-langchain  = ["langchain-core>=1.3.3", "langsmith>=0.8.18"]
-math       = ["sympy>=1.12"]
-pandas     = ["pandas>=2.1", "pyarrow>=15.0"]
-calendar   = ["caldav>=1.3"]
-session         = ["httpx>=0.27"]
-chatgpt-session = ["httpx>=0.27"]
-claude-session  = ["httpx>=0.27"]
-kimi-session    = ["httpx>=0.27"]
-grok-session    = ["httpx>=0.27"]
-gemini-session  = ["httpx>=0.27"]
-capture         = ["playwright>=1.40"]
-browser         = ["playwright>=1.40", "lxml>=5.0"]
-computer-use    = ["pillow>=12.3.0", "mss>=9.0", "pyautogui>=0.9.54"]
-pdf             = ["pdfplumber>=0.10", "pypdf>=6.15.0"]
-clipboard       = ["pyperclip>=1.8"]
-voice           = ["faster-whisper>=1.0"]
-# CLAP zero-shot audio understanding (tools/audio_understanding.py,
-# audio_analysis.py). torch floor mirrors [training].
-clap            = ["transformers>=4.40", "torch>=2.2"]
-notifications   = ["httpx>=0.27"]
+parsers         = ["pdfplumber>=0.10", "pypdf>=6.15.0", "pillow>=12.3.0"]
 audit-signing   = ["cryptography>=48.0.1"]
-sigstore        = ["sigstore>=3.0"]
 oidc            = ["pyjwt[crypto]>=2.13.0"]
-training        = ["torch>=2.2", "transformers>=4.40", "peft>=0.10",
-                   "bitsandbytes>=0.43", "accelerate>=0.30"]
-issue-trackers  = ["httpx>=0.27"]
+# Optional CPU inference for the retained, artifact-validated LearnedPRM.
+# LinearPRM and its governed offline trainer use only the standard library.
+training        = ["torch>=2.2"]
 spreadsheet     = ["openpyxl>=3.1"]
-youtube         = ["youtube-transcript-api>=0.6"]
-latex           = ["latex2mathml>=3.77"]
-websocket       = ["websockets>=12.0"]
-webrtc          = ["aiortc>=1.9"]
-mongodb         = ["pymongo>=4.6"]
 redis           = ["redis>=5.0"]
 s3              = ["boto3>=1.34"]
 observability   = [
@@ -112,12 +71,11 @@ sentry          = ["sentry-sdk>=2.0"]
 shield          = ["maverick-shield>=0.1.7"]
 installer  = ["maverick-installer>=0.1.7"]
 dashboard  = ["maverick-dashboard>=0.1.7"]
-mcp        = ["maverick-mcp-server>=0.1.7"]
 knowledge  = ["maverick-knowledge>=0.1.7"]
 embeddings = ["fastembed>=0.3"]
 # Full dev/test bootstrap. Beyond the test runner + linter, this bundles the
 # cross-package runtime deps the suite imports -- the sibling packages are
-# installed `--no-deps`, so their deps (fastapi/httpx/twilio/...) won't come in
+# installed `--no-deps`, so their web-stack deps won't come in
 # otherwise. Versions mirror the CVE-patched floors the CI `test`/`audit` jobs
 # enforce (see .github/workflows/ci.yml). Keeps `pip install -e .[dev]`
 # runnable end-to-end so `pytest` passes from a clean checkout.
@@ -137,7 +95,6 @@ dev        = [
     "requests>=2.33.0",
     "urllib3>=2.7.0",
     "pillow>=12.3.0",
-    "twilio>=9.0",
 ]
 all        = [
     "openai>=1.30",
@@ -145,7 +102,6 @@ all        = [
     "maverick-shield>=0.1.7",
     "maverick-installer>=0.1.7",
     "maverick-dashboard>=0.1.7",
-    "maverick-mcp-server>=0.1.7",
     "maverick-knowledge>=0.1.7",
 ]
 
@@ -164,16 +120,11 @@ where = ["."]
 include = ["maverick*"]
 
 [tool.setuptools.package-data]
-# Ship the gRPC contract so the server can generate stubs from the installed
-# wheel (the [grpc] extra compiles it on demand).
-"maverick.grpc_api" = ["*.proto"]
 # Ship the domain packs and the first-party skills library as package data so
 # they are present in a built wheel, not only an editable/source checkout.
 "maverick" = [
     "data/*.json",
     "domains/*.toml",
     "skills_builtin/*.md",
-    "starter_templates/*.md",
 ]
 "maverick.env_hunt" = ["rules/*.yml"]
-"maverick.training" = ["environment_packs/*.ndjson", "environment_packs/*.json", "specialist_models.v1.json"]

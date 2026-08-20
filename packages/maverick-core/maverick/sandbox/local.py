@@ -69,8 +69,8 @@ def container_user_args(allow_root: bool = False) -> list[str]:
 
     Containers default to running as root; against a writable host mount that
     lets a prompt-injected agent write root-owned files (or worse) on the host.
-    Drop to the invoking user's uid/gid -- matching ``DevcontainerBackend`` --
-    unless the operator opts back into root via ``[sandbox] allow_root = true``
+    Drop Docker execution to the invoking user's uid/gid unless the operator
+    opts back into root via ``[sandbox] allow_root = true``
     or ``MAVERICK_SANDBOX_ALLOW_ROOT`` (truthy).
 
     ``os.getuid``/``os.getgid`` are POSIX-only (absent on Windows); there is no

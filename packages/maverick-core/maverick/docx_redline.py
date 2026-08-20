@@ -245,14 +245,71 @@ def _safe_docx_entries(data: bytes) -> zipfile.ZipFile:
         raise RedlineError("document too large to redline")
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
-    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError) as e:
+    except (
+        EOFError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ) as e:
         raise RedlineError("not a readable .docx package") from e
-    infos = zf.infolist()
-    if len(infos) > _MAX_ENTRIES:
-        raise RedlineError("document has too many parts")
-    if sum(i.file_size for i in infos) > _MAX_TOTAL_UNCOMPRESSED:
-        raise RedlineError("document expands too large")
+    try:
+        infos = zf.infolist()
+        if len(infos) > _MAX_ENTRIES:
+            raise RedlineError("document has too many parts")
+        if len({info.filename for info in infos}) != len(infos):
+            raise RedlineError("document has duplicate part names")
+        if any(
+            info.file_size < 0
+            or info.compress_size < 0
+            or info.flag_bits & 0x1
+            for info in infos
+        ):
+            raise RedlineError("document has an invalid or encrypted part")
+        if sum(info.file_size for info in infos) > _MAX_TOTAL_UNCOMPRESSED:
+            raise RedlineError("document expands too large")
+        if any(
+            info.file_size > 0
+            and (
+                info.compress_size <= 0
+                or info.file_size > info.compress_size * _MAX_COMPRESSION_RATIO
+            )
+            for info in infos
+        ):
+            raise RedlineError("document part compression ratio rejected")
+    except Exception:
+        zf.close()
+        raise
     return zf
+
+
+def _read_docx_entry(
+    zf: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    limit: int,
+) -> bytes:
+    """Read one prevalidated part without an unbounded ``ZipFile.read``."""
+    if info.is_dir():
+        return b""
+    if info.file_size > limit:
+        raise RedlineError("document part expands too large")
+    try:
+        with zf.open(info, "r") as stream:
+            raw = stream.read(min(limit + 1, info.file_size + 1))
+    except (
+        EOFError,
+        NotImplementedError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ) as exc:
+        raise RedlineError("document contains an unreadable part") from exc
+    if len(raw) > limit or len(raw) != info.file_size:
+        raise RedlineError("document part size does not match its ZIP metadata")
+    return raw
 
 
 def redline_docx(
@@ -266,19 +323,21 @@ def redline_docx(
     Accept/Reject per edit."""
     zf = _safe_docx_entries(original)
     try:
-        names = zf.namelist()
-        if "word/document.xml" not in names:
+        documents = [
+            item for item in zf.infolist()
+            if item.filename == "word/document.xml"
+        ]
+        if not documents:
             raise RedlineError("package has no word/document.xml")
-        info = next(i for i in zf.infolist() if i.filename == "word/document.xml")
+        if len(documents) != 1:
+            raise RedlineError("package has duplicate word/document.xml parts")
+        info = documents[0]
         if info.file_size > _MAX_DOCUMENT_XML:
             raise RedlineError("document body too large to redline")
         if (info.compress_size
                 and info.file_size > info.compress_size * _MAX_COMPRESSION_RATIO):
             raise RedlineError("document body compression ratio rejected")
-        with zf.open(info) as fh:
-            raw = fh.read(_MAX_DOCUMENT_XML + 1)
-        if len(raw) > _MAX_DOCUMENT_XML:
-            raise RedlineError("document body too large to redline")
+        raw = _read_docx_entry(zf, info, limit=_MAX_DOCUMENT_XML)
         xml = raw.decode("utf-8", errors="ignore")
 
         revised, applied, unmatched, inserted = _apply_edits_to_document_xml(
@@ -290,9 +349,16 @@ def redline_docx(
                 if item.filename == "word/document.xml":
                     out.writestr(item.filename, revised)
                 elif not item.is_dir():
-                    # Read by ZipInfo, not by name: a package with duplicate
-                    # entry names would otherwise copy the last one repeatedly.
-                    out.writestr(item, zf.read(item))
+                    # Bind the bounded read to the exact validated ZipInfo;
+                    # never perform an unbounded name-based ZipFile.read().
+                    out.writestr(
+                        item,
+                        _read_docx_entry(
+                            zf,
+                            item,
+                            limit=_MAX_TOTAL_UNCOMPRESSED,
+                        ),
+                    )
     finally:
         zf.close()
     return RedlineResult(content=buf.getvalue(), applied=applied,
@@ -794,9 +860,17 @@ def revision_count(docx_bytes: bytes) -> tuple[int, int]:
     changes before it is attached to a vendor record."""
     zf = _safe_docx_entries(docx_bytes)
     try:
-        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
-    except KeyError:
-        return (0, 0)
+        documents = [
+            item for item in zf.infolist()
+            if item.filename == "word/document.xml"
+        ]
+        if len(documents) != 1:
+            return (0, 0)
+        xml = _read_docx_entry(
+            zf,
+            documents[0],
+            limit=_MAX_DOCUMENT_XML,
+        ).decode("utf-8", errors="ignore")
     finally:
         zf.close()
     return (len(re.findall(r"<w:ins\b", xml)),

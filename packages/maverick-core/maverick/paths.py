@@ -1,8 +1,8 @@
 """Tenant-aware data paths — the P1 multi-tenancy primitive.
 
 Maverick keeps its state under ``~/.maverick``. For multi-tenant deployments,
-a *tenant* namespaces that state so one tenant's data (cross-session memory,
-history, ...) is isolated from another's on disk.
+a *tenant* namespaces that state so one tenant's world and audit history is
+isolated from another's on disk.
 
 The active tenant is resolved in order:
 
@@ -15,9 +15,8 @@ With **no** tenant, paths resolve to the legacy ``~/.maverick/<...>`` locations,
 so single-tenant deployments are completely unchanged. With tenant ``t``, they
 resolve under ``~/.maverick/tenants/<t>/<...>``.
 
-This increment routes the cross-session **memory** store through here (the most
-leak-sensitive per-tenant store); the world model and audit log are migrated in
-follow-on increments.
+The world model, audit log, and other retained local stores resolve through this
+shared path boundary.
 """
 
 from __future__ import annotations
@@ -398,8 +397,7 @@ def diagnostic_data_dir(*parts: str, tenant: str | None = "__active__") -> Path:
 def tenant_by_user_enabled() -> bool:
     """Opt-in, off by default. ``MAVERICK_TENANT_BY_USER=1`` or
     ``[tenancy] by_user = true`` makes the server isolate each channel user
-    into their own tenant (so one user's cross-session memory can't leak to
-    another). Off -> single shared tenant, behaviour unchanged."""
+    into their own tenant. Off -> single shared tenant, behaviour unchanged."""
     env = os.environ.get("MAVERICK_TENANT_BY_USER")
     if env is not None and env.strip():
         value = env.strip().lower()

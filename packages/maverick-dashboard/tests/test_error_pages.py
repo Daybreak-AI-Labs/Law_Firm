@@ -19,8 +19,8 @@ def test_404_html_for_browser(monkeypatch, tmp_path):
     assert resp.status_code == 404
     assert "404" in resp.text
     assert "/this/does/not/exist" in resp.text
-    # Branded chrome present (nav, halt pill).
-    assert "halt-pill" in resp.text
+    assert "Bjerken and Day" in resp.text
+    assert 'href="/projects"' in resp.text
 
 
 def test_404_json_for_api(monkeypatch, tmp_path):

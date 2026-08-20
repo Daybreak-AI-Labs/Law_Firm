@@ -3,6 +3,25 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 
+def _allow_test_matter(monkeypatch):
+    """Keep identity-only tests below the mandatory durable-context seam."""
+    from maverick.matter_context import MatterContext
+
+    monkeypatch.setattr(
+        "maverick.matter_context.resolve_goal_matter_context",
+        lambda _world, _goal_id, *, principal, source: MatterContext(
+            matter_id=1,
+            client_id=1,
+            principal=principal,
+            membership_role="attorney",
+            domain="legal",
+            jurisdiction="Tennessee",
+            purpose="goal-execution",
+            source=source,
+        ),
+    )
+
+
 def test_run_goal_in_thread_propagates_execution_identity(monkeypatch):
     """HTTP adapters can pass an authenticated user through the runner."""
     from maverick import budget as budget_mod
@@ -28,9 +47,11 @@ def test_run_goal_in_thread_propagates_execution_identity(monkeypatch):
     monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: object())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
+    _allow_test_matter(monkeypatch)
 
     assert runner.run_goal_in_thread(
         42, max_depth=2, channel="api", user_id="alice", conversation_id=9,
+        concurrency_principal="user:alice",
         allowed_suites=frozenset({"finance"}),
     ) == "done"
     assert captured["channel"] == "api"
@@ -78,6 +99,7 @@ def test_run_goal_in_thread_can_schedule_by_caller_principal(monkeypatch):
     monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: object())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
+    _allow_test_matter(monkeypatch)
 
     assert runner.run_goal_in_thread(
         42,

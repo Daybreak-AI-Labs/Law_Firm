@@ -10,7 +10,7 @@ open-source project and takes no outside contributions.
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ./packages/maverick-core
 for p in maverick-shield \
-         maverick-dashboard maverick-mcp maverick-knowledge; do
+         maverick-dashboard maverick-knowledge; do
   pip install --no-deps -e "./packages/$p"
 done
 pip install --no-deps -e ./apps/installer-cli
@@ -35,13 +35,11 @@ Beyond ruff, CI enforces a set of gates that each fail the build. Run them local
 before pushing anything that touches their subject:
 
 ```bash
-python -m maverick.plugin_matrix --ci
 python -m maverick.deprecations --ci
 python -m maverick.a11y_audit --ci             # dashboard templates
 python -m maverick.migration_governance --ci   # world-model migrations are immutable
 python -m maverick.evaluator_evolution --ci    # evaluator anchors are immutable
 python -m maverick.schema_migrations --ci
-python -m maverick.grpc_api.contract --check   # proto changes must be additive
 MAVERICK_ENCRYPT_AT_REST=0 python -m maverick.control_data_plane_e2e --ci
 ```
 
@@ -52,7 +50,8 @@ files.
 
 1. **The kernel runs without the shield.** Never make `agent-shield` a hard
    requirement — fail open with a warning.
-2. **Never hard-code a model.** Use `maverick.config.get_role_model(role)`.
+2. **Never hard-code or route models.** Secure runs use one exact run-wide
+   `provider:model` pin through `maverick.llm.model_for_role(role)`.
 3. **Budget caps are not optional.** Never bypass `budget.check()`.
 4. **All shell through `sandbox.exec()`.** CI greps for violations.
 5. **No new top-level dependency without a config knob.**

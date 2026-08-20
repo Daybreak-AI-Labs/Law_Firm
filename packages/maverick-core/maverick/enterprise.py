@@ -44,10 +44,9 @@ When on, it enforces:
 
   What it still does not cover, stated so the sentence above stays honest:
 
-  * A tool that shells out to ``curl`` or opens a raw socket. There is no
-    packet-level backend (see :mod:`maverick.sandbox.network_policy`), so
-    hard process-level egress is bounded by the sandbox and deployment network
-    policy, not by this lock.
+  * A process that shells out to ``curl`` or opens a raw socket. Hard
+    process-level egress is bounded by Docker and deployment network policy,
+    not by this in-process lock.
   * An HTTP library outside the wrapped set. The static egress-contract CI gate
     catches known production imports, but it cannot substitute for an OS/VPC
     deny rule at runtime.
@@ -113,15 +112,15 @@ _LOCAL_PROVIDER_ENDPOINT_ENV = {
 
 
 class EgressBlocked(RuntimeError):
-    """Raised when enterprise mode refuses to send data to a non-local provider."""
+    """Raised before governed data can cross a disallowed egress boundary."""
 
-    def __init__(self, provider: str):
-        super().__init__(
-            f"enterprise mode: refusing to send data to non-local provider "
+    def __init__(self, provider: str, *, message: str | None = None):
+        super().__init__(message or (
+            "enterprise mode: refusing to send data to non-local provider "
             f"{provider!r}. Sensitive data must stay in your boundary — route this "
-            f"role to a self-hosted model (ollama / vllm / tgi) or another "
-            f"validated local provider."
-        )
+            "role to a self-hosted model (ollama / vllm / tgi) or another "
+            "validated local provider."
+        ))
         self.provider = provider
 
 
@@ -338,8 +337,8 @@ def _configured_openai_compatible_base_url() -> str | None:
 # Cloud instance-metadata endpoints are link-local but are NOT operator-controlled
 # local services -- they expose instance role credentials. In the enterprise egress
 # boundary they must be treated as off-limits, not "local" (user-testing finding;
-# defense-in-depth -- http_fetch's SSRF guard already blocks these, but the REST
-# connector relies on the egress check alone). Compared as parsed IPs so IPv6
+# defense-in-depth -- retained REST connectors also use the shared SSRF guard,
+# but the egress boundary must enforce this independently). Compared as parsed IPs so IPv6
 # normalization can't sneak an equivalent form past a string match.
 _IMDS_IPS = frozenset(
     ipaddress.ip_address(a) for a in ("169.254.169.254", "fd00:ec2::254")
@@ -374,6 +373,39 @@ def _is_local_endpoint(url: str | None) -> bool:
     if ip in _IMDS_IPS:
         return False  # IMDS is cloud infra, not a local service -> deny via egress
     return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def _is_firm_loopback_endpoint(url: str | None) -> bool:
+    """Firm-local means loopback/``.localhost`` only, never the whole LAN."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    host = parsed.hostname.strip().lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_imds_host(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host) in _IMDS_IPS
+    except ValueError:
+        return False
+
+
+def _refresh_bound_matter_context():
+    """Resolve live membership/policy; uncertainty is a dispatch denial."""
+    from .matter_context import refresh_matter_context
+
+    return refresh_matter_context()
 
 
 def _endpoint_validated_provider_is_local(provider: str) -> bool:
@@ -492,28 +524,139 @@ def is_local_provider(provider: str) -> bool:
     return canon in _extra_local_providers()
 
 
-def assert_provider_allowed(provider: str) -> None:
-    """Egress guard. No-op unless enterprise mode is on.
+def _canonical_provider(provider: str) -> str:
+    try:
+        from .providers import _canonical
 
-    When on, raises :class:`EgressBlocked` before the governed dispatch path can
-    call a non-local provider, and records an ``egress_blocked`` audit event.
+        return _canonical(provider)
+    except Exception:
+        return (provider or "").strip().lower()
+
+
+def _active_matter_context():
+    """Return the bound matter context without inventing ambient authority."""
+    from .matter_context import current_matter_context
+
+    return current_matter_context()
+
+
+def matter_egress_boundary_active() -> bool:
+    """Whether the current task carries privileged matter data."""
+    try:
+        return _active_matter_context() is not None
+    except Exception:
+        # A broken context resolver must make degraded HTTP clients refuse,
+        # never silently turn a matter boundary into the legacy open posture.
+        return True
+
+
+def _firm_allowlist(key: str) -> frozenset[str]:
+    """Exact deployment allow-list from ``[firm]``; malformed means empty."""
+    try:
+        from .config import load_config
+
+        config = load_config() or {}
+        if not isinstance(config, Mapping):
+            return frozenset()
+        section = config.get("firm") or {}
+        if not isinstance(section, Mapping):
+            return frozenset()
+        raw = section.get(key) or []
+        if not isinstance(raw, (list, tuple, set, frozenset)):
+            return frozenset()
+        values = {
+            str(item).strip().lower().rstrip(".")
+            for item in raw
+            if isinstance(item, str) and item.strip()
+        }
+        return frozenset(values)
+    except Exception:
+        return frozenset()
+
+
+def _approved_matter_providers() -> frozenset[str]:
+    return frozenset(
+        _canonical_provider(item) for item in _firm_allowlist("approved_providers")
+    )
+
+
+def _matter_provider_permitted(context, provider: str) -> bool:
+    # Local inference is still privileged matter processing.  Refresh the
+    # durable membership before *every* provider authorization, including a
+    # loopback Ollama/vLLM/TGI endpoint; otherwise a run that outlives an
+    # attorney's revocation can keep sending client content to the local model.
+    try:
+        context = _refresh_bound_matter_context()
+    except Exception:
+        return False
+    if is_local_provider(provider):
+        endpoint = _configured_base_url(provider)
+        if endpoint:
+            # A provider name does not make an on-prem/LAN endpoint local. The
+            # exact HTTP policy below requires approved_local_hosts + live ACL.
+            return _matter_http_permitted(endpoint, context)
+        # Only built-in providers have a known loopback default. Custom
+        # operator-declared names without a concrete endpoint are ambiguous.
+        return provider in LOCAL_PROVIDERS
+    return (
+        getattr(context, "egress_mode", None) == "approved_services"
+        and provider in _approved_matter_providers()
+        and not enterprise_enabled()
+    )
+
+
+def _audit_matter_egress_denial(*, provider: str, host: str = "") -> None:
+    from .audit import EventKind, audit_event
+
+    context = _active_matter_context()
+    payload = {"provider": provider}
+    if host:
+        payload["host"] = host
+    if context is not None:
+        payload.update(
+            matter_id=context.matter_id,
+            purpose=context.purpose,
+            egress_mode=context.egress_mode,
+        )
+    audit_event(EventKind.EGRESS_BLOCKED, **payload)
+
+
+def assert_provider_allowed(provider: str) -> None:
+    """Central provider egress guard for enterprise and client-matter data.
+
+    A bound matter is local-only unless its responsible attorney selected
+    ``approved_services`` *and* the canonical provider is in the deployment's
+    exact ``[firm] approved_providers`` list. Enterprise mode remains a stricter
+    floor and therefore still permits local providers only.
+
+    Raises :class:`EgressBlocked` before the governed dispatch path can call a
+    forbidden provider, and records an ``egress_blocked`` audit event.
     Called at the single LLM dispatch chokepoint
     (:func:`maverick.llm.LLM.complete`) so it covers every agent, role, and
     tool-driven model call that uses that chokepoint.
     """
-    if not enterprise_enabled():
+    canon = _canonical_provider(provider)
+    context = _active_matter_context()
+    if context is not None:
+        if _matter_provider_permitted(context, canon):
+            return
+        _audit_matter_egress_denial(provider=canon)
+        raise EgressBlocked(
+            canon,
+            message=(
+                "matter egress policy: refusing provider "
+                f"{canon!r} for matter {context.matter_id}. Local providers are "
+                "allowed; a contracted service additionally requires the matter "
+                "mode 'approved_services' and an exact [firm] "
+                "approved_providers entry."
+            ),
+        )
+    if not enterprise_enabled() or is_local_provider(canon):
         return
-    if is_local_provider(provider):
-        return
-    try:
-        from .providers import _canonical
-        canon = _canonical(provider)
-    except Exception:
-        canon = (provider or "").strip().lower()
-    from .audit import EventKind, audit_event
-
     # A refusal still denies egress (the caller cannot reach dispatch), while
     # making it impossible to claim the denial was recorded when it was not.
+    from .audit import EventKind, audit_event
+
     audit_event(EventKind.EGRESS_BLOCKED, provider=canon)
     raise EgressBlocked(canon)
 
@@ -536,18 +679,70 @@ def _allowed_egress_hosts() -> frozenset[str]:
     return frozenset(str(h).strip().lower().rstrip(".") for h in raw if str(h).strip())
 
 
-def egress_permitted(url: str) -> bool:
-    """In enterprise mode, is outbound *tool* egress to ``url`` permitted?
-
-    True when enterprise mode is off, the endpoint is local/private, or its host is
-    on the ``[enterprise] allowed_hosts`` allow-list. Default-deny otherwise for
-    guarded HTTP paths such as http_fetch, web_search, and connectors.
-    """
-    if not enterprise_enabled():
+def _matter_http_permitted(url: str, context) -> bool:
+    """Evaluate the firm transport/host policy against live authority."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if scheme not in {"http", "https"} or not host or _is_imds_host(host):
+        return False
+    # Loopback is exempt from the destination allow-list, not from the matter
+    # ACL.  Resolve the current durable authority before any host class is
+    # admitted so revocation/matter reassignment takes effect at the next
+    # actual HTTP request, including local-model streaming follow-ups.
+    try:
+        fresh = _refresh_bound_matter_context()
+    except Exception:
+        return False
+    if _is_firm_loopback_endpoint(url):
+        # Explicit loopback runtimes are the only firm HTTP exception.
         return True
+
+    # Everything leaving loopback is encrypted in transit. Certificate
+    # verification is enforced by egress_guard at the actual client seam.
+    if scheme != "https":
+        return False
+
+    if host in _firm_allowlist("approved_local_hosts"):
+        return True
+
+    # Literal private/link-local IPs never inherit locality merely from their
+    # address class. They require the exact approved_local_hosts branch above.
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_private or ip.is_link_local):
+        return False
+
+    if getattr(fresh, "egress_mode", None) != "approved_services":
+        return False
+    if host not in _firm_allowlist("approved_hosts"):
+        return False
+    if enterprise_enabled():
+        return host in _allowed_egress_hosts()
+    return True
+
+
+def egress_permitted(url: str) -> bool:
+    """Is outbound HTTP egress permitted by matter and enterprise policy?
+
+    Local/private endpoints pass. A matter in ``local_only`` denies every public
+    host; ``approved_services`` additionally requires an exact ``[firm]
+    approved_hosts`` entry. Enterprise mode then applies as a strict
+    intersection using its own exact allow-list.
+    """
+    context = _active_matter_context()
+    if context is not None:
+        return _matter_http_permitted(url, context)
     if _is_local_endpoint(url):
         return True
     host = _host_of(url)
+    if not enterprise_enabled():
+        return True
     return bool(host) and host in _allowed_egress_hosts()
 
 
@@ -559,13 +754,15 @@ def enterprise_egress_denial(url: str, *, tool: str = "") -> str | None:
     if egress_permitted(url):
         return None
     host = _host_of(url) or (url or "?")
-    from .audit import EventKind, audit_event
-
-    audit_event(
-        EventKind.EGRESS_BLOCKED,
-        provider=f"tool:{tool}" if tool else "tool",
-        host=host,
-    )
+    context = _active_matter_context()
+    provider = f"tool:{tool}" if tool else "tool"
+    _audit_matter_egress_denial(provider=provider, host=host)
+    if context is not None:
+        return (
+            f"matter egress policy: refusing tool egress to {host!r} for matter "
+            f"{context.matter_id}. Public HTTP requires mode 'approved_services' "
+            "and an exact [firm] approved_hosts entry."
+        )
     return (
         f"enterprise mode: refusing tool egress to {host!r} -- not a local endpoint "
         "and not in [enterprise] allowed_hosts. The application egress boundary "
@@ -578,6 +775,7 @@ __all__ = [
     "LOCAL_PROVIDERS",
     "EgressBlocked",
     "egress_permitted",
+    "matter_egress_boundary_active",
     "enterprise_egress_denial",
     "deployment_enterprise_enabled",
     "enterprise_enabled",

@@ -68,12 +68,25 @@ class TestConfiguredStrategy:
         assert configured_strategy() == ""
 
     def test_env_beats_config(self, monkeypatch):
-        monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "streaming")
+        monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "learned")
         monkeypatch.setattr(
             cfg, "load_config",
             lambda: {"context": {"compaction_strategy": "graph"}},
         )
-        assert configured_strategy() == "streaming"
+        assert configured_strategy() == "learned"
+
+    def test_retired_streaming_value_cannot_persist_a_sidecar(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "streaming")
+        monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+        monkeypatch.setattr(cfg, "load_config", dict)
+        messages = _traj(big=False)
+
+        assert configured_strategy() == ""
+        assert compact_with_strategy(messages) == compact_messages(messages)
+        assert compact_with(messages) == compact_messages(messages)
+        assert not list(tmp_path.rglob("compaction_stream.json"))
 
 
 class TestDispatch:
@@ -114,12 +127,6 @@ class TestDispatch:
         assert blk["type"] == "text"
         assert "[image:" in blk["text"]
 
-    def test_streaming_strategy_emits_running_summary(self, monkeypatch):
-        monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "streaming")
-        out = compact_with_strategy(_traj(big=False), conversation_id="c1", keep_recent=2)
-        assert "<stream-summary" in str(out[1]["content"])
-        assert out[0] == _traj(big=False)[0]
-
     def test_learned_strategy_uses_injected_llm(self, monkeypatch, fake_llm, make_llm_response):
         monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "learned")
         fake_llm.scripted = [make_llm_response("THE DIGEST")]
@@ -147,7 +154,7 @@ class TestDispatch:
                 return SimpleNamespace(text="alpha | relates_to | beta")
 
         budget = object()
-        for strategy in ("learned", "streaming", "graph"):
+        for strategy in ("learned", "graph"):
             llm = BudgetLLM()
             compact_with_strategy(
                 _traj(big=False),

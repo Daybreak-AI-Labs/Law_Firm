@@ -28,32 +28,13 @@ def test_register_invalidates_cache():
     assert {t["name"] for t in after} == {"a", "c"}
 
 
-def test_activate_and_acl_invalidate_cache():
+def test_acl_and_registration_invalidate_cache():
     reg = ToolRegistry()
-    for n in ("find_tools", "core1", "extra"):
-        reg.register(_tool(n))
-    reg.enable_deferred({"core1"})
-    exposed = {t["name"] for t in reg.to_anthropic()}
-    assert exposed == {"core1", "find_tools"}  # 'extra' deferred
-    reg.activate(["extra"])
-    assert "extra" in {t["name"] for t in reg.to_anthropic()}  # invalidated + revealed
-
-    # ACL change also invalidates.
-    reg2 = ToolRegistry()
-    reg2.register(_tool("x"))
-    reg2.register(_tool("y"))
-    _ = reg2.to_anthropic()
-    reg2.set_acl(denied={"y"})
-    reg2.register(_tool("z"))  # ACL applies on (re)register
-    names = {t["name"] for t in reg2.to_anthropic()}
+    reg.register(_tool("x"))
+    reg.register(_tool("y"))
+    before = reg.to_anthropic()
+    reg.set_acl(denied={"y"})
+    reg.register(_tool("z"))  # ACL applies on registration
+    names = {t["name"] for t in reg.to_anthropic()}
+    assert reg.to_anthropic() is not before
     assert "z" in names
-
-
-def test_activate_unknown_name_keeps_cache():
-    reg = ToolRegistry()
-    reg.register(_tool("find_tools"))
-    reg.register(_tool("core1"))
-    reg.enable_deferred({"core1"})
-    payload = reg.to_anthropic()
-    reg.activate(["does_not_exist"])  # no-op -> cache should survive
-    assert reg.to_anthropic() is payload

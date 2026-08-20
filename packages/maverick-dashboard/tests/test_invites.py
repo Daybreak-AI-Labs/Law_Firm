@@ -30,8 +30,22 @@ def client():
 
 
 def _admin_auth(monkeypatch) -> dict[str, str]:
-    token = "invite-admin-test-token"  # pragma: allowlist secret
-    monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", token)
+    from maverick.oidc import VerifiedPrincipal
+    from maverick_dashboard import auth, rbac
+
+    token = "invite-admin"
+    monkeypatch.setattr(auth, "oidc_enabled", lambda: True)
+    monkeypatch.setattr(
+        auth,
+        "verify_oidc_token",
+        lambda _token, **_kwargs: VerifiedPrincipal(
+            sub="invite-admin",
+            issuer="https://issuer.example",
+            audience="maverick",
+            claims={"sub": "invite-admin"},
+        ),
+    )
+    rbac.set_role("user:invite-admin", "admin", actor="test-bootstrap")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -104,6 +118,26 @@ def test_local_session_secret_is_persistent_and_private(tmp_path):
     assert s1 == s2 and len(s1) >= 32
     key = invites._session_secret_path()
     assert key.exists() and private_path_is_restricted(key)
+
+
+def test_invite_session_defaults_to_12_hours_and_caps_configuration(monkeypatch):
+    from maverick.web_session import verify_session
+    from maverick_dashboard import invites
+
+    monkeypatch.setattr(invites.time, "time", lambda: 1_700_000_000)
+    default_token = invites.mint_local_session("alice@example.com")
+    default = verify_session(default_token, invites.local_session_secret())
+    assert default is not None
+    assert default["exp"] - default["iat"] == 12 * 3600
+
+    monkeypatch.setattr(
+        "maverick.config.load_config",
+        lambda *a, **k: {"dashboard": {"invite_session_hours": 999}},
+    )
+    capped_token = invites.mint_local_session("alice@example.com")
+    capped = verify_session(capped_token, invites.local_session_secret())
+    assert capped is not None
+    assert capped["exp"] - capped["iat"] == 24 * 3600
 
 
 # ---------- HTTP: fail-closed while disabled ----------
@@ -277,7 +311,6 @@ def test_invites_satisfy_require_auth_boot_guard(monkeypatch):
     import maverick_dashboard.app as app_mod
     monkeypatch.setenv("MAVERICK_DASHBOARD_REQUIRE_AUTH", "1")
     monkeypatch.setattr("maverick.oidc.oidc_enabled", lambda: False)
-    monkeypatch.setattr("maverick.proxy_auth.proxy_auth_enabled", lambda: False)
     with pytest.raises(RuntimeError):
         app_mod._assert_dashboard_auth_configured()
     monkeypatch.setenv("MAVERICK_DASHBOARD_INVITES", "1")

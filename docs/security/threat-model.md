@@ -1,234 +1,172 @@
-# Maverick threat model (STRIDE)
+# Law-firm threat model
 
-This is the working threat model for Maverick. It's living: when we add
-a capability, we update this doc with the new threats and mitigations.
-PRs that add tools or providers SHOULD touch this file.
+This is the working threat model for the Bjerken and Day firm build. It covers
+the retained local dashboard, worker, governed agent runtime, matter storage,
+knowledge ingestion, read-only connectors, and encrypted disaster-recovery
+path. It does not describe capabilities removed from this fork.
 
-The model uses STRIDE: **S**poofing, **T**ampering, **R**epudiation,
-**I**nformation disclosure, **D**enial of service, **E**levation of
-privilege.
+The review method is STRIDE: spoofing, tampering, repudiation, information
+disclosure, denial of service, and elevation of privilege.
 
-## Trust boundaries
+## Security boundary
 
-```
-+-----------------+        +--------------------+
-| user terminal   | <----> | maverick process   |
-+-----------------+        +--------------------+
-                                  |
-                                  v
-                           +-------------------+
-                           | provider API      | (Anthropic/OpenAI/...)
-                           +-------------------+
-                                  |
-                                  v
-                           +-------------------+
-                           | sandbox           | (local subprocess / docker / ssh)
-                           +-------------------+
-                                  |
-                                  v
-                           +-------------------+
-                           | external sites    | (browser tool, http_fetch, web_search)
-                           +-------------------+
-```
-
-The user's machine is the trust boundary on the inside. The provider
-API and external sites are the trust boundary on the outside. Anything
-crossing those needs explicit consent or shield approval.
-
-### Networked / multi-principal boundaries (enterprise + federated)
-
-The single-user picture above is the default. When Maverick is deployed
-as a governed service it grows three more inbound trust boundaries, each
-fronted by its own authenticated, fail-closed surface:
-
-```
-                         +----------------------------+
-   dashboard users  ---> | dashboard (FastAPI)        |  OIDC / proxy / session
-   (browsers, OIDC)      |  - per-user owner scoping   |  cookie; RBAC; CSRF
-                         +----------------------------+
-   API / SDK / MCP   ---> | gRPC goal API + MCP server |  shared bearer
-   clients               |  - capability-attenuated    |  token; TLS
-                         +----------------------------+
-                                      |
-                                      v
-                         +----------------------------+
-   queue workers     <---| queue / dispatcher handoff  |  capability re-
-   (arq/Celery)          |  (cross-host)               |  attenuated by worker
-                         +----------------------------+
+```text
+named firm user
+      |
+      v
+local dashboard / operator CLI
+      |
+      v
+durable goal + MatterContext ----> signed local queue envelope ----> worker
+      |                                                        |
+      +--------------------------------------------------------+
+                               |
+                               v
+                    governed agent + fixed tool ceiling
+                               |
+               +---------------+----------------+
+               |                                |
+               v                                v
+     local encrypted state          approved model/search/read-only
+     knowledge and audit             connector destinations only
 ```
 
-**One client per deployment.** The product contract is one tenant per
-Maverick instance; client/tenant state is namespaced on disk under
-`tenants/<client>/` and the dashboard owner-scopes every object. Cross-peer
-and cross-user data mingling is the threat this whole layer exists to prevent.
+The firm runtime has no inbound MCP or gRPC execution service, no external
+plugin loader, no remote skill/catalog installer, and no browser/computer/shell
+tool in the model-visible firm registry. Those absences are security controls,
+not optional configuration.
 
-Each of these surfaces is **off by default** and **fail-closed**: it serves
-nothing until explicitly configured with credentials, and an unauthenticated
-or unknown caller is refused before any work is done.
+## Required execution invariants
 
-## In-scope assets
+Every production goal run must satisfy all of these conditions:
 
-- User's filesystem (`~/.maverick/`, the project working directory).
-- API keys (in `~/.maverick/.env`, chmod 600).
-- Session cookies (in `~/.maverick/sessions/*.json`, chmod 600).
-- Audit log (in `~/.maverick/audit/*.ndjson`, chmod 600).
-- World model SQLite db (optional per-column at-rest encryption,
-  `crypto_at_rest` / `tenant/kms.py`; AES-256-GCM, per-tenant DEK).
-- At-rest / KMS key material (`~/.maverick/keys/`, mode-at-creation 0600;
-  the wrapped DEK is never written unwrapped).
-- Per-deployment / per-tenant client data — must never mingle across
-  matters or users (dashboard owner scoping).
-- The dashboard `session_secret` and API bearer tokens.
+1. The durable goal identifies a positive existing matter and a known enabled
+   legal domain whose workflow ends in a review or approval gate.
+2. The matter has a positive client id, canonical matter number, jurisdiction,
+   and a valid `local_only` or `approved_services` egress policy.
+3. The authenticated principal is a named active matter member with an
+   execution-capable role. Viewer membership, global administration, and the
+   shared dashboard bearer do not bypass the ethical wall.
+4. The runner binds an immutable `MatterContext` before model, sandbox, or tool
+   work. External dispatch refreshes durable authority so membership revocation,
+   a moved goal, or changed matter policy fails closed.
+5. Queue producers sign the exact matter id and principal. Workers authenticate
+   the versioned envelope, re-resolve durable authority, and compare it
+   immediately before dispatch. Matterless or tampered jobs do no work.
+6. The tool registry intersects the fixed firm ceiling with the exact legal
+   profile and bound matter. Missing context exposes only pure context-free
+   helpers; later registration cannot shadow a retained first-party tool.
 
-## Out-of-scope (won't defend against)
+The executable contracts live in `maverick/matter_context.py`,
+`maverick/runner.py`, `maverick/queue_dispatcher.py`, and
+`maverick/tools/__init__.py`.
 
-- Local-root attackers (anyone with root on the user's box owns
-  everything anyway).
-- Hardware attacks (cold boot, evil maid).
-- Compromised provider API endpoints — we trust the providers we
-  configured to do their job. If Anthropic ships a compromised model,
-  we have bigger problems.
-- Compromised optional plugins — users who install untrusted plugins are
-  responsible for vetting them. Manifest permissions ARE enforced by default
-  (`[plugins] enforce_permissions = true`): a plugin requesting an ungranted
-  `network`/`fs_write`/`subprocess`/`sensitive_envs` permission is skipped
-  (never loaded) unless granted via `[plugins] grant=[...]`; setting
-  `enforce_permissions = false` (or `MAVERICK_PLUGINS_ENFORCE=0`) downgrades to
-  load-with-warning. Plugin tool calls can additionally run out-of-process
-  under `[plugins] isolation`.
+## Assets
 
-## Threats by category
+- Client, matter, membership, goal, conversation, and deliverable records.
+- Matter attachments and the per-domain knowledge index.
+- Provider and connector credentials.
+- Audit events, approval/signoff records, and release evidence.
+- At-rest encryption, audit-signing, queue-signing, backup-signing, and backup-
+  encryption keys.
+- Encrypted backup archives and restore staging directories.
 
-> The `(Qxx)` markers below are historical roadmap dates from when this
-> section was written. Several have since shipped — audit-log Ed25519
-> signing, webhook HMAC with replay-bound timestamps, capability tokens,
-> and at-rest encryption are all live; see the networked/multi-principal
-> section for the implemented enforcement points.
+Matter confidentiality is the primary asset. A successful user authentication
+does not imply authority to see or execute work in every matter.
+
+## Threats and controls
 
 ### Spoofing
 
-| Threat                                   | Mitigation                                                                  |
-|------------------------------------------|------------------------------------------------------------------------------|
-| Attacker impersonates the user to a channel adapter (Discord etc.) | Channel auth tokens stored chmod 600; webhook receivers HMAC-signed (Q2 26). |
-| Prompt injection from a fetched URL makes the agent issue tools as the user | Shield scan of inputs; injected-content detection (Q3 26). Tool ACLs limit blast radius. |
-| Subagent claims a capability it doesn't have | Capability tokens (Q4 26) make declared capabilities unforgeable.            |
-| Webhook receiver believes a forged event | `X-Maverick-Signature` HMAC; `verify_signature()` helper.                    |
+| Threat | Control |
+| --- | --- |
+| Caller forges another user | Named dashboard identity is required for matter operations; the static shared bearer is rejected for execution. |
+| User claims membership in another matter | Membership and role are read from durable matter state; there is no administrator bypass. |
+| Queue message forges a principal or matter | The bounded versioned envelope is HMAC-authenticated and the worker re-resolves both values before dispatch. |
+| Webhook or retired remote protocol starts work | Matterless producer paths and the remote MCP/gRPC execution surfaces are absent or fail closed. |
 
 ### Tampering
 
-| Threat                                       | Mitigation                                                              |
-|----------------------------------------------|--------------------------------------------------------------------------|
-| Audit log entries get edited or deleted after the fact | Daily-rotated NDJSON, chmod 600. Audit-log signing (Q3 26) adds an Ed25519 chain. |
-| Skill/plugin code is modified on disk between installs | Hash-pinned on catalog install (sha256 verified before write). Signed skills (Q2 26). |
-| Browser session cookie is replayed by a third process | chmod 600 + 0o700 parent dir. Encrypted at rest (Q1 27).                 |
-| World model gets corrupted mid-write       | SQLite WAL mode + autocheckpoint + `PRAGMA wal_checkpoint(TRUNCATE)` on close. |
+| Threat | Control |
+| --- | --- |
+| Goal is moved or its domain/policy changes after enqueue | Worker and external-dispatch chokepoints refresh authority and reject snapshot drift. |
+| Audit or signoff evidence is modified | Secure defaults enable the signed audit chain; release/signoff transitions are recorded through durable audit outboxes. Operators must retain the verification key independently for third-party evidence. |
+| Backup archive is modified | Restore authenticates the AES-256-GCM envelope and signed manifest before staging. Wrong-key and tampered archives fail closed. |
+| CLI source file changes between inspection and install | `--from-file` uses one identity-bound regular-file handle and installs the exact bytes that were parsed and linted. |
+| Hostile archive expands beyond its declared size | Attachment and document ZIP readers validate metadata and enforce bounded reads before decompression. |
 
 ### Repudiation
 
-> **Tamper-evidence is opt-in.** The audit log is plain NDJSON by default;
-> the rows below are only *tamper-evident* with `[audit] sign = true`
-> (Ed25519 hash-chain). Even then, third-party attribution requires
-> verifying with an **externally-held** pubkey — a key co-located with the
-> log only detects accidental/non-privileged edits. Run `maverick audit
-> verify --pubkey <hex>` to check the chain.
-
-| Threat                                                        | Mitigation                                                  |
-|--------------------------------------------------------------|--------------------------------------------------------------|
-| User claims they didn't approve a destructive action           | Audit log records every consent prompt + decision + source (tamper-evident only when signing is on). |
-| User claims they didn't spend $X on a run                    | Episode records `cost_dollars` + `(in,out)` tokens per call. |
-| Agent took an action no one can attribute                    | Every tool call audit-logged with agent id + goal id (tamper-evident only when signing is on). |
+| Threat | Control |
+| --- | --- |
+| Attorney disputes a release decision | Signoff is bound to the immutable deliverable/release payload and recorded with audit outbox evidence. A later payload mutation invalidates the prior signoff. |
+| Operator disputes a restore | Backup create/verify/restore are explicit local CLI operations; restore requires deliberate confirmation and logs the verified source. |
+| Audit key is co-located with the evidence | Treat co-located signing keys as integrity checks only. Independent key custody is required for credible external verification. |
 
 ### Information disclosure
 
-| Threat                                                          | Mitigation                                                                       |
-|------------------------------------------------------------------|-----------------------------------------------------------------------------------|
-| Tool output leaks API keys to logs                              | `secret_detector` scrubs Anthropic/OpenAI/AWS/GCP/Azure/GitHub/JWT before logging. |
-| Browser tool leaks session cookies to external sites             | Cookies sent only to the origin they were captured from.                          |
-| Telemetry phones home with prompt content                       | Telemetry is opt-in (Q3 26); anonymous-mode strips goal text from logs.           |
-| Webhook payload leaks PII                                       | Outbound webhooks send only minimal payload; users control which events fire.     |
-| Audit log readable by other local users                         | chmod 600 enforced; load refuses if perms relax.                                  |
+| Threat | Control |
+| --- | --- |
+| IDOR exposes another matter | Object access is checked against the exact client/matter membership, and denials do not disclose object existence. |
+| Provider or connector receives data from a local-only matter | Central model/HTTP dispatch checks the refreshed per-matter egress mode before bytes leave the process. |
+| Connector mutates an external legal system | The retained Carta, Clio, Contractbook, DocuSign, and Ironclad connector schemas are GET-only. |
+| Untrusted PDF/DOCX exploits a parser | Rich-document parsing uses a bounded child process and has no in-process fallback on isolation failure. The in-process escape hatch is explicitly trusted/test-only. |
+| Logs or outputs contain secrets | Secret scrubbing and audit redaction run before retained logs/exports; adversarial and ReDoS regressions are tested. |
+| Backup captures live encryption keys | Backup staging excludes key material. Backup encryption uses a separately custodied `MAVERICK_BACKUP_ENCRYPTION_KEY`, never a key stored in the data root or archive. |
 
 ### Denial of service
 
-| Threat                                                       | Mitigation                                                                  |
-|--------------------------------------------------------------|------------------------------------------------------------------------------|
-| Runaway agent burns the user's budget                        | Hard caps on dollars / tokens / tool calls / wall-seconds; budget_status tool. |
-| Agent gets stuck retrying a 401 forever                      | retry_classifier marks auth errors terminal.                                  |
-| Webhook receiver hangs the run                               | Webhook dispatch is async via a daemon ThreadPoolExecutor; failures logged.   |
-| Tool blocks the agent (e.g. shell command hangs)             | Sandbox timeouts; killswitch file (`~/.maverick/HALT`) aborts cleanly.        |
-| Compaction balloons memory on long traces                    | Hierarchical compaction (Q2 26) + retrieval-augmented compaction (Q4 26).     |
+| Threat | Control |
+| --- | --- |
+| Runaway model/tool work exhausts budget | Dollar, token, tool-call, depth, and wall-time ceilings stop dispatch. |
+| Parser child floods IPC or hangs | Input, stdout, and stderr are byte-capped; the child has a hard timeout and is killed on failure. |
+| ZIP bomb exhausts disk or memory | Archive entry counts, compressed/uncompressed sizes, aggregate output, and read lengths are bounded. |
+| Queue replay duplicates work | Envelopes are expiring and nonce/message-id bound; terminal consumption requires a fresh signed submission. |
 
 ### Elevation of privilege
 
-| Threat                                                  | Mitigation                                                                            |
-|---------------------------------------------------------|----------------------------------------------------------------------------------------|
-| Plugin escapes its declared capabilities               | Manifest permissions enforced by default (ungranted → plugin skipped); tool ACLs filter at registry time; optional out-of-process isolation. |
-| Browser tool reaches private/loopback addresses        | `http_fetch` refuses private IPs by default; `MAVERICK_FETCH_ALLOW_PRIVATE=1` opt-in.  |
-| Computer-use tool drives mouse/keyboard outside scope  | Kill switch `MAVERICK_COMPUTER_DISABLE=1`; consent prompt for first session (Q2 26).   |
-| Shell tool reads sensitive files (gold patches, etc.)  | Opaque-mode blocklists for benchmark contexts; tool ACLs.                              |
-| Subagent gains tools the parent doesn't have           | Spawn-tools layer; tool ACLs apply at every level.                                     |
+| Threat | Control |
+| --- | --- |
+| Viewer or global admin executes client work | Only responsible-attorney, attorney, and staff matter roles may execute; resolution has no global-admin bypass. |
+| Subagent acquires a broader tool set | Capabilities and the firm registry are narrow-only at every agent boundary. Runtime skill/tool acquisition is removed. |
+| Tool shadows a trusted connector/helper | Secure registration refuses duplicate first-party names and any name outside the fixed ceiling. |
+| Application-layer egress guard is bypassed | Use host, container, or VPC default-deny egress as the hard boundary. The Python guard is defense in depth, not a packet firewall. |
 
-## Networked / multi-principal threats (enterprise + federated)
+## Key custody
 
-These cover the inbound boundaries in the second diagram: the dashboard,
-the gRPC/MCP APIs, and the cross-host queue.
-Every mitigation below is
-implemented today (not roadmap); the named mechanism is the enforcement
-point.
+Do not use one key for multiple purposes. At minimum, custody must distinguish:
 
-### Spoofing
+- at-rest encryption;
+- audit signing;
+- local/network queue signing where enabled;
+- backup manifest signing; and
+- backup encryption.
 
-| Threat | Mitigation |
-|--------|------------|
-| Dashboard caller forges another user's identity | OIDC ID-token verification is asymmetric-only (defeats HS256/`none` alg-confusion), all of `exp/iat/aud/iss/sub` required; the browser-login session cookie is HMAC-signed (constant-time verify, expiry-enforced). |
-| API/MCP caller spoofs the bearer | Constant-time bearer compare; fail-closed when nothing matches. |
+The backup encryption key must be injected by the operator from outside the
+Maverick data root. A backup that includes its own decryption key is not a
+confidential backup.
 
-### Tampering
+## Out of scope and residual risk
 
-| Threat | Mitigation |
-|--------|------------|
-| An **older** signed marketplace bundle is replayed to resurrect a withdrawn (e.g. malicious) listing | Per-origin monotonic `created_at` watermark — an import must be strictly newer than the last applied from that origin (also blocks exact-replay). |
-| A delegated capability grant is tampered with in transit / on the queue | gRPC and the queue worker **re-intersect** any wire-supplied capability with the receiver's own local policy (`_rpc_capability` / `_worker_capability`); a grant can only narrow, never broaden. |
-| Audit chain edited after the fact | Ed25519 hash-chain with cross-file anchoring; `maverick audit verify --pubkey <externally-held hex>` is required for third-party tamper-evidence (a co-located key only catches non-privileged edits). |
+- A local administrator or root attacker can read process memory and replace
+  executable code.
+- A compromised approved model or SaaS endpoint can misuse data deliberately
+  sent to it. `approved_services` is an authorization decision, not a provider
+  integrity guarantee.
+- The application egress guard covers supported dispatch paths; raw sockets,
+  subprocess clients, native libraries, and a compromised interpreter require
+  deployment-level network containment.
+- Process isolation reduces parser blast radius but is not equivalent to a
+  separately sandboxed VM.
+- Secure defaults can be explicitly weakened for development. Production
+  startup and deployment validation must reject that posture for client data.
+- Tests and proof artifacts establish named invariants only; they are not a
+  penetration test, legal-compliance attestation, or efficacy benchmark.
 
-### Repudiation
+## Review triggers
 
-| Threat | Mitigation |
-|--------|------------|
-| A governance denial isn't recorded | Every capability/consent denial lands in the signed audit chain. |
-
-### Information disclosure
-
-| Threat | Mitigation |
-|--------|------------|
-| One dashboard user reads another user's goals (IDOR) | Object-level `assert_goal_access` on every goal-by-id endpoint; exact owner match; denials return **404** (not 403) so existence isn't disclosed. Legacy `owner==""` rows are unreachable by authenticated non-admins. |
-| A peer reads webhook/push secrets back from config | `get_push_config` masks the token; support bundles redact secret-named keys. |
-| Provider session cookies readable by another local user mid-write | Written **mode-at-creation** (`os.open(..., 0600)`), closing the world-readable window the old write-then-chmod left. |
-| Cross-tenant data decryption | Per-tenant DEK + AEAD context binding (`tenant/kms.py`); a tenant's key/ciphertext can't open another's (GCM auth fails). |
-| A remote gRPC client sends bearer credentials or goal data over plaintext | Both listener binds and client dials reject non-loopback plaintext by default. TLS/mTLS is the production path; `MAVERICK_ALLOW_INSECURE_GRPC=1` is the explicit trusted-network escape hatch. |
-
-### Denial of service
-
-| Threat | Mitigation |
-|--------|------------|
-| An outward surface is flooded | Bounded thread pools + `maximum_concurrent_rpcs` (gRPC/webhooks); SSE/WS offload + a WS concurrency cap (dashboard); per-request byte ceilings on the webhook surfaces. |
-| A client-supplied budget/deadline bypasses caps | Clamped down to operator ceilings; budget caps are enforced at record time, never bypassed. |
-| ReDoS via adversarial text on the scanning surfaces | Secret-detector / shield regexes are anchored (verified <0.15s on 100 KB adversarial inputs). |
-
-### Elevation of privilege
-
-| Threat | Mitigation |
-|--------|------------|
-| A peer obtains authority the receiver wouldn't grant | Delegations are **narrow-only**: the peer's requested tools intersect the receiver's local grant; the trust registry ceiling tightens it further; `negotiate_boot` refuses a delegation it can't fully equip. |
-| A queue worker honors an over-broad grant placed on the queue | The worker re-attenuates by its own local policy when enforcement is on (zero-trust across the queue boundary). |
-| A Redis writer plants an executable serialized object before the HMAC verifier runs | Producer and worker both require the bounded, versioned strict-JSON ARQ codec; pickle and every unknown codec are rejected before object reconstruction. |
-| Two fleets share a Redis service and consume each other's jobs | A validated deployment queue namespace is mandatory on both producer and worker. Deployments should also use dedicated Redis databases and ACL identities because ARQ job-body keys use global prefixes. |
-| A tool escapes the workspace via a symlink swapped after the path check (TOCTOU) | File tools verify containment **through the opened descriptor** (`/proc/self/fd`), immune to a post-check swap; writes `O_CREAT` without `O_TRUNC`, verify, then write — an escaped file is never truncated. |
-| An MCP/connector tool defaults to an under-restricted risk | Unclassified + MCP tools default to **high** risk; the capability `max_risk` ceiling drops over-risk tools at registry time; tool-ACL fails **closed** for restricted principals on a config-read error. |
-| An external surface served unauthenticated | The gRPC API and MCP-HTTP require credentials and refuse to start/serve without them; a client-bound deployment refuses to serve unbound (`require_client_binding`). |
-
-## Threat-model review cadence
-
-- Reviewed at every minor release.
-- Reviewed when a new tool, provider, sandbox, or channel ships.
-- External penetration tests planned for Q3 2027 and Q3 2028.
+Review this model whenever a new outbound destination, parser format, tool,
+matter role, queue transport, authentication mode, or release path is added.
+Any proposal to restore remote execution, external plugins, runtime acquisition,
+or an unbounded browser/computer tool requires a new threat-model decision
+before implementation.

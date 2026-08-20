@@ -15,8 +15,15 @@ Usage::
 
     from maverick.runner import run_goal_in_background, run_goal_in_thread
 
-    run_goal_in_thread(goal_id=42, max_dollars=2.0)   # blocking, sync
-    bg.add_task(run_goal_in_thread, goal_id=42)        # FastAPI BG task
+    run_goal_in_thread(                              # blocking, sync
+        goal_id=42, max_dollars=2.0,
+        concurrency_principal="user:alice",
+    )
+    bg.add_task(                                       # FastAPI BG task
+        run_goal_in_thread,
+        goal_id=42,
+        concurrency_principal="user:alice",
+    )
 """
 from __future__ import annotations
 
@@ -149,17 +156,36 @@ def run_goal_in_thread(
     could not even start (no slot) -- must surface as a job failure so the
     queue's retry/backoff actually runs. Polling callers ignore the value.
 
+    Before constructing an LLM or sandbox, resolves the goal's immutable
+    :class:`~maverick.matter_context.MatterContext` from the durable goal,
+    matter-membership, and legal-domain records. ``concurrency_principal`` is
+    the authenticated execution principal at this boundary; ``user_id`` is
+    audit metadata and never substitutes for it.
+
     Acquires a fresh WorldModel + LLM + Sandbox per call so each
     background goal gets its own connection (SQLite WAL + check_same_thread
     handles the concurrency), and always closes the WorldModel so the
     per-goal connection + WAL handle don't leak for the process lifetime.
     """
+    if (
+        not isinstance(concurrency_principal, str)
+        or not concurrency_principal
+        or concurrency_principal != concurrency_principal.strip()
+        or "\x00" in concurrency_principal
+    ):
+        log.error(
+            "run_goal_in_thread: authenticated concurrency_principal is required "
+            "for matter execution (goal_id=%s)",
+            goal_id,
+        )
+        return None
+
     # Per-user lane first: bounds one caller's own fan-out without ever
     # blocking on another caller's runs.  Some execution identities (for
     # example fleet agent audit principals) are derived from user-controlled
     # objects, so callers may pass a separate stable authenticated principal
     # for scheduling while preserving ``user_id`` for audit/governance.
-    lane_principal = concurrency_principal if concurrency_principal is not None else user_id
+    lane_principal = concurrency_principal
     principal_sem = _principal_semaphore(lane_principal)
     if not principal_sem.acquire(timeout=_ACQUIRE_TIMEOUT):
         log.error(
@@ -178,67 +204,89 @@ def run_goal_in_thread(
         return None
     _mark_inflight_started()
     world = None
-    sandbox = None
     try:
-        from .budget import budget_from_config
-        from .llm import LLM
-        from .orchestrator import run_goal_sync
-        from .sandbox import build_sandbox
+        from .matter_context import (
+            matter_context_scope,
+            resolve_goal_matter_context,
+        )
         from .world_model import close_world_if_owned, open_world
         world = open_world()  # client/tenant-floored canonical world
-        llm = LLM()
-        sandbox = build_sandbox()
-        # Precedence: explicit caller arg > [budget] config > the
-        # background runner's conservative defaults (tighter than the
-        # interactive Budget defaults on purpose).
-        budget = budget_from_config(
-            defaults={
-                "max_dollars": DEFAULT_MAX_DOLLARS,
-                "max_wall_seconds": DEFAULT_MAX_WALL_SECONDS,
-            },
-            max_dollars=max_dollars,
-            max_wall_seconds=max_wall_seconds,
+        matter_context = resolve_goal_matter_context(
+            world,
+            goal_id,
+            principal=concurrency_principal,
+            source="runner",
         )
-        try:
-            run_goal_sync(
-                llm, world, budget,
-                goal_id, sandbox=sandbox, max_depth=max_depth,
-                conversation_id=conversation_id, channel=channel,
-                user_id=user_id, capability=capability,
-                allowed_suites=allowed_suites, resume=True,
-            )
-        except Exception:
-            # If the swarm raises an unexpected exception (anything not
-            # caught by run_goal itself), the goal row is still 'active'.
-            # Mark it 'blocked' so the dashboard doesn't show a ghost.
-            log.exception("goal #%s crashed inside run_goal_sync", goal_id)
+        with matter_context_scope(matter_context):
+            from .budget import budget_from_config
+            from .llm import LLM
+            from .orchestrator import run_goal_sync
+            from .sandbox import build_sandbox
+
+            sandbox = None
             try:
-                world.set_goal_status(goal_id, "blocked", result="internal error")
-            except Exception:  # pragma: no cover
-                log.exception("failed to reclaim goal #%s after crash", goal_id)
-            # A genuine crash IS retryable -- return a distinct signal. An
-            # intentional 'blocked' read back below (budget cap, killswitch
-            # halt, awaiting-user) is TERMINAL and must not be re-run, or the
-            # worker re-executes the whole swarm and re-spends budget.
-            return "error"
-        # Read back the terminal status so the worker can decide retry.
-        try:
-            g = world.get_goal(goal_id)
-            return g.status if g else None
-        except Exception:  # pragma: no cover
-            log.exception("run_goal_in_thread: status read-back failed (goal_id=%s)", goal_id)
-            return None
+                # Context is bound before either dependency can initiate model
+                # or sandbox work, and remains bound through sandbox cleanup.
+                llm = LLM()
+                sandbox = build_sandbox()
+                # Precedence: explicit caller arg > [budget] config > the
+                # background runner's conservative defaults (tighter than the
+                # interactive Budget defaults on purpose).
+                budget = budget_from_config(
+                    defaults={
+                        "max_dollars": DEFAULT_MAX_DOLLARS,
+                        "max_wall_seconds": DEFAULT_MAX_WALL_SECONDS,
+                    },
+                    max_dollars=max_dollars,
+                    max_wall_seconds=max_wall_seconds,
+                )
+                try:
+                    run_goal_sync(
+                        llm, world, budget,
+                        goal_id, sandbox=sandbox, max_depth=max_depth,
+                        conversation_id=conversation_id, channel=channel,
+                        user_id=user_id, capability=capability,
+                        allowed_suites=allowed_suites, resume=True,
+                    )
+                except Exception:
+                    # If the swarm raises an unexpected exception (anything not
+                    # caught by run_goal itself), the goal row is still 'active'.
+                    # Mark it 'blocked' so the dashboard doesn't show a ghost.
+                    log.exception("goal #%s crashed inside run_goal_sync", goal_id)
+                    try:
+                        world.set_goal_status(goal_id, "blocked", result="internal error")
+                    except Exception:  # pragma: no cover
+                        log.exception("failed to reclaim goal #%s after crash", goal_id)
+                    # A genuine crash IS retryable -- return a distinct signal. An
+                    # intentional 'blocked' read back below (budget cap, killswitch
+                    # halt, awaiting-user) is TERMINAL and must not be re-run, or the
+                    # worker re-executes the whole swarm and re-spends budget.
+                    return "error"
+                # Read back the terminal status so the worker can decide retry.
+                try:
+                    g = world.get_goal(goal_id)
+                    return g.status if g else None
+                except Exception:  # pragma: no cover
+                    log.exception(
+                        "run_goal_in_thread: status read-back failed (goal_id=%s)",
+                        goal_id,
+                    )
+                    return None
+            finally:
+                if sandbox is not None:
+                    close = getattr(sandbox, "close", None)
+                    if close is not None:
+                        try:
+                            close()
+                        except Exception:  # pragma: no cover
+                            log.debug(
+                                "run_goal_in_thread: sandbox.close() failed",
+                                exc_info=True,
+                            )
     except Exception:
         log.exception("background goal run failed (goal_id=%s)", goal_id)
         return None
     finally:
-        if sandbox is not None:
-            close = getattr(sandbox, "close", None)
-            if close is not None:
-                try:
-                    close()
-                except Exception:  # pragma: no cover
-                    log.debug("run_goal_in_thread: sandbox.close() failed", exc_info=True)
         if world is not None:
             try:
                 close_world_if_owned(world)
@@ -370,10 +418,9 @@ async def run_goal_in_background_async(
     """Dispatch without blocking an async channel or HTTP event loop.
 
     Dispatcher submission is deliberately synchronous: local execution waits
-    for the terminal status, queue submission may perform broker I/O, and gRPC
-    waits for the worker RPC.  ``asyncio.to_thread`` preserves contextvars
-    (including the active tenant) while keeping all three paths off the caller's
-    event loop.
+    for the terminal status and queue submission may perform broker I/O.
+    ``asyncio.to_thread`` preserves contextvars (including the active tenant)
+    while keeping both paths off the caller's event loop.
     """
     try:
         status = await asyncio.to_thread(

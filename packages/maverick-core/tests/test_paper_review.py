@@ -140,9 +140,18 @@ def test_recommendation_is_deterministic_from_severity():
     assert clean.recommendation == "acceptable"
 
 
-def test_review_without_a_model_still_produces_complete_language():
-    # No provider key in the environment: every proposed clause must still be
-    # our full template text, never an empty stub.
+def test_review_without_a_model_still_produces_complete_language(monkeypatch):
+    # Force the model-unavailable path instead of depending on the developer's
+    # ambient provider credentials. Every proposed clause must still be our
+    # full template text, never an empty stub or a live provider response.
+    from maverick import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "model_for_role", lambda _role: "test:unavailable")
+
+    def unavailable_llm(*_args, **_kwargs):
+        raise RuntimeError("model deliberately unavailable in unit test")
+
+    monkeypatch.setattr(llm_mod, "LLM", unavailable_llm)
     r = pr.review_paper(DPA_TEXT, vendor="Acme", use_model=True)
     assert not r.drafted_with_model
     for c in r.gaps:

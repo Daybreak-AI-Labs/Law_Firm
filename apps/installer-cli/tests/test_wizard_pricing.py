@@ -59,9 +59,8 @@ def test_generated_config_persists_strict_default(
     monkeypatch.setattr(wizard, "ENV_FILE", tmp_path / ".env")
 
     wizard.write_config(
-        providers=[],
-        role_models={},
-        channels={},
+        providers=["anthropic"],
+        run_model="anthropic:claude-sonnet-4-6",
         safety={"profile": "balanced"},
         budget={
             "max_dollars": 5.0,

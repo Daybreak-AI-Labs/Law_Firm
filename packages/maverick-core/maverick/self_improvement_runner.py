@@ -1,27 +1,17 @@
-"""Glue that completes the *model-agnostic* self-improvement rungs.
+"""Offline, matter-scoped self-harness and verifier-evidence coordination.
 
-These are the rungs that compound on a customer's data WITHOUT owning or
-fine-tuning a generative model -- which is the whole strategy: the default brain
-stays a frontier model (kernel rule 2, never compete on the model), and the moat
-is governance + per-customer compounding on top of it. This module ties capture
--> evidence -> the governed controller for:
+This module ties capture -> evidence for the retained firm learning loop:
 
 * **judgment** -- ``build_prm_examples`` turns captured trajectories into
   training rows for the small reward *head* (an MLP over the frontier model's
   outputs -- NOT an LLM, so no open-weights model is implied);
-* **tools** -- ``review_generated_tools`` promotes a synthesized tool that earns
-  it and retires one that doesn't;
-* **prompts / skills / policies** -- ``emit_strategy_candidate`` routes a strategy
-  change through the gate;
 * **calibration** -- ``collect_calibration`` feeds the verifier-drift interlock
-  from any ground-truth source so the freeze is always armed.
+  from trusted ground truth so the freeze is always armed; and
+* **prompt harness** -- exact-matter candidate generation/evaluation with
+  explicit operator-only promotion through the governed transaction ledger.
 
-Weight-level fine-tuning (``si_producers.propose_weights`` / ``propose_policy``
-on an adapter) stays an explicitly optional, sovereign-/air-gap-only seam; it is
-deliberately NOT on this model-agnostic completion path.
-
-Everything here is deterministic and offline-testable. The producers it calls
-are no-ops unless ``[self_improvement] enable`` is set.
+Generic synthesized-tool, routing-policy, code, and weight producers are not
+part of the firm product.
 """
 from __future__ import annotations
 
@@ -31,11 +21,73 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from .learning_guard import Halted
-from .si_producers import ToolOutcomeTracker, propose_policy, propose_prompt, propose_tool
 
 log = logging.getLogger(__name__)
+
+
+def _learning_scope(
+    project_id: int | None, owner: str | None,
+) -> tuple[int, str, str] | None:
+    """Return exact matter, owner, and opaque owner key; fail closed."""
+    from .skill.distillation_local import scoped_store
+
+    store = scoped_store(None, project_id=project_id, owner=owner)
+    if store is None or owner is None:
+        return None
+    try:
+        matter_id = int(store.parent.name.removeprefix("matter-"))
+    except (TypeError, ValueError):
+        return None
+    owner_scope = store.name.removeprefix("owner-")
+    if (
+        matter_id <= 0 or len(owner_scope) != 16
+        or any(ch not in "0123456789abcdef" for ch in owner_scope)
+    ):
+        return None
+    return matter_id, str(owner), owner_scope
+
+
+def _scoped_corpus_path(
+    corpus_path: str | Path, *, scope: tuple[int, str, str],
+) -> str:
+    """Place every raw/eval corpus in one matter + principal namespace."""
+    matter_id, _owner, owner_scope = scope
+    path = Path(corpus_path)
+    matter_dir = f"matter-{matter_id}"
+    owner_dir = f"owner-{owner_scope}"
+    if (
+        path.parent.name == owner_dir
+        and path.parent.parent.name == matter_dir
+        and path.parent.parent.parent.name == "matters"
+    ):
+        return str(path)
+    return str(path.parent / "matters" / matter_dir / owner_dir / path.name)
+
+
+def _scope_reflexions(
+    reflexions, *, scope: tuple[int, str, str],
+) -> list[dict]:
+    """Select only records stamped with this exact matter and owner."""
+    matter_id, owner, _owner_scope = scope
+    out: list[dict] = []
+    for raw in reflexions or []:
+        record = raw.to_dict() if hasattr(raw, "to_dict") else raw
+        if not isinstance(record, Mapping):
+            continue
+        raw_matter = record.get("matter_id")
+        if isinstance(raw_matter, bool):
+            continue
+        try:
+            record_matter = int(raw_matter)
+        except (TypeError, ValueError):
+            continue
+        if record_matter != matter_id or record.get("owner") != owner:
+            continue
+        out.append(dict(record))
+    return out
 
 
 def _learning_provider_egress_enabled() -> bool:
@@ -70,38 +122,6 @@ def collect_calibration(confidence: float, correct: bool, *, source: str = "auto
     except Exception:  # pragma: no cover -- never block a run on calibration capture
         log.debug("calibration capture failed", exc_info=True)
         return False
-
-
-# -- tools: promote what helps, retire what doesn't (Phase 3) ----------------
-
-def should_retire(name: str, tracker: ToolOutcomeTracker, *,
-                  floor: float = 0.2, min_samples: int = 5) -> bool:
-    """A synthesized tool earns retirement when it has enough use and a low
-    success rate -- the FORGET half of the action-space loop."""
-    return tracker.samples(name) >= min_samples and tracker.success_rate(name) < floor
-
-
-def review_generated_tools(names, tracker: ToolOutcomeTracker, *, baseline_success: float = 0.5,
-                           rollback_for: Callable[[str], object] | None = None,
-                           controller=None) -> dict[str, str]:
-    """For each synthesized tool decide promote / retire / hold via the gate.
-
-    Returns ``{name: action}`` where action is ``"promoted"``, ``"retire"``, or
-    ``"hold"``. ``retire`` is advisory -- the caller removes the tool file (the
-    rollback handle makes that reversible). Promotion runs through the full
-    controller, so a tool that beats baseline but would widen authority is held.
-    """
-    rollback_for = rollback_for or (lambda n: f"retire:{n}")
-    out: dict[str, str] = {}
-    for name in names:
-        if should_retire(name, tracker):
-            out[name] = "retire"
-            continue
-        verdict = propose_tool(name, tracker, baseline_success,
-                               rollback=rollback_for(name), capability_widens=False,
-                               controller=controller)
-        out[name] = "promoted" if verdict.ok else "hold"
-    return out
 
 
 # -- judgment: a training set for the small reward head (Phase 1) ------------
@@ -268,20 +288,6 @@ def build_prm_examples(  # noqa: C901 - trust validation stays at the corpus bou
     return rows
 
 
-# -- prompts / skills / policies (Phase 4) -----------------------------------
-
-def emit_strategy_candidate(kind: str, summary: str, baseline: float, candidate: float,
-                            samples: int, *, rollback, controller=None):
-    """Route a strategy change through the gate. ``kind`` is ``"prompt"`` (a
-    prompt/playbook variant, no capability surface) or ``"policy"`` (a routing/
-    decision policy)."""
-    if kind == "prompt":
-        return propose_prompt(summary, baseline, candidate, samples,
-                              rollback=rollback, controller=controller)
-    return propose_policy(summary, baseline, candidate, samples,
-                          rollback=rollback, capability_widens=False, controller=controller)
-
-
 # -- self-harness: learn a model-specific harness addendum (Phase 4 sibling) --
 
 def _risk_calibration_boundary(
@@ -308,6 +314,7 @@ def _risk_calibration_boundary(
 
 def run_self_harness_pass(  # noqa: C901 - fail-closed orchestration boundary
     reflexions=None, *, model_id: str | None = None,
+    project_id: int | None = None, owner: str | None = None,
     held_in=None, held_out=None,
     score_with=None, score_without=None, propose_fn=None, controller=None,
     min_support: int | None = None, limit: int = 500,
@@ -326,7 +333,9 @@ def run_self_harness_pass(  # noqa: C901 - fail-closed orchestration boundary
     validate -> gate), to be called by a scheduler / the self-improvement loop.
 
     Resolves ``model_id`` to the configured orchestrator model and loads recent
-    model-tagged reflexions when not supplied. The tuning knobs
+    model-tagged reflexions only when an exact matter and owner are supplied.
+    Matter-scoped passes mine/propose/evaluate offline but never mutate the
+    runtime addendum store. The tuning knobs
     (``min_support``/``require_held_out``/``min_delta``/``min_held_out``/
     ``candidates_per_signature``/``semantic_mining``/``bucket_by``/``canary``)
     default to ``None`` and are then filled from ``[self_harness]`` config, so an
@@ -346,6 +355,13 @@ def run_self_harness_pass(  # noqa: C901 - fail-closed orchestration boundary
         from . import self_harness
         if not self_harness.enabled():
             return self_harness.SelfHarnessReport(model_id=str(model_id or ""))
+        scope = _learning_scope(project_id, owner)
+        if scope is None:
+            report = self_harness.SelfHarnessReport(model_id=str(model_id or ""))
+            report.skipped.append(
+                "reflexion processing requires exact matter and owner scope"
+            )
+            return report
         st = self_harness.settings()
         if st.get("_config_valid") is not True:
             report = self_harness.SelfHarnessReport(model_id=str(model_id or ""))
@@ -427,8 +443,12 @@ def run_self_harness_pass(  # noqa: C901 - fail-closed orchestration boundary
         if reflexions is None:
             from . import reflexion
             reflexions = [r.to_dict() for r in reflexion.list_recent(limit=limit)]
+        if scope is not None:
+            reflexions = _scope_reflexions(reflexions, scope=scope)
         return self_harness.run_self_harness(
-            reflexions, model_id=model_id, held_in=held_in, held_out=held_out,
+            reflexions, model_id=model_id,
+            project_id=scope[0], owner=scope[1],
+            held_in=held_in, held_out=held_out,
             score_with=score_with, score_without=score_without,
             propose_fn=propose_fn, controller=controller, min_support=min_support,
             require_held_out=require_held_out, min_delta=min_delta,
@@ -445,7 +465,8 @@ def run_self_harness_pass(  # noqa: C901 - fail-closed orchestration boundary
             holdout_rotations=holdout_rotations, canary=bool(canary),
             holdout_authorize=holdout_authorize,
             eval_for_context=eval_for_context,
-            promotion_authorize=promotion_authorize)
+            promotion_authorize=promotion_authorize,
+            apply_promotions=False)
     except Halted:
         raise
     except Exception:  # pragma: no cover -- learning never perturbs a run
@@ -651,8 +672,8 @@ def _auto_evaluator(model_id: str, *, corpus_path: str, held_out_frac: float = 0
     """Build ``(held_in, held_out, score_with, score_without)`` -- the LIVE A/B --
     from a configured eval corpus + the model's own LLM client, so the driver can
     actually PROMOTE rather than only dry-inspect. The candidate ``model_id``
-    GENERATES; a verifier-role model JUDGES (cross-model, to avoid self-grading;
-    neither is hard-coded -- :func:`model_for_role`, kernel rule 2). ``judge_samples``
+    GENERATES; the same exact run pin, acting in the verifier role, JUDGES with
+    a separate held-out rubric (:func:`model_for_role`, kernel rule 2). ``judge_samples``
     > 1 turns on self-consistency judging (majority vote over diverse framings).
     Returns ``None`` (caller stays dry) when there is no corpus, no cases for the
     model, or no usable held-out split. Never raises."""
@@ -718,7 +739,7 @@ def _context_evaluator(model_id: str, *, corpus_path: str, budget=None,
 
     Returns ``None`` when the corpus has no keys beyond the model's (nothing
     scoped to serve -- no LLM clients are built in that case). Otherwise the
-    candidate model generates and a verifier-role model judges exactly as in
+    selected run model generates and then judges under the verifier rubric as in
     :func:`_auto_evaluator`, sharing the same ``budget`` pot; per-domain quads
     are cached so repeated signatures don't rebuild them. A domain with no
     usable held-out split yields ``None`` for that domain (the pass keeps its
@@ -898,6 +919,7 @@ def _build_holdout_authorizer(
 
 def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration boundary
     reflexions=None, *, model_id: str | None = None, limit: int = 500,
+    project_id: int | None = None, owner: str | None = None,
     retire: bool = True, retire_after_days: float | None = None,
     held_in=None, held_out=None, score_with=None, score_without=None,
     propose_fn=None, controller=None, evaluation_system: str | None = None,
@@ -907,8 +929,10 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
     retirement -- the unit a scheduler (cron / the self-improvement loop) invokes
     to operate the harness end-to-end. Returns ``(report, retired_count)``.
 
-    The pass is :func:`run_self_harness_pass` (mine -> propose -> validate ->
-    gate). The live A/B (``score_with``/``score_without``) is injected, OR -- when
+    The pass is :func:`run_self_harness_pass` (mine -> propose -> validate).
+    Client-derived reads require exact matter/owner scope and remain offline:
+    they do not apply, graduate, demote, or retire runtime guidance. The live
+    A/B (``score_with``/``score_without``) is injected, OR -- when
     the caller injects none, ``[self_harness] eval_corpus`` is configured, and
     learning provider egress is authorized -- AUTO-BUILT by
     :func:`_auto_evaluator` (the model generates, a verifier judges) so a
@@ -923,6 +947,14 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
     try:
         from . import self_harness
         from .llm import require_model_allowed
+
+        scope = _learning_scope(project_id, owner)
+        if scope is None:
+            report = self_harness.SelfHarnessReport(model_id=str(model_id or ""))
+            report.skipped.append(
+                "reflexion processing requires exact matter and owner scope"
+            )
+            return report, 0
 
         if model_id is not None:
             # A caller-selected candidate model is an explicit policy pin. Keep
@@ -949,9 +981,10 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
         # verifier-judges evaluator. Unset corpus (the default) -> stays dry, so
         # behavior is unchanged out of the box.
         if (score_with is None and score_without is None and st is not None
-                and provider_egress):
+                and provider_egress and scope is not None):
             corpus_path = st.get("eval_corpus")
             if corpus_path:
+                corpus_path = _scoped_corpus_path(corpus_path, scope=scope)
                 from . import self_harness_eval as eval_module
                 from .llm import model_for_role
                 model_id = model_id or model_for_role("orchestrator")
@@ -1099,6 +1132,7 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
                     return report, 0
         report = run_self_harness_pass(
             reflexions, model_id=model_id, limit=limit,
+            project_id=project_id, owner=owner,
             held_in=held_in, held_out=held_out, score_with=score_with,
             score_without=score_without, propose_fn=propose_fn,
             controller=controller, **pass_kwargs)
@@ -1107,7 +1141,7 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
         # recall->outcome counters (safe -- only touches canary-flagged lines), and
         # optionally re-measure each line's live A/B lift to demote dead weight
         # (opt-in: a general corpus can under-credit a narrow line).
-        if resolved and self_harness.enabled():
+        if resolved and self_harness.enabled() and scope is None:
             try:
                 res = self_harness.review_canaries(resolved)
                 report.graduated = list(res.get("graduated", []))
@@ -1138,7 +1172,7 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
                 except Exception:  # pragma: no cover
                     log.debug("self-harness efficacy review failed", exc_info=True)
         retired = 0
-        if retire and self_harness.enabled():
+        if retire and self_harness.enabled() and scope is None:
             days = retire_after_days
             if days is None:
                 days = self_harness.settings().get("retire_after_days", 0.0)
@@ -1285,149 +1319,17 @@ def _memo_scorer(fn, *, draws: int = 2, by_line: bool = False,
     return _scored
 
 
-def _memo_paraphraser(fn):
-    """Cache a paraphraser on its input goals tuple: paraphrases depend only
-    on the held-out cases, never on the candidate line, yet
-    ``validate_proposal`` regenerates them per candidate -- L x H redundant
-    LLM calls per target. A stable paraphrase list also keeps the memoized
-    baseline arm's cache key stable across candidates. A falsy result is NOT
-    cached, so one transient paraphraser failure can't silently disable the
-    metamorphic check for the whole sweep."""
-    cache: dict[tuple, list] = {}
-
-    def _para(goals):
-        key = tuple(goals)
-        if key not in cache:
-            out = fn(goals)
-            if not out:
-                return out
-            cache[key] = out
-        return cache[key]
-
-    return _para
-
-
-def _transfer_context(st: dict, corpus_path: str):
-    """The shared per-sweep transfer state: ``(eval_for_target, validate_kwargs)``.
-
-    ``eval_for_target`` caches each target's corpus-built quad (so a fleet
-    sweep builds every evaluator once, not once per source) with the baseline
-    arm memoized, one eval-budget pot across everything, and the SAME floors +
-    metamorphic/judge_unknown wiring the cycle applies -- a transferred line
-    must clear the gate home-grown lines clear, not a weaker copy of it."""
-    if st.get("risk_limited"):
-        raise ValueError(
-            "risk-limited transfer requires explicit per-target deployed-prompt "
-            "snapshots and a separately budgeted holdout authorizer")
-    if not _learning_provider_egress_enabled():
-        return (lambda _model: None), _validation_floors(st)
-    budget = _eval_budget(st)
-    judge_unknown = bool(st.get("metamorphic"))
-    cache: dict[str, tuple | None] = {}
-
-    def eval_for_target(m: str):
-        if m not in cache:
-            # _auto_evaluator already memoizes the baseline arm.
-            cache[m] = _auto_evaluator(m, corpus_path=corpus_path,
-                                       judge_samples=st.get("judge_samples", 1),
-                                       budget=budget,
-                                       judge_unknown=judge_unknown)
-        return cache[m]
-
-    validate_kwargs = _validation_floors(st)
-    if st.get("metamorphic"):
-        try:
-            from . import self_harness_eval as ev
-            from .llm import LLM, model_for_role
-            validate_kwargs["metamorphic_fn"] = _memo_paraphraser(
-                ev.llm_paraphraser(LLM(model_for_role("summarizer")),
-                                   budget=budget))
-        except Exception:  # pragma: no cover -- no paraphraser = check off
-            log.debug("transfer paraphraser construction failed", exc_info=True)
-    return eval_for_target, validate_kwargs
-
-
-def run_self_harness_transfer(source_model: str, *, targets=None,
-                              corpus_path: str | None = None,
-                              controller=None, force: bool = False,
-                              raise_errors: bool = False,
-                              _context=None) -> dict:
-    """Driver entry for a governed cross-model transfer trial: try
-    ``source_model``'s graduated lines on ``targets`` (default: the whole
-    fleet) against each target's corpus-built A/B, applying the configured
-    validation floors (including ``holdout_rotations`` -- the same
-    cross-validation home-grown lines face), one shared eval-budget pot, and
-    the canary landing ``self_harness.run_transfer`` enforces. The
-    tried-memory makes repeat invocations spend nothing on already-judged
-    pairs (``force`` overrides). Returns the per-target report; ``{}`` when
-    the loop is off or no corpus is configured. Never raises unless
-    ``raise_errors`` -- the interactive CLI sets it, because a swallowed
-    error is indistinguishable from an empty fleet."""
-    try:
-        from . import self_harness
-        if not self_harness.enabled():
-            return {}
-        st = self_harness.settings()
-        corpus_path = corpus_path or st.get("eval_corpus")
-        if not corpus_path:
-            return {}
-        eval_for_target, validate_kwargs = (
-            _context if _context is not None
-            else _transfer_context(st, corpus_path))
-        if (st.get("risk_limited")
-                and not validate_kwargs.get("holdout_authorize")):
-            raise ValueError(
-                "risk-limited transfer context lacks holdout authorization")
-        if targets is None:
-            targets = harness_fleet_models()
-        return self_harness.run_transfer(
-            str(source_model), list(targets), eval_for_target=eval_for_target,
-            controller=controller, force=force, validate_kwargs=validate_kwargs,
-            holdout_rotations=int(st.get("holdout_rotations", 1) or 1))
-    except Exception:  # pragma: no cover -- a transfer trial never perturbs a run
-        if raise_errors:
-            raise
-        log.warning("self-harness transfer failed", exc_info=True)
-        return {}
-
-
-def run_self_harness_transfer_sweep(*, controller=None) -> dict:
-    """Fleet-wide transfer: every configured role model as source in turn,
-    all sources sharing ONE transfer context (evaluator cache, budget pot,
-    floors). The tried-memory keeps steady-state spend near zero -- only lines
-    learned since the last sweep generate new evaluations. Returns
-    ``{source: per-target report}`` for sources that attempted anything."""
-    out: dict[str, dict] = {}
-    try:
-        from . import self_harness
-        if not self_harness.enabled():
-            return out
-        st = self_harness.settings()
-        corpus_path = st.get("eval_corpus")
-        if not corpus_path:
-            return out
-        context = _transfer_context(st, corpus_path)
-        fleet = harness_fleet_models()
-        for m in fleet:
-            # run_transfer skips the source itself -- no pre-filter needed.
-            rep = run_self_harness_transfer(
-                m, targets=fleet,
-                corpus_path=corpus_path, controller=controller, _context=context)
-            if any(r.get("attempted") for r in rep.values()):
-                out[m] = rep
-    except Exception:  # pragma: no cover -- a sweep never perturbs a run
-        log.debug("self-harness transfer sweep failed", exc_info=True)
-    return out
-
-
 def run_corpus_harvest(world, *, mode: str | None = None, key: str | None = None,
                        corpus_path: str | None = None,
+                       project_id: int | None = None, owner: str | None = None,
                        raise_errors: bool = False) -> int:
     """Driver entry for corpus bootstrapping: mine hindsight-pair candidates
     from the reflexion log + the world's DONE goals and stage ("propose") or
-    merge ("auto") them for ``key`` (default: the orchestrator model). The one
-    owner of the harvest policy -- the unscoped-reflexion filter (via
-    reflexion's own scope predicate), the history limits, and the
+    stage them for ``key`` (default: the orchestrator model). An exact matter
+    and owner are mandatory; the corpus itself is stored in that namespace.
+    Legacy ``mode="auto"`` is demoted to staging so harvesting never promotes
+    client-derived cases into the live evaluation corpus unattended. The
+    history limits and the
     secret-redaction pass live here, not in each CLI. Goals already live,
     pending, or operator-rejected are excluded BEFORE the candidate cap so
     they can't starve fresh candidates. Returns how many candidates were
@@ -1437,23 +1339,36 @@ def run_corpus_harvest(world, *, mode: str | None = None, key: str | None = None
     try:
         from . import reflexion, self_harness
         from . import self_harness_eval as ev
-        from .reflexion import _sanitize_text, _scope_matches
+        from .reflexion import _sanitize_text
         st = self_harness.settings()
         mode = mode or st.get("corpus_harvest", "off")
         corpus_path = corpus_path or st.get("eval_corpus")
         if mode not in ("propose", "auto") or not corpus_path or world is None:
             return 0
+        scope = _learning_scope(project_id, owner)
+        if scope is None:
+            return 0
+        matter_id, exact_owner, _owner_scope = scope
+        corpus_path = _scoped_corpus_path(corpus_path, scope=scope)
         if key is None:
             from .llm import model_for_role
             key = model_for_role("orchestrator")
-        refl = [r.to_dict() for r in reflexion.list_recent(limit=500)
-                if _scope_matches(r, channel=None, user_id=None)]
-        # Isolation parity with the reflexion side: owner-scoped goals stay
-        # out of the shared corpus -- one tenant's goal text must never be
-        # mined into ground truth other contexts evaluate against.
-        goals = [g for g in world.list_goals(status="done", limit=200,
-                                             order="desc")
-                 if not getattr(g, "owner", "")]
+        refl = _scope_reflexions(
+            reflexion.list_recent(limit=500), scope=scope,
+        )
+        goals = []
+        for goal in world.list_goals(
+            status="done", owner=exact_owner, project_id=matter_id,
+            limit=200, order="desc",
+        ):
+            goal_owner = getattr(goal, "owner", None)
+            if (
+                getattr(goal, "project_id", None) != matter_id
+                or goal_owner is None
+                or str(goal_owner) != exact_owner
+            ):
+                continue
+            goals.append(goal)
         known = {c["goal"] for c in ev.load_eval_corpus(corpus_path).get(str(key), [])}
         known |= {c["goal"] for c in ev.load_pending(corpus_path).get(str(key), [])}
         known |= set(ev.load_rejected(corpus_path).get(str(key), []))
@@ -1466,8 +1381,7 @@ def run_corpus_harvest(world, *, mode: str | None = None, key: str | None = None
         # The files hold REDACTED text, so re-check known post-redaction too
         # (a secret-bearing goal changes form between mining and staging).
         cands = [c for c in cands if c["goal"] not in known]
-        add = ev.merge_candidates if mode == "auto" else ev.stage_candidates
-        return add(corpus_path, key, cands)
+        return ev.stage_candidates(corpus_path, key, cands)
     except Exception:  # pragma: no cover -- harvesting never perturbs a run
         if raise_errors:
             raise
@@ -1476,6 +1390,7 @@ def run_corpus_harvest(world, *, mode: str | None = None, key: str | None = None
 
 
 def run_corpus_quality(*, key: str | None = None, corpus_path: str | None = None,
+                       project_id: int | None = None, owner: str | None = None,
                        samples: int = 2, raise_errors: bool = False) -> list[dict]:
     """Driver entry for the corpus quality probe: measure each live case's
     baseline discriminativeness with the same model-generates /
@@ -1493,6 +1408,10 @@ def run_corpus_quality(*, key: str | None = None, corpus_path: str | None = None
         corpus_path = corpus_path or st.get("eval_corpus")
         if not corpus_path:
             return []
+        scope = _learning_scope(project_id, owner)
+        if scope is None:
+            return []
+        corpus_path = _scoped_corpus_path(corpus_path, scope=scope)
         if key is None:
             key = model_for_role("orchestrator")
         cases = ev.corpus_cases(ev.load_eval_corpus(corpus_path), key)
@@ -1521,58 +1440,7 @@ def run_corpus_quality(*, key: str | None = None, corpus_path: str | None = None
         return []
 
 
-def harness_fleet_models() -> list[str]:
-    """The DISTINCT set of models the fleet runs, resolved across every role in
-    ``llm.ROLE_MODELS`` (each via ``model_for_role``, deduped, sorted for a
-    deterministic order). The harness is model-specific, so a worker model
-    accumulates its OWN guidance -- this is the fleet the driver should cover, not
-    just the orchestrator. Empty on any error (never raises)."""
-    try:
-        from .llm import ROLE_MODELS, model_for_role
-    except Exception:  # pragma: no cover
-        return []
-    models: list[str] = []
-    for role in ROLE_MODELS:
-        try:
-            m = model_for_role(role)
-        except Exception:  # pragma: no cover -- one bad role can't drop the rest
-            continue
-        if m and m not in models:
-            models.append(m)
-    return sorted(models)
-
-
-def run_self_harness_all_models(*, limit: int = 500, retire: bool = True, **cycle_kwargs):
-    """Run a self-harness cycle for EVERY distinct configured role model, so
-    WORKER models learn their own harness, not just the orchestrator -- the
-    harness is model-specific and a real fleet runs several models. Returns
-    ``{model_id: (report, retired)}``.
-
-    Each model's pass mines only ITS OWN traces (mining is per-model), so a
-    worker's lesson never bleeds into the orchestrator's. Without injected
-    scorers it is a fleet-wide DRY inspection + stale-line retirement; live
-    per-model A/B scoring is the operator's to wire (a real evaluation needs a
-    real model). Operational failures are isolated per sweep; :class:`Halted`
-    is re-raised for the caller."""
-    out: dict[str, tuple] = {}
-    try:
-        from . import self_harness
-        if not self_harness.enabled():
-            return out
-        for m in harness_fleet_models():
-            out[m] = run_self_harness_cycle(
-                model_id=m, limit=limit, retire=retire, **cycle_kwargs)
-    except Halted:
-        raise
-    except Exception:  # pragma: no cover -- a fleet sweep never perturbs a run
-        log.debug("self-harness all-models cycle failed", exc_info=True)
-    return out
-
-
 __all__ = [
-    "collect_calibration", "should_retire", "review_generated_tools",
-    "build_prm_examples", "emit_strategy_candidate", "run_self_harness_pass",
-    "run_self_harness_cycle", "run_self_harness_all_models", "harness_fleet_models",
-    "run_self_harness_transfer", "run_self_harness_transfer_sweep",
-    "run_corpus_harvest",
+    "collect_calibration", "build_prm_examples", "run_self_harness_pass",
+    "run_self_harness_cycle", "run_corpus_harvest",
 ]

@@ -33,10 +33,12 @@ from pathlib import Path
 # bridge below delivers it to the JobQueue the local Worker polls, so the two
 # real substrates compose.
 from .queue_dispatcher import JOB_NAME, QUEUED_STATUS, QueueDispatcher
-from .worker import Worker
+from .worker import Worker, _verify_job_matter_context
 from .world_model import WorldModel
 
 _WORKER_KIND = "run_goal"
+_HARNESS_PRINCIPAL = "user:e2e"
+_HARNESS_DOMAIN = "legal"
 
 
 def _stub_execute(world_db: Path, goal_id: int) -> None:
@@ -62,9 +64,34 @@ def run_e2e(workdir: Path, *, execute=None) -> dict:
     # Shared world (the control plane's handle). try/finally so an exception
     # anywhere in the harness still closes the SQLite connection instead of
     # leaking it (and masking the real error behind a temp-dir cleanup failure).
-    world = WorldModel(path=world_db)
+    # QueueDispatcher resolves the canonical world independently before it signs
+    # the envelope. Pin that canonical path to this harness's explicit shared DB
+    # for the duration, exactly as a tenant-bound deployment pins all producers
+    # and workers to one world store.
+    from . import world_model as world_model_mod
+
+    prior_default_db = world_model_mod.DEFAULT_DB
+    world_model_mod.DEFAULT_DB = world_db
+    world = None
     try:
-        goal_id = world.create_goal("e2e: prove control/data-plane split", "harness")
+        world = WorldModel(path=world_db)
+        matter_id = world.create_client_matter(
+            "E2E client matter",
+            principal=_HARNESS_PRINCIPAL,
+            domain=_HARNESS_DOMAIN,
+            matter_number="E2E-001",
+            jurisdiction="Test jurisdiction",
+            client_name="E2E Test Client",
+        )
+        goal_id = world.create_matter_goal(
+            "e2e: prove control/data-plane split",
+            "harness",
+            principal=_HARNESS_PRINCIPAL,
+            domain=_HARNESS_DOMAIN,
+            project_id=matter_id,
+        )
+        if goal_id is None:  # pragma: no cover - invariant construction failure
+            raise RuntimeError("could not create the governed E2E matter goal")
         status_initial = world.get_goal(goal_id).status
 
         # --- Control plane: submit through the real QueueDispatcher ----------
@@ -80,13 +107,28 @@ def run_e2e(workdir: Path, *, execute=None) -> dict:
         dispatcher = QueueDispatcher(enqueue=_broker)
         t_submit = time.time()
         submit_returned = dispatcher.submit(
-            goal_id, max_dollars=1.0, channel="harness", user_id="e2e")
+            goal_id,
+            max_dollars=1.0,
+            channel="harness",
+            user_id="e2e",
+            concurrency_principal=_HARNESS_PRINCIPAL,
+        )
         pending = queue.list(status="pending")
         status_after_enqueue = world.get_goal(goal_id).status
 
         # --- Data plane: a separate Worker claims and executes --------------
         worker = Worker(queue=queue)
-        worker.register(_WORKER_KIND, lambda job: execute(world_db, int(job.payload["goal_id"])))
+        verified_contexts = []
+
+        def _execute_bound_job(job) -> None:
+            context = _verify_job_matter_context(
+                job.payload,
+                int(job.payload["goal_id"]),
+            )
+            verified_contexts.append(context)
+            execute(world_db, int(job.payload["goal_id"]))
+
+        worker.register(_WORKER_KIND, _execute_bound_job)
         t_claim = time.time()
         claimed = worker.run_once()
         done_jobs = queue.list(status="done")
@@ -95,19 +137,31 @@ def run_e2e(workdir: Path, *, execute=None) -> dict:
         # ``get_goal`` opens a per-thread reader in addition to the writer.
         # Close the full WorldModel, not only ``conn``, so Windows can remove
         # the evidence harness's temporary database after the proof finishes.
-        world.close()
+        if world is not None:
+            world.close()
+        world_model_mod.DEFAULT_DB = prior_default_db
 
     # --- Proof ---------------------------------------------------------------
     control_did_not_execute = status_after_enqueue == status_initial == "pending"
     worker_claimed = bool(claimed) and len(done_jobs) == 1
     status_flowed_back = status_after_run == "done"
     enqueued_one = submit_returned == QUEUED_STATUS and len(pending) == 1
+    context_verified = bool(verified_contexts) and (
+        verified_contexts[0].matter_id == matter_id
+        and verified_contexts[0].principal == _HARNESS_PRINCIPAL
+        and verified_contexts[0].domain == _HARNESS_DOMAIN
+    )
     ok = bool(control_did_not_execute and worker_claimed and status_flowed_back
-              and enqueued_one)
+              and enqueued_one and context_verified)
 
     return {
         "harness": "control_data_plane_e2e",
         "goal_id": goal_id,
+        "matter_context": {
+            "matter_id": matter_id,
+            "principal": _HARNESS_PRINCIPAL,
+            "domain": _HARNESS_DOMAIN,
+        },
         "shared_stores": {"world_db": world_db.name, "job_queue_db": jobs_db.name},
         "control_plane": {
             "dispatcher": "QueueDispatcher",
@@ -129,12 +183,15 @@ def run_e2e(workdir: Path, *, execute=None) -> dict:
             "control_plane_did_not_execute": control_did_not_execute,
             "worker_claimed_and_completed_out_of_band": worker_claimed,
             "status_flowed_through_shared_world": status_flowed_back,
+            "worker_reverified_matter_context": context_verified,
             "ok": ok,
         },
         "note": (
             "Real QueueDispatcher + SQLite JobQueue + Worker + shared WorldModel; "
-            "no Redis/gRPC network. Agent execution is stubbed at the LLM "
-            "boundary — this proves the dispatch plumbing, not the agent loop."
+            "the signed job is bound to an active member of an exact client "
+            "matter and a gated legal domain. No Redis/gRPC network. Agent "
+            "execution is stubbed at the LLM boundary — this proves the "
+            "dispatch plumbing and matter context, not the agent loop."
         ),
     }
 

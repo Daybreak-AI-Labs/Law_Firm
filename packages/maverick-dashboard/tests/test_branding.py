@@ -1,6 +1,4 @@
-"""Firm branding: the logo is served, stays public (the share view needs it
-without a login), and the firm name appears on the dashboard chrome + public
-share page."""
+"""Firm-only branding has no residual platform-vendor asset or route."""
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -12,38 +10,44 @@ client = TestClient(app, headers={"Origin": "http://testserver"})
 def _world(tmp_path, monkeypatch):
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    monkeypatch.setattr(
+        "maverick_dashboard.public_origin.canonical_url",
+        lambda path: "https://firm.example/" + str(path or "").lstrip("/"),
+    )
+    monkeypatch.setattr("maverick.audit.audit_event", lambda *a, **k: True)
     return world_model.WorldModel(tmp_path / "world.db")
 
 
-def test_logo_is_served_as_jpeg():
-    r = client.get("/static/daybreak-logo.jpg")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("image/jpeg")
-    assert len(r.content) > 1000
-
-
-def test_logo_stays_public_when_a_token_is_set(monkeypatch):
-    # With a dashboard token, normal pages require auth -- but the brand image
-    # must stay reachable so the (auth-exempt) public share view can load it.
-    monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", "secret-token-xyz")
-    noauth = TestClient(app)  # no bearer header
-    assert noauth.get("/goals").status_code == 401          # normal page gated
-    assert noauth.get("/static/daybreak-logo.jpg").status_code == 200  # logo public
-
-
-def test_sidebar_and_favicon_use_the_logo(tmp_path, monkeypatch):
+def test_shell_uses_only_firm_wordmark(tmp_path, monkeypatch):
     _world(tmp_path, monkeypatch)
     t = client.get("/goals").text
-    assert "/static/daybreak-logo.jpg" in t      # favicon + sidebar both point at it
-    assert "brand__plate" in t                   # logo sits on the dark brand plate
-    assert "Bjerken and Day" in t                # firm name in the footer
+    assert "daybreak-logo" not in t.lower()
+    assert "Daybreak Labs" not in t
+    assert "Bjerken and Day" in t
+    assert client.get("/static/daybreak-logo.jpg").status_code == 404
 
 
 def test_share_page_shows_the_firm_wordmark(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Forecast", "", domain="finance_cashflow")
+    reviewer = "user:reviewer"
+    project_id = w.create_client_matter(
+        "Client matter",
+        principal=reviewer,
+        domain="legal_obligations",
+        matter_number="BRAND-001",
+        jurisdiction="Tennessee",
+        client_name="Branding Client",
+    )
+    gid = w.create_matter_goal(
+        "Forecast",
+        "",
+        principal=reviewer,
+        domain="legal_obligations",
+        project_id=project_id,
+    )
+    assert gid is not None
     w.set_goal_status(gid, "done", result="ok")
-    w.record_signoff(gid, "approved", decided_by="reviewer")
+    w.record_signoff(gid, "approved", decided_by=reviewer)
     token = client.post(f"/api/v1/goals/{gid}/share").json()["url"].split("/share/")[1]
     page = TestClient(app).get(f"/share/{token}").text   # anon viewer
     # This page is what a CLIENT sees, so it carries the firm's wordmark --

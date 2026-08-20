@@ -5,6 +5,7 @@ import functools
 import logging
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -40,13 +41,6 @@ def _strip_terminal_control(text: str) -> str:
     return _TERMINAL_CONTROL_RE.sub("", text)
 
 
-def _default_model() -> str:
-    """Lazy resolver so the click default callback doesn't pull `.llm`
-    (and the anthropic SDK) at module import time."""
-    from ..llm import DEFAULT_MODEL
-    return DEFAULT_MODEL
-
-
 def _fact_subject_token(channel: str, user: str) -> str:
     """Stable, delimiter-safe token for explicitly user-scoped facts."""
     return f"{quote(channel, safe='')}:{quote(user, safe='')}"
@@ -67,13 +61,19 @@ def _model_route_configuration_missing(
     from ..operator_preflight import _route_configuration_missing
     from ..providers import _canonical
 
-    spec = str(model_spec or _default_model()).strip()
-    provider = _canonical(spec.split(":", 1)[0] if ":" in spec else "anthropic")
-    return provider, _route_configuration_missing(provider, load_config())
+    cfg = load_config()
+    if model_spec is None:
+        from ..llm import offline_model_for_role
+
+        spec = offline_model_for_role("orchestrator", config=cfg)
+    else:
+        spec = str(model_spec).strip()
+    provider = _canonical(spec.split(":", 1)[0])
+    return provider, _route_configuration_missing(provider, cfg)
 
 
 def _require_llm_key(model_spec: str | None = None) -> str:
-    """Refuse cleanly when a selected route (or any swarm route) is incomplete."""
+    """Refuse cleanly when the selected run model is incomplete."""
     try:
         if model_spec is None:
             from ..config import load_config
@@ -96,10 +96,10 @@ def _require_llm_key(model_spec: str | None = None) -> str:
 
     detail = _format_route_missing(missing_routes)
     click.echo(
-        "Maverick can't reach an LLM through every selected model route. "
+        "Maverick can't reach the selected run model. "
         f"Missing: {detail}.\n"
         "\n"
-        "Configure that route with:  maverick init\n"
+        "Configure that model with:  maverick init\n"
         "Then verify it with:       maverick doctor",
         err=True,
     )
@@ -128,8 +128,7 @@ def _humanize_run_error(e: Exception) -> str:
     # Sandbox backends already raise an actionable RuntimeError, e.g.
     # "Docker not available. ... change [sandbox] backend to 'local'".
     if isinstance(e, RuntimeError) and (
-        "not available" in low or "docker" in low or "podman" in low
-        or "sandbox" in low
+        "not available" in low or "docker" in low or "sandbox" in low
     ):
         return f"Couldn't start the sandbox.\n  {msg}"
     if "authentication" in name or "invalid x-api-key" in low or "401" in msg:
@@ -189,28 +188,6 @@ def _humane_errors(fn):
             click.echo(_humanize_run_error(e), err=True)
             sys.exit(1)
     return wrapper
-
-
-def _kernel():
-    """Lazy-import the agent-runtime modules into a single namespace.
-
-    Importing ``.orchestrator`` transitively pulls agent + swarm +
-    blackboard + sandbox + skills + tools (~30 ms). Commands that
-    don't drive the agent (``version``, ``doctor``, ``config``,
-    ``audit``, ``cache``, ``retention``, ``skill *``, ``template *``)
-    never need any of it. Call this at the top of any command that does.
-    """
-    import types
-
-    from ..budget import Budget
-    from ..llm import DEFAULT_MODEL, LLM
-    from ..orchestrator import run_goal_sync
-    from ..sandbox import build_sandbox
-    from ..secrets import scrub
-    return types.SimpleNamespace(
-        Budget=Budget, LLM=LLM, DEFAULT_MODEL=DEFAULT_MODEL,
-        run_goal_sync=run_goal_sync, build_sandbox=build_sandbox, scrub=scrub,
-    )
 
 
 def _run_outcome_blocked(world, goal_id: int) -> bool:
@@ -325,29 +302,24 @@ def _configure_cli_text_streams() -> None:
 
 @click.group(epilog=(
     "Day to day, the firm runs in the dashboard (`maverick dashboard`); the\n"
-    "commands here are the operational surface: launchers (dashboard / mcp /\n"
-    "worker), setup and health (doctor, migrate, config-lint), the audit and\n"
+    "commands here are the operational surface: launchers (dashboard / worker),\n"
+    "setup and health (doctor, migrate, config-lint), the audit and\n"
     "privacy record (audit, erase, erase-verify, export-user), the emergency\n"
-    "stop (halt / unhalt), and the nightly dream beat."
+    "stop (halt / unhalt), encrypted backup/restore, and the nightly dream beat."
 ))
 @click.option("--db", default=None,
               help="World model database path (default: the active tenant's world.db).")
-@click.option("--model", default=None, help="LLM model id (default: from config).")
+@click.option(
+    "--model",
+    default=None,
+    help="Exact run-wide provider:model pin (default: [models].default).",
+)
 @click.pass_context
 def main(ctx: click.Context, db: str | None, model: str | None) -> None:
-    """Maverick: multi-agent swarm for long-horizon work."""
+    """Maverick: governed matter-bound work for law firms."""
     _configure_cli_text_streams()
     _configure_cli_logging()
     ctx.ensure_object(dict)
-    if ctx.invoked_subcommand == "mcp":
-        from .._mcp_parent_guard import ParentGuardError, arm_from_environment
-
-        try:
-            arm_from_environment()
-        except ParentGuardError as exc:
-            raise click.ClickException(
-                f"refusing unsafe tagged MCP launch: {exc}"
-            ) from exc
     # Default the world DB to the ACTIVE TENANT's world.db (selected via
     # MAVERICK_TENANT) so one business's run history / goals / facts never pool
     # into another's -- the same isolation the channel server already gets via
@@ -358,7 +330,6 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
         if ctx.invoked_subcommand in {
             "config-lint",
             "doctor",
-            "gen-stubs",
             "init",
             "preflight",
             "version",
@@ -377,11 +348,21 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
             db = str(Workspace.current().db_path)
     ctx.obj["db"] = Path(db)
     if model:
-        from ..llm import ModelNotAllowedError, require_model_allowed
+        from ..llm import (
+            ModelNotAllowedError,
+            ModelSelectionError,
+            require_model_allowed,
+        )
 
+        previous_override = os.environ.get("MAVERICK_MODEL_OVERRIDE")
+        os.environ["MAVERICK_MODEL_OVERRIDE"] = model
         try:
             model = require_model_allowed(model)
-        except (ModelNotAllowedError, ValueError) as exc:
+        except (ModelNotAllowedError, ModelSelectionError, ValueError) as exc:
+            if previous_override is None:
+                os.environ.pop("MAVERICK_MODEL_OVERRIDE", None)
+            else:
+                os.environ["MAVERICK_MODEL_OVERRIDE"] = previous_override
             raise click.BadParameter(str(exc), param_hint="'--model'") from exc
     ctx.obj["model"] = model  # resolved lazily on first use
     # `--model` is a run-wide override. The agents resolve their model via
@@ -394,83 +375,251 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
 
 
 
-def _install_config_from_file(src: str) -> None:
-    """Headless provisioning: validate SRC and install it as config.toml (0600)."""
-    from pathlib import Path as _P
+_MAX_CONFIG_SOURCE_BYTES = 1024 * 1024
+_CONFIG_SOURCE_READ_CHUNK_BYTES = 64 * 1024
+_FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
-    from ..config import config_path
-    src_path = _P(src).expanduser()
-    if not src_path.is_file():
-        raise click.ClickException(f"no such config file: {src}")
-    try:
-        try:
-            import tomllib
-        except ModuleNotFoundError:  # 3.10
-            import tomli as tomllib  # type: ignore
-        with open(src_path, "rb") as f:
-            cfg = tomllib.load(f)
-    except Exception as e:
-        raise click.ClickException(f"invalid TOML in {src}: {e}") from e
-    # Surface unknown-section / type problems, but don't block (operators may use
-    # newer keys than this build knows).
-    try:
-        from ..config_lint import lint_config
-        for finding in lint_config(cfg):
-            click.echo(click.style(f"  ! {finding.section}: {finding.message}",
-                                   fg="yellow"), err=True)
-    except Exception:
-        pass
-    dst = config_path()
-    from ..file_lock import (
-        atomic_write_bytes,
-        ensure_private_directory,
-        ensure_private_file,
+
+def _config_source_is_alias(path: Path, info: os.stat_result) -> bool:
+    """Return whether PATH names a symlink, junction, or Windows reparse point."""
+    if stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(callable(is_junction) and is_junction())
+
+
+def _config_source_identity(info: os.stat_result) -> tuple[int, ...]:
+    """Metadata that must remain stable for the duration of a source read."""
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
     )
 
-    # A provisioned config may contain inline provider keys. Tighten the
-    # directory with a protected Windows DACL and publish the bytes from a
-    # create-time protected temp; POSIX mode bits passed to os.open do not
-    # provide the equivalent Windows custody boundary.
-    ensure_private_directory(dst.parent)
-    data = src_path.read_bytes()
+
+def _config_source_file_id(info: os.stat_result) -> tuple[int, int]:
+    """Filesystem identity used to bind the inspected path to the open handle."""
+    return info.st_dev, info.st_ino
+
+
+def _config_source_path_state(info: os.stat_result) -> tuple[int, ...]:
+    """Stable state comparable between pathname and handle stat APIs."""
+    state = (
+        info.st_mode,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+    )
+    # Windows obtains pathname and handle creation times through different APIs;
+    # their sub-microsecond rounding can differ for an unchanged file. Handle to
+    # handle checks below still include ctime, while POSIX path checks can too.
+    if os.name != "nt":
+        state += (info.st_ctime_ns,)
+    return state
+
+
+def _open_config_source_fd(path: Path) -> int:
+    """Open PATH for a stable read, denying concurrent Windows mutation."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOINHERIT", 0)
+    if os.name != "nt":
+        return os.open(path, flags)
+
+    # The CRT's regular ``open`` sharing mode can permit another handle to
+    # overwrite a same-size file while we read it. NTFS timestamps exposed by
+    # ``stat`` are not a sufficient change signal for that race. Open the file
+    # with read sharing only, so Windows itself denies concurrent write/delete
+    # handles for the lifetime of this identity-bound descriptor.
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    create_file = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    generic_read = 0x80000000
+    file_share_read = 0x00000001
+    open_existing = 3
+    file_flag_open_reparse_point = 0x00200000
+    file_flag_sequential_scan = 0x08000000
+    handle = create_file(
+        str(path),
+        generic_read,
+        file_share_read,
+        None,
+        open_existing,
+        file_flag_open_reparse_point | file_flag_sequential_scan,
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        error = ctypes.get_last_error()
+        raise OSError(error, ctypes.FormatError(error), str(path))
     try:
-        installed = dst.read_bytes() if dst.is_file() else b""
-        unchanged = (
-            dst.is_file()
-            and installed.replace(b"\r\n", b"\n")
-            == data.replace(b"\r\n", b"\n")
+        # ``open_osfhandle`` transfers ownership of HANDLE to the returned fd.
+        return msvcrt.open_osfhandle(handle, flags)
+    except Exception:
+        close_handle(handle)
+        raise
+
+
+def _read_config_source_once(path: Path) -> bytes:
+    """Read one bounded regular config through a stable, identity-bound handle."""
+    before = path.lstat()
+    if _config_source_is_alias(path, before) or not stat.S_ISREG(before.st_mode):
+        raise ValueError("config source must be a regular, non-aliased file")
+    if before.st_ino == 0:
+        raise ValueError("config source does not expose a stable file identity")
+    if before.st_size > _MAX_CONFIG_SOURCE_BYTES:
+        raise ValueError(
+            f"config source exceeds the {_MAX_CONFIG_SOURCE_BYTES}-byte limit"
         )
-    except OSError:
-        unchanged = False
-    if unchanged:
-        # A retried deployment should be a true no-op: do not rotate the inode,
-        # mtime, or watcher state when the same logical TOML is installed,
-        # including when a cross-platform checkout changed line endings.
-        # Still repair/verify custody in case an older release left wide perms.
-        ensure_private_file(dst, 0o600)
-        click.echo(click.style(f"config unchanged -> {dst} (0600)", fg="green"))
-        return
-    atomic_write_bytes(dst, data, mode=0o600)
-    click.echo(click.style(f"installed config -> {dst} (0600)", fg="green"))
 
+    fd = _open_config_source_fd(path)
+    try:
+        opened = os.fstat(fd)
+        if (
+            _config_source_is_alias(path, opened)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_ino == 0
+            or _config_source_file_id(opened) != _config_source_file_id(before)
+        ):
+            raise ValueError("config source changed while it was opened")
+        if opened.st_size > _MAX_CONFIG_SOURCE_BYTES:
+            raise ValueError(
+                f"config source exceeds the {_MAX_CONFIG_SOURCE_BYTES}-byte limit"
+            )
+        expected = _config_source_identity(opened)
 
+        def read_snapshot() -> bytes:
+            chunks: list[bytes] = []
+            remaining = _MAX_CONFIG_SOURCE_BYTES + 1
+            while remaining:
+                try:
+                    chunk = os.read(
+                        fd,
+                        min(_CONFIG_SOURCE_READ_CHUNK_BYTES, remaining),
+                    )
+                except OSError as exc:
+                    raise ValueError(
+                        "config source changed while it was read"
+                    ) from exc
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            snapshot = b"".join(chunks)
+            if len(snapshot) > _MAX_CONFIG_SOURCE_BYTES:
+                raise ValueError(
+                    f"config source exceeds the {_MAX_CONFIG_SOURCE_BYTES}-byte limit"
+                )
+            return snapshot
+
+        data = read_snapshot()
+
+        after_handle = os.fstat(fd)
+        after_path = path.lstat()
+        if (
+            _config_source_is_alias(path, after_path)
+            or not stat.S_ISREG(after_path.st_mode)
+            or _config_source_identity(after_handle) != expected
+            or _config_source_file_id(after_path) != _config_source_file_id(opened)
+            or _config_source_path_state(after_path) != _config_source_path_state(opened)
+            or len(data) != after_handle.st_size
+        ):
+            raise ValueError("config source changed while it was read")
+
+        # Rewind and verify the same identity-bound handle. Windows sharing
+        # denial blocks ordinary writers; this second bounded snapshot also
+        # catches changes from exotic writable mappings or filesystems whose
+        # metadata signal is too coarse. Never reopen PATH for content.
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+        except OSError as exc:
+            raise ValueError("config source changed while it was read") from exc
+        import hashlib
+        import hmac
+
+        verification_hash = hashlib.sha256()
+        verification_length = 0
+        remaining = _MAX_CONFIG_SOURCE_BYTES + 1
+        while remaining:
+            try:
+                chunk = os.read(
+                    fd,
+                    min(_CONFIG_SOURCE_READ_CHUNK_BYTES, remaining),
+                )
+            except OSError as exc:
+                raise ValueError("config source changed while it was read") from exc
+            if not chunk:
+                break
+            verification_hash.update(chunk)
+            verification_length += len(chunk)
+            remaining -= len(chunk)
+        if verification_length > _MAX_CONFIG_SOURCE_BYTES:
+            raise ValueError(
+                f"config source exceeds the {_MAX_CONFIG_SOURCE_BYTES}-byte limit"
+            )
+        verified_handle = os.fstat(fd)
+        verified_path = path.lstat()
+
+        if (
+            _config_source_is_alias(path, verified_path)
+            or not stat.S_ISREG(verified_path.st_mode)
+            or _config_source_identity(verified_handle) != expected
+            or _config_source_file_id(verified_path) != _config_source_file_id(opened)
+            or _config_source_path_state(verified_path)
+            != _config_source_path_state(opened)
+            or verification_length != verified_handle.st_size
+            or verification_length != len(data)
+            or not hmac.compare_digest(
+                hashlib.sha256(data).digest(),
+                verification_hash.digest(),
+            )
+        ):
+            raise ValueError("config source changed while it was read")
+        return data
+    finally:
+        os.close(fd)
 
 
 def _install_config_from_file(src: str) -> None:
-    """Headless provisioning: validate SRC and install it as config.toml (0600)."""
-    from pathlib import Path as _P
-
+    """Headless provisioning: validate SRC and install its exact bytes privately."""
     from ..config import config_path
-    src_path = _P(src).expanduser()
-    if not src_path.is_file():
-        raise click.ClickException(f"no such config file: {src}")
+
+    src_path = Path(src).expanduser()
+    try:
+        data = _read_config_source_once(src_path)
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"no such config file: {src}") from exc
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"cannot safely read config file {src}: {exc}") from exc
+
     try:
         try:
             import tomllib
         except ModuleNotFoundError:  # 3.10
             import tomli as tomllib  # type: ignore
-        with open(src_path, "rb") as f:
-            cfg = tomllib.load(f)
+        cfg = tomllib.loads(data.decode("utf-8", errors="strict"))
     except Exception as e:
         raise click.ClickException(f"invalid TOML in {src}: {e}") from e
     # Surface unknown-section / type problems, but don't block (operators may use
@@ -494,7 +643,6 @@ def _install_config_from_file(src: str) -> None:
     # create-time protected temp; POSIX mode bits passed to os.open do not
     # provide the equivalent Windows custody boundary.
     ensure_private_directory(dst.parent)
-    data = src_path.read_bytes()
     try:
         installed = dst.read_bytes() if dst.is_file() else b""
         unchanged = (
@@ -568,7 +716,6 @@ def version() -> None:
         ("maverick-agent",     ("maverick-agent", "maverick")),
         ("maverick-shield",    ("maverick-shield",)),
         ("maverick-dashboard", ("maverick-dashboard",)),
-        ("maverick-mcp-server", ("maverick-mcp-server",)),
         ("maverick-knowledge", ("maverick-knowledge",)),
         ("maverick-installer", ("maverick-installer",)),
     ]
@@ -619,50 +766,138 @@ def version() -> None:
     click.echo(f"  platform:              {sys.platform}")
 
 
+@main.group("backup")
+def backup_group() -> None:
+    """Create, verify, or restore operator-custodied encrypted backups."""
 
 
+@backup_group.command("create")
+@click.argument(
+    "output",
+    required=False,
+    type=click.Path(path_type=Path, dir_okay=False),
+)
+def backup_create(output: Path | None) -> None:
+    """Create one encrypted backup; refuse an existing OUTPUT path."""
+    from ..backup import BackupError, create_backup
 
-
-
-
-
-
-def _show_capability_plan(profile):
-    """Analyse a draft pack for capability gaps and print them. Read-only;
-    returns the plan (or None if analysis was unavailable) for later apply."""
-    from ..provision import analyze_profile
     try:
-        from ..tools import base_tool_names
-        plan = analyze_profile(profile, known_tools=base_tool_names())
-    except Exception as e:  # analysis must never block onboarding
-        click.echo(f"(capability analysis skipped: {e})", err=True)
-        return None
-    if plan.is_empty():
-        return plan
-    click.echo(click.style("\nCapability gaps the factory can close:", bold=True))
-    for g in plan.gaps:
-        click.echo(f"  - {g.describe()}")
-    from .. import self_learning
-    if not self_learning.enabled():
-        click.echo("  (enable [self_learning] to auto-provision these on approval)")
-    return plan
+        archive = create_backup(output)
+    except BackupError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Encrypted backup created: {archive}")
 
 
-def _apply_capability_plan(profile, plan, llm) -> None:
-    """Equip an approved pack: install catalog skills + synthesize declared
-    tools through the governed paths. No-op unless self-learning is enabled.
-    Records the gaps as factory-learning signals (no-op unless that's on)."""
-    if plan is None or plan.is_empty():
-        return
-    from ..provision import apply_plan
-    result = apply_plan(plan, approved=True, llm=llm)
-    if result.acquired or result.generated or result.failed:
-        click.echo(click.style(f"Provisioning: {result.summary()}", fg="cyan"))
+@backup_group.command("verify")
+@click.argument(
+    "archive",
+    type=click.Path(
+        path_type=Path,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+    ),
+)
+def backup_verify(archive: Path) -> None:
+    """Decrypt and authenticate ARCHIVE without changing live data."""
+    from ..backup import BackupError, read_manifest
+
     try:
-        from .. import factory_learning
-        factory_learning.record_provisioning(profile, plan, result)
-    except Exception:  # pragma: no cover -- learning must never break onboarding
-        pass
+        manifest = read_manifest(archive)
+    except BackupError as exc:
+        raise click.ClickException(str(exc)) from exc
+    files = manifest.get("files")
+    file_count = len(files) if isinstance(files, dict) else 0
+    click.echo(
+        "Encrypted backup verified: "
+        f"client={manifest.get('client_id')!r}, "
+        f"schema={manifest.get('schema')!r}, files={file_count}"
+    )
+
+
+@backup_group.command("restore")
+@click.argument(
+    "archive",
+    type=click.Path(
+        path_type=Path,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+    ),
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Override client/schema compatibility only; never cryptographic checks.",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Confirm the deliberate transactional restore without an interactive prompt.",
+)
+def backup_restore(archive: Path, force: bool, yes: bool) -> None:
+    """Transactionally restore one encrypted ARCHIVE into the active client."""
+    from ..backup import BackupError, restore_backup
+
+    if not yes:
+        click.confirm(
+            "Restore this encrypted archive into the active client data root? "
+            f"{archive}",
+            abort=True,
+        )
+    try:
+        root = restore_backup(archive, force=force)
+    except BackupError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Encrypted backup restored into: {root}")
+
+
+@main.group("encryption")
+def encryption_group() -> None:
+    """Migrate legacy client data into the encrypted-at-rest format."""
+
+
+@encryption_group.command("migrate")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report plaintext cells and legacy attachment names without changing data.",
+)
+@click.pass_context
+def encryption_migrate_cmd(ctx: click.Context, dry_run: bool) -> None:
+    """Seal legacy world data and replace client-named attachment paths.
+
+    The active tenant's world DB (or the root ``--db`` override) is migrated in
+    place. Create an operator-custodied encrypted backup with ``maverick backup
+    create`` first when rollback is required; this command never emits a
+    plaintext recovery copy.
+    """
+    db_path = Path(ctx.obj["db"])
+    if not db_path.is_file():
+        raise click.ClickException(f"world database does not exist: {db_path}")
+
+    from ..crypto_at_rest import EncryptionUnavailable
+    from ..encryption_migrate import migrate_world_db
+
+    try:
+        report = migrate_world_db(db_path, dry_run=dry_run)
+    except EncryptionUnavailable as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(f"encryption migration refused: {exc}") from exc
+
+    mode = "dry run" if dry_run else "complete"
+    click.echo(f"Encryption migration {mode}: {db_path}")
+    for field, count in sorted(report.items()):
+        click.echo(f"  {field}: {int(count)}")
+
+
+
+
 
 
 
@@ -799,47 +1034,6 @@ def _echo_harness_cycle(report, retired: int) -> None:
 
 
 
-def _migrate_learning_files(sh, learning_store, src, addenda, meta, tried) -> None:
-    merged = 0
-    with learning_store.rmw_lock():
-        db_add = learning_store.load_addenda_db()
-        for k, block in addenda.items():
-            if k not in db_add:
-                db_add[k] = block
-            elif db_add[k] != block:
-                cur = db_add[k]
-                have = {sh._norm_line(x) for x in sh._bullets(cur)}
-                for ln in sh._bullets(block):
-                    if sh._norm_line(ln) not in have:
-                        cur = sh._compose_addendum(k, cur, ln)
-                db_add[k] = cur
-                merged += 1
-        learning_store.write_addenda_db(db_add)
-        db_meta = learning_store.load_line_meta_db()
-        for lid, rec in meta.items():
-            db_meta.setdefault(lid, rec)
-        learning_store.write_line_meta_db(db_meta)
-        db_tried = learning_store.load_transfer_tried_db()
-        for lid, ts in tried.items():
-            db_tried.setdefault(lid, ts)
-        learning_store.write_transfer_tried_db(db_tried)
-    routed = sh.load_addenda()
-    missing = [k for k in addenda if k not in routed]
-    if missing:
-        raise click.ClickException(
-            f"verification failed -- keys missing after import: {missing[:3]}"
-            " (file stores left untouched)")
-    for p in (src, sh._meta_path(src), sh._transfer_tried_path(src)):
-        if p.exists():
-            p.rename(p.with_name(p.name + ".migrated"))
-    click.echo(f"imported {len(addenda)} addenda key(s), {len(meta)} provenance "
-               f"record(s), {len(tried)} tried pair(s) into the world store"
-               + (f" ({merged} conflicting key(s) merged)" if merged else "")
-               + "; file stores renamed to *.migrated.")
-
-
-
-
 def _corpus_key_and_path(model: str | None) -> tuple[str, str]:
     from ..self_harness import settings
     corpus_path = settings().get("eval_corpus")
@@ -958,48 +1152,6 @@ def dashboard(host: str, port: int, token) -> None:
     uvicorn.run(fastapi_app, host=host, port=port, log_level="info")
 
 
-@main.command()
-@click.option("--http", "use_http", is_flag=True,
-              help="Serve over Streamable HTTP instead of stdio.")
-@click.option("--host", default="127.0.0.1", show_default=True,
-              help="Bind host (with --http).")
-@click.option("--port", default=8771, type=int, show_default=True,
-              help="Port (with --http).")
-def mcp(use_http: bool, host: str, port: int) -> None:
-    """Start the MCP server on stdio (or --http).
-
-    The platform's surface for outside callers. Any MCP-speaking client --
-    in practice, the IDE-side ones: Claude Code, Cursor, Continue, Zed --
-    can drive the swarm from outside Python via this command.
-    """
-    try:
-        from maverick_mcp.server import MCPServer
-    except ImportError:
-        click.echo(
-            "Install the MCP server from the same reviewed Maverick checkout; "
-            "public-index lookup is disabled.",
-            err=True,
-        )
-        sys.exit(2)
-    from ..deployment import require_enterprise_or_die
-    require_enterprise_or_die()
-    if use_http:
-        try:
-            from maverick_mcp.http_transport import serve
-        except ImportError:
-            click.echo(
-                "Install the MCP HTTP extra from the same reviewed Maverick "
-                "checkout; public-index lookup is disabled.",
-                err=True,
-            )
-            sys.exit(2)
-        serve(host=host, port=port)
-    else:
-        # Run the stdio server directly. Going through server.main() would
-        # re-parse sys.argv and reject the `mcp` subcommand token (the bug
-        # that made `maverick mcp` -- the command every quickstart uses --
-        # exit before serving).
-        MCPServer().run()
 
 
 
@@ -1038,28 +1190,6 @@ def mcp(use_http: bool, host: str, port: int) -> None:
 
 
 
-
-
-
-
-
-
-
-
-def _propagate_coding_flags(coding_mode: bool, best_of_n: int) -> None:
-    """Export the coding-mode / best-of-N env flags that ``coding_mode.from_env()``
-    reads everywhere. ``--best-of-n`` only takes effect under ``--coding-mode``,
-    so warn (rather than silently single-run) if it's set without it."""
-    if coding_mode:
-        os.environ["MAVERICK_CODING_MODE"] = "1"
-    if best_of_n > 1:
-        os.environ["MAVERICK_BEST_OF_N"] = str(best_of_n)
-        if not coding_mode:
-            click.echo(
-                "WARNING: --best-of-n only takes effect with --coding-mode; "
-                "without it the swarm does a single run.",
-                err=True,
-            )
 
 
 
@@ -2544,110 +2674,6 @@ def audit_export(
         n += 1
     if n == 0:
         click.echo("no audit events to export", err=True)
-
-
-@audit.command("forward")
-@click.option("--format", "fmt", type=click.Choice(["json", "cef"]), default="json",
-              help="Wire format for the SIEM (default: json).")
-@click.option("--to", "dest", default=None,
-              help="Destination URI: tcp://host:port, udp://host:port, or "
-                   "http(s)://host/path. Default: MAVERICK_SIEM_DEST / "
-                   "[audit] siem_dest.")
-@click.option("--day", default=None, help="YYYY-MM-DD (default: today).")
-@click.option("--all", "all_days", is_flag=True,
-              help="Forward every YYYY-MM-DD.ndjson day-file in the audit dir.")
-@click.option("--since", default=None,
-              help="Start of an inclusive YYYY-MM-DD window (e.g. an incident).")
-@click.option("--until", default=None,
-              help="End of the inclusive YYYY-MM-DD window.")
-@click.option("--tenant", default=None,
-              help="Tenant whose audit dir to forward (default: active/none).")
-@click.option("--dry-run", is_flag=True,
-              help="Validate the destination and count events; send nothing.")
-def audit_forward(
-    fmt: str, dest: str | None, day: str | None, all_days: bool,
-    since: str | None, until: str | None, tenant: str | None, dry_run: bool,
-) -> None:
-    """Push the audit log to a SIEM collector over the network.
-
-    The push counterpart of ``audit export``: same read-only re-emission of the
-    tamper-evident NDJSON log, but shipped to ``--to`` (a tcp/udp syslog or
-    http(s) collector) instead of a file. A transport failure exits non-zero --
-    a SIEM gap is a compliance event, not something to swallow. An empty log
-    exits 0 with a note (cron never fails on a quiet day).
-    """
-    import datetime as _dt
-
-    _require_day_opt(day)
-    for _label, _val in (("--since", since), ("--until", until)):
-        if _val is not None:
-            try:
-                _parsed = _dt.datetime.strptime(_val, "%Y-%m-%d")
-            except ValueError:
-                click.echo(f"ERROR: {_label} must be YYYY-MM-DD", err=True)
-                sys.exit(2)
-            if _parsed.strftime("%Y-%m-%d") != _val:
-                click.echo(f"ERROR: {_label} must be YYYY-MM-DD", err=True)
-                sys.exit(2)
-
-    if not dest or not dest.strip():
-        import os as _os
-        dest = _os.environ.get("MAVERICK_SIEM_DEST")
-        if not dest:
-            try:
-                from ..config import load_config
-                dest = (load_config() or {}).get("audit", {}).get("siem_dest")
-            except Exception:
-                dest = None
-    if not dest or not str(dest).strip():
-        click.echo(
-            "ERROR: no SIEM destination (--to, MAVERICK_SIEM_DEST, or "
-            "[audit] siem_dest)", err=True,
-        )
-        sys.exit(2)
-
-    # Same paid-tier entitlement gate as export, including active deployment
-    # tenants resolved by feature_allowed when --tenant is omitted.
-    from ..billing import feature_allowed
-    if not feature_allowed("audit_export", tenant=tenant):
-        from ..paths import current_tenant_id
-        denied_tenant = tenant or current_tenant_id() or "active tenant"
-        click.echo(
-            f"ERROR: tenant '{denied_tenant}' plan does not include SIEM audit "
-            "export (audit_export entitlement). Upgrade the tenant's plan.",
-            err=True,
-        )
-        sys.exit(2)
-
-    from ..audit import forwarder
-    from ..audit.export import iter_audit_events, to_cef, to_jsonl
-
-    # Validate the destination up front so a typo fails before we read the log.
-    try:
-        forwarder.parse_dest(str(dest))
-    except ValueError as e:
-        click.echo(f"ERROR: {e}", err=True)
-        sys.exit(2)
-
-    render = to_cef if fmt == "cef" else to_jsonl
-    lines = (render(ev) for ev in iter_audit_events(
-        day=day, all_days=all_days, since=since, until=until, tenant=tenant,
-    ))
-
-    if dry_run:
-        n = sum(1 for _ in lines)
-        click.echo(f"dry-run: {n} event(s) would ship to {dest}", err=True)
-        return
-
-    try:
-        sent = forwarder.forward(lines, str(dest))
-    except Exception as e:
-        click.echo(f"ERROR: SIEM forward failed: {e}", err=True)
-        sys.exit(1)
-    if sent == 0:
-        click.echo("no audit events to forward", err=True)
-    else:
-        click.echo(f"forwarded {sent} event(s) to {dest}", err=True)
 
 
 @audit.group("worm")

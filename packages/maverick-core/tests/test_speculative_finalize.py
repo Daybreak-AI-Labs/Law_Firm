@@ -12,9 +12,14 @@ from pathlib import Path
 
 import pytest
 from maverick.budget import Budget
+from maverick.matter_context import (
+    matter_context_scope,
+    resolve_goal_matter_context,
+)
 from maverick.orchestrator import run_goal
 from maverick.sandbox import LocalBackend
 from maverick.world_model import WorldModel
+from maverick_knowledge import SqliteVectorStore, matter_collection
 
 
 def _scripted(make_llm_response):
@@ -35,22 +40,75 @@ async def test_conversation_turn_written_either_way(
     tmp_path: Path, fake_llm, make_llm_response, monkeypatch, overlap,
 ):
     monkeypatch.setenv("MAVERICK_SPECULATIVE_FINALIZE", overlap)
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", (b"s" * 32).hex())
     fake_llm.scripted = _scripted(make_llm_response)
 
-    world = WorldModel(path=tmp_path / "world.db")
-    conv_id = world.get_or_create_conversation("cli", "sess-1").id
-    gid = world.create_goal("compute the answer", "trivial")
-
-    out = await run_goal(
-        llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
-        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
-        conversation_id=conv_id,
+    knowledge_path = tmp_path / "knowledge.db"
+    monkeypatch.setattr(
+        "maverick.config.get_knowledge",
+        lambda: {
+            "enable": True,
+            "embedder": "deterministic",
+            "store": "sqlite",
+            "path": str(knowledge_path),
+        },
     )
+    world = WorldModel(path=tmp_path / "world.db")
+    principal = "user:alice"
+    domain = "legal_intake"
+    matter_id = world.create_client_matter(
+        "Speculative finalization matter",
+        principal=principal,
+        domain=domain,
+        matter_number="2026-SPEC",
+        jurisdiction="Tennessee",
+        client_name="Speculative finalization client",
+    )
+    store = SqliteVectorStore(knowledge_path)
+    store.add(
+        matter_collection(matter_id, "legal"),
+        [("context", "authenticated matter context", [1.0] + [0.0] * 255, {})],
+    )
+    store.close()
+    conversation = world.get_or_create_matter_conversation(
+        "cli", "sess-1", matter_id, principal=principal,
+    )
+    assert conversation is not None
+    conv_id = conversation.id
+    gid = world.create_matter_goal(
+        "compute the answer",
+        "trivial",
+        principal=principal,
+        domain=domain,
+        project_id=matter_id,
+    )
+    assert gid is not None
+
+    def resolve():
+        return resolve_goal_matter_context(
+            world,
+            gid,
+            principal=principal,
+            source="speculative-finalize-test",
+        )
+
+    with matter_context_scope(resolve(), authority_resolver=resolve):
+        out = await run_goal(
+            llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
+            goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+            conversation_id=conv_id,
+        )
     assert "DONE." in out
 
     # The assistant turn was persisted by the speculative side effect
     # (and the run joined it before returning).
-    turns = world.recent_turns(conv_id, limit=10)
+    turns = world.recent_matter_turns(
+        conv_id,
+        project_id=matter_id,
+        principal=principal,
+        limit=10,
+    )
     assert any(
         t.role == "assistant" and "the answer is 42" in t.content
         for t in turns

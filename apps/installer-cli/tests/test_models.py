@@ -17,14 +17,6 @@ def test_every_provider_has_required_fields():
             assert "notes" in m
 
 
-def test_default_for_every_role():
-    for role, _ in models.ROLES:
-        spec = models.default_for_role(role)
-        assert ":" in spec, f"{role} default missing provider prefix: {spec}"
-        provider, _model = spec.split(":", 1)
-        assert provider in models.PROVIDERS, f"{role} -> unknown provider {provider}"
-
-
 def test_all_providers_now_ready():
     # Sanity check: multi-provider dispatch landed; nothing should be 'planned'.
     for prov_id, info in models.PROVIDERS.items():

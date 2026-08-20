@@ -1,14 +1,11 @@
 """Built-in OIDC authorization-code browser-login flow for the dashboard.
 
-This is the self-contained alternative to the reverse-proxy SSO path
-(:mod:`maverick.proxy_auth`): a deployment that can't run an auth proxy in front
-of the dashboard gets browser SSO directly, by having the dashboard itself drive
-the OAuth2 / OpenID-Connect authorization-code flow.
+The dashboard drives the OAuth2 / OpenID-Connect authorization-code flow and
+mints a short-lived local browser session from the verified identity.
 
 It is **off by default and fail-closed**: every route here first checks
 :func:`maverick.oidc.login_enabled` and returns 404 when the flow isn't fully
-configured, so an unconfigured deployment behaves exactly as before (the bearer
-gate and the reverse-proxy path are untouched). Configuration lives in
+configured, so an unconfigured deployment exposes no login flow. Configuration lives in
 ``[auth.oidc]`` (``client_id``/``client_secret``/``redirect_uri``/
 ``session_secret`` + issuer-or-endpoints); see :func:`maverick.oidc.login_enabled`.
 
@@ -268,13 +265,7 @@ def _principal_from_request_session(request: Request):
     absent, or the cookie fails verification (tampered/expired/wrong-secret).
     """
     if not login_enabled():
-        try:
-            from .saml import saml_enabled
-
-            if not saml_enabled():
-                return None
-        except Exception:  # pragma: no cover - unavailable SAML is not a session
-            return None
+        return None
     raw = request.cookies.get(SESSION_COOKIE)
     if not raw:
         return None
@@ -290,7 +281,7 @@ def _principal_from_request_session(request: Request):
     except ValueError:
         return None
     # Revocation: a session minted before the principal's revocation epoch
-    # ("log out everywhere" / SCIM deprovision) is rejected even though its HMAC
+    # ("log out everywhere" / firm offboarding) is rejected even though its HMAC
     # signature and exp are still valid.
     from .session_revocation import is_revoked
     if is_revoked(sub, payload.get("iat")):
@@ -475,19 +466,6 @@ async def auth_callback(request: Request):
     return_to = _safe_return_to(tx.get("return_to"))
     session_payload = {"sub": principal.sub, "iat": _now(), "exp": _now() + _SESSION_TTL}
     session_cookie = sign_session(session_payload, cfg.session_secret)
-
-    # Record this sub against the user's stable IdP identifiers so a later SCIM
-    # deprovision can revoke this session even if the IdP's sub is pairwise and
-    # appears in no SCIM attribute (Entra). Best-effort -- never blocks login.
-    try:
-        from .subject_directory import record_login
-        claims = principal.claims or {}
-        record_login(principal.sub, [
-            claims.get("email"), claims.get("preferred_username"),
-            claims.get("oid"), claims.get("upn"),
-        ])
-    except Exception:  # pragma: no cover -- directory never blocks login
-        pass
 
     response = RedirectResponse(return_to, status_code=303)
     _set_cookie(

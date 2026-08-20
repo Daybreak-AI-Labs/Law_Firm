@@ -30,7 +30,13 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from .distillation_local import _default_store, distill, save_skill
+from .distillation_local import (
+    _default_store,
+    distill,
+    read_sealed_skill,
+    save_skill,
+    scoped_store,
+)
 
 # A small stop-list so the signature is content words, not glue.
 _STOP = frozenset({
@@ -77,17 +83,30 @@ def is_duplicate(signature: frozenset[str], existing: list[frozenset[str]], *,
     return any(_overlap(signature, e) >= threshold for e in existing)
 
 
-def signatures_from_store(store: Path | str | None = None) -> list[frozenset[str]]:
+def signatures_from_store(
+    store: Path | str | None = None, *, project_id: int | None = None,
+    owner: str | None = None,
+) -> list[frozenset[str]]:
     """Content signatures of every already-learned skill in ``store``."""
-    p = Path(store) if store is not None else _default_store()
+    from ..learning_crypto import protected_learning_enabled
+
+    if protected_learning_enabled() and (project_id is None or owner is None):
+        return []
+    if project_id is not None or owner is not None:
+        scoped = scoped_store(store, project_id=project_id, owner=owner)
+        if scoped is None:
+            return []
+        p = scoped
+    else:
+        p = Path(store) if store is not None else _default_store()
     if not p.exists():
         return []
     out: list[frozenset[str]] = []
     for md in sorted(p.glob("*.md")):
-        try:
-            out.append(_tokens(md.read_text(encoding="utf-8")))
-        except OSError:
+        text = read_sealed_skill(md, p)
+        if text is None:
             continue
+        out.append(_tokens(text))
     return out
 
 
@@ -110,10 +129,14 @@ def distill_gated(trajectories: list[dict], *,
                   existing_signatures: list[frozenset[str]] | None = None,
                   top_k: int = 3, min_examples: int = DEFAULT_MIN_EXAMPLES,
                   dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
-                  min_signal: int = DEFAULT_MIN_SIGNAL_TOKENS) -> tuple[dict | None, str]:
+                  min_signal: int = DEFAULT_MIN_SIGNAL_TOKENS,
+                  project_id: int | None = None,
+                  owner: str | None = None) -> tuple[dict | None, str]:
     """Distill with the v2 gates (evidence, quality, dedup). Returns
     ``(skill_or_None, reason)``."""
-    skill = distill(trajectories, top_k=top_k)
+    skill = distill(
+        trajectories, top_k=top_k, project_id=project_id, owner=owner,
+    )
     if skill is None:
         return None, "no successful trajectories"
     if int(skill.get("n_examples", 0)) < min_examples:
@@ -132,14 +155,20 @@ def distill_and_save_gated(trajectories: list[dict], *, store: Path | str | None
                            dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
                            min_signal: int = DEFAULT_MIN_SIGNAL_TOKENS,
                            before_save: Callable[[], None] | None = None,
+                           project_id: int | None = None,
+                           owner: str | None = None,
                            ) -> tuple[Path | None, str]:
     """Gate (evidence + quality + dedup) against ``store``, save only a novel,
     specific skill. Returns ``(path_or_None, reason)``."""
-    existing = signatures_from_store(store)
+    if scoped_store(store, project_id=project_id, owner=owner) is None:
+        return None, "missing exact matter/owner scope"
+    existing = signatures_from_store(
+        store, project_id=project_id, owner=owner,
+    )
     skill, reason = distill_gated(
         trajectories, existing_signatures=existing, top_k=top_k,
         min_examples=min_examples, dedup_threshold=dedup_threshold,
-        min_signal=min_signal)
+        min_signal=min_signal, project_id=project_id, owner=owner)
     if skill is None:
         return None, reason
     # This is a durable learning transition even when a caller uses the helper
@@ -150,7 +179,9 @@ def distill_and_save_gated(trajectories: list[dict], *, store: Path | str | None
     check_learning_halt("skill_distillation", "save")
     if before_save is not None:
         before_save()
-    return save_skill(skill, store), "ok"
+    return save_skill(
+        skill, store, project_id=project_id, owner=owner,
+    ), "ok"
 
 
 __all__ = ["distill_gated", "distill_and_save_gated", "is_duplicate",

@@ -37,7 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 INVITE_TTL_HOURS = 7 * 24          # default link lifetime
-LOCAL_SESSION_DAYS = 30            # no-IdP session lifetime (re-invite to renew)
+LOCAL_SESSION_SECONDS = 12 * 3600  # short-lived no-IdP session; re-invite to renew
+MAX_LOCAL_SESSION_SECONDS = 24 * 3600
 _MAX_PENDING = 500                 # cap the store; an admin never needs more
 
 _INVITES_LOCK = threading.Lock()
@@ -403,12 +404,16 @@ def local_login_mode() -> bool:
 def session_ttl_seconds() -> int:
     try:
         from maverick.config import load_config
-        days = ((load_config() or {}).get("dashboard") or {}).get("invite_session_days")
-        if days is not None:
-            return max(1, int(float(days) * 86400))
+        dashboard = (load_config() or {}).get("dashboard") or {}
+        hours = dashboard.get("invite_session_hours")
+        if hours is None and dashboard.get("invite_session_days") is not None:
+            hours = float(dashboard["invite_session_days"]) * 24
+        if hours is not None:
+            requested = int(float(hours) * 3600)
+            return max(300, min(requested, MAX_LOCAL_SESSION_SECONDS))
     except Exception:  # pragma: no cover
         pass
-    return LOCAL_SESSION_DAYS * 86400
+    return LOCAL_SESSION_SECONDS
 
 
 def mint_local_session(email: str) -> str:

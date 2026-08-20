@@ -17,21 +17,20 @@ Retrieval: ``recall(goal_text, k=3)`` returns the top-K most similar
 prior reflections. Used by the orchestrator's default-on pre-run context layer
 (disable via [reflexion] enable = false).
 
-Similarity scoring: embedding cosine when fastembed is installed, so a
-lesson phrased differently from the current goal still matches; otherwise
-token-jaccard. The embedding path reuses the shared ``skill_embeddings``
-model/cache and fails open to jaccard — the kernel never *requires*
-fastembed (CLAUDE.md rule 1).
+Similarity scoring uses the explicitly configured, digest-pinned on-box
+knowledge model when an exact live MatterContext is bound; otherwise it uses
+token-jaccard. There is no FastEmbed download or persisted vector cache.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,6 +67,50 @@ def _tenant_path(name: str, legacy):
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _lock = threading.Lock()
+_active_matter: ContextVar[int | None] = ContextVar(
+    "maverick_reflexion_matter", default=None,
+)
+_active_owner: ContextVar[str | None] = ContextVar(
+    "maverick_reflexion_owner", default=None,
+)
+
+
+def _exact_matter_id(value: Any) -> int | None:
+    """Normalize the physical matter key; ambiguous keys fail closed."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        matter_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return matter_id if matter_id > 0 else None
+
+
+@contextmanager
+def matter_scope(matter_id: int | None, owner: str | None = None):
+    """Propagate one goal's matter through agent/tool learning callbacks.
+
+    A few low-level callbacks (notably human-override and flaky-tool learning)
+    do not receive the ``Goal`` object. Context-local propagation keeps those
+    records useful without turning a missing key into a global memory bucket.
+    """
+    token = _active_matter.set(_exact_matter_id(matter_id))
+    owner_token = _active_owner.set(str(owner) if owner is not None else None)
+    try:
+        yield
+    finally:
+        _active_owner.reset(owner_token)
+        _active_matter.reset(token)
+
+
+def current_matter_id() -> int | None:
+    """The exact matter propagated by the running orchestrator, if any."""
+    return _active_matter.get()
+
+
+def current_owner() -> str | None:
+    """The exact owner propagated by the running orchestrator, if any."""
+    return _active_owner.get()
 
 
 @dataclass
@@ -95,6 +138,14 @@ class Reflexion:
     # scope the learned guidance so an orchestrator lesson doesn't tax worker
     # prompts of the same model. Older lines load as None — backward compatible.
     role: str | None = None
+    # Exact client-matter boundary. ``Goal.project_id`` is the current physical
+    # matter key; a missing key is retained for audit/legacy visibility but is
+    # never eligible for cross-run recall or offline consolidation.
+    matter_id: int | None = None
+    # Principal provenance for offline candidate generation. Runtime recall is
+    # shared within the matter, but DGM corpus reads additionally require this
+    # exact owner so an operator cannot pool two principals accidentally.
+    owner: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -112,6 +163,8 @@ def record(
     domain: str | None = None,
     model_id: str | None = None,
     role: str | None = None,
+    matter_id: int | None = None,
+    owner: str | None = None,
     path: Path | None = None,
 ) -> bool:
     """Append a Reflexion. Returns True on success.
@@ -156,6 +209,14 @@ def record(
         domain=optional(domain, 128),
         model_id=optional(model_id, 256),
         role=optional(role, 128),
+        matter_id=_exact_matter_id(
+            matter_id if matter_id is not None else current_matter_id(),
+        ),
+        # An empty owner is still an exact local principal in the existing
+        # WorldModel schema. Preserve it rather than collapsing it into the
+        # legacy/missing-owner sentinel used by the DGM read boundary.
+        owner=safe(owner if owner is not None else current_owner(), 256)
+        if (owner is not None or current_owner() is not None) else None,
     )
     with _lock:
         try:
@@ -164,11 +225,27 @@ def record(
                 # explicit caller path keeps its existing parent ACL.
                 ensure_private_directory(path.parent)
             with cross_process_lock(path, strict=True):
+                from .learning_crypto import (
+                    decode_json_record,
+                    encode_json_record,
+                    protected_learning_enabled,
+                )
+
+                if path.exists() and protected_learning_enabled():
+                    ensure_private_file(path)
+                    with open(path, encoding="utf-8") as existing:
+                        if any(
+                            raw.strip() and decode_json_record(raw) is None
+                            for raw in existing
+                        ):
+                            raise RuntimeError(
+                                "reflexion store authentication failed"
+                            )
                 fd = open_private_append(
                     path, require_private_parent=default_store,
                 )
                 with os.fdopen(fd, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry.to_dict(), default=str) + "\n")
+                    f.write(encode_json_record(entry.to_dict()) + "\n")
                     f.flush()
                     os.fsync(f.fileno())
             return True
@@ -190,11 +267,10 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 def _embed_sims(query: str, entries: list[Reflexion]) -> list[float] | None:
     """Cosine similarity of ``query`` to each entry's goal_text.
 
-    Returns a list aligned with ``entries`` when the shared fastembed model
-    is available, else ``None`` so ``recall`` falls back to jaccard. Reuses
-    the ``skill_embeddings`` model/cache (one batch call) and never raises;
-    mirrors ``tools/recall._rank_with_embeddings`` — same model, same
-    fail-open contract.
+    Returns a list aligned with ``entries`` when the configured pinned local
+    knowledge model is available, else ``None`` so recall falls back to
+    jaccard. The compatibility bridge keeps no client vectors or text and has
+    no remote/download provider.
     """
     try:
         from .skill.embeddings import _cosine, _have_fastembed, embed
@@ -205,21 +281,54 @@ def _embed_sims(query: str, entries: list[Reflexion]) -> list[float] | None:
             return None
         qv = vectors[0]
         return [_cosine(qv, vectors[i + 1]) for i in range(len(entries))]
-    except Exception as e:  # pragma: no cover -- fail open to jaccard
-        log.debug("reflexion embedding recall failed (%s); using jaccard", e)
+    except Exception as e:  # pragma: no cover -- lexical recall remains useful
+        log.debug("local reflexion embedding unavailable (%s); using jaccard", e)
         return None
 
 
 def _scope_matches(
-    entry: Reflexion, *, channel: str | None, user_id: str | None
+    entry: Reflexion, *, channel: str | None, user_id: str | None,
+    matter_id: int | None = None,
 ) -> bool:
     """Return whether a persisted entry belongs to the requested scope.
 
     Reflexions can contain user-originated goal text. Keep scoped memories
-    from crossing channel/user boundaries; unscoped CLI runs continue to share
-    only with other unscoped runs.
+    from crossing channel/user boundaries, and require an exact matter match.
     """
-    return entry.channel == channel and entry.user_id == user_id
+    # ``None`` is not a shared/global matter. It means the caller could not
+    # prove a matter boundary, so no client-derived lesson may be recalled.
+    return (
+        matter_id is not None
+        and entry.matter_id == matter_id
+        and entry.channel == channel
+        and entry.user_id == user_id
+    )
+
+
+def _reflexion_from_record(data: dict[str, Any]) -> Reflexion | None:
+    try:
+        values = {
+            key: data.get(key)
+            for key in (
+                "ts",
+                "goal_text",
+                "failure_class",
+                "failure_msg",
+                "reflection",
+                "tools_used",
+                "channel",
+                "user_id",
+                "domain",
+                "model_id",
+                "role",
+                "matter_id",
+                "owner",
+            )
+        }
+        values["matter_id"] = _exact_matter_id(values["matter_id"])
+        return Reflexion(**values)
+    except TypeError:
+        return None
 
 
 def _sanitize_text(text: str, *, shield: Any | None = None) -> str:
@@ -260,6 +369,27 @@ _DEDUP_THRESHOLD = 0.9
 _DOMAIN_BOOST = 0.1
 
 
+def _live_scope_allows_recall(matter_id: int, domain: str | None) -> bool:
+    """Require freshly proven matter authority in the firm posture."""
+    try:
+        from .security_defaults import secure_by_default
+
+        secure = bool(secure_by_default())
+    except Exception:
+        secure = True
+    if not secure:
+        return True
+    try:
+        from .matter_context import refresh_matter_context
+
+        live_context = refresh_matter_context()
+    except Exception:
+        return False
+    return live_context.matter_id == matter_id and (
+        domain is None or live_context.domain == domain
+    )
+
+
 def recall(
     goal_text: str,
     *,
@@ -270,6 +400,7 @@ def recall(
     channel: str | None = None,
     user_id: str | None = None,
     domain: str | None = None,
+    matter_id: int | None = None,
     scan_cap: int = _SCAN_CAP,
 ) -> list[tuple[float, Reflexion]]:
     """Return the top-k most similar prior reflections.
@@ -277,7 +408,7 @@ def recall(
     Tuples are (score, Reflexion), sorted by score descending. Empty
     list if no file exists or nothing clears the similarity floor.
 
-    Similarity is embedding cosine when fastembed is installed, else
+    Similarity is pinned-local embedding cosine when configured, else
     token-jaccard; the floor is ``min_embed_score`` or ``min_score``
     respectively (the two metrics aren't on the same scale). The returned
     score blends similarity with a recency factor so a fresher lesson
@@ -286,7 +417,12 @@ def recall(
     de-duplicated within the top-k.
     """
     path = path if path is not None else default_path()
-    if not goal_text or not path.exists():
+    matter_id = _exact_matter_id(
+        matter_id if matter_id is not None else current_matter_id(),
+    )
+    if matter_id is None or not goal_text or not path.exists():
+        return []
+    if not _live_scope_allows_recall(matter_id, domain):
         return []
     qt = _tokens(goal_text)
     entries: list[Reflexion] = []
@@ -297,24 +433,18 @@ def recall(
             lines = deque(f, maxlen=scan_limit)
     except OSError:
         return []
+    from .learning_crypto import decode_json_record
+
     for raw in lines:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
+        data = decode_json_record(raw)
+        if data is None:
             continue
-        if not isinstance(data, dict):
+        entry = _reflexion_from_record(data)
+        if entry is None:
             continue
-        try:
-            entry = Reflexion(**{
-                key: data.get(key) for key in (
-                    "ts", "goal_text", "failure_class",
-                    "failure_msg", "reflection", "tools_used",
-                    "channel", "user_id", "domain",
-                )
-            })
-        except TypeError:
-            continue
-        if not _scope_matches(entry, channel=channel, user_id=user_id):
+        if not _scope_matches(
+            entry, channel=channel, user_id=user_id, matter_id=matter_id,
+        ):
             continue
         entries.append(entry)
 
@@ -326,8 +456,8 @@ def recall(
     oldest = min(e.ts for e in entries)
     span = newest - oldest
 
-    # Prefer embedding cosine (catches differently-worded lessons jaccard
-    # misses); fall back to per-entry jaccard when fastembed is absent.
+    # Prefer pinned-local embedding cosine (catches differently-worded lessons
+    # jaccard misses); fall back to per-entry jaccard when it is unconfigured.
     embed_sims = _embed_sims(goal_text, entries)
     if embed_sims is not None:
         sims, floor = embed_sims, min_embed_score
@@ -377,24 +507,15 @@ def list_recent(
             # the N most recent entries. 4x headroom absorbs malformed lines
             # and any local ts jitter without paying an O(whole-file) parse.
             tail = deque(f, maxlen=max(1, limit) * 4)
+        from .learning_crypto import decode_json_record
+
         for raw in tail:
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
+            data = decode_json_record(raw)
+            if data is None:
                 continue
-            if not isinstance(data, dict):
-                continue
-            try:
-                entries.append(Reflexion(**{
-                    k: data.get(k) for k in (
-                        "ts", "goal_text", "failure_class",
-                        "failure_msg", "reflection", "tools_used",
-                        "channel", "user_id", "domain", "model_id",
-                        "role",
-                    )
-                }))
-            except TypeError:
-                continue
+            entry = _reflexion_from_record(data)
+            if entry is not None:
+                entries.append(entry)
     except OSError:
         return []
     # A legacy/hand-written line can lack ``ts`` (loaded as None); a None key
@@ -469,18 +590,10 @@ def enabled() -> bool:
 def recall_enabled() -> bool:
     """Whether recorded lessons may be RE-INJECTED into new runs' context.
 
-    Off by default, and deliberately a separate knob from :func:`enabled`:
-    recording lessons and consolidating them offline (``maverick dream``) is
-    how the loop learns, but recall re-injects text derived from one goal into
-    another goal's prompt, and its only scoping today is channel/user/domain.
-    In a practice whose goals belong to different clients, that is a
-    cross-matter path -- a lesson distilled from one client's failed filing can
-    surface, content and all, while working for another client.
-
-    ``[reflexion] recall = true`` (or ``MAVERICK_REFLEXION_RECALL=1``) turns it
-    back on for single-tenant/single-client deployments that accept that.
-    When matters exist as a first-class scope, recall should come back
-    matter-bound by default rather than through this blanket knob.
+    Recall is on with reflexion learning by default now that :func:`recall`
+    requires an exact, non-null matter key. The independent knob remains so an
+    operator can stop prompt re-injection while continuing to record local
+    evidence for offline review.
     """
     try:
         from .config import governed_learning_env_flag, load_config
@@ -489,7 +602,7 @@ def recall_enabled() -> bool:
             return override and enabled()
         cfg = load_config()
         return bool(
-            cfg.get("reflexion", {}).get("recall", False)
+            cfg.get("reflexion", {}).get("recall", enabled())
         ) and enabled()
     except Exception:  # pragma: no cover -- config never blocks a run
         return False
@@ -515,6 +628,7 @@ def tools_from_blackboard(blackboard) -> list[str]:
 
 def flaky_tools(
     *, min_count: int = 2, path: Path | None = None, scan: int = 300,
+    matter_id: int | None = None,
 ) -> set[str]:
     """Tool names with >= ``min_count`` persisted ``tool_flaky`` lessons.
 
@@ -522,8 +636,15 @@ def flaky_tools(
     caught failing the same way — the recall side of the tool-failure
     taxonomy. Empty set on any error (fail-open)."""
     counts: dict[str, int] = {}
+    matter_id = _exact_matter_id(
+        matter_id if matter_id is not None else current_matter_id(),
+    )
+    if matter_id is None:
+        return set()
     try:
         for r in list_recent(limit=scan, path=path):
+            if r.matter_id != matter_id:
+                continue
             if r.failure_class != "tool_flaky":
                 continue
             for t in r.tools_used or []:
@@ -536,7 +657,9 @@ def flaky_tools(
 def record_human_override(
     brief: str, tool_name: str, reason: str, *,
     domain: str | None = None, channel: str | None = None,
-    user_id: str | None = None, path: Path | None = None,
+    user_id: str | None = None, matter_id: int | None = None,
+    owner: str | None = None,
+    path: Path | None = None,
 ) -> bool:
     """Persist a human's refusal of a gated action as a learning signal.
 
@@ -564,6 +687,8 @@ def record_human_override(
             channel=channel,
             user_id=user_id,
             domain=domain,
+            matter_id=matter_id,
+            owner=owner,
             path=path,
         )
     except Exception as e:  # pragma: no cover -- learning never blocks a denial
@@ -597,6 +722,9 @@ __all__ = [
     "DEFAULT_PATH",
     "default_path",
     "record",
+    "matter_scope",
+    "current_matter_id",
+    "current_owner",
     "record_human_override",
     "flaky_tools",
     "recall",

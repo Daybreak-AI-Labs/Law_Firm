@@ -1,162 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Deliverables · Bjerken and Day{% endblock %}
 {% block content %}
-  {% from "_hero.html" import hero, state %}
-  {% call hero('Your AI workforce', 'Deliverables',
-               subtitle='Work, organized by who it\'s for',
-               lede='The work your AI teams produce, organized by deliverable
-                     and by who it\'s for — your forecasts, reports, and items
-                     awaiting your sign-off (the full
-                     <a href="/goals">run history</a> is separate).') %}
-    {{ state('Current state',
-             items | length ~ ' deliverable' ~ ('' if items | length == 1 else 's') ~ ' in view',
-             badge=(awaiting | length ~ ' awaiting sign-off') if awaiting else 'clear',
-             badge_class='warn' if awaiting else 'ok',
-             copy='Each deliverable names what it is, who it\'s for, and
-                   whether it needs a sign-off before it is acted on.') }}
-  {% endcall %}
+<section class="page-head">
+  <p class="eyebrow">Attorney work queue</p>
+  <h1>Deliverables</h1>
+  <p class="muted">Drafts from matters you currently belong to, grouped by legal workflow.</p>
+</section>
 
-  {% if showing_mine %}
-    <p class="muted" style="margin-top: calc(-1 * var(--space-2)); margin-bottom: var(--space-4);">
-      Showing deliverables for your role{{ 's' if mine|length > 1 else '' }}: <strong>{{ mine|join(', ') }}</strong>.
-    </p>
-  {% endif %}
+{% if awaiting %}
+<section class="stack" aria-labelledby="awaiting-title">
+  <h2 id="awaiting-title">Awaiting attorney sign-off</h2>
+  {% for row in awaiting %}
+  <a class="card" href="/chat/goal/{{ row.id }}"><strong>{{ row.deliverable }}</strong><br><span class="muted">{{ row.title }} · {{ row.gate }} required</span></a>
+  {% endfor %}
+</section>
+{% endif %}
 
-  {% if items or role or showing_mine or active_roles %}
-    <div class="dlv-filter" role="group" aria-label="Filter by role">
-      {% if mine %}
-        <a href="/deliverables" class="dlv-chip{% if showing_mine %} dlv-chip--on{% endif %}">Mine</a>
-      {% endif %}
-      <a href="/deliverables?role=all" class="dlv-chip{% if not showing_mine and not role %} dlv-chip--on{% endif %}">All</a>
-      {# Only roles with live work get a chip — not the whole catalogue. #}
-      {% for r in active_roles %}
-        <a href="/deliverables?role={{ r }}" class="dlv-chip{% if role == r %} dlv-chip--on{% endif %}{% if r in mine %} dlv-chip--mine{% endif %}">{{ r }}</a>
-      {% endfor %}
-      {# A hand-picked role that has no work yet still needs its own chip. #}
-      {% if role and role not in active_roles %}
-        <a href="/deliverables?role={{ role }}" class="dlv-chip dlv-chip--on">{{ role }}</a>
-      {% endif %}
-    </div>
-    {# The full role set is searchable rather than a wall of chips. #}
-    {% if roles|length > active_roles|length %}
-      <form class="dlv-jump" method="get" action="/deliverables" role="search">
-        <input list="dlv-roles" name="role" class="input dlv-jump__in"
-               placeholder="Search {{ roles|length }} roles…" autocomplete="off"
-               aria-label="Jump to a role"
-               value="{{ role if role and role not in active_roles else '' }}">
-        <datalist id="dlv-roles">
-          {% for r in roles %}<option value="{{ r }}"></option>{% endfor %}
-        </datalist>
-        <button class="btn" type="submit">Go</button>
-      </form>
-    {% endif %}
-  {% endif %}
-
-  {% if awaiting %}
-    <div class="section-head">
-      <h2>Awaiting sign-off</h2>
-      <span class="badge warn">{{ awaiting|length }}</span>
-    </div>
-    <div class="panel" style="padding: var(--space-2) var(--space-3);">
-      {% for r in awaiting %}
-        <div class="mv-row">
-          <div class="mv-row__main">
-            <div class="mv-row__title">{{ r.deliverable }}</div>
-            <div class="mv-row__sub muted">
-              {{ r.title }} · <span data-when="{{ r.updated_at }}"></span> · {{ r.gate }} gate
-            </div>
-          </div>
-          <div class="mv-row__actions">
-            <a class="btn btn--primary" href="/chat/goal/{{ r.id }}">Review</a>
-          </div>
-        </div>
-      {% endfor %}
-    </div>
-  {% endif %}
-
-  {% if items %}
-    <div class="section-head"><h2>Deliverables</h2></div>
-    <div class="card-grid">
-      {% for it in items %}
-        <div class="card">
-          <div class="dlv-card__head">
-            <span class="dlv-card__label">{{ it.deliverable }}</span>
-            {% if it.gate %}<span class="badge" title="Needs {{ it.gate }} before it is acted on">{{ it.gate }} gate</span>{% endif %}
-          </div>
-          <p class="muted dlv-card__meta">
-            {%- if it.consumers %}For {{ it.consumers|join(', ') }}{% else %}No consumers named{% endif -%}
-            {%- if it.cadence %} · {{ it.cadence }}{% endif -%}
-            {%- if it.shape %} · {{ it.shape }}{% endif -%}
-          </p>
-          {% if it.latest %}
-            <a class="dlv-run" href="/chat/goal/{{ it.latest.id }}">
-              <span class="badge {{ it.latest.status }}">{{ it.latest.status }}</span>
-              <span class="dlv-run__title">{{ it.latest.title }}</span>
-              <span class="muted" data-when="{{ it.latest.updated_at }}"></span>
-            </a>
-            {% if it.awaiting_count %}
-              <p class="muted dlv-card__await">{{ it.awaiting_count }} awaiting your sign-off</p>
-            {% endif %}
-          {% else %}
-            <p class="muted dlv-card__meta">No runs yet — this deliverable hasn't been produced.</p>
-          {% endif %}
-        </div>
-      {% endfor %}
-    </div>
-  {% else %}
-    <div class="mv-empty">
-      <p class="mv-empty__title">
-        {%- if role %}No deliverables for {{ role }}
-        {%- elif showing_mine %}Nothing for your role{{ 's' if mine|length > 1 else '' }} yet
-        {%- else %}No deliverables declared yet{% endif %}
-      </p>
-      <p class="mv-empty__body">
-        {% if showing_mine %}
-          No deliverables are routed to <strong>{{ mine|join(', ') }}</strong> yet —
-          <a href="/deliverables?role=all">see all deliverables</a>.
-        {% else %}
-          Deliverables appear here as soon as your teams start producing
-          them — each one names what it is, who it's for, and whether it
-          needs a sign-off. See <a href="/compartments">Compartments</a>
-          for the teams set up in this workspace.
-        {% endif %}
-      </p>
-    </div>
-  {% endif %}
-
-  <style>
-    .dlv-filter { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
-    .dlv-jump { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-5); max-width: 30rem; }
-    .dlv-jump__in { flex: 1 1 auto; }
-    .dlv-chip {
-      padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 999px;
-      font-size: var(--text-sm); color: var(--muted); background: var(--surface-1);
-      transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
-    }
-    .dlv-chip:hover { color: var(--text); border-color: var(--brand-border); }
-    .dlv-chip--on { color: var(--brand-fg); background: var(--brand); border-color: var(--brand); }
-    /* a role the signed-in user consumes: a subtle dot, so "mine" reads at a glance */
-    .dlv-chip--mine:not(.dlv-chip--on) { border-color: var(--brand-border); }
-    .dlv-chip--mine::before { content: "• "; color: var(--brand); }
-    .dlv-card__head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-    .dlv-card__label { font-weight: var(--font-semibold); margin-inline-end: auto; }
-    .dlv-card__meta { font-size: var(--text-sm); margin: 0 0 var(--space-3); }
-    .dlv-card__await { font-size: var(--text-sm); margin: var(--space-2) 0 0; color: var(--warn); }
-    .dlv-run {
-      display: flex; align-items: center; gap: var(--space-2); margin-top: auto;
-      padding: var(--space-2) var(--space-3); border: 1px solid var(--hairline);
-      border-radius: var(--radius-md); background: var(--surface-sunken);
-    }
-    .dlv-run:hover { border-color: var(--brand-border); }
-    .dlv-run__title { flex: 1 1 auto; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  </style>
-  <script>
-    // Format every server-rendered timestamp via the shared relative-time helper.
-    (function () {
-      document.querySelectorAll('[data-when]').forEach(function (el) {
-        var ts = parseFloat(el.getAttribute('data-when'));
-        if (ts) el.textContent = window.mvWhen(ts);
-      });
-    })();
-  </script>
+<section class="card-grid" aria-label="Matter deliverables">
+{% for item in items %}
+  <article class="card stack">
+    <h2>{{ item.deliverable }}</h2>
+    <p class="muted">{{ item.domain }}{% if item.gate %} · {{ item.gate }} required{% endif %}</p>
+    {% if item.latest %}<a href="/chat/goal/{{ item.latest.id }}"><span class="badge {{ item.latest.status }}">{{ item.latest.status }}</span> {{ item.latest.title }}</a>{% else %}<p class="muted">No accessible draft yet.</p>{% endif %}
+  </article>
+{% else %}
+  <p class="card muted">No matter deliverables yet.</p>
+{% endfor %}
+</section>
 {% endblock %}

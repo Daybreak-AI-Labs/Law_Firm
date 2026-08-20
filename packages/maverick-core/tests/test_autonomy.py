@@ -60,24 +60,10 @@ class TestAssumeWhenHeadless:
         assert autonomy.assume_when_headless() is True
 
 
-class TestShouldEscalate:
-    def test_disabled_never_escalates(self, monkeypatch):
-        monkeypatch.delenv("MAVERICK_AUTONOMY_GATE", raising=False)
-        assert autonomy.should_escalate_verification(0.99) is False
-
-    def test_high_disagreement_escalates_when_enabled(self, monkeypatch):
-        monkeypatch.setenv("MAVERICK_AUTONOMY_GATE", "1")
-        assert autonomy.should_escalate_verification(0.8) is True
-
-    def test_low_disagreement_does_not_escalate(self, monkeypatch):
-        monkeypatch.setenv("MAVERICK_AUTONOMY_GATE", "1")
-        assert autonomy.should_escalate_verification(0.1) is False
-
-
 class TestTightenCeiling:
     _S = {
         "enable": True, "min_confidence": 0.5, "disagreement_high": 0.5,
-        "escalate_verification": True, "tighten_on_low_trust": True,
+"tighten_on_low_trust": True,
     }
 
     def test_no_deficit_leaves_ceiling_unchanged(self):
@@ -215,102 +201,13 @@ class TestAgentGateIntegration:
 
 
 # --------------------------------------------------------------------------
-# integration: spawn_swarm escalates on disagreement (Loop 1)
-# --------------------------------------------------------------------------
-class TestSwarmEscalation:
-    @pytest.mark.asyncio
-    async def test_divergent_swarm_sets_escalation(
-        self, tmp_path, fake_llm, monkeypatch,
-    ):
-        monkeypatch.setenv("MAVERICK_AUTONOMY_GATE", "1")
-        import maverick.agent as agent_mod
-        from maverick.agent import Agent, AgentResult
-        from maverick.tools.spawn import spawn_swarm_tool
-
-        ctx = _ctx(tmp_path, fake_llm)
-        parent = Agent(ctx=ctx, role="orchestrator", brief="t", depth=0)
-
-        # Stub each child's run() to return a DISTINCT final -> max entropy.
-        counter = {"n": 0}
-
-        async def _fake_run(self):
-            counter["n"] += 1
-            return AgentResult(
-                final=f"answer-variant-{counter['n']}",
-                role=self.role, name=self.name,
-            )
-
-        monkeypatch.setattr(agent_mod.Agent, "run", _fake_run)
-
-        tool = spawn_swarm_tool(parent)
-        out = await tool.fn({"agents": [
-            {"role": "researcher", "task": "a"},
-            {"role": "researcher", "task": "b"},
-            {"role": "researcher", "task": "c"},
-        ]})
-
-        assert ctx.escalate_verification is True
-        assert ctx.last_disagreement > 0.5
-        assert "reconcile" in out.lower()
-
-    @pytest.mark.asyncio
-    async def test_consensus_swarm_does_not_escalate(
-        self, tmp_path, fake_llm, monkeypatch,
-    ):
-        monkeypatch.setenv("MAVERICK_AUTONOMY_GATE", "1")
-        import maverick.agent as agent_mod
-        from maverick.agent import Agent, AgentResult
-        from maverick.tools.spawn import spawn_swarm_tool
-
-        ctx = _ctx(tmp_path, fake_llm)
-        parent = Agent(ctx=ctx, role="orchestrator", brief="t", depth=0)
-
-        async def _fake_run(self):
-            return AgentResult(final="the same answer", role=self.role, name=self.name)
-
-        monkeypatch.setattr(agent_mod.Agent, "run", _fake_run)
-
-        tool = spawn_swarm_tool(parent)
-        await tool.fn({"agents": [
-            {"role": "researcher", "task": "a"},
-            {"role": "researcher", "task": "b"},
-        ]})
-        assert ctx.escalate_verification is False
-        assert ctx.last_disagreement == 0.0
-
-
-# --------------------------------------------------------------------------
-# unit: verify_final routes to the ensemble when forced (Loop 1 plumbing)
+# unit: verify_final keeps one verification path and one provider call
 # --------------------------------------------------------------------------
 class TestVerifyFinalRouting:
     @pytest.mark.asyncio
-    async def test_force_ensemble_routes_to_panel(self, monkeypatch):
-        import maverick.verifier as v
-        called = {"ensemble": False, "single": False}
-
-        async def _ens(*a, **k):
-            called["ensemble"] = True
-            return v.VerifierVerdict.accept_unconditionally()
-
-        async def _single(*a, **k):
-            called["single"] = True
-            return v.VerifierVerdict.accept_unconditionally()
-
-        monkeypatch.setattr(v, "verify_proposal_ensemble", _ens)
-        monkeypatch.setattr(v, "verify_proposal", _single)
-        await v.verify_final("b", "p", object(), None, force_ensemble=True)
-        assert called["ensemble"] is True
-        assert called["single"] is False
-
-    @pytest.mark.asyncio
     async def test_default_routes_to_structured(self, monkeypatch):
-        # The rubric judge is the default now; without ensemble it routes there.
         import maverick.verifier as v
-        called = {"ensemble": False, "single": False, "structured": False}
-
-        async def _ens(*a, **k):
-            called["ensemble"] = True
-            return v.VerifierVerdict.accept_unconditionally()
+        called = {"single": False, "structured": False}
 
         async def _single(*a, **k):
             called["single"] = True
@@ -320,24 +217,16 @@ class TestVerifyFinalRouting:
             called["structured"] = True
             return v.VerifierVerdict.accept_unconditionally()
 
-        monkeypatch.setattr(v, "verify_proposal_ensemble", _ens)
         monkeypatch.setattr(v, "verify_proposal", _single)
         monkeypatch.setattr(v, "verify_proposal_structured", _structured)
-        monkeypatch.setattr(v, "_ensemble_enabled", lambda: False)
         monkeypatch.setattr(v, "_structured_verify_enabled", lambda: True)
-        await v.verify_final("b", "p", object(), None, force_ensemble=False)
-        assert called["structured"] is True
-        assert called["single"] is False and called["ensemble"] is False
+        await v.verify_final("b", "p", object(), None)
+        assert called == {"single": False, "structured": True}
 
     @pytest.mark.asyncio
-    async def test_routes_to_scalar_single_when_structured_disabled(self, monkeypatch):
-        # Opting out of the rubric judge falls back to the scalar single verifier.
+    async def test_routes_to_scalar_when_structured_disabled(self, monkeypatch):
         import maverick.verifier as v
-        called = {"ensemble": False, "single": False, "structured": False}
-
-        async def _ens(*a, **k):
-            called["ensemble"] = True
-            return v.VerifierVerdict.accept_unconditionally()
+        called = {"single": False, "structured": False}
 
         async def _single(*a, **k):
             called["single"] = True
@@ -347,11 +236,8 @@ class TestVerifyFinalRouting:
             called["structured"] = True
             return v.VerifierVerdict.accept_unconditionally()
 
-        monkeypatch.setattr(v, "verify_proposal_ensemble", _ens)
         monkeypatch.setattr(v, "verify_proposal", _single)
         monkeypatch.setattr(v, "verify_proposal_structured", _structured)
-        monkeypatch.setattr(v, "_ensemble_enabled", lambda: False)
         monkeypatch.setattr(v, "_structured_verify_enabled", lambda: False)
-        await v.verify_final("b", "p", object(), None, force_ensemble=False)
-        assert called["single"] is True
-        assert called["ensemble"] is False and called["structured"] is False
+        await v.verify_final("b", "p", object(), None)
+        assert called == {"single": True, "structured": False}

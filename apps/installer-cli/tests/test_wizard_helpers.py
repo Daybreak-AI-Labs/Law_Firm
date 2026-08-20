@@ -48,12 +48,29 @@ def test_pick_sandbox_defaults_docker_when_unavailable(monkeypatch):
         defaults.append(default)
         return default
     monkeypatch.setattr(wizard, "_q_select", fake_select)
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: "/tmp/ws")
+    texts = iter(["/tmp/ws", "sha256:" + ("a" * 64)])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(texts))
     wizard.pick_sandbox()
     # The backend prompt is first; its default stays docker even when the
     # daemon is down (security-first). A container backend then asks a second
     # question (the coding language), so assert on the first prompt, not last.
     assert defaults[0].startswith("docker")
+
+
+def test_deployment_choices_are_exactly_retained_topologies(monkeypatch):
+    from maverick_installer import wizard
+
+    seen = {}
+
+    def choose(_message, choices, default=None):
+        seen["choices"] = list(choices)
+        return choices[0]
+
+    monkeypatch.setattr(wizard, "_q_select", choose)
+    assert wizard.pick_deployment() == "local"
+    assert [choice.split()[0] for choice in seen["choices"]] == [
+        "local", "docker", "vps",
+    ]
 
 
 # ---------- validation cache ----------

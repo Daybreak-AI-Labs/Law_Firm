@@ -5,8 +5,8 @@ declares a customer's edition, pricing **tier** (basic / gold / platinum), and
 enabled add-on **suites** (e.g. ``fleet``). It is verified **offline** at load
 time against the publisher's trusted public key — so an **air-gapped** bank can
 be upgraded (platform → Gold, or + Fleet packs) by dropping in a new signed
-license file, **no network required**. A connected deployment can additionally
-poll an entitlement API, but the signed file is the floor that works everywhere.
+license file, **no network required**. Entitlement resolution is deliberately
+offline-only in the firm build.
 
 Design (kernel rule 1 ethos — *fail open on the core*):
 
@@ -40,9 +40,8 @@ from pathlib import Path
 # distinct from :mod:`maverick.billing`, whose ``Entitlements``/``feature_allowed``
 # gate the **per-tenant billing plan** (free/pro/enterprise) for a multi-tenant
 # operator. Same word ("entitlements"), different axis — don't cross the imports.
-# The two compose (a capability can be both tier-gated here and plan-gated there;
-# e.g. SIEM export is a Gold+ tier capability per that doc AND an ``audit_export``
-# billing-plan feature). Keep tier gates here; keep per-tenant plan gates there.
+# The two compose: a capability can be both tier-gated here and plan-gated
+# there. Keep tier gates here; keep per-tenant plan gates there.
 
 _TIER_RANK = {"basic": 0, "gold": 1, "platinum": 2}
 BASE_TIER = "basic"
@@ -52,8 +51,8 @@ DEFAULT_GRACE_DAYS = 14
 #: a *core* feature and is always allowed (fail-open).
 #:
 #: EMPTY ON PURPOSE. Upstream this gated paid add-ons behind an Ed25519 license
-#: issued by the vendor: external_agents, fleet_governance, fleet_memory and
-#: siem_export at "gold"; advanced_evolve, custom_pack_factory and multi_tenant
+#: issued by the vendor: external_agents, fleet_governance and fleet_memory at
+#: "gold"; advanced_evolve, custom_pack_factory and multi_tenant
 #: at "platinum". The firm owns this software outright, there is no vendor to
 #: buy a tier from, and the console that minted those licenses is deleted -- so
 #: every capability is a core capability here. Leaving the registry populated
@@ -220,7 +219,7 @@ class Entitlements:
         - ``features`` grants a gated feature à la carte, even below its
           registry tier (e.g. Gold + ``advanced_evolve``).
         - ``features_denied`` switches a feature off even when the tier would
-          include it (e.g. Gold minus ``siem_export``). Denial wins over grant.
+        include it (e.g. Gold minus ``legacy_export``). Denial wins over grant.
 
         Both lists only bind while the license is paid-active (``resolve``
         drops them otherwise), so an expired/invalid license still fails open
@@ -344,214 +343,6 @@ def require_suite(suite: str) -> bool:
     return current().suite_enabled(suite)
 
 
-# ---- connected entitlement API (optional; the signed file is the floor) -----
-
-DEFAULT_REFRESH_TIMEOUT = 10.0
-
-
-@dataclass(frozen=True)
-class RefreshResult:
-    """Outcome of a connected-API refresh — for logging/metering, never raised."""
-    ok: bool
-    reason: str
-    status: str
-    changed: bool = False
-
-
-def _http_get_json(url: str, token: str | None, timeout: float) -> dict:
-    """Minimal stdlib GET → JSON. No new top-level dep (kernel rule 5). The API
-    returns a **signed** license doc, so the signature — not the transport — is
-    the trust boundary: an attacker who MITMs the response still cannot forge a
-    publisher signature, and :func:`resolve` rejects anything unverified.
-    (urllib verifies TLS certs by default for https URLs.)"""
-    import urllib.parse
-    import urllib.request
-    scheme = urllib.parse.urlparse(url).scheme.lower()
-    if scheme not in ("https", "http"):
-        # api_url is operator/config-controlled; refuse file://, ftp://, etc. so
-        # a stray config value can't turn a license refresh into a local-file /
-        # SSRF read. Prefer https; http is allowed for a trusted segment.
-        raise ValueError(f"refusing non-http(s) entitlement API scheme: {scheme!r}")
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _rollback_reason(path: Path, new_doc: dict) -> str | None:
-    """Refusal reason if persisting ``new_doc`` over the license already at
-    ``path`` would be a **rollback or subject swap**, else ``None``.
-
-    An attacker on the refresh path can only replay a *validly signed* older
-    license (they can't forge one), so freshness — not the signature — is what
-    stops a downgrade. Compares the stable subject (``customer``) and
-    ``issued_at``; a missing/unreadable installed license means there is nothing
-    to roll back from. ``license_id`` is deliberately **not** the subject key —
-    it's regenerated on every issue, so a legitimate renewal has a new one."""
-    if not path.exists():
-        return None
-    try:
-        cur = json.loads(path.read_text("utf-8"))
-    except Exception:  # noqa: BLE001 - an unreadable floor can always be replaced
-        return None
-    if not isinstance(cur, dict):
-        return None
-    cur_cust, new_cust = cur.get("customer"), new_doc.get("customer")
-    if cur_cust and new_cust and cur_cust != new_cust:
-        return "server license is for a different customer (refused)"
-    try:
-        cur_iss = _parse_dt(cur.get("issued_at"))
-        new_iss = _parse_dt(new_doc.get("issued_at"))
-    except (ValueError, TypeError):
-        return None
-    if cur_iss and new_iss and new_iss < cur_iss:
-        return "server license is older than installed (rollback refused)"
-    return None
-
-
-def refresh_from_server(url: str | None = None, *, token: str | None = None,
-                        trusted_pubkeys: list[str] | None = None,
-                        save: bool = True, timeout: float | None = None,
-                        fetch=None) -> RefreshResult:
-    """Connected path: pull a fresh signed license from the entitlement API and,
-    if it verifies, persist it so the **offline file stays the floor** for the
-    next boot (an air-gapped box simply never calls this).
-
-    Fail-open by contract (kernel rule 1): a missing URL, a network error, or an
-    unverifiable response NEVER raises and NEVER changes the running entitlement
-    — the last-known license file keeps the deployment live. Only a **verified,
-    paid-active, and not-a-rollback** license is written, so a spoofed,
-    downgraded, or replayed API reply cannot forge, strip, or roll back
-    entitlements. ``fetch`` is injectable for tests."""
-    cfg = _license_cfg()
-    api_url = url or os.environ.get("MAVERICK_LICENSE_API") or cfg.get("api_url")
-    if not api_url:
-        return RefreshResult(False, "no entitlement API configured", current().status)
-    # The token is a secret: resolve it through the secret provider (file/env
-    # backends), the same path the SIEM bearer uses — not a raw os.environ read.
-    from .secret_provider import get_secret
-    api_token = token or get_secret("MAVERICK_LICENSE_API_TOKEN") or cfg.get("api_token")
-    to = timeout if timeout is not None else DEFAULT_REFRESH_TIMEOUT
-    getter = fetch or (lambda: _http_get_json(str(api_url), api_token, to))
-    try:
-        doc = getter()
-    except Exception as e:  # noqa: BLE001 - network/parse failure must never brick
-        return RefreshResult(False, f"fetch failed: {type(e).__name__}", current().status)
-    ent = resolve(doc, trusted_pubkeys=trusted_pubkeys)
-    if ent.status not in _PAID_ACTIVE:
-        # Never overwrite a good local license with an unverifiable server reply.
-        return RefreshResult(False, f"server license {ent.status}", current().status)
-    changed = False
-    if save:
-        path = _default_license_path()
-        rolled = _rollback_reason(path, doc)
-        if rolled:
-            return RefreshResult(False, rolled, current().status)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            new_text = json.dumps(doc, indent=2) + "\n"
-            changed = (not path.exists()) or path.read_text("utf-8") != new_text
-            path.write_text(new_text, encoding="utf-8")
-        except Exception as e:  # noqa: BLE001 - persistence is best-effort
-            return RefreshResult(True, f"verified but not saved: {type(e).__name__}",
-                                 ent.status, False)
-    reset_cache()
-    return RefreshResult(True, "ok", ent.status, changed)
-
-
-# ---- background auto-refresh (near-instant entitlement propagation) --------
-#
-# The connected path above is pull-based; nothing in the kernel called it on a
-# schedule, so a license issued in the vendor console only landed when someone
-# ran a manual refresh. This loop closes that gap: a long-lived process (the
-# dashboard, `maverick mcp`, …) calls start_refresher() once and the deployment
-# then picks up upgrades/downgrades within one interval of the console issuing
-# them — checkbox flipped at HQ, feature live at the client ~a minute later.
-# Every poll also records a fleet check-in server-side, so the fleet board
-# stays near-live for free.
-
-DEFAULT_REFRESH_INTERVAL = 60.0   # seconds; a signed license is ~1 KB of JSON
-_MIN_REFRESH_INTERVAL = 30.0      # floor so a config typo can't hammer the API
-
-_REFRESHER_STOP = None            # threading.Event of the live refresher, else None
-_REFRESHER_THREAD = None
-
-
-def refresh_interval_seconds() -> float:
-    """The configured auto-refresh interval (``[license] refresh_interval_seconds``
-    / ``MAVERICK_LICENSE_REFRESH_INTERVAL``), clamped to a 30 s floor.
-
-    Returns 0 (disabled) when no entitlement API is configured — an offline /
-    air-gapped box has nothing to poll — or when the operator explicitly sets
-    the interval to 0. Defaults to 60 s when an API is configured, because a
-    connected deployment that opted into the entitlement API expects upgrades
-    to propagate without a redeploy."""
-    cfg = _license_cfg()
-    api_url = os.environ.get("MAVERICK_LICENSE_API") or cfg.get("api_url")
-    if not api_url:
-        return 0.0
-    raw = os.environ.get("MAVERICK_LICENSE_REFRESH_INTERVAL")
-    if raw is None:
-        raw = cfg.get("refresh_interval_seconds", DEFAULT_REFRESH_INTERVAL)
-    try:
-        interval = float(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_REFRESH_INTERVAL
-    if interval <= 0:
-        return 0.0
-    return max(interval, _MIN_REFRESH_INTERVAL)
-
-
-def start_refresher(interval: float | None = None, *, refresh=None):
-    """Start the background license-refresh thread (idempotent; daemon).
-
-    Returns the thread, or ``None`` when auto-refresh is disabled (no API
-    configured / interval 0) or a refresher is already running. ``refresh`` is
-    injectable for tests and defaults to :func:`refresh_from_server`, which
-    never raises — so the loop can't die on a network blip, and a failed poll
-    simply leaves the last-known-good license file in charge (fail-open)."""
-    global _REFRESHER_STOP, _REFRESHER_THREAD
-    if _REFRESHER_THREAD is not None and _REFRESHER_THREAD.is_alive():
-        return None
-    # An explicit interval argument is caller-controlled (tests use tiny ones);
-    # config-sourced values are already floor-clamped in refresh_interval_seconds.
-    every = float(interval) if interval is not None else refresh_interval_seconds()
-    if every <= 0:
-        return None
-    import logging
-    import threading
-    log = logging.getLogger(__name__)
-    stop = threading.Event()
-    do_refresh = refresh or refresh_from_server
-
-    def _loop() -> None:
-        while not stop.wait(every):
-            try:
-                res = do_refresh()
-            except Exception:  # noqa: BLE001 - belt+braces; the loop must survive
-                log.debug("license refresh raised unexpectedly", exc_info=True)
-                continue
-            if getattr(res, "changed", False):
-                reset_cache()
-                log.info("entitlements updated from server: %s", current().summary())
-
-    t = threading.Thread(target=_loop, name="maverick-license-refresh", daemon=True)
-    _REFRESHER_STOP, _REFRESHER_THREAD = stop, t
-    t.start()
-    return t
-
-
-def stop_refresher(timeout: float = 2.0) -> None:
-    """Signal the refresher to exit and join it briefly (safe to call anytime)."""
-    global _REFRESHER_STOP, _REFRESHER_THREAD
-    if _REFRESHER_STOP is not None:
-        _REFRESHER_STOP.set()
-    if _REFRESHER_THREAD is not None and _REFRESHER_THREAD.is_alive():
-        _REFRESHER_THREAD.join(timeout=timeout)
-    _REFRESHER_STOP = _REFRESHER_THREAD = None
-
-
 # ---- CLI: python -m maverick.entitlements {keygen,issue,verify,show} -------
 # Self-contained so it needs no wiring into the main cli.py. `keygen`/`issue`
 # are Daybreak-side (keep the private key secret); `verify`/`show` run on a
@@ -578,10 +369,6 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
     iss.add_argument("--grace-days", type=int, default=DEFAULT_GRACE_DAYS)
     iss.add_argument("--key", required=True, help="publisher private key hex, or @path")
     iss.add_argument("-o", "--out", default="license.json")
-
-    rf = sub.add_parser("refresh", help="one-shot connected refresh (cron/systemd-"
-                                        "timer alternative to the in-process loop)")
-    rf.add_argument("--url", default=None, help="entitlement API URL (default: config)")
 
     vf = sub.add_parser("verify", help="verify a license file")
     vf.add_argument("--file", default=None)
@@ -620,12 +407,6 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
         Path(args.out).write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {args.out}  ({args.customer} · {args.tier})  key_id={doc['key_id'][:16]}…")
         return 0
-
-    if args.cmd == "refresh":
-        res = refresh_from_server(args.url)
-        print(f"{'ok' if res.ok else 'FAILED'}: {res.reason} · status={res.status}"
-              f"{' · updated' if res.changed else ''}")
-        return 0 if res.ok else 1
 
     # verify / show
     trust = [k.strip() for k in args.pubkey.split(",")] if args.pubkey else None

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 import subprocess
 
 import pytest
@@ -10,9 +9,7 @@ from maverick import (
     attachments,
     failure_telemetry,
     supply_chain,
-    voice_macros,
 )
-from maverick.encryption_migrate import backup_world_db
 from maverick.file_lock import private_path_is_restricted
 from maverick.world_model import WorldModel
 
@@ -97,21 +94,6 @@ def test_attachments_refuse_shared_custom_root_without_mutation(tmp_path):
     assert not (shared / "7").exists()
 
 
-def test_plaintext_backup_refuses_shared_db_parent_without_mutation(tmp_path):
-    shared, unrelated, _ = _shared_fixture(tmp_path)
-    db = shared / "world.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("CREATE TABLE records (value TEXT)")
-        conn.execute("INSERT INTO records VALUES ('plaintext')")
-    before = _security_snapshot(shared)
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        backup_world_db(db)
-
-    _assert_shared_unchanged(shared, unrelated, before)
-    assert not list(shared.glob("*.pre-encrypt-*.bak"))
-
-
 def test_best_effort_failure_telemetry_preserves_shared_parent(
     tmp_path, monkeypatch,
 ):
@@ -140,15 +122,3 @@ def test_supply_chain_pins_refuse_shared_custom_parent_without_mutation(
 
     _assert_shared_unchanged(shared, unrelated, before)
     assert not path.exists()
-
-
-def test_voice_macros_refuse_shared_custom_parent_without_mutation(tmp_path):
-    shared, unrelated, before = _shared_fixture(tmp_path)
-    path = shared / "voice-macros.json"
-
-    with pytest.raises(PermissionError, match="must already be private"):
-        voice_macros.record_macro("morning", ["status report"], path=path)
-
-    _assert_shared_unchanged(shared, unrelated, before)
-    assert not path.exists()
-    assert not (shared / "voice-macros.json.lock").exists()

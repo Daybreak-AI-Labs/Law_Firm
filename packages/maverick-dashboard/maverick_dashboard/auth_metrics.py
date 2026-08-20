@@ -9,7 +9,7 @@ spike.
 
 Process-local by design: each worker keeps its own counter and Prometheus
 scrapes per instance (same model as the hand-rolled gauges already on
-``/metrics``). Standalone module so both the app middleware and the SCIM router
+``/metrics``). Standalone module so authentication boundaries and metrics
 can increment it without an import cycle.
 """
 from __future__ import annotations
@@ -21,8 +21,7 @@ _FAILURES: dict[str, int] = {}
 
 
 def record_auth_failure(reason: str) -> None:
-    """Increment the failure tally for ``reason`` (a short, bounded label such
-    as ``bad_token`` / ``scim_bad_token``). Never raises."""
+    """Increment the failure tally for a short bounded reason label."""
     r = (reason or "unknown").strip() or "unknown"
     with _LOCK:
         _FAILURES[r] = _FAILURES.get(r, 0) + 1

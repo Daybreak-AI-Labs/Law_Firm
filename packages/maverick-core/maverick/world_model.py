@@ -21,8 +21,9 @@ import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -46,13 +47,68 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 40
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
 
 # Valid PRAGMA synchronous levels (we don't expose OFF — corruption risk).
 _SYNC_MODES = {"NORMAL", "FULL", "EXTRA"}
+
+# A project is the current physical matter row.  These are data-access roles,
+# deliberately separate from dashboard/global RBAC roles: an administrator is
+# not automatically a member of every client matter.
+MATTER_MEMBERSHIP_ROLES = frozenset({
+    "responsible_attorney", "attorney", "staff", "viewer",
+})
+
+# A deployment-wide bearer is a machine credential shared by whoever knows its
+# secret.  It can own legacy/unfiled automation provenance, but it can never be
+# a human identity inside a client's ethical wall.
+NON_HUMAN_MATTER_PRINCIPALS = frozenset({"user:dashboard-static-bearer"})
+
+
+def _matter_principal_allowed(principal: str) -> bool:
+    member = str(principal or "").strip()
+    return bool(member) and member not in NON_HUMAN_MATTER_PRINCIPALS
+
+# A matter's outbound-confidentiality posture.  ``local_only`` is deliberately
+# the durable default: cloud credentials or a deployment-wide allow-list never
+# amount to client consent.  ``approved_services`` merely makes a matter
+# eligible for the separate exact provider/host allow-lists enforced at the
+# central dispatch and HTTP choke points.
+MATTER_EGRESS_MODES = frozenset({"local_only", "approved_services"})
+
+# Conflict intake is deliberately small and exact.  Names are encrypted at
+# rest; matching decrypts them only inside the trusted WorldModel transaction
+# and never returns the matching matter to an ordinary caller.  Alias/fuzzy
+# research remains an attorney workflow rather than a guessed automated join.
+MATTER_PARTY_ROLES = frozenset({
+    "client", "adverse", "related", "witness", "other",
+})
+
+
+class PotentialConflict(RuntimeError):
+    """A prospective client or party matches a protected firm party record."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "potential conflict detected; intake requires conflicts-counsel review"
+        )
+
+
+def _conflict_name_key(value: str) -> str:
+    """Conservative exact-name key used only after decrypting protected rows.
+
+    Unicode compatibility normalization, case folding, and punctuation/space
+    collapse catch ordinary presentation differences (``ACME, Inc.`` versus
+    ``acme inc``).  Common entity suffixes are retained: removing them would
+    make distinct legal entities collide and create a misleading clearance.
+    """
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(
+        "".join(ch if ch.isalnum() else " " for ch in normalized).split()
+    )
 
 
 def _synchronous_mode() -> str:
@@ -90,16 +146,31 @@ CREATE TABLE IF NOT EXISTS goals (
     project_id INTEGER
 );
 
--- v19 projects ("matters"): a workspace grouping related goals (a close cycle,
--- an audit, a deal). name + description are encrypted at rest like goal content;
--- owner/domain/status are plaintext for listing + filtering. Goals point at one
--- via goals.project_id (nullable; a goal need not belong to a project).
+-- v35 clients are deliberately minimal.  Their name is encrypted like matter
+-- content and is exposed only through a principal's accessible matters.
+CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('prospective','active','closed','declined')),
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+
+-- Projects are the physical matter row.  name, description, matter number,
+-- jurisdiction and client name are encrypted at rest.  owner is provenance,
+-- never the ACL; matter_memberships is the ethical wall.
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     description TEXT,
     owner TEXT NOT NULL DEFAULT '',
     domain TEXT NOT NULL DEFAULT '',
+    client_id INTEGER REFERENCES clients(id),
+    matter_number TEXT NOT NULL DEFAULT '',
+    jurisdiction TEXT NOT NULL DEFAULT '',
+    egress_mode TEXT NOT NULL DEFAULT 'local_only'
+        CHECK(egress_mode IN ('local_only','approved_services')),
     status TEXT NOT NULL DEFAULT 'active',
     created_at REAL NOT NULL
 );
@@ -116,8 +187,27 @@ CREATE TABLE IF NOT EXISTS share_links (
     created_by TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     expires_at REAL,
+    approved_updated_at REAL,
+    approved_sha256 TEXT,
     revoked INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS release_audit_outbox (
+    event_id TEXT PRIMARY KEY,
+    goal_id INTEGER NOT NULL REFERENCES goals(id),
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    destination_class TEXT NOT NULL,
+    deliverable_updated_at REAL NOT NULL,
+    deliverable_sha256 TEXT NOT NULL,
+    share_link_id INTEGER REFERENCES share_links(id),
+    expires_at REAL,
+    created_at REAL NOT NULL,
+    delivered_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_release_audit_outbox_pending
+    ON release_audit_outbox(delivered_at, goal_id);
 
 CREATE INDEX IF NOT EXISTS idx_goals_status     ON goals(status);
 CREATE INDEX IF NOT EXISTS idx_goals_updated_at ON goals(updated_at);
@@ -142,6 +232,37 @@ CREATE TABLE IF NOT EXISTS signoffs (
     note TEXT,
     created_at REAL NOT NULL
 );
+
+-- Client/adverse/related names used for pre-open conflicts checks.  Names are
+-- encrypted and matches are returned only as an opaque yes/no boundary.
+CREATE TABLE IF NOT EXISTS matter_parties (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN
+        ('client','adverse','related','witness','other')),
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_matter_parties_project
+    ON matter_parties(project_id, role);
+
+-- v34 signed-audit outbox for attorney review decisions. The signoff and this
+-- intent commit together; release stays blocked until ``delivered_at`` proves
+-- that the exact goal version + result digest reached the append-only chain.
+CREATE TABLE IF NOT EXISTS signoff_audit_outbox (
+    event_id TEXT PRIMARY KEY,
+    goal_id INTEGER NOT NULL REFERENCES goals(id),
+    decision TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    deliverable_updated_at REAL NOT NULL,
+    deliverable_sha256 TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    delivered_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_signoff_audit_outbox_pending
+    ON signoff_audit_outbox(delivered_at, goal_id);
 
 -- v18 artifacts: versioned, kind-tagged deliverable artifacts a goal produces
 -- (markdown / code / table / text), distinct from the single goal.result blob.
@@ -273,9 +394,9 @@ CREATE TABLE IF NOT EXISTS goal_events (
 CREATE INDEX IF NOT EXISTS idx_goal_events_goal_id_id ON goal_events(goal_id, id);
 CREATE INDEX IF NOT EXISTS idx_goal_events_ts          ON goal_events(ts);
 
--- v0.2 multi-turn: per-channel-user conversation threads.
--- (channel, user_id) is the natural key so the same iMessage user
--- across separate Maverick goals lands in a single conversation.
+-- Legacy auth-off conversation history.  Firm chat uses the physically
+-- separate matter_conversations/matter_turns tables below so the historical
+-- two-column UNIQUE constraint can never collapse two client matters.
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel TEXT NOT NULL,
@@ -297,6 +418,48 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_conv_id ON turns(conversation_id, id);
+
+-- v36 secure firm chat: a mandatory immutable matter boundary and a distinct
+-- turn table.  Keeping this additive avoids weakening old-replica safety and
+-- makes accidental calls to the legacy conversation methods unable to read a
+-- matter conversation by id.
+CREATE TABLE IF NOT EXISTS matter_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    UNIQUE(channel, user_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matter_conversations_last_seen
+    ON matter_conversations(last_seen);
+
+CREATE TABLE IF NOT EXISTS matter_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL
+        REFERENCES matter_conversations(id) ON DELETE CASCADE,
+    goal_id INTEGER REFERENCES goals(id),
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_matter_turns_conv_id
+    ON matter_turns(conversation_id, id);
+
+-- Human feedback is protected matter data, not a deployment-global telemetry
+-- file.  One current row per goal is enough for the local learning signal.
+CREATE TABLE IF NOT EXISTS goal_feedback (
+    goal_id INTEGER PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    rating TEXT NOT NULL CHECK(rating IN ('up','down')),
+    value REAL NOT NULL CHECK(value >= 0 AND value <= 1),
+    note TEXT NOT NULL DEFAULT '',
+    decided_by TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goal_feedback_project
+    ON goal_feedback(project_id, updated_at);
 
 -- v0.2 attachments: files/images uploaded with a goal.
 -- The actual bytes live on disk under ~/.maverick/attachments/<goal>/<sha>;
@@ -385,10 +548,9 @@ CREATE INDEX IF NOT EXISTS idx_goals_status_updated
 CREATE INDEX IF NOT EXISTS idx_goals_parent
     ON goals(parent_id, created_at);
 
--- v25 fleet learning store (docs/proposals/fleet-learning-state.md, phase 1):
--- the self-harness addenda / provenance / transfer tried-memory as shared
--- tables, so a multi-host fleet learns as one. Written only when
--- [self_harness] store = "world"; empty tables otherwise.
+-- v25 retained self-harness addenda and provenance. Firm secure mode stores
+-- authenticated ciphertext under exact matter + hashed-owner keys. Written
+-- only when [self_harness] store = "world"; empty tables otherwise.
 CREATE TABLE IF NOT EXISTS harness_addenda (
     key        TEXT PRIMARY KEY,
     block      TEXT NOT NULL,
@@ -399,12 +561,8 @@ CREATE TABLE IF NOT EXISTS harness_line_meta (
     record     TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
-CREATE TABLE IF NOT EXISTS harness_transfer_tried (
-    line_id TEXT PRIMARY KEY,
-    ts      REAL NOT NULL
-);
 
--- v26 fleet learning store, phase 2: the eval-corpus family (live cases,
+-- v26 retained exact-matter eval-corpus family (live cases,
 -- harvest pending, reject memory, plus "extra" rows preserving a live file's
 -- non-list top-level entries). seq preserves row order (review indexes are
 -- positional). Written only when [self_harness] store = "world".
@@ -543,12 +701,10 @@ MIGRATIONS: dict[int, list[str]] = {
     # exists only to keep the SQLite head at v24 to match the Postgres ladder
     # (which adds the columns at v24). See migration_governance head-parity gate.
     24: [],
-    # v25 fleet learning store: the harness_* tables are in SCHEMA (idempotent
-    # CREATE, applied on every open); listed here so existing DBs bump the
-    # version, matching the v9/v15/v22 pattern and the Postgres ladder.
+    # v25 original self-harness state tables. Retained as a historical no-op so
+    # existing databases keep a monotonic migration sequence.
     25: [],
-    # v26 fleet learning store phase 2: harness_corpus is in SCHEMA (idempotent
-    # CREATE); listed here so existing DBs bump the version.
+    # v26 adds the evaluated-corpus store used by offline per-matter learning.
     26: [],
     # v27 cache-token spend columns: Budget breaks out cache_read/cache_write
     # tokens (priced at 0.1x / 1.25-2x) but the episode row dropped them, so
@@ -602,7 +758,165 @@ MIGRATIONS: dict[int, list[str]] = {
     # write clock and advances on every upsert, so its matching migration is a
     # no-op that keeps the governed backend ladders at the same release head.
     31: [],
+    # v32 ethical-wall boundary: projects are the current physical matter row,
+    # but their legacy scalar ``owner`` was never a membership/ACL model.  An
+    # exact principal membership is now required to see or mutate matter-bound
+    # work.  Existing non-ownerless projects backfill their owner as the
+    # responsible attorney; ownerless legacy projects deliberately receive no
+    # ambient member and therefore fail closed until an operator assigns one.
+    32: [
+        "CREATE TABLE IF NOT EXISTS matter_memberships ("
+        " project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,"
+        " principal TEXT NOT NULL,"
+        " role TEXT NOT NULL CHECK(role IN "
+        " ('responsible_attorney','attorney','staff','viewer')),"
+        " active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
+        " added_by TEXT NOT NULL DEFAULT '',"
+        " created_at REAL NOT NULL,"
+        " PRIMARY KEY (project_id, principal))",
+        "CREATE INDEX IF NOT EXISTS idx_matter_memberships_principal "
+        "ON matter_memberships(principal, active, project_id)",
+        "INSERT OR IGNORE INTO matter_memberships("
+        " project_id, principal, role, active, added_by, created_at) "
+        "SELECT id, owner, 'responsible_attorney', 1, 'migration:v32', "
+        "created_at FROM projects WHERE owner <> ''",
+    ],
+    # v33 matter-specific confidentiality posture.  Existing matters and new
+    # installs default to local-only; allowing a contracted service still
+    # requires both an explicit matter decision and the deployment's exact
+    # provider/host allow-list.
+    33: [
+        "ALTER TABLE projects ADD COLUMN egress_mode TEXT NOT NULL "
+        "DEFAULT 'local_only' CHECK(egress_mode IN "
+        "('local_only','approved_services'))",
+    ],
+    # v34 legal signoff/audit atomicity.  The human decision is not a release
+    # credential until its exact deliverable version and SHA-256 digest are in
+    # the signed audit chain.
+    34: [
+        "CREATE TABLE IF NOT EXISTS signoff_audit_outbox ("
+        " event_id TEXT PRIMARY KEY,"
+        " goal_id INTEGER NOT NULL REFERENCES goals(id),"
+        " decision TEXT NOT NULL,"
+        " decided_by TEXT NOT NULL,"
+        " deliverable_updated_at REAL NOT NULL,"
+        " deliverable_sha256 TEXT NOT NULL,"
+        " created_at REAL NOT NULL,"
+        " delivered_at REAL)",
+        "CREATE INDEX IF NOT EXISTS idx_signoff_audit_outbox_pending "
+        "ON signoff_audit_outbox(delivered_at, goal_id)",
+    ],
+    # v35 minimal firm intake: a durable client row, required legal-matter
+    # metadata, and encrypted conflict parties.  Existing legacy projects keep
+    # NULL/blank metadata and therefore cannot be selected by the authenticated
+    # intake workflow until explicitly migrated by an attorney.
+    35: [
+        "CREATE TABLE IF NOT EXISTS clients ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " name TEXT NOT NULL,"
+        " status TEXT NOT NULL DEFAULT 'active' CHECK(status IN "
+        " ('prospective','active','closed','declined')),"
+        " created_by TEXT NOT NULL DEFAULT '',"
+        " created_at REAL NOT NULL)",
+        "ALTER TABLE projects ADD COLUMN client_id INTEGER REFERENCES clients(id)",
+        "ALTER TABLE projects ADD COLUMN matter_number TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE projects ADD COLUMN jurisdiction TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS idx_projects_client ON projects(client_id)",
+        "CREATE TABLE IF NOT EXISTS matter_parties ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,"
+        " name TEXT NOT NULL,"
+        " role TEXT NOT NULL CHECK(role IN "
+        " ('client','adverse','related','witness','other')),"
+        " created_by TEXT NOT NULL DEFAULT '',"
+        " created_at REAL NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_matter_parties_project "
+        "ON matter_parties(project_id, role)",
+        "UPDATE matter_memberships SET active = 0 "
+        "WHERE principal = 'user:dashboard-static-bearer'",
+    ],
+    # v36 ethical-wall chat isolation.  The old natural key mixed every matter
+    # discussed by one user/channel into a single prompt history.  A physically
+    # separate secure table is additive (old replicas can still read their
+    # legacy table) and makes matter id mandatory for all firm-chat rows.
+    36: [
+        "CREATE TABLE IF NOT EXISTS matter_conversations ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " channel TEXT NOT NULL,"
+        " user_id TEXT NOT NULL,"
+        " project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,"
+        " created_at REAL NOT NULL,"
+        " last_seen REAL NOT NULL,"
+        " UNIQUE(channel, user_id, project_id))",
+        "CREATE INDEX IF NOT EXISTS idx_matter_conversations_last_seen "
+        "ON matter_conversations(last_seen)",
+        "CREATE TABLE IF NOT EXISTS matter_turns ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " conversation_id INTEGER NOT NULL "
+        "REFERENCES matter_conversations(id) ON DELETE CASCADE,"
+        " goal_id INTEGER REFERENCES goals(id),"
+        " role TEXT NOT NULL,"
+        " content TEXT NOT NULL,"
+        " ts REAL NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_matter_turns_conv_id "
+        "ON matter_turns(conversation_id, id)",
+    ],
+    # v37 feedback is matter-bound, encrypted, and authorized in the same SQL
+    # transaction as each read/write.  The obsolete plaintext NDJSON store is
+    # intentionally not imported because it carried no trustworthy matter ACL.
+    37: [
+        "CREATE TABLE IF NOT EXISTS goal_feedback ("
+        " goal_id INTEGER PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,"
+        " project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,"
+        " rating TEXT NOT NULL CHECK(rating IN ('up','down')),"
+        " value REAL NOT NULL CHECK(value >= 0 AND value <= 1),"
+        " note TEXT NOT NULL DEFAULT '',"
+        " decided_by TEXT NOT NULL,"
+        " updated_at REAL NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_goal_feedback_project "
+        "ON goal_feedback(project_id, updated_at)",
+    ],
+    # v38 each public share is permanently bound to the exact approved bytes;
+    # legacy rows have NULL commitments and are therefore inert.  The token and
+    # signed-audit intent commit atomically, and resolution additionally
+    # requires proof that the event reached the append-only audit chain.
+    38: [
+        "ALTER TABLE share_links ADD COLUMN approved_updated_at REAL",
+        "ALTER TABLE share_links ADD COLUMN approved_sha256 TEXT",
+        "CREATE TABLE IF NOT EXISTS release_audit_outbox ("
+        " event_id TEXT PRIMARY KEY,"
+        " goal_id INTEGER NOT NULL REFERENCES goals(id),"
+        " project_id INTEGER NOT NULL REFERENCES projects(id),"
+        " actor TEXT NOT NULL,"
+        " action TEXT NOT NULL,"
+        " destination_class TEXT NOT NULL,"
+        " deliverable_updated_at REAL NOT NULL,"
+        " deliverable_sha256 TEXT NOT NULL,"
+        " share_link_id INTEGER REFERENCES share_links(id),"
+        " expires_at REAL,"
+        " created_at REAL NOT NULL,"
+        " delivered_at REAL)",
+        "CREATE INDEX IF NOT EXISTS idx_release_audit_outbox_pending "
+        "ON release_audit_outbox(delivered_at, goal_id)",
+    ],
+    # v39 retires the obsolete fleet-transfer tried-memory. The retained
+    # operator-only self-harness evaluates and promotes within one exact matter
+    # and owner scope; it never transfers candidates across models or matters.
+    # This DROP is intentionally classified as an offline maintenance step.
+    39: ["DROP TABLE IF EXISTS harness_transfer_tried"],
+    # v40 seals artifact titles like every other client/model-derived field.
+    # Randomized title ciphertext cannot drive version equality, so a keyed,
+    # domain-separated digest is stored beside it. Legacy rows remain blocked
+    # from new version writes until `maverick encryption migrate` backfills the
+    # digest from authenticated/decrypted title bytes.
+    40: [
+        "ALTER TABLE artifacts ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_goal_title "
+        "ON artifacts(goal_id, title_key, version)",
+    ],
 }
+
+_SECURE_DELETE_MIGRATION_VERSIONS = frozenset({39})
 
 
 @dataclass
@@ -675,6 +989,41 @@ class ApprovalAuditEvent:
         )
 
 
+@dataclass(frozen=True)
+class SignoffAuditEvent:
+    """One exact attorney decision waiting for signed-audit delivery."""
+
+    event_id: str
+    goal_id: int
+    decision: str
+    decided_by: str
+    deliverable_updated_at: float
+    deliverable_sha256: str
+    created_at: float
+    delivered_at: float | None
+
+
+def _signoff_audit_event_id(
+    tenant_id: str | None,
+    goal_id: int,
+    decision: str,
+    decided_by: str,
+    deliverable_updated_at: float,
+    deliverable_sha256: str,
+) -> str:
+    """Stable framed identity for an exact reviewed deliverable."""
+    parts = (
+        (tenant_id or "").encode("utf-8"),
+        str(int(goal_id)).encode("ascii"),
+        decision.encode("ascii"),
+        decided_by.encode("utf-8"),
+        float(deliverable_updated_at).hex().encode("ascii"),
+        deliverable_sha256.encode("ascii"),
+    )
+    framed = b"".join(len(part).to_bytes(4, "big") + part for part in parts)
+    return "legal-signoff-v1-" + hashlib.sha256(framed).hexdigest()
+
+
 def _approval_audit_event_id(
     tenant_id: str | None,
     approval_id: int,
@@ -724,6 +1073,8 @@ class Conversation:
     user_id: str
     created_at: float
     last_seen: float
+    project_id: int | None = None
+    domain: str = ""
 
 
 @dataclass
@@ -923,6 +1274,14 @@ def _goal_events_from_rows(rows: list) -> list[GoalEvent]:
     return events
 
 
+def _attachment_from_row(row) -> Attachment:
+    """Build an attachment without exposing sealed metadata to callers."""
+    d = dict(row)
+    d["filename"] = _dec_field(d.get("filename"))
+    d["path"] = _dec_field(d.get("path"))
+    return Attachment(**_row_for(Attachment, d))
+
+
 def _episode_spend_from_row(row) -> EpisodeSpend:
     """Build an EpisodeSpend from a row, decrypting the sealed outcome field."""
     d = dict(row)
@@ -942,6 +1301,10 @@ def _approval_from_row(row) -> Approval:
 
 def _approval_audit_event_from_row(row) -> ApprovalAuditEvent:
     return ApprovalAuditEvent(**_row_for(ApprovalAuditEvent, dict(row)))
+
+
+def _signoff_audit_event_from_row(row) -> SignoffAuditEvent:
+    return SignoffAuditEvent(**_row_for(SignoffAuditEvent, dict(row)))
 
 
 def default_db_path() -> Path:
@@ -996,18 +1359,6 @@ class WorldModel:
         path, default_managed = _resolve_world_path(path)
         _managed_path = _managed_path or default_managed
         self.path = path
-        # Whether this DB already held data before we opened it. Captured BEFORE
-        # any file creation below so a brand-new world.db (every fresh
-        # install/tenant) is not mistaken for a legacy DB needing a
-        # pre-migration backup -- only a pre-existing, non-empty DB gets one.
-        try:
-            self._db_preexisted = (
-                str(path) != ":memory:"
-                and path.exists()
-                and path.stat().st_size > 0
-            )
-        except OSError:  # pragma: no cover -- stat race; assume fresh
-            self._db_preexisted = False
         # world.db holds all conversation content, messages, and facts.
         # The audit dir is locked to 0700/0600 but this DB inherited the
         # default umask (often world-readable 0644) — any local user or
@@ -1135,6 +1486,7 @@ class WorldModel:
                 break
             except sqlite3.OperationalError as e:
                 if "locked" not in str(e).lower():
+                    self.conn.rollback()
                     raise
                 try:
                     self.conn.rollback()
@@ -1219,6 +1571,24 @@ class WorldModel:
             with self._write_lock:
                 return self.conn.execute(sql, params).fetchone()
         return conn.execute(sql, params).fetchone()
+
+    @staticmethod
+    def _next_goal_updated_at(conn, goal_id: int) -> float:
+        """Return a strictly increasing optimistic version for one goal.
+
+        Wall-clock timestamps can repeat on coarse clocks and under fast test or
+        worker mutations. Sign-off uses ``updated_at`` as a compare-and-swap
+        version, so equality across two payloads would authorize stale bytes.
+        The database write transaction serializes this read/increment.
+        """
+        row = conn.execute(
+            "SELECT updated_at FROM goals WHERE id = ?",
+            (int(goal_id),),
+        ).fetchone()
+        wall = time.time()
+        if row is None:
+            return wall
+        return max(wall, float(row["updated_at"]) + 0.000001)
 
     def close(self) -> None:
         """Close the underlying SQLite connection.
@@ -1364,74 +1734,10 @@ class WorldModel:
             "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version)"
         )
 
-    def _backup_before_migration(self, from_version: int) -> None:
-        """Best-effort recovery snapshot taken before applying schema migrations.
-
-        Migrations are forward-only and irreversible; an interrupted upgrade can
-        leave the world DB partially migrated with no automated rollback. Before
-        the first pending migration in this open, snapshot the DB -- via SQLite's
-        online-backup API, so it is consistent even under WAL -- to a sibling
-        ``<db>.pre-migration-v<from>.bak`` an operator can restore from.
-
-        Best-effort and fail-open: a snapshot failure logs and does NOT block the
-        upgrade (startup must still proceed). Skipped for in-memory DBs and when
-        ``[world_model] pre_migration_backup = false``.
-        """
-        path = getattr(self, "path", None)
-        if path is None or str(path) == ":memory:":
-            return
-        # Only a pre-existing DB has data worth protecting; a fresh world.db
-        # "migrates" v1->current on first open but has nothing to lose.
-        if not getattr(self, "_db_preexisted", False):
-            return
-        try:
-            from .config import load_config
-            if load_config().get("world_model", {}).get(
-                "pre_migration_backup", True
-            ) is False:
-                return
-        except Exception:  # pragma: no cover -- config never blocks a migration
-            pass
-        dest = Path(f"{path}.pre-migration-v{from_version}.bak")
-        if dest.exists():  # idempotent across the open-time lock-retry loop
-            return
-        try:
-            # Quiesce the source first. executescript(SCHEMA)/_init_schema_version()
-            # leave an uncommitted write transaction holding a lock on self.conn,
-            # and SQLite's online backup of a connection that is mid-write-
-            # transaction deadlocks (observed as a hung migration). Commit so the
-            # snapshot is a clean, lock-free read of the pre-migration state; the
-            # migration loop opens its own writes immediately after.
-            try:
-                self.conn.commit()
-            except sqlite3.Error:  # pragma: no cover -- best-effort quiesce
-                pass
-            # Pre-create the sensitive backup with the shared create-time
-            # private ACL and no-follow atomic publication before SQLite opens
-            # it and writes any customer data.
-            atomic_create_bytes(dest, b"")
-            bdst = sqlite3.connect(str(dest))
-            try:
-                self.conn.backup(bdst)
-            finally:
-                bdst.close()  # sqlite3's context manager commits but never closes
-            ensure_private_file(dest)
-            log.info(
-                "world: wrote pre-migration backup %s (v%s -> v%s)",
-                dest, from_version, SCHEMA_VERSION,
-            )
-        except Exception as e:  # pragma: no cover -- snapshot is best-effort
-            log.warning(
-                "world: pre-migration backup failed (%s); proceeding with upgrade", e,
-            )
-
     def _apply_migrations(self) -> None:
         current = self.conn.execute(
             "SELECT version FROM schema_version LIMIT 1"
         ).fetchone()[0]
-        # A recovery point before any forward-only migration runs.
-        if current < SCHEMA_VERSION:
-            self._backup_before_migration(current)
         # Wave 12 hardening: temporarily bump busy_timeout for the
         # migration. CREATE INDEX on a multi-million-row table
         # (long-lived production DB) can take 30s+ and the 5s default
@@ -1446,18 +1752,58 @@ class WorldModel:
         except sqlite3.Error:
             prior = None
         try:
+            # An UPDATE/INSERT that affects zero rows does not reliably open a
+            # Python sqlite3 transaction. Start one explicitly so a failed DDL
+            # step cannot persist ahead of schema_version. This is the recovery
+            # boundary that replaces the former plaintext pre-migration copy.
+            if current < SCHEMA_VERSION and not self.conn.in_transaction:
+                self.conn.execute("BEGIN IMMEDIATE")
             while current < SCHEMA_VERSION:
                 next_version = current + 1
-                for stmt in MIGRATIONS.get(next_version, []):
-                    try:
-                        self.conn.execute(stmt)
-                    except sqlite3.OperationalError as e:
-                        msg = str(e).lower()
-                        if "duplicate column" not in msg:
-                            raise
-                self.conn.execute(
-                    "UPDATE schema_version SET version = ?", (next_version,),
-                )
+                prior_secure_delete: int | None = None
+                try:
+                    if next_version in _SECURE_DELETE_MIGRATION_VERSIONS:
+                        row = self.conn.execute(
+                            "PRAGMA secure_delete"
+                        ).fetchone()
+                        if row is None:
+                            raise sqlite3.OperationalError(
+                                "cannot establish secure_delete mode"
+                            )
+                        prior_secure_delete = int(row[0])
+                        self.conn.execute("PRAGMA secure_delete = ON")
+                        enabled_row = self.conn.execute(
+                            "PRAGMA secure_delete"
+                        ).fetchone()
+                        if enabled_row is None or int(enabled_row[0]) != 1:
+                            raise sqlite3.OperationalError(
+                                "cannot enable secure_delete for data retirement"
+                            )
+                    for stmt in MIGRATIONS.get(next_version, []):
+                        try:
+                            self.conn.execute(stmt)
+                        except sqlite3.OperationalError as e:
+                            msg = str(e).lower()
+                            if "duplicate column" not in msg:
+                                raise
+                    self.conn.execute(
+                        "UPDATE schema_version SET version = ?", (next_version,),
+                    )
+                finally:
+                    if prior_secure_delete is not None:
+                        self.conn.execute(
+                            f"PRAGMA secure_delete = {prior_secure_delete}"
+                        )
+                        restored = self.conn.execute(
+                            "PRAGMA secure_delete"
+                        ).fetchone()
+                        if (
+                            restored is None
+                            or int(restored[0]) != prior_secure_delete
+                        ):
+                            raise sqlite3.OperationalError(
+                                "cannot restore secure_delete mode"
+                            )
                 current = next_version
         finally:
             if prior is not None:
@@ -1486,6 +1832,61 @@ class WorldModel:
                  owner, domain or "", project_id),
             )
             return cur.lastrowid
+
+    def create_matter_goal(
+        self,
+        title: str,
+        description: str = "",
+        parent_id: int | None = None,
+        *,
+        principal: str,
+        domain: str,
+        project_id: int,
+    ) -> int | None:
+        """Create a matter-bound goal iff ``principal`` is an active member.
+
+        The membership predicate and INSERT are one SQLite statement. This is
+        deliberately stronger than checking :meth:`project_member_role` before
+        calling :meth:`create_goal`: another process can revoke membership in
+        between those calls. ``INSERT .. SELECT`` takes one database snapshot,
+        so either the active membership authorizes the bound row or no row is
+        written. The caller's exact principal is also the immutable provenance
+        owner; dashboard/global admin status has no role in this boundary.
+
+        Returns the new goal id, or ``None`` when the matter is missing or the
+        exact membership is not active.
+        """
+        member = str(principal or "").strip()
+        specialist = str(domain or "").strip()
+        if not _matter_principal_allowed(member):
+            raise ValueError("matter goal principal is required")
+        if not specialist:
+            raise ValueError("matter goal domain is required")
+        if isinstance(project_id, bool) or int(project_id) <= 0:
+            raise ValueError("matter goal project_id must be positive")
+        matter_id = int(project_id)
+        with self._writing() as conn:
+            now = time.time()
+            cur = conn.execute(
+                "INSERT INTO goals(parent_id, title, description, status, "
+                "created_at, updated_at, owner, domain, project_id) "
+                "SELECT ?, ?, ?, 'pending', ?, ?, ?, ?, p.id "
+                "FROM projects p JOIN matter_memberships mm "
+                "ON mm.project_id = p.id "
+                "WHERE p.id = ? AND mm.principal = ? AND mm.active = 1",
+                (
+                    parent_id,
+                    _enc_field(title),
+                    _enc_field(description),
+                    now,
+                    now,
+                    member,
+                    specialist,
+                    matter_id,
+                    member,
+                ),
+            )
+            return int(cur.lastrowid) if cur.rowcount == 1 else None
 
     def record_goal_origin(self, goal_id: int, kind: str, ref: str) -> None:
         """Record which automation spawned a goal, so the Automations page can
@@ -1517,6 +1918,51 @@ class WorldModel:
             (str(kind), str(ref)),
         )
         return {r["status"]: int(r["n"]) for r in rows}
+
+    @staticmethod
+    def _queue_current_signoff_audit(conn, goal_id: int) -> SignoffAuditEvent | None:
+        """Queue the exact current signoff/version in the caller's transaction."""
+        row = conn.execute(
+            "SELECT s.goal_id, s.decision, s.decided_by, s.created_at, "
+            "g.updated_at AS deliverable_updated_at, g.result "
+            "FROM signoffs s JOIN goals g ON g.id = s.goal_id "
+            "WHERE s.goal_id = ? AND g.status = 'done'",
+            (int(goal_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        result = _dec_field(row["result"]) or ""
+        digest = hashlib.sha256(result.encode("utf-8")).hexdigest()
+        event_id = _signoff_audit_event_id(
+            current_tenant_id(),
+            int(goal_id),
+            str(row["decision"]),
+            str(row["decided_by"]),
+            float(row["deliverable_updated_at"]),
+            digest,
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO signoff_audit_outbox("
+            "event_id, goal_id, decision, decided_by, deliverable_updated_at, "
+            "deliverable_sha256, created_at, delivered_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, NULL)",
+            (
+                event_id,
+                int(goal_id),
+                str(row["decision"]),
+                str(row["decided_by"]),
+                float(row["deliverable_updated_at"]),
+                digest,
+                float(row["created_at"]),
+            ),
+        )
+        queued = conn.execute(
+            "SELECT event_id, goal_id, decision, decided_by, "
+            "deliverable_updated_at, deliverable_sha256, created_at, "
+            "delivered_at FROM signoff_audit_outbox WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        return _signoff_audit_event_from_row(queued) if queued else None
 
     def record_signoff(self, goal_id: int, decision: str, *,
                        decided_by: str = "", note: str | None = None,
@@ -1558,6 +2004,8 @@ class WorldModel:
             )
             cur = conn.execute(sql, tuple(params))
             if cur.rowcount == 1:
+                if self._queue_current_signoff_audit(conn, int(goal_id)) is None:
+                    raise RuntimeError("sign-off audit intent was not queued")
                 return True
             # Zero rows is either an invalid/stale expected version or an
             # identical retry. Distinguish them while this write transaction
@@ -1584,8 +2032,38 @@ class WorldModel:
                 (int(goal_id),),
             ).fetchone()
             if current and current["decision"] == decision:
+                if self._queue_current_signoff_audit(conn, int(goal_id)) is None:
+                    raise RuntimeError("sign-off audit intent was not queued")
                 return False
             raise RuntimeError("sign-off transition failed")
+
+    def current_signoff_audit_event(self, goal_id: int) -> SignoffAuditEvent | None:
+        """Ensure and return the outbox event for the exact current signoff.
+
+        The insert is an upgrade seam for a v16-v33 signoff that predates the
+        v34 outbox. It never synthesizes a decision: it binds only the existing
+        authoritative row, current goal version, and current result digest.
+        """
+        with self._writing() as conn:
+            return self._queue_current_signoff_audit(conn, int(goal_id))
+
+    def mark_signoff_audit_delivered(
+        self,
+        event_id: str,
+        *,
+        delivered_at: float | None = None,
+    ) -> bool:
+        """Mark one exact legal decision delivered to the signed audit chain."""
+        with self._writing() as conn:
+            cur = conn.execute(
+                "UPDATE signoff_audit_outbox SET delivered_at = COALESCE("
+                "delivered_at, ?) WHERE event_id = ?",
+                (
+                    float(delivered_at) if delivered_at is not None else time.time(),
+                    str(event_id),
+                ),
+            )
+            return cur.rowcount == 1
 
     def signoff_for(self, goal_id: int) -> dict | None:
         """The current sign-off on a goal's deliverable, or ``None`` if it
@@ -1598,6 +2076,84 @@ class WorldModel:
             "decided_by": row["decided_by"], "note": _dec_field(row["note"]),
             "created_at": row["created_at"],
         }
+
+    def record_matter_feedback(
+        self,
+        goal_id: int,
+        *,
+        principal: str,
+        rating: str,
+        value: float,
+        note: str = "",
+    ) -> dict | None:
+        """Persist encrypted feedback iff the exact matter membership is active."""
+        actor = str(principal or "").strip()
+        if not _matter_principal_allowed(actor):
+            return None
+        if rating not in {"up", "down"}:
+            raise ValueError("rating must be 'up' or 'down'")
+        numeric = float(value)
+        if not math.isfinite(numeric) or not 0 <= numeric <= 1:
+            raise ValueError("feedback value must be between 0 and 1")
+        with self._writing() as conn:
+            now = time.time()
+            cur = conn.execute(
+                "INSERT INTO goal_feedback("
+                "goal_id, project_id, rating, value, note, decided_by, updated_at) "
+                "SELECT g.id, g.project_id, ?, ?, ?, ?, ? FROM goals g "
+                "JOIN matter_memberships mm ON mm.project_id = g.project_id "
+                "WHERE g.id = ? AND g.project_id IS NOT NULL "
+                "AND mm.principal = ? AND mm.active = 1 "
+                "ON CONFLICT(goal_id) DO UPDATE SET "
+                "project_id=excluded.project_id, rating=excluded.rating, "
+                "value=excluded.value, note=excluded.note, "
+                "decided_by=excluded.decided_by, updated_at=excluded.updated_at",
+                (
+                    rating,
+                    numeric,
+                    _enc_field(str(note or "")[:500]),
+                    actor,
+                    now,
+                    int(goal_id),
+                    actor,
+                ),
+            )
+            if cur.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT gf.* FROM goal_feedback gf "
+                "JOIN matter_memberships mm ON mm.project_id = gf.project_id "
+                "WHERE gf.goal_id = ? AND mm.principal = ? AND mm.active = 1",
+                (int(goal_id), actor),
+            ).fetchone()
+        return self._feedback_from_row(row) if row else None
+
+    @staticmethod
+    def _feedback_from_row(row) -> dict:
+        return {
+            "goal_id": int(row["goal_id"]),
+            "project_id": int(row["project_id"]),
+            "rating": str(row["rating"]),
+            "value": float(row["value"]),
+            "note": _dec_field(row["note"]) or "",
+            "by": str(row["decided_by"]),
+            "ts": float(row["updated_at"]),
+        }
+
+    def matter_feedback_for_goal(
+        self, goal_id: int, *, principal: str,
+    ) -> dict | None:
+        """Read feedback only through the reader's current exact membership."""
+        actor = str(principal or "").strip()
+        if not _matter_principal_allowed(actor):
+            return None
+        row = self._read_one(
+            "SELECT gf.* FROM goal_feedback gf "
+            "JOIN matter_memberships mm ON mm.project_id = gf.project_id "
+            "WHERE gf.goal_id = ? AND mm.principal = ? AND mm.active = 1",
+            (int(goal_id), actor),
+        )
+        return self._feedback_from_row(row) if row else None
 
     def signoffs_for_goals(self, goal_ids) -> dict[int, str]:
         """Map ``goal_id -> decision`` for a batch of goals (the persona inbox,
@@ -1616,10 +2172,45 @@ class WorldModel:
     def add_artifact(self, goal_id: int, kind: str, title: str, content: str) -> int:
         """Record an artifact a goal produced (markdown / code / table / text).
         Re-using the same ``(goal_id, title)`` appends the next version, so the
-        UI can show history. ``title`` is a plaintext label (versioning keys on
-        it); ``content`` is encrypted at rest like other agent output."""
-        now = time.time()
+        UI can show history. ``title`` and ``content`` are encrypted at rest;
+        equality versioning uses a keyed, goal-scoped title digest."""
+        from .crypto_at_rest import (
+            at_rest_enabled,
+            is_sealed_str,
+            lookup_digest,
+            unseal_from_str,
+        )
+
+        clear_title = str(title or "")
+        title_purpose = f"artifact-title:goal:{int(goal_id)}"
+        title_key = lookup_digest(clear_title, purpose=title_purpose)
         with self._writing() as conn:
+            # Do not silently split a legacy title's version history. Every
+            # existing row for this goal must have a digest that matches its
+            # authenticated/decrypted title under the current key posture.
+            # `maverick encryption migrate` performs that explicit backfill.
+            existing = conn.execute(
+                "SELECT title, title_key FROM artifacts WHERE goal_id = ?",
+                (int(goal_id),),
+            ).fetchall()
+            for row in existing:
+                stored_title = str(row["title"] or "")
+                if at_rest_enabled():
+                    if not is_sealed_str(stored_title):
+                        raise RuntimeError(
+                            "artifact title migration required before versioning"
+                        )
+                    indexed_title = unseal_from_str(stored_title)
+                else:
+                    indexed_title = stored_title
+                expected_key = lookup_digest(
+                    indexed_title, purpose=title_purpose
+                )
+                if row["title_key"] != expected_key:
+                    raise RuntimeError(
+                        "artifact title-key migration required before versioning"
+                    )
+            now = self._next_goal_updated_at(conn, int(goal_id))
             # Compute the next version in the SAME statement as the INSERT so the
             # whole read-modify-write is atomic under SQLite's per-statement write
             # lock. A separate SELECT MAX(version)+1 then INSERT races ACROSS
@@ -1628,12 +2219,20 @@ class WorldModel:
             # processes assign the SAME version. The scalar subquery closes that
             # gap; mirrors the per-key serialization done in the Postgres backend.
             cur = conn.execute(
-                "INSERT INTO artifacts(goal_id, kind, title, content, version, created_at) "
-                "VALUES(?, ?, ?, ?, "
+                "INSERT INTO artifacts(goal_id, kind, title, title_key, content, "
+                "version, created_at) VALUES(?, ?, ?, ?, ?, "
                 "(SELECT COALESCE(MAX(version), 0) + 1 FROM artifacts "
-                " WHERE goal_id = ? AND title = ?), ?)",
-                (int(goal_id), str(kind or "text"), title or "", _enc_field(content),
-                 int(goal_id), title or "", now),
+                " WHERE goal_id = ? AND title_key = ?), ?)",
+                (
+                    int(goal_id),
+                    str(kind or "text"),
+                    _enc_field(clear_title),
+                    title_key,
+                    _enc_field(content),
+                    int(goal_id),
+                    title_key,
+                    now,
+                ),
             )
             # The goal timestamp is the optimistic release version used by
             # sign-off. Include artifact mutations in that version, not just
@@ -1652,12 +2251,26 @@ class WorldModel:
         """Every artifact version for a goal, ordered by title then version."""
         rows = self._read_all(
             "SELECT id, goal_id, kind, title, content, version, created_at "
-            "FROM artifacts WHERE goal_id = ? ORDER BY title, version",
+            "FROM artifacts WHERE goal_id = ? ORDER BY version",
             (int(goal_id),),
         )
-        return [{"id": r["id"], "goal_id": r["goal_id"], "kind": r["kind"],
-                 "title": r["title"] or "", "content": _dec_field(r["content"]) or "",
-                 "version": r["version"], "created_at": r["created_at"]} for r in rows]
+        titles = _dec_fields([r["title"] for r in rows])
+        contents = _dec_fields([r["content"] for r in rows])
+        artifacts = [
+            {
+                "id": row["id"],
+                "goal_id": row["goal_id"],
+                "kind": row["kind"],
+                "title": decoded_title or "",
+                "content": decoded_content or "",
+                "version": row["version"],
+                "created_at": row["created_at"],
+            }
+            for row, decoded_title, decoded_content in zip(
+                rows, titles, contents, strict=True
+            )
+        ]
+        return sorted(artifacts, key=lambda item: (item["title"], item["version"]))
 
     def latest_artifacts(self, goal_id: int) -> list[dict]:
         """The latest version of each titled artifact, with a ``versions`` count
@@ -1672,61 +2285,693 @@ class WorldModel:
     # ---- projects ("matters"): a workspace grouping related goals ----------
 
     def create_project(self, name: str, *, description: str = "", owner: str = "",
-                       domain: str = "") -> int:
-        """Create a project. ``name``/``description`` are encrypted at rest;
-        ``owner``/``domain`` are plaintext (listing + scoping)."""
+                       domain: str = "", egress_mode: str = "local_only") -> int:
+        """Create a matter and atomically enroll its creating principal.
+
+        ``owner`` remains plaintext provenance for legacy integrations.  It is
+        not the authorization boundary: access is granted only by an active
+        row in ``matter_memberships``.  Auth-off local callers may still pass
+        an empty owner; that creates no ambient membership and relies solely on
+        the explicit single-user compatibility path in the dashboard.
+        """
         now = time.time()
+        owner_principal = str(owner or "").strip()
+        if owner_principal and not _matter_principal_allowed(owner_principal):
+            raise ValueError("a shared credential cannot be a matter member")
+        mode = str(egress_mode or "").strip()
+        if mode not in MATTER_EGRESS_MODES:
+            raise ValueError(
+                "egress_mode must be 'local_only' or 'approved_services'"
+            )
         with self._writing() as conn:
             cur = conn.execute(
-                "INSERT INTO projects(name, description, owner, domain, status, created_at) "
-                "VALUES(?, ?, ?, ?, 'active', ?)",
-                (_enc_field(name), _enc_field(description), owner or "", domain or "", now),
+                "INSERT INTO projects(name, description, owner, domain, egress_mode, "
+                "status, created_at) VALUES(?, ?, ?, ?, ?, 'active', ?)",
+                (_enc_field(name), _enc_field(description), owner_principal,
+                 domain or "", mode, now),
+            )
+            project_id = int(cur.lastrowid)
+            if owner_principal:
+                conn.execute(
+                    "INSERT INTO matter_memberships("
+                    "project_id, principal, role, active, added_by, created_at) "
+                    "VALUES(?, ?, 'responsible_attorney', 1, ?, ?)",
+                    (project_id, owner_principal, owner_principal, now),
+                )
+            return project_id
+
+    @staticmethod
+    def _intake_text(value: str, label: str, *, max_length: int) -> str:
+        clean = str(value or "").strip()
+        if not clean:
+            raise ValueError(f"{label} is required")
+        if len(clean) > max_length or any(ord(ch) < 32 and ch not in "\t\n" for ch in clean):
+            raise ValueError(f"{label} is invalid")
+        return clean
+
+    @classmethod
+    def _intake_party_names(cls, values: Iterable[str]) -> list[str]:
+        names = [
+            cls._intake_text(value, "party name", max_length=200)
+            for value in values
+        ]
+        if len(names) > 50:
+            raise ValueError("no more than 50 parties may be added at intake")
+        return names
+
+    @staticmethod
+    def _begin_conflict_transaction(conn: sqlite3.Connection) -> None:
+        """Take SQLite's cross-process writer lock before conflict reads.
+
+        ``_writing`` serializes one WorldModel instance, but ordinary SQLite
+        transactions are deferred.  A SELECT-then-INSERT intake sequence on two
+        dashboard workers could therefore let both see a clear snapshot.  An
+        immediate transaction makes the clearance check and all ensuing rows a
+        single serializable decision across connections and processes.
+        """
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+
+    @staticmethod
+    def _accessible_client_row(
+        conn: sqlite3.Connection,
+        client_id: int,
+        principal: str,
+    ):
+        return conn.execute(
+            "SELECT c.id, c.name, c.status FROM clients c WHERE c.id = ? "
+            "AND EXISTS (SELECT 1 FROM projects p "
+            "JOIN matter_memberships mm ON mm.project_id = p.id "
+            "WHERE p.client_id = c.id AND mm.principal = ? AND mm.active = 1)",
+            (int(client_id), principal),
+        ).fetchone()
+
+    @staticmethod
+    def _assert_no_party_conflict(
+        conn: sqlite3.Connection,
+        candidate_names: Iterable[str],
+    ) -> None:
+        """Raise only an opaque conflict signal; never return the matched row."""
+        candidates = [_conflict_name_key(name) for name in candidate_names]
+        if any(not key for key in candidates) or len(set(candidates)) != len(candidates):
+            raise PotentialConflict
+        if not candidates:
+            return
+        protected = conn.execute(
+            "SELECT name FROM clients UNION ALL SELECT name FROM matter_parties"
+        ).fetchall()
+        candidate_keys = set(candidates)
+        for row in protected:
+            clear_name = _dec_field(row["name"])
+            # A strict encrypted store that cannot authenticate/decrypt one
+            # protected row cannot safely clear a new party against it.
+            if clear_name in {None, _UNSEALED_WITHHELD}:
+                raise PotentialConflict
+            if _conflict_name_key(clear_name) in candidate_keys:
+                raise PotentialConflict
+
+    def check_potential_conflicts(self, names: Iterable[str]) -> None:
+        """Opaque exact-name preflight, serialized with concurrent intakes.
+
+        This is advisory only: :meth:`create_client_matter` repeats the same
+        check in its write transaction.  No protected client, matter, or party
+        metadata is returned on either outcome.
+        """
+        candidates = self._intake_party_names(names)
+        if not candidates:
+            raise ValueError("at least one client or party name is required")
+        with self._writing() as conn:
+            self._begin_conflict_transaction(conn)
+            self._assert_no_party_conflict(conn, candidates)
+
+    def create_client_matter(
+        self,
+        name: str,
+        *,
+        principal: str,
+        domain: str,
+        matter_number: str,
+        jurisdiction: str,
+        description: str = "",
+        client_name: str = "",
+        client_id: int | None = None,
+        adverse_parties: Iterable[str] = (),
+    ) -> int:
+        """Atomically clear and open one client matter for an exact principal.
+
+        A new client and its client/adverse-party records commit with the matter
+        and responsible-attorney membership.  Reusing a client requires an
+        active membership in at least one of that client's existing matters;
+        nonexistent and cross-wall ids deliberately produce the same opaque
+        :class:`PotentialConflict` signal.
+        """
+        matter_name = self._intake_text(name, "matter name", max_length=120)
+        actor = self._intake_text(principal, "principal", max_length=255)
+        if not _matter_principal_allowed(actor):
+            raise ValueError("a shared credential cannot open a client matter")
+        legal_domain = self._intake_text(domain, "legal domain", max_length=120)
+        number = self._intake_text(matter_number, "matter number", max_length=120)
+        venue = self._intake_text(jurisdiction, "jurisdiction", max_length=120)
+        detail = str(description or "").strip()
+        if len(detail) > 16_000:
+            raise ValueError("matter description is invalid")
+        parties = self._intake_party_names(adverse_parties)
+        new_client_name = str(client_name or "").strip()
+        if (client_id is None) == (not new_client_name):
+            raise ValueError("choose either a new client or an existing client")
+        if client_id is not None and (
+            isinstance(client_id, bool) or int(client_id) <= 0
+        ):
+            raise ValueError("existing client is invalid")
+        if new_client_name:
+            new_client_name = self._intake_text(
+                new_client_name, "client name", max_length=200,
+            )
+
+        now = time.time()
+        with self._writing() as conn:
+            self._begin_conflict_transaction(conn)
+            if client_id is None:
+                self._assert_no_party_conflict(
+                    conn, [new_client_name, *parties],
+                )
+                cur = conn.execute(
+                    "INSERT INTO clients(name, status, created_by, created_at) "
+                    "VALUES(?, 'active', ?, ?)",
+                    (_enc_field(new_client_name), actor, now),
+                )
+                selected_client_id = int(cur.lastrowid)
+                selected_client_name = new_client_name
+            else:
+                client_row = self._accessible_client_row(
+                    conn, int(client_id), actor,
+                )
+                if client_row is None:
+                    raise PotentialConflict
+                selected_client_name = _dec_field(client_row["name"])
+                if selected_client_name in {None, _UNSEALED_WITHHELD}:
+                    raise PotentialConflict
+                self._assert_no_party_conflict(conn, parties)
+                selected_client_id = int(client_row["id"])
+
+            cur = conn.execute(
+                "INSERT INTO projects(name, description, owner, domain, client_id, "
+                "matter_number, jurisdiction, egress_mode, status, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, 'local_only', 'active', ?)",
+                (
+                    _enc_field(matter_name), _enc_field(detail), actor, legal_domain,
+                    selected_client_id, _enc_field(number), _enc_field(venue), now,
+                ),
+            )
+            project_id = int(cur.lastrowid)
+            conn.execute(
+                "INSERT INTO matter_memberships("
+                "project_id, principal, role, active, added_by, created_at) "
+                "VALUES(?, ?, 'responsible_attorney', 1, ?, ?)",
+                (project_id, actor, actor, now),
+            )
+            conn.execute(
+                "INSERT INTO matter_parties(project_id, name, role, created_by, created_at) "
+                "VALUES(?, ?, 'client', ?, ?)",
+                (project_id, _enc_field(selected_client_name), actor, now),
+            )
+            conn.executemany(
+                "INSERT INTO matter_parties(project_id, name, role, created_by, created_at) "
+                "VALUES(?, ?, 'adverse', ?, ?)",
+                [
+                    (project_id, _enc_field(party), actor, now)
+                    for party in parties
+                ],
+            )
+            return project_id
+
+    def list_clients(self, *, principal: str | None = None) -> list[dict]:
+        """Clients visible through active exact-principal matter membership."""
+        if principal is not None and not _matter_principal_allowed(principal):
+            return []
+        params: tuple[Any, ...] = ()
+        if principal is None:
+            sql = (
+                "SELECT c.id, c.name, c.status, c.created_by, c.created_at, "
+                "COUNT(DISTINCT p.id) AS matter_count FROM clients c "
+                "LEFT JOIN projects p ON p.client_id = c.id"
+            )
+        else:
+            # Join through the exact active membership as well as using it as
+            # the visibility predicate.  Counting every matter for an otherwise
+            # visible client would disclose the existence of walled-off matters.
+            sql = (
+                "SELECT c.id, c.name, c.status, c.created_by, c.created_at, "
+                "COUNT(DISTINCT p.id) AS matter_count FROM clients c "
+                "JOIN projects p ON p.client_id = c.id "
+                "JOIN matter_memberships mm ON mm.project_id = p.id "
+                "AND mm.principal = ? AND mm.active = 1"
+            )
+            params = (str(principal),)
+        sql += " GROUP BY c.id ORDER BY c.id DESC"
+        return [
+            {
+                "id": int(row["id"]),
+                "name": _dec_field(row["name"]) or "",
+                "status": row["status"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"],
+                "matter_count": int(row["matter_count"]),
+            }
+            for row in self._read_all(sql, params)
+        ]
+
+    def list_matter_parties(
+        self, project_id: int, *, principal: str | None = None,
+    ) -> list[dict]:
+        """Protected parties, optionally fetched through an exact SQL ACL."""
+        if principal is not None and not _matter_principal_allowed(principal):
+            return []
+        sql = (
+            "SELECT id, project_id, name, role, created_by, created_at "
+            "FROM matter_parties WHERE project_id = ?"
+        )
+        params: tuple[Any, ...] = (int(project_id),)
+        if principal is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM matter_memberships mm "
+                "WHERE mm.project_id = matter_parties.project_id "
+                "AND mm.principal = ? AND mm.active = 1)"
+            )
+            params += (str(principal),)
+        sql += " ORDER BY role, id"
+        rows = self._read_all(
+            sql,
+            params,
+        )
+        return [
+            {
+                "id": int(row["id"]),
+                "project_id": int(row["project_id"]),
+                "name": _dec_field(row["name"]) or "",
+                "role": row["role"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def add_matter_party(
+        self,
+        project_id: int,
+        name: str,
+        role: str,
+        *,
+        principal: str,
+    ) -> int | None:
+        """Conflict-check and add a party under atomic responsible-attorney ACL."""
+        party_name = self._intake_text(name, "party name", max_length=200)
+        party_role = str(role or "").strip().lower()
+        if party_role not in MATTER_PARTY_ROLES:
+            raise ValueError("invalid matter party role")
+        actor = str(principal or "").strip()
+        if not _matter_principal_allowed(actor):
+            return None
+        with self._writing() as conn:
+            self._begin_conflict_transaction(conn)
+            authorized = conn.execute(
+                "SELECT 1 FROM matter_memberships WHERE project_id = ? "
+                "AND principal = ? AND active = 1 AND role = 'responsible_attorney'",
+                (int(project_id), actor),
+            ).fetchone()
+            if authorized is None:
+                return None
+            self._assert_no_party_conflict(conn, [party_name])
+            cur = conn.execute(
+                "INSERT INTO matter_parties(project_id, name, role, created_by, created_at) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (int(project_id), _enc_field(party_name), party_role, actor, time.time()),
             )
             return int(cur.lastrowid)
 
     def _project_from_row(self, row) -> dict:
+        keys = set(row.keys())
         return {
             "id": row["id"], "name": _dec_field(row["name"]) or "",
             "description": _dec_field(row["description"]) or "",
             "owner": row["owner"], "domain": row["domain"],
+            "client_id": row["client_id"],
+            "client_name": (
+                _dec_field(row["client_name"]) or ""
+                if "client_name" in keys else ""
+            ),
+            "matter_number": _dec_field(row["matter_number"]) or "",
+            "jurisdiction": _dec_field(row["jurisdiction"]) or "",
+            "egress_mode": row["egress_mode"],
             "status": row["status"], "created_at": row["created_at"],
         }
 
-    def get_project(self, project_id: int) -> dict | None:
-        row = self._read_one("SELECT * FROM projects WHERE id = ?", (int(project_id),))
+    def set_project_egress_mode(
+        self,
+        project_id: int,
+        egress_mode: str,
+        *,
+        principal: str,
+    ) -> bool:
+        """Change a matter's egress posture under responsible-attorney control.
+
+        This is one atomic authorization + mutation statement.  A dashboard
+        administrator, former member, or ordinary attorney cannot loosen the
+        client's confidentiality boundary by racing a membership change.
+        """
+        mode = str(egress_mode or "").strip()
+        if mode not in MATTER_EGRESS_MODES:
+            raise ValueError(
+                "egress_mode must be 'local_only' or 'approved_services'"
+            )
+        member = str(principal or "").strip()
+        if not _matter_principal_allowed(member):
+            return False
+        with self._writing() as conn:
+            cur = conn.execute(
+                "UPDATE projects SET egress_mode = ? WHERE id = ? AND EXISTS ("
+                "SELECT 1 FROM matter_memberships mm WHERE mm.project_id = projects.id "
+                "AND mm.principal = ? AND mm.active = 1 "
+                "AND mm.role = 'responsible_attorney')",
+                (mode, int(project_id), member),
+            )
+            return cur.rowcount == 1
+
+    def get_project(
+        self, project_id: int, *, principal: str | None = None,
+    ) -> dict | None:
+        """Fetch/decrypt a matter, optionally under an exact SQL ACL predicate."""
+        if principal is not None and not _matter_principal_allowed(principal):
+            return None
+        sql = (
+            "SELECT projects.*, clients.name AS client_name FROM projects "
+            "LEFT JOIN clients ON clients.id = projects.client_id "
+            "WHERE projects.id = ?"
+        )
+        params: tuple[Any, ...] = (int(project_id),)
+        if principal is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM matter_memberships mm "
+                "WHERE mm.project_id = projects.id AND mm.principal = ? "
+                "AND mm.active = 1)"
+            )
+            params += (str(principal),)
+        row = self._read_one(sql, params)
         return self._project_from_row(row) if row else None
 
-    def list_projects(self, *, owner: str | None = None) -> list[dict]:
-        """All projects, newest first. ``owner``-scoped like :meth:`list_goals`
-        (owner is plaintext); each carries a ``goal_count``."""
-        sql = "SELECT * FROM projects"
+    def list_projects(
+        self, *, owner: str | None = None, principal: str | None = None,
+    ) -> list[dict]:
+        """Projects newest first, optionally restricted to an exact member.
+
+        ``owner`` remains a legacy/provenance filter for internal reports.
+        Dashboard authorization must pass ``principal``; the two predicates
+        compose when both are supplied.  Global administrators receive no
+        implicit exception here.
+        """
+        if principal is not None and not _matter_principal_allowed(principal):
+            return []
+        sql = (
+            "SELECT projects.*, clients.name AS client_name FROM projects "
+            "LEFT JOIN clients ON clients.id = projects.client_id"
+        )
+        clauses: list[str] = []
         params: tuple[Any, ...] = ()
         if owner is not None:
-            sql += " WHERE owner = ?"
-            params = (owner,)
+            clauses.append("projects.owner = ?")
+            params += (owner,)
+        if principal is not None:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM matter_memberships mm "
+                "WHERE mm.project_id = projects.id AND mm.principal = ? "
+                "AND mm.active = 1)"
+            )
+            params += (str(principal),)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY id DESC"
         out = []
         for row in self._read_all(sql, params):
             p = self._project_from_row(row)
-            cnt = self._read_one(
-                "SELECT COUNT(*) AS n FROM goals WHERE project_id = ?", (p["id"],))
+            count_sql = "SELECT COUNT(*) AS n FROM goals WHERE project_id = ?"
+            count_params: tuple[Any, ...] = (p["id"],)
+            if principal is not None:
+                count_sql += (
+                    " AND EXISTS (SELECT 1 FROM matter_memberships mm "
+                    "WHERE mm.project_id = goals.project_id AND mm.principal = ? "
+                    "AND mm.active = 1)"
+                )
+                count_params += (str(principal),)
+            cnt = self._read_one(count_sql, count_params)
             p["goal_count"] = int(cnt["n"]) if cnt else 0
             out.append(p)
         return out
 
-    def set_goal_project(self, goal_id: int, project_id: int | None) -> None:
-        """File a goal under a project (or clear it with ``None``)."""
+    def add_project_member(
+        self,
+        project_id: int,
+        principal: str,
+        role: str,
+        *,
+        added_by: str = "",
+    ) -> None:
+        """Grant or reactivate an exact-principal matter membership."""
+        member = str(principal or "").strip()
+        normalized_role = str(role or "").strip().lower()
+        if not _matter_principal_allowed(member):
+            if member in NON_HUMAN_MATTER_PRINCIPALS:
+                raise ValueError("a shared credential cannot be a matter member")
+            raise ValueError("matter member principal is required")
+        if normalized_role not in MATTER_MEMBERSHIP_ROLES:
+            raise ValueError(f"invalid matter membership role: {role!r}")
+        now = time.time()
         with self._writing() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (int(project_id),),
+            ).fetchone()
+            if exists is None:
+                raise KeyError(f"no such project: {int(project_id)}")
             conn.execute(
-                "UPDATE goals SET project_id = ?, updated_at = ? WHERE id = ?",
-                (int(project_id) if project_id is not None else None, time.time(), int(goal_id)),
+                "INSERT INTO matter_memberships("
+                "project_id, principal, role, active, added_by, created_at) "
+                "VALUES(?, ?, ?, 1, ?, ?) "
+                "ON CONFLICT(project_id, principal) DO UPDATE SET "
+                "role = excluded.role, active = 1, "
+                "added_by = excluded.added_by, created_at = excluded.created_at",
+                (int(project_id), member, normalized_role,
+                 str(added_by or "").strip(), now),
             )
+            if normalized_role not in {"responsible_attorney", "attorney"}:
+                conn.execute(
+                    "DELETE FROM signoffs WHERE decided_by = ? AND goal_id IN "
+                    "(SELECT id FROM goals WHERE project_id = ?)",
+                    (member, int(project_id)),
+                )
 
-    def project_status_counts(self, project_id: int) -> dict[str, int]:
-        """Member-goal counts keyed by status (the project summary)."""
+    def deactivate_project_member(self, project_id: int, principal: str) -> bool:
+        """Revoke a matter membership, preserving its audit-friendly row.
+
+        The final active responsible attorney cannot be removed.  A transfer
+        must enroll the replacement first, so a matter never becomes an
+        ownerless shared workspace by accident.
+        """
+        member = str(principal or "").strip()
+        if not member:
+            return False
+        with self._writing() as conn:
+            row = conn.execute(
+                "SELECT role, active FROM matter_memberships "
+                "WHERE project_id = ? AND principal = ?",
+                (int(project_id), member),
+            ).fetchone()
+            if row is None or not int(row["active"]):
+                return False
+            if row["role"] == "responsible_attorney":
+                other = conn.execute(
+                    "SELECT 1 FROM matter_memberships WHERE project_id = ? "
+                    "AND role = 'responsible_attorney' AND active = 1 "
+                    "AND principal <> ? LIMIT 1",
+                    (int(project_id), member),
+                ).fetchone()
+                if other is None:
+                    raise ValueError(
+                        "cannot revoke the matter's final responsible attorney"
+                    )
+            cur = conn.execute(
+                "UPDATE matter_memberships SET active = 0 "
+                "WHERE project_id = ? AND principal = ? AND active = 1",
+                (int(project_id), member),
+            )
+            if cur.rowcount == 1:
+                conn.execute(
+                    "DELETE FROM signoffs WHERE decided_by = ? AND goal_id IN "
+                    "(SELECT id FROM goals WHERE project_id = ?)",
+                    (member, int(project_id)),
+                )
+            return cur.rowcount == 1
+
+    def offboard_matter_principal(self, principal: str) -> dict[str, int]:
+        """Atomically revoke every matter ACL and signoff for one human.
+
+        Offboarding refuses while the person is the final responsible attorney
+        on any active matter.  Callers must assign a replacement first; the
+        transaction otherwise deactivates all memberships and destroys every
+        release authority derived from the principal's historical signoffs.
+        """
+        member = str(principal or "").strip()
+        if not _matter_principal_allowed(member):
+            raise ValueError("a named matter principal is required")
+        with self._writing() as conn:
+            stranded = conn.execute(
+                "SELECT 1 FROM matter_memberships mine "
+                "WHERE mine.principal = ? AND mine.active = 1 "
+                "AND mine.role = 'responsible_attorney' AND NOT EXISTS ("
+                "SELECT 1 FROM matter_memberships other "
+                "WHERE other.project_id = mine.project_id AND other.active = 1 "
+                "AND other.role = 'responsible_attorney' "
+                "AND other.principal <> mine.principal) LIMIT 1",
+                (member,),
+            ).fetchone()
+            if stranded is not None:
+                raise ValueError(
+                    "assign another responsible attorney before offboarding"
+                )
+            memberships = conn.execute(
+                "UPDATE matter_memberships SET active = 0 "
+                "WHERE principal = ? AND active = 1",
+                (member,),
+            ).rowcount
+            signoffs = conn.execute(
+                "DELETE FROM signoffs WHERE decided_by = ?", (member,)
+            ).rowcount
+            return {
+                "memberships": int(memberships),
+                "signoffs": int(signoffs),
+            }
+
+    def project_member_role(self, project_id: int, principal: str) -> str | None:
+        """Active role for an exact principal, or ``None`` (deny)."""
+        member = str(principal or "").strip()
+        if not _matter_principal_allowed(member):
+            return None
+        row = self._read_one(
+            "SELECT role FROM matter_memberships "
+            "WHERE project_id = ? AND principal = ? AND active = 1",
+            (int(project_id), member),
+        )
+        return str(row["role"]) if row else None
+
+    def list_project_members(
+        self,
+        project_id: int,
+        *,
+        include_inactive: bool = False,
+        principal: str | None = None,
+    ) -> list[dict]:
+        """Matter roster, optionally fetched through the reader's exact ACL."""
+        if principal is not None and not _matter_principal_allowed(principal):
+            return []
+        sql = (
+            "SELECT project_id, principal, role, active, added_by, created_at "
+            "FROM matter_memberships WHERE project_id = ? "
+            "AND principal <> 'user:dashboard-static-bearer'"
+        )
+        params: tuple[Any, ...] = (int(project_id),)
+        if principal is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM matter_memberships reader "
+                "WHERE reader.project_id = matter_memberships.project_id "
+                "AND reader.principal = ? AND reader.active = 1)"
+            )
+            params += (str(principal),)
+        if not include_inactive:
+            sql += " AND active = 1"
+        sql += " ORDER BY role, principal"
+        return [dict(row) for row in self._read_all(sql, params)]
+
+    def set_goal_project(
+        self,
+        goal_id: int,
+        project_id: int | None,
+        *,
+        principal: str | None = None,
+    ) -> bool:
+        """File a goal under a matter, with optional atomic ACL enforcement.
+
+        Internal/auth-off callers may omit ``principal``.  Authenticated
+        dashboard callers must provide it: the principal must be allowed to
+        access the goal's current location and be an active member of the
+        destination.  This keeps a revocation racing the request from becoming
+        a cross-matter write.
+        """
+        with self._writing() as conn:
+            gid = int(goal_id)
+            target_id = int(project_id) if project_id is not None else None
+            if principal is not None:
+                member = str(principal or "").strip()
+                if not _matter_principal_allowed(member):
+                    return False
+                goal = conn.execute(
+                    "SELECT owner, project_id FROM goals WHERE id = ?", (gid,),
+                ).fetchone()
+                if goal is None:
+                    return False
+                current_id = goal["project_id"]
+                if current_id is None:
+                    current_allowed = goal["owner"] == member
+                else:
+                    current_allowed = conn.execute(
+                        "SELECT 1 FROM matter_memberships WHERE project_id = ? "
+                        "AND principal = ? AND active = 1",
+                        (int(current_id), member),
+                    ).fetchone() is not None
+                if not current_allowed:
+                    return False
+                if target_id is not None:
+                    target_allowed = conn.execute(
+                        "SELECT 1 FROM matter_memberships WHERE project_id = ? "
+                        "AND principal = ? AND active = 1",
+                        (target_id, member),
+                    ).fetchone() is not None
+                    if not target_allowed:
+                        return False
+            elif target_id is not None:
+                # Even trusted internal callers may not create an orphaned
+                # reference to a nonexistent matter.
+                if conn.execute(
+                    "SELECT 1 FROM projects WHERE id = ?", (target_id,),
+                ).fetchone() is None:
+                    return False
+            version = self._next_goal_updated_at(conn, gid)
+            cur = conn.execute(
+                "UPDATE goals SET project_id = ?, updated_at = ? WHERE id = ?",
+                (target_id, version, gid),
+            )
+            if cur.rowcount == 1:
+                conn.execute("DELETE FROM signoffs WHERE goal_id = ?", (gid,))
+            return cur.rowcount == 1
+
+    def project_status_counts(
+        self, project_id: int, *, principal: str | None = None,
+    ) -> dict[str, int]:
+        """Matter goal counts, optionally fetched through an exact SQL ACL."""
+        if principal is not None and not _matter_principal_allowed(principal):
+            return {}
+        sql = (
+            "SELECT status, COUNT(*) AS n FROM goals WHERE project_id = ?"
+        )
+        params: tuple[Any, ...] = (int(project_id),)
+        if principal is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM matter_memberships mm "
+                "WHERE mm.project_id = goals.project_id AND mm.principal = ? "
+                "AND mm.active = 1)"
+            )
+            params += (str(principal),)
+        sql += " GROUP BY status"
         rows = self._read_all(
-            "SELECT status, COUNT(*) AS n FROM goals WHERE project_id = ? GROUP BY status",
-            (int(project_id),),
+            sql,
+            params,
         )
         return {r["status"]: int(r["n"]) for r in rows}
 
@@ -1749,9 +2994,13 @@ class WorldModel:
 
     def create_share_link(self, goal_id: int, *, created_by: str = "",
                           ttl_seconds: float | None = None) -> tuple[int, str]:
-        """Mint a read-only share link for a goal. Returns ``(id, clear_token)``;
-        only the token's SHA-256 is persisted, so the clear token is shown to the
-        creator exactly once and the DB never holds anything that grants access."""
+        """Create a legacy, deliberately inert share-link row.
+
+        Kept only so older local callers can migrate without an attribute error.
+        Rows created here have no approved-byte commitment or release-audit
+        intent, so :meth:`resolve_share_link` will never authorize them.  Firm
+        release code must use :meth:`create_bound_share_link`.
+        """
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         now = time.time()
@@ -1764,6 +3013,130 @@ class WorldModel:
             )
             return int(cur.lastrowid), token
 
+    def create_bound_share_link(
+        self,
+        goal_id: int,
+        *,
+        project_id: int,
+        actor: str,
+        deliverable_updated_at: float,
+        deliverable_sha256: str,
+        ttl_seconds: float | None = None,
+        allow_local_auth_off: bool = False,
+    ) -> tuple[int, str, dict[str, Any]]:
+        """Atomically mint a version-bound link and signed-audit intent.
+
+        The write transaction repeats the exact matter-membership, finished
+        goal, current approval, version, and byte-digest predicates proved at
+        the HTTP boundary.  The returned token remains inert until the caller
+        appends the returned privacy-minimized event to the signed audit chain
+        and acknowledges it with :meth:`mark_release_audit_delivered`.
+        """
+        gid = int(goal_id)
+        matter_id = int(project_id)
+        principal = str(actor or "").strip()
+        expected_digest = str(deliverable_sha256 or "").strip().lower()
+        if (
+            not _matter_principal_allowed(principal)
+            or matter_id <= 0
+            or len(expected_digest) != 64
+        ):
+            raise ValueError("invalid authorized share-link boundary")
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        now = time.time()
+        exp = now + float(ttl_seconds) if ttl_seconds else None
+        event_id = "release-" + secrets.token_urlsafe(24)
+        with self._writing() as conn:
+            if allow_local_auth_off and principal == "local":
+                row = conn.execute(
+                    "SELECT g.result, g.updated_at FROM goals g "
+                    "JOIN signoffs s ON s.goal_id = g.id AND s.decision = 'approved' "
+                    "WHERE g.id = ? AND g.project_id = ? AND g.status = 'done' "
+                    "AND g.updated_at = ?",
+                    (gid, matter_id, float(deliverable_updated_at)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT g.result, g.updated_at FROM goals g "
+                    "JOIN signoffs s ON s.goal_id = g.id AND s.decision = 'approved' "
+                    "JOIN matter_memberships mm ON mm.project_id = g.project_id "
+                    "AND mm.principal = ? AND mm.active = 1 "
+                    "AND mm.role IN ('responsible_attorney','attorney') "
+                    "WHERE g.id = ? AND g.project_id = ? AND g.status = 'done' "
+                    "AND g.updated_at = ?",
+                    (principal, gid, matter_id, float(deliverable_updated_at)),
+                ).fetchone()
+            if row is None:
+                raise ValueError("share authorization changed before commit")
+            current = _dec_field(row["result"]) or ""
+            current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+            if not secrets.compare_digest(current_digest, expected_digest):
+                raise ValueError("deliverable changed before share commit")
+            cur = conn.execute(
+                "INSERT INTO share_links(goal_id, token_sha256, created_by, "
+                "created_at, expires_at, approved_updated_at, approved_sha256) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    gid,
+                    token_hash,
+                    principal,
+                    now,
+                    exp,
+                    float(deliverable_updated_at),
+                    expected_digest,
+                ),
+            )
+            link_id = int(cur.lastrowid)
+            conn.execute(
+                "INSERT INTO release_audit_outbox(event_id, goal_id, project_id, "
+                "actor, action, destination_class, deliverable_updated_at, "
+                "deliverable_sha256, share_link_id, expires_at, created_at) "
+                "VALUES(?, ?, ?, ?, 'share_link', 'public_bearer_link', ?, ?, ?, ?, ?)",
+                (
+                    event_id,
+                    gid,
+                    matter_id,
+                    principal,
+                    float(deliverable_updated_at),
+                    expected_digest,
+                    link_id,
+                    exp,
+                    now,
+                ),
+            )
+        event = {
+            "event_id": event_id,
+            "goal_id": gid,
+            "matter_id": matter_id,
+            "actor": principal,
+            "action": "share_link",
+            "destination_class": "public_bearer_link",
+            "deliverable_updated_at": float(deliverable_updated_at),
+            "deliverable_sha256": expected_digest,
+            "share_link_id": link_id,
+            "expires_at": exp,
+        }
+        return link_id, token, event
+
+    def mark_release_audit_delivered(
+        self,
+        event_id: str,
+        *,
+        delivered_at: float | None = None,
+    ) -> bool:
+        """Acknowledge delivery of one exact release intent."""
+        with self._writing() as conn:
+            cur = conn.execute(
+                "UPDATE release_audit_outbox SET delivered_at = COALESCE("
+                "delivered_at, ?) WHERE event_id = ?",
+                (
+                    float(delivered_at) if delivered_at is not None else time.time(),
+                    str(event_id),
+                ),
+            )
+            return cur.rowcount == 1
+
     def resolve_share_link(self, token: str) -> int | None:
         """The goal_id a share token grants read access to, or ``None`` if the
         token is unknown, revoked, or expired. Lookup is by hash -- the clear
@@ -1772,12 +3145,29 @@ class WorldModel:
             return None
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         row = self._read_one(
-            "SELECT goal_id, expires_at, revoked FROM share_links WHERE token_sha256 = ?",
+            "SELECT sl.goal_id, sl.expires_at, sl.revoked, "
+            "sl.approved_updated_at, sl.approved_sha256, g.updated_at, g.result, "
+            "rao.delivered_at AS audit_delivered_at "
+            "FROM share_links sl JOIN goals g ON g.id = sl.goal_id "
+            "LEFT JOIN release_audit_outbox rao ON rao.share_link_id = sl.id "
+            "WHERE sl.token_sha256 = ?",
             (token_hash,),
         )
-        if not row or row["revoked"]:
+        if (
+            not row
+            or row["revoked"]
+            or row["approved_updated_at"] is None
+            or not row["approved_sha256"]
+            or row["audit_delivered_at"] is None
+        ):
             return None
         if row["expires_at"] is not None and float(row["expires_at"]) < time.time():
+            return None
+        if float(row["updated_at"]) != float(row["approved_updated_at"]):
+            return None
+        current = _dec_field(row["result"]) or ""
+        current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if not secrets.compare_digest(current_digest, str(row["approved_sha256"])):
             return None
         return int(row["goal_id"])
 
@@ -1785,18 +3175,22 @@ class WorldModel:
         """Share links for a goal (manage UI), newest first. Tokens are NOT
         returned (only the hash exists); each row carries its lifecycle state."""
         rows = self._read_all(
-            "SELECT id, created_by, created_at, expires_at, revoked FROM share_links "
-            "WHERE goal_id = ? ORDER BY id DESC",
+            "SELECT sl.id, sl.created_by, sl.created_at, sl.expires_at, "
+            "sl.revoked, sl.approved_updated_at, rao.delivered_at "
+            "FROM share_links sl LEFT JOIN release_audit_outbox rao "
+            "ON rao.share_link_id = sl.id WHERE sl.goal_id = ? ORDER BY sl.id DESC",
             (int(goal_id),),
         )
         now = time.time()
         out = []
         for r in rows:
             expired = r["expires_at"] is not None and float(r["expires_at"]) < now
+            bound = r["approved_updated_at"] is not None and r["delivered_at"] is not None
             out.append({
                 "id": r["id"], "created_by": r["created_by"], "created_at": r["created_at"],
                 "expires_at": r["expires_at"], "revoked": bool(r["revoked"]),
-                "expired": expired, "active": not r["revoked"] and not expired,
+                "expired": expired,
+                "active": bound and not r["revoked"] and not expired,
             })
         return out
 
@@ -1820,27 +3214,36 @@ class WorldModel:
         Plain-text column (pack names are operator-defined identifiers, not
         user content) so learning loops can filter without decrypting."""
         with self._writing() as conn:
-            conn.execute(
-                "UPDATE goals SET domain = ? WHERE id = ?",
-                (domain or "", goal_id),
+            version = self._next_goal_updated_at(conn, int(goal_id))
+            cur = conn.execute(
+                "UPDATE goals SET domain = ?, updated_at = ? WHERE id = ?",
+                (domain or "", version, goal_id),
             )
+            if cur.rowcount == 1:
+                conn.execute("DELETE FROM signoffs WHERE goal_id = ?", (int(goal_id),))
 
     def set_goal_title(self, goal_id: int, title: str) -> None:
         """Rename a goal, sealing the title column like ``create_goal`` does."""
         with self._writing() as conn:
-            conn.execute(
+            version = self._next_goal_updated_at(conn, int(goal_id))
+            cur = conn.execute(
                 "UPDATE goals SET title = ?, updated_at = ? WHERE id = ?",
-                (_enc_field(title), time.time(), int(goal_id)),
+                (_enc_field(title), version, int(goal_id)),
             )
+            if cur.rowcount == 1:
+                conn.execute("DELETE FROM signoffs WHERE goal_id = ?", (int(goal_id),))
 
     def set_goal_parent(self, goal_id: int, parent_id: int | None) -> None:
         """Move a goal under a new parent (or to the root with ``None``)."""
         with self._writing() as conn:
-            conn.execute(
+            version = self._next_goal_updated_at(conn, int(goal_id))
+            cur = conn.execute(
                 "UPDATE goals SET parent_id = ?, updated_at = ? WHERE id = ?",
                 (int(parent_id) if parent_id is not None else None,
-                 time.time(), int(goal_id)),
+                 version, int(goal_id)),
             )
+            if cur.rowcount == 1:
+                conn.execute("DELETE FROM signoffs WHERE goal_id = ?", (int(goal_id),))
 
     def goal_parent_pairs(self) -> list[tuple[int, int | None]]:
         """``(id, parent_id)`` for every goal -- the edge list for tree/cycle checks."""
@@ -1849,9 +3252,10 @@ class WorldModel:
 
     def set_goal_status(self, goal_id: int, status: str, result: str | None = None) -> None:
         with self._writing() as conn:
+            version = self._next_goal_updated_at(conn, int(goal_id))
             cur = conn.execute(
                 "UPDATE goals SET status = ?, updated_at = ?, result = COALESCE(?, result) WHERE id = ?",
-                (status, time.time(), _enc_field(result), goal_id),
+                (status, version, _enc_field(result), goal_id),
             )
             # A sign-off is authority over one immutable terminal payload, not
             # over a goal id forever.  Reruns, failures, and any result rewrite
@@ -1919,6 +3323,8 @@ class WorldModel:
         status: str | None = None,
         *,
         owner: str | None = None,
+        accessible_by: str | None = None,
+        include_all_unfiled: bool = False,
         domain: str | None = None,
         project_id: int | None = None,
         limit: int | None = None,
@@ -1932,7 +3338,11 @@ class WorldModel:
         small ``limit`` to avoid loading every goal on every request;
         ``order='desc'`` lets the most-recent slice be fetched cheaply.
         ``domain`` scopes to one department (the pack a goal ran as) -- the
-        ``domain`` column is plaintext, so it filters in SQL.
+        ``domain`` column is plaintext, so it filters in SQL. ``accessible_by``
+        is the ethical-wall predicate: matter-bound rows require an exact
+        active membership; unfiled rows require exact ownership unless
+        ``include_all_unfiled`` is set for a legacy administrative work queue.
+        The latter never bypasses a matter membership.
         """
         direction = "DESC" if order.lower() == "desc" else "ASC"
         sql = "SELECT * FROM goals"
@@ -1944,6 +3354,28 @@ class WorldModel:
         if owner is not None:
             clauses.append("owner = ?")
             params = params + (owner,)
+        if accessible_by is not None:
+            principal = str(accessible_by)
+            if not _matter_principal_allowed(principal):
+                if include_all_unfiled:
+                    clauses.append("project_id IS NULL")
+                else:
+                    clauses.append("project_id IS NULL AND owner = ?")
+                    params += (principal,)
+            else:
+                member_clause = (
+                    "EXISTS (SELECT 1 FROM matter_memberships mm "
+                    "WHERE mm.project_id = goals.project_id "
+                    "AND mm.principal = ? AND mm.active = 1)"
+                )
+                if include_all_unfiled:
+                    clauses.append(f"(project_id IS NULL OR {member_clause})")
+                    params += (principal,)
+                else:
+                    clauses.append(
+                        f"((project_id IS NULL AND owner = ?) OR {member_clause})"
+                    )
+                    params += (principal, principal)
         if domain is not None:
             clauses.append("domain = ?")
             params = params + (domain,)
@@ -1964,6 +3396,8 @@ class WorldModel:
         query: str,
         *,
         owner: str | None = None,
+        accessible_by: str | None = None,
+        include_all_unfiled: bool = False,
         limit: int = 50,
         scan: int = 1000,
     ) -> list[Goal]:
@@ -1973,20 +3407,46 @@ class WorldModel:
         match plaintext. We fetch a bounded window of the most-recent goals
         (``scan``), decrypt them via ``_goal_from_row``, and filter in Python on
         a case-insensitive substring match -- the same scan-then-decrypt shape
-        as ``candidate_goals``. Owner-scoped like :meth:`list_goals`; returns up
-        to ``limit`` matches, newest first.
+        as ``candidate_goals``. Authorization mirrors :meth:`list_goals`;
+        matter-bound rows require exact active membership. Returns up to
+        ``limit`` matches, newest first.
         """
         q = (query or "").strip().lower()
         if not q:
             return []
         sql = (
             "SELECT id, parent_id, title, description, status, created_at, "
-            "updated_at, deadline, result, owner FROM goals"
+            "updated_at, deadline, result, owner, domain, project_id FROM goals"
         )
+        clauses: list[str] = []
         params: tuple[Any, ...] = ()
         if owner is not None:
-            sql += " WHERE owner = ?"
-            params = (owner,)
+            clauses.append("owner = ?")
+            params += (owner,)
+        if accessible_by is not None:
+            principal = str(accessible_by)
+            if not _matter_principal_allowed(principal):
+                if include_all_unfiled:
+                    clauses.append("project_id IS NULL")
+                else:
+                    clauses.append("project_id IS NULL AND owner = ?")
+                    params += (principal,)
+            else:
+                member_clause = (
+                    "EXISTS (SELECT 1 FROM matter_memberships mm "
+                    "WHERE mm.project_id = goals.project_id "
+                    "AND mm.principal = ? AND mm.active = 1)"
+                )
+                if include_all_unfiled:
+                    clauses.append(f"(project_id IS NULL OR {member_clause})")
+                    params += (principal,)
+                else:
+                    clauses.append(
+                        f"((project_id IS NULL AND owner = ?) OR {member_clause})"
+                    )
+                    params += (principal, principal)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY updated_at DESC LIMIT ?"
         params = params + (max(1, int(scan)),)
         rows = self._read_all(sql, params)
@@ -2125,6 +3585,9 @@ class WorldModel:
         limit: int = 50,
         goal_id: int | None = None,
         owner: str | None = None,
+        *,
+        accessible_by: str | None = None,
+        include_all_unfiled: bool = False,
     ) -> list[EpisodeSpend]:
         """Recent run-cost episodes, newest first.
 
@@ -2143,8 +3606,11 @@ class WorldModel:
             "COALESCE(e.cache_read_tokens, 0) AS cache_read_tokens, "
             "COALESCE(e.cache_write_tokens, 0) AS cache_write_tokens "
         )
-        join = ("FROM episodes e JOIN goals g ON e.goal_id = g.id "
-                if owner is not None else "FROM episodes e ")
+        join = (
+            "FROM episodes e JOIN goals g ON e.goal_id = g.id "
+            if owner is not None or accessible_by is not None
+            else "FROM episodes e "
+        )
         where, params = [], []
         if goal_id is not None:
             where.append("e.goal_id = ?")
@@ -2152,6 +3618,28 @@ class WorldModel:
         if owner is not None:
             where.append("g.owner = ?")
             params.append(owner)
+        if accessible_by is not None:
+            principal = str(accessible_by)
+            if not _matter_principal_allowed(principal):
+                if include_all_unfiled:
+                    where.append("g.project_id IS NULL")
+                else:
+                    where.append("g.project_id IS NULL AND g.owner = ?")
+                    params.append(principal)
+            else:
+                member_clause = (
+                    "EXISTS (SELECT 1 FROM matter_memberships mm "
+                    "WHERE mm.project_id = g.project_id AND mm.principal = ? "
+                    "AND mm.active = 1)"
+                )
+                if include_all_unfiled:
+                    where.append(f"(g.project_id IS NULL OR {member_clause})")
+                    params.append(principal)
+                else:
+                    where.append(
+                        f"((g.project_id IS NULL AND g.owner = ?) OR {member_clause})"
+                    )
+                    params.extend((principal, principal))
         sql = "SELECT " + cols + join
         if where:
             sql += "WHERE " + " AND ".join(where) + " "
@@ -2192,17 +3680,48 @@ class WorldModel:
             )
             return int(cur.rowcount or 0)
 
-    def total_spend(self, owner: str | None = None) -> dict[str, float]:
+    def total_spend(
+        self,
+        owner: str | None = None,
+        *,
+        accessible_by: str | None = None,
+        include_all_unfiled: bool = False,
+    ) -> dict[str, float]:
         """Aggregate spend. ``owner`` scopes to one principal's runs (join to
         the owning goal); ``None`` is the deployment-wide admin / auth-off view.
         """
-        join = ("FROM episodes e JOIN goals g ON e.goal_id = g.id "
-                if owner is not None else "FROM episodes e ")
+        join = (
+            "FROM episodes e JOIN goals g ON e.goal_id = g.id "
+            if owner is not None or accessible_by is not None
+            else "FROM episodes e "
+        )
         where = "WHERE e.ended_at IS NOT NULL"
-        params: tuple = ()
+        params: tuple[Any, ...] = ()
         if owner is not None:
             where += " AND g.owner = ?"
             params = (owner,)
+        if accessible_by is not None:
+            principal = str(accessible_by)
+            if not _matter_principal_allowed(principal):
+                if include_all_unfiled:
+                    where += " AND g.project_id IS NULL"
+                else:
+                    where += " AND g.project_id IS NULL AND g.owner = ?"
+                    params += (principal,)
+            else:
+                member_clause = (
+                    "EXISTS (SELECT 1 FROM matter_memberships mm "
+                    "WHERE mm.project_id = g.project_id AND mm.principal = ? "
+                    "AND mm.active = 1)"
+                )
+                if include_all_unfiled:
+                    where += f" AND (g.project_id IS NULL OR {member_clause})"
+                    params += (principal,)
+                else:
+                    where += (
+                        f" AND ((g.project_id IS NULL AND g.owner = ?) OR {member_clause})"
+                    )
+                    params += (principal, principal)
         row = self._read_one(
             "SELECT COALESCE(SUM(e.cost_dollars), 0) AS dollars, "
             "COALESCE(SUM(e.input_tokens), 0) AS in_tok, "
@@ -3188,15 +4707,17 @@ class WorldModel:
 
     # ----- conversations (multi-turn per channel user) -----
     def get_or_create_conversation(self, channel: str, user_id: str) -> Conversation:
-        """Idempotent: same (channel, user_id) always returns the same row.
-        last_seen is bumped on every call so prune_conversations can
-        retire ones the user has stopped talking to."""
+        """Legacy auth-off conversation with no matter boundary.
+
+        Firm callers must use :meth:`get_or_create_matter_conversation`, which
+        writes a physically separate table.
+        """
         now = time.time()
         with self._writing() as conn:
             conn.execute(
                 "INSERT INTO conversations(channel, user_id, created_at, last_seen) "
-                "VALUES(?, ?, ?, ?) "
-                "ON CONFLICT(channel, user_id) DO UPDATE SET last_seen = excluded.last_seen",
+                "VALUES(?, ?, ?, ?) ON CONFLICT(channel, user_id) "
+                "DO UPDATE SET last_seen = excluded.last_seen",
                 (channel, user_id, now, now),
             )
             row = conn.execute(
@@ -3204,6 +4725,153 @@ class WorldModel:
                 (channel, user_id),
             ).fetchone()
         return Conversation(**_row_for(Conversation, dict(row)))
+
+    def get_or_create_matter_conversation(
+        self,
+        channel: str,
+        user_id: str,
+        project_id: int,
+        *,
+        principal: str,
+    ) -> Conversation | None:
+        """Return one conversation only while ``principal`` is a matter member.
+
+        Membership validation, lookup/insert, and the final read share one
+        ``BEGIN IMMEDIATE`` transaction.  A concurrent revocation therefore
+        wins either before this operation (which returns ``None``) or after its
+        snapshot; no unscoped history is ever selected as a fallback.
+        """
+        member = str(principal or "").strip()
+        channel = str(channel or "").strip()
+        user_id = str(user_id or "").strip()
+        if not _matter_principal_allowed(member):
+            return None
+        if not channel or not user_id:
+            raise ValueError("conversation channel and user_id are required")
+        if isinstance(project_id, bool) or int(project_id) <= 0:
+            raise ValueError("conversation project_id must be positive")
+        matter_id = int(project_id)
+        now = time.time()
+        with self._writing() as conn:
+            authorized = conn.execute(
+                "SELECT p.domain FROM projects p "
+                "JOIN matter_memberships mm ON mm.project_id = p.id "
+                "WHERE p.id = ? AND mm.principal = ? AND mm.active = 1",
+                (matter_id, member),
+            ).fetchone()
+            if authorized is None:
+                return None
+            row = conn.execute(
+                "SELECT c.*, p.domain AS domain FROM matter_conversations c "
+                "JOIN projects p ON p.id = c.project_id "
+                "WHERE c.channel = ? AND c.user_id = ? AND c.project_id = ?",
+                (channel, user_id, matter_id),
+            ).fetchone()
+            if row is None:
+                cur = conn.execute(
+                    "INSERT INTO matter_conversations("
+                    "channel, user_id, project_id, created_at, last_seen) "
+                    "VALUES(?, ?, ?, ?, ?)",
+                    (channel, user_id, matter_id, now, now),
+                )
+                conversation_id = int(cur.lastrowid)
+            else:
+                conversation_id = int(row["id"])
+                conn.execute(
+                    "UPDATE matter_conversations SET last_seen = ? WHERE id = ?",
+                    (now, conversation_id),
+                )
+            row = conn.execute(
+                "SELECT c.*, p.domain AS domain FROM matter_conversations c "
+                "JOIN projects p ON p.id = c.project_id "
+                "JOIN matter_memberships mm ON mm.project_id = c.project_id "
+                "WHERE c.id = ? AND mm.principal = ? AND mm.active = 1",
+                (conversation_id, member),
+            ).fetchone()
+        if row is None:
+            return None
+        return Conversation(**_row_for(Conversation, dict(row)))
+
+    def append_matter_turn(
+        self,
+        conversation_id: int,
+        *,
+        project_id: int,
+        principal: str,
+        role: str,
+        content: str,
+        goal_id: int | None = None,
+    ) -> int | None:
+        """Append only through the conversation's exact active matter ACL."""
+        if role not in ("user", "assistant"):
+            raise ValueError(f"role must be 'user' or 'assistant', got {role!r}")
+        member = str(principal or "").strip()
+        if not _matter_principal_allowed(member):
+            return None
+        if isinstance(project_id, bool) or int(project_id) <= 0:
+            raise ValueError("conversation project_id must be positive")
+        matter_id = int(project_id)
+        gid = int(goal_id) if goal_id is not None else None
+        with self._writing() as conn:
+            row = conn.execute(
+                "SELECT c.id FROM matter_conversations c "
+                "JOIN matter_memberships mm ON mm.project_id = c.project_id "
+                "WHERE c.id = ? AND c.project_id = ? "
+                "AND mm.principal = ? AND mm.active = 1 "
+                "AND (? IS NULL OR EXISTS ("
+                "SELECT 1 FROM goals g WHERE g.id = ? "
+                "AND g.project_id = c.project_id AND g.domain = ("
+                "SELECT p.domain FROM projects p WHERE p.id = c.project_id)))",
+                (int(conversation_id), matter_id, member, gid, gid),
+            ).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                "INSERT INTO matter_turns(conversation_id, goal_id, role, content, ts) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (
+                    int(conversation_id),
+                    gid,
+                    role,
+                    _enc_field(content),
+                    time.time(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def recent_matter_turns(
+        self,
+        conversation_id: int,
+        *,
+        project_id: int,
+        principal: str,
+        limit: int = 20,
+    ) -> list[Turn]:
+        """Read prompt history only through an exact current membership row."""
+        member = str(principal or "").strip()
+        if not _matter_principal_allowed(member):
+            return []
+        if isinstance(project_id, bool) or int(project_id) <= 0:
+            return []
+        bounded_limit = max(0, min(int(limit), 10_000))
+        if not bounded_limit:
+            return []
+        rows = self._read_all(
+            "SELECT t.id, t.conversation_id, t.goal_id, t.role, t.content, t.ts "
+            "FROM matter_turns t JOIN matter_conversations c "
+            "ON c.id = t.conversation_id "
+            "JOIN matter_memberships mm ON mm.project_id = c.project_id "
+            "WHERE c.id = ? AND c.project_id = ? "
+            "AND mm.principal = ? AND mm.active = 1 "
+            "ORDER BY t.id DESC LIMIT ?",
+            (int(conversation_id), int(project_id), member, bounded_limit),
+        )
+        out: list[Turn] = []
+        for row in rows:
+            data = dict(row)
+            data["content"] = _dec_field(data["content"])
+            out.append(Turn(**data))
+        return list(reversed(out))
 
     def append_turn(
         self,
@@ -3618,6 +5286,10 @@ class WorldModel:
                         chunk,
                     )
                     for table in (
+                        "release_audit_outbox",
+                        "signoff_audit_outbox",
+                        "goal_feedback",
+                        "matter_turns",
                         "artifacts",
                         "attachments",
                         "goal_events",
@@ -3834,11 +5506,25 @@ class WorldModel:
         path: str,
     ) -> int:
         with self._writing() as conn:
+            now = self._next_goal_updated_at(conn, int(goal_id))
             cur = conn.execute(
                 "INSERT INTO attachments(goal_id, filename, mime, size_bytes, sha256, path, created_at) "
                 "VALUES(?, ?, ?, ?, ?, ?, ?)",
-                (goal_id, filename, mime, size_bytes, sha256, path, time.time()),
+                (
+                    goal_id,
+                    _enc_field(filename),
+                    mime,
+                    size_bytes,
+                    sha256,
+                    _enc_field(path),
+                    now,
+                ),
             )
+            conn.execute(
+                "UPDATE goals SET updated_at = ? WHERE id = ?",
+                (now, int(goal_id)),
+            )
+            conn.execute("DELETE FROM signoffs WHERE goal_id = ?", (int(goal_id),))
             return cur.lastrowid
 
     def list_attachments(self, goal_id: int) -> list[Attachment]:
@@ -3847,7 +5533,7 @@ class WorldModel:
             "FROM attachments WHERE goal_id = ? ORDER BY id",
             (goal_id,),
         )
-        return [Attachment(**dict(r)) for r in rows]
+        return [_attachment_from_row(r) for r in rows]
 
     def prune_conversations(self, idle_for_seconds: float = 90 * 24 * 3600) -> int:
         """Delete conversations idle for N seconds and their turns. Rows removed."""
@@ -3917,8 +5603,8 @@ def open_world(path: Path | None = None) -> Any:
 
 
 # Per-tenant WorldModel cache. P1 multi-tenancy: each tenant gets its own
-# world.db under ~/.maverick/tenants/<t>/, mirroring how cross-session memory
-# (tools/memory.py) and the audit log resolve their dirs via data_dir(). Keyed
+# world.db under ~/.maverick/tenants/<t>/, mirroring how the audit log and other
+# retained local stores resolve their directories via data_dir(). Keyed
 # by the RESOLVED db path so two raw tenant ids that sanitize to the same dir
 # share one connection -- a single SQLite file must have exactly one WorldModel
 # (its write lock serialises mutations within the process; two instances on the

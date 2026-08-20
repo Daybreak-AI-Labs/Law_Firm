@@ -7,6 +7,9 @@ from maverick import self_improvement as si
 from maverick.learning_guard import check_learning_halt
 from maverick.learning_rollout import Stage, run_rollout
 
+TEST_MATTER_ID = 101
+TEST_OWNER = "user:test-attorney"
+
 
 @pytest.fixture(autouse=True)
 def _clean_killswitch(monkeypatch, tmp_path):
@@ -34,6 +37,8 @@ def _reflexions() -> list[dict]:
             "failure_class": "timeout",
             "goal_text": f"reconcile the recurring ledger export {index}",
             "failure_msg": "timed out",
+            "matter_id": TEST_MATTER_ID,
+            "owner": TEST_OWNER,
         }
         for index in range(3)
     ]
@@ -134,7 +139,9 @@ def test_local_halt_refuses_self_harness_before_proposal(
 
     with pytest.raises(killswitch.Halted, match="source=file"):
         self_harness.run_self_harness(
-            _reflexions(), model_id="M", propose_fn=proposer, min_support=3)
+            _reflexions(), model_id="M", propose_fn=proposer, min_support=3,
+            project_id=TEST_MATTER_ID, owner=TEST_OWNER,
+        )
 
     assert proposed == 0
 
@@ -159,6 +166,7 @@ def test_local_halt_during_evaluation_blocks_followup_and_promotion(
     with pytest.raises(killswitch.Halted, match="source=file"):
         self_harness.run_self_harness(
             _reflexions(), model_id="M", min_support=3, path=store,
+            project_id=TEST_MATTER_ID, owner=TEST_OWNER,
             propose_fn=lambda _sig: "Inspect the export window before retrying.",
             held_in=["dev"], held_out=["sealed"],
             score_with=first_arm, score_without=forbidden_arm,
@@ -170,35 +178,29 @@ def test_local_halt_during_evaluation_blocks_followup_and_promotion(
 
 @pytest.mark.parametrize(
     "entrypoint",
-    ["run_self_harness_pass", "run_self_harness_cycle", "run_self_harness_all_models"],
+    ["run_self_harness_pass", "run_self_harness_cycle"],
 )
 def test_self_harness_runner_wrappers_propagate_halt(monkeypatch, entrypoint):
     from maverick import self_improvement_runner as runner
 
     halt = killswitch.Halted("operator stop", "test")
-    if entrypoint == "run_self_harness_all_models":
-        monkeypatch.setattr(self_harness, "enabled", lambda: True)
-        monkeypatch.setattr(runner, "harness_fleet_models", lambda: ["M"])
-        monkeypatch.setattr(
-            runner,
-            "run_self_harness_cycle",
-            lambda **_kwargs: (_ for _ in ()).throw(halt),
-        )
+    monkeypatch.setattr(
+        self_harness,
+        "enabled",
+        lambda: (_ for _ in ()).throw(halt),
+    )
+    if entrypoint == "run_self_harness_pass":
         def call():
-            return runner.run_self_harness_all_models()
+            return runner.run_self_harness_pass(
+                [], model_id="M", project_id=TEST_MATTER_ID,
+                owner=TEST_OWNER,
+            )
     else:
-        monkeypatch.setattr(
-            self_harness,
-            "enabled",
-            lambda: (_ for _ in ()).throw(halt),
-        )
-        if entrypoint == "run_self_harness_pass":
-            def call():
-                return runner.run_self_harness_pass([], model_id="M")
-        else:
-            def call():
-                return runner.run_self_harness_cycle(
-                    reflexions=[], model_id="M", retire=False)
+        def call():
+            return runner.run_self_harness_cycle(
+                reflexions=[], model_id="M", retire=False,
+                project_id=TEST_MATTER_ID, owner=TEST_OWNER,
+            )
 
     with pytest.raises(killswitch.Halted, match="source=test"):
         call()
@@ -260,7 +262,9 @@ def test_halt_armed_during_distillation_blocks_the_skill_save(
 
     with pytest.raises(killswitch.Halted, match="source=file"):
         dreaming._distill_department_skills(
-            {"finance": [{"success": True}, {"success": True}]},
+            {(TEST_MATTER_ID, TEST_OWNER, "finance"): [
+                {"success": True}, {"success": True},
+            ]},
             skill_store=tmp_path / "skills", min_cluster=2,
         )
     assert called == 1

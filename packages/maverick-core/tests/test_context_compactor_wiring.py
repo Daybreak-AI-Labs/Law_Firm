@@ -15,9 +15,14 @@ import pytest
 from maverick import context_compactor as cc
 from maverick.budget import Budget
 from maverick.llm import LLMResponse
+from maverick.matter_context import (
+    matter_context_scope,
+    resolve_goal_matter_context,
+)
 from maverick.orchestrator import run_goal
 from maverick.sandbox import LocalBackend
 from maverick.world_model import WorldModel
+from maverick_knowledge import SqliteVectorStore, matter_collection
 
 # ---------- token counting ----------
 
@@ -96,14 +101,83 @@ def _prompt_blob(fake_llm) -> str:
     return blob
 
 
-def _seed_conversation(world, n=30):
-    conv = world.get_or_create_conversation("tg", "u1")
-    for i in range(n):
-        world.append_turn(
-            conv.id, "user" if i % 2 == 0 else "assistant",
-            f"message number {i} about deploying the parser service",
+_PRINCIPAL = "user:alice"
+_DOMAIN = "legal_intake"
+
+
+def _prepare_knowledge(monkeypatch, tmp_path: Path) -> Path:
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", (b"c" * 32).hex())
+    path = tmp_path / "knowledge.db"
+    monkeypatch.setattr(
+        cfg,
+        "get_knowledge",
+        lambda: {
+            "enable": True,
+            "embedder": "deterministic",
+            "store": "sqlite",
+            "path": str(path),
+        },
+    )
+    return path
+
+
+def _seed_required_knowledge(path: Path, matter_id: int) -> None:
+    store = SqliteVectorStore(path)
+    store.add(
+        matter_collection(matter_id, "legal"),
+        [("context", "authenticated matter context", [1.0] + [0.0] * 255, {})],
+    )
+    store.close()
+
+
+def _matter_run(world, knowledge_path: Path, *, title: str):
+    matter_id = world.create_client_matter(
+        "Compaction matter",
+        principal=_PRINCIPAL,
+        domain=_DOMAIN,
+        matter_number="2026-COMPACT",
+        jurisdiction="Tennessee",
+        client_name="Compaction client",
+    )
+    _seed_required_knowledge(knowledge_path, matter_id)
+    conv = world.get_or_create_matter_conversation(
+        "tg", "u1", matter_id, principal=_PRINCIPAL,
+    )
+    assert conv is not None
+    gid = world.create_matter_goal(
+        title,
+        "",
+        principal=_PRINCIPAL,
+        domain=_DOMAIN,
+        project_id=matter_id,
+    )
+    assert gid is not None
+
+    def resolve():
+        return resolve_goal_matter_context(
+            world,
+            gid,
+            principal=_PRINCIPAL,
+            source="context-compactor-test",
         )
-    return conv
+
+    return matter_id, conv, gid, resolve(), resolve
+
+
+def _seed_conversation(world, knowledge_path: Path, n=30):
+    matter_id, conv, gid, context, resolve = _matter_run(
+        world, knowledge_path, title="Continue the deploy",
+    )
+    for i in range(n):
+        assert world.append_matter_turn(
+            conv.id,
+            project_id=matter_id,
+            principal=_PRINCIPAL,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"message number {i} about deploying the parser service",
+        )
+    return conv, gid, context, resolve
 
 
 @pytest.mark.asyncio
@@ -112,18 +186,19 @@ async def test_long_history_is_compacted_when_enabled(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("MAVERICK_HISTORY_TOKENS", "80")   # small -> forces a drop
     monkeypatch.setenv("MAVERICK_HISTORY_WINDOW", "40")
 
+    knowledge_path = _prepare_knowledge(monkeypatch, tmp_path)
     world = WorldModel(path=tmp_path / "world.db")
-    conv = _seed_conversation(world, n=30)
-    gid = world.create_goal("Continue the deploy", "")
+    conv, gid, context, resolve = _seed_conversation(world, knowledge_path, n=30)
     fake_llm.scripted = [
         LLMResponse(text="FINAL: done", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
 
-    await run_goal(
-        llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
-        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
-        conversation_id=conv.id,
-    )
+    with matter_context_scope(context, authority_resolver=resolve):
+        await run_goal(
+            llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
+            goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+            conversation_id=conv.id,
+        )
     assert "compacted to save context" in _prompt_blob(fake_llm)  # compaction ran
 
 
@@ -135,18 +210,19 @@ async def test_history_uses_last_10_when_disabled(monkeypatch, tmp_path: Path, f
     monkeypatch.setenv("MAVERICK_CONTEXT_MODEL_SCALED", "0")
     monkeypatch.setattr(cfg, "load_config", dict)
 
+    knowledge_path = _prepare_knowledge(monkeypatch, tmp_path)
     world = WorldModel(path=tmp_path / "world.db")
-    conv = _seed_conversation(world, n=30)
-    gid = world.create_goal("Continue the deploy", "")
+    conv, gid, context, resolve = _seed_conversation(world, knowledge_path, n=30)
     fake_llm.scripted = [
         LLMResponse(text="FINAL: done", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
 
-    await run_goal(
-        llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
-        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
-        conversation_id=conv.id,
-    )
+    with matter_context_scope(context, authority_resolver=resolve):
+        await run_goal(
+            llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
+            goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+            conversation_id=conv.id,
+        )
     blob = _prompt_blob(fake_llm)
     assert "compacted to save context" not in blob   # no compaction
     assert "message number 29" in blob               # last turn included
@@ -162,18 +238,19 @@ async def test_history_scales_with_model_window_by_default(
     monkeypatch.delenv("MAVERICK_CONTEXT_MODEL_SCALED", raising=False)
     monkeypatch.setattr(cfg, "load_config", dict)
 
+    knowledge_path = _prepare_knowledge(monkeypatch, tmp_path)
     world = WorldModel(path=tmp_path / "world.db")
-    conv = _seed_conversation(world, n=30)
-    gid = world.create_goal("Continue the deploy", "")
+    conv, gid, context, resolve = _seed_conversation(world, knowledge_path, n=30)
     fake_llm.scripted = [
         LLMResponse(text="FINAL: done", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
 
-    await run_goal(
-        llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
-        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
-        conversation_id=conv.id,
-    )
+    with matter_context_scope(context, authority_resolver=resolve):
+        await run_goal(
+            llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
+            goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+            conversation_id=conv.id,
+        )
     blob = _prompt_blob(fake_llm)
     assert "message number 29" in blob
     assert "message number 0 about" in blob
@@ -206,19 +283,28 @@ async def test_compact_history_caps_each_persisted_turn(monkeypatch, tmp_path: P
     # default) raises it with the orchestrator model's window.
     monkeypatch.setenv("MAVERICK_CONTEXT_MODEL_SCALED", "0")
 
+    knowledge_path = _prepare_knowledge(monkeypatch, tmp_path)
     world = WorldModel(path=tmp_path / "world.db")
-    conv = world.get_or_create_conversation("tg", "u1")
-    world.append_turn(conv.id, "user", ("A" * 320) + "UNSAFE_AFTER_300")
-    gid = world.create_goal("Continue safely", "")
+    matter_id, conv, gid, context, resolve = _matter_run(
+        world, knowledge_path, title="Continue safely",
+    )
+    assert world.append_matter_turn(
+        conv.id,
+        project_id=matter_id,
+        principal=_PRINCIPAL,
+        role="user",
+        content=("A" * 320) + "UNSAFE_AFTER_300",
+    )
     fake_llm.scripted = [
         LLMResponse(text="FINAL: done", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
 
-    await run_goal(
-        llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
-        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
-        conversation_id=conv.id,
-    )
+    with matter_context_scope(context, authority_resolver=resolve):
+        await run_goal(
+            llm=fake_llm, world=world, budget=Budget(max_dollars=1.0),
+            goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
+            conversation_id=conv.id,
+        )
 
     blob = _prompt_blob(fake_llm)
     assert "A" * 300 in blob

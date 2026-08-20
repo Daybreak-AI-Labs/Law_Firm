@@ -26,9 +26,8 @@ def test_exact_override_still_lowers_builtin():
 def test_glob_can_still_raise_and_relax_non_builtins():
     # A glob may RAISE a built-in...
     assert tool_risk("read_file", {"read_*": "high"}) == "high"
-    # ...and may still relax a non-built-in fail-safe (mcp_*), the documented
-    # use case -- mcp tools are not in the built-in table, so no floor applies.
-    assert tool_risk("mcp_other__write", {"mcp_*": "medium"}) == "medium"
+    # ...and may still classify a non-built-in tool through an explicit glob.
+    assert tool_risk("external_other_write", {"external_*": "medium"}) == "medium"
     # An unknown tool is classified freely by a glob.
     assert tool_risk("acme_custom_tool", {"acme_*": "low"}) == "low"
 

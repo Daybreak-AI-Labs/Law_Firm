@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import zipfile
 
+import maverick.attachments as att
 import pytest
 from maverick.attachments import (
     AttachmentRejected,
@@ -93,6 +94,65 @@ class TestBroaderMimes:
         with pytest.raises(AttachmentRejected, match="executable or archive"):
             store(goal_id=1, filename="fake.docx", mime=DOCX_MIME,
                   data=b"PK\x03\x04" + b"\x00" * 32, root=tmp_path)
+
+    def test_oversized_document_mimetype_rejected_before_decompression(
+        self, monkeypatch
+    ):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "mimetype",
+                b"a" * (att._DOCUMENT_MIMETYPE_MAX_BYTES + 1),
+            )
+        monkeypatch.setattr(
+            zipfile.ZipFile,
+            "open",
+            lambda *a, **k: pytest.fail("oversized mimetype was decompressed"),
+        )
+
+        assert att._is_document_package(buf.getvalue()) is False
+
+    def test_document_mimetype_compressed_size_is_validated(self, monkeypatch):
+        payload = b"application/vnd.oasis.opendocument.text"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("mimetype", payload)
+        monkeypatch.setattr(
+            att,
+            "_DOCUMENT_MIMETYPE_MAX_COMPRESSED_BYTES",
+            len(payload) - 1,
+        )
+        monkeypatch.setattr(
+            zipfile.ZipFile,
+            "open",
+            lambda *a, **k: pytest.fail("oversized compressed entry was read"),
+        )
+
+        assert att._is_document_package(buf.getvalue()) is False
+
+    def test_document_mimetype_read_uses_declared_bounded_size(self, monkeypatch):
+        payload = b"application/vnd.oasis.opendocument.text"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("mimetype", payload)
+        requested = []
+        real_open = zipfile.ZipFile.open
+
+        def tracked_open(self, *args, **kwargs):
+            stream = real_open(self, *args, **kwargs)
+            real_read = stream.read
+
+            def tracked_read(size=-1):
+                requested.append(size)
+                return real_read(size)
+
+            stream.read = tracked_read
+            return stream
+
+        monkeypatch.setattr(zipfile.ZipFile, "open", tracked_open)
+
+        assert att._is_document_package(buf.getvalue()) is True
+        assert requested == [len(payload)]
 
     def test_elf_still_rejected_under_any_mime(self, tmp_path, monkeypatch):
         _clear_env(monkeypatch)

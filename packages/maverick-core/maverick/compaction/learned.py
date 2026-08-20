@@ -14,8 +14,8 @@ folds the old middle of a trajectory into one LLM-written digest — and it
   injectable PRNG so tests and replays are exact.
 
 The summarize call goes through the injected ``llm`` seam only, with the
-configured summarizer role model (``llm.model_for_role`` — users own model
-choice; nothing here names a model). No llm, or any error, falls back to
+selected run model acting as summarizer (``llm.model_for_role`` — users own
+the run pin; nothing here names a model). No llm, or any error, falls back to
 ``compact_messages`` — fail-open, like every compaction path.
 """
 from __future__ import annotations

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import time
 
 import pytest
 from maverick import crypto_at_rest as car
@@ -21,6 +22,15 @@ requires_crypto = pytest.mark.skipif(
 )
 
 _MARKER = " [process restarted mid-run]"
+
+
+def _age_goal(world, goal_id: int) -> None:
+    """Make reclaim eligibility deterministic despite monotonic goal versions."""
+    with world._writing() as conn:
+        conn.execute(
+            "UPDATE goals SET updated_at = ? WHERE id = ?",
+            (time.time() - 1.0, int(goal_id)),
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -41,6 +51,7 @@ def test_reclaim_preserves_sealed_nonnull_result(monkeypatch, tmp_path):
     gid = wm.create_goal("g", "")
     # An active goal that already carries a (sealed) result.
     wm.set_goal_status(gid, "active", result="partial work so far")
+    _age_goal(wm, gid)
 
     n = wm.reclaim_orphan_goals(max_age_seconds=0)
     assert n == 1
@@ -65,6 +76,7 @@ def test_reclaim_seals_marker_for_null_result(monkeypatch, tmp_path):
     db = tmp_path / "world.db"
     wm = WorldModel(db)
     gid = wm.create_goal("g", "")  # stays 'pending', result is NULL
+    _age_goal(wm, gid)
 
     n = wm.reclaim_orphan_goals(max_age_seconds=0)
     assert n == 1
@@ -89,6 +101,7 @@ def test_reclaim_under_strict_mode_preserves_legacy_plaintext_result(monkeypatch
     wm = WorldModel(db)                     # encryption off: result is plaintext
     gid = wm.create_goal("g", "")
     wm.set_goal_status(gid, "active", result="IMPORTANT pre-encryption result")
+    _age_goal(wm, gid)
 
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     monkeypatch.setenv("MAVERICK_ENCRYPT_STRICT", "1")
@@ -111,6 +124,7 @@ def test_reclaim_plaintext_concat_unchanged_without_encryption(tmp_path):
     wm = WorldModel(tmp_path / "world.db")
     gid = wm.create_goal("g", "")
     wm.set_goal_status(gid, "active", result="prior")
+    _age_goal(wm, gid)
 
     n = wm.reclaim_orphan_goals(max_age_seconds=0)
     assert n == 1

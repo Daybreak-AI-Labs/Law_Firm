@@ -8,7 +8,6 @@ from maverick import (
     dreaming,
     evaluator_evolution,
     experience,
-    factory_learning,
     failure_telemetry,
     jit_rl,
     operations_scientist,
@@ -23,7 +22,7 @@ from maverick import (
     self_tuning_budget,
     trajectory_store,
 )
-from maverick.skill import distillation_local, synthesis
+from maverick.skill import distillation_local
 
 _ENV_FLAGS = (
     "MAVERICK_SELF_LEARNING",
@@ -37,10 +36,8 @@ _ENV_FLAGS = (
     "MAVERICK_CREDIT",
     "MAVERICK_DATA_ENGINE",
     "MAVERICK_EXPERIENCE_GUIDANCE",
-    "MAVERICK_SKILL_SYNTHESIS",
     "MAVERICK_REHEARSAL",
     "MAVERICK_OPERATIONS_SCIENTIST",
-    "MAVERICK_FACTORY_LEARNING",
     "MAVERICK_EVALUATOR_EVOLUTION",
     "MAVERICK_FAILURE_TELEMETRY",
     "MAVERICK_BUDGET_SELF_TUNING",
@@ -74,10 +71,8 @@ def _governed_states() -> dict[str, bool]:
         "credit": credit.enabled(),
         "data_engine": data_engine.enabled(),
         "experience": experience.enabled(),
-        "skill_synthesis": synthesis.enabled(),
         "rehearsal": rehearsal.enabled(),
         "operations_scientist": operations_scientist.enabled(),
-        "factory_learning": factory_learning.enabled(),
         "evaluator_evolution": evaluator_evolution.enabled(),
         "failure_telemetry": failure_telemetry.enabled(),
         "budget_tuning": self_tuning_budget.enabled(),
@@ -94,12 +89,11 @@ def test_governed_learning_defaults_on(tmp_path, monkeypatch):
     assert all(_governed_states().values())
     from maverick.config import get_self_harness, get_self_improvement, get_self_learning
 
-    assert get_self_learning()["create_tools"] is False
-    assert get_self_learning()["allow_mcp_acquisition"] is False
     assert get_self_learning()["allow_provider_egress"] is False
     assert get_self_harness()["risk_limited"] is True
     assert get_self_harness()["auto_run"] is True
     assert get_self_improvement()["capture"] is True
+    assert "factory_learning" not in get_self_improvement()
 
 
 def test_malformed_learning_booleans_fail_closed(
@@ -110,8 +104,6 @@ def test_malformed_learning_booleans_fail_closed(
         """
 [self_learning]
 enable = "false"
-create_tools = "false"
-allow_mcp_acquisition = "false"
 allow_provider_egress = "false"
 
 [self_harness]
@@ -136,10 +128,7 @@ require_signed_approval = "false"
 
     settings = get_self_learning()
     assert settings["enable"] is False
-    assert settings["create_tools"] is False
-    assert settings["allow_mcp_acquisition"] is False
     assert settings["allow_provider_egress"] is False
-    assert self_learning.mcp_acquisition_enabled() is False
     assert self_learning.provider_egress_enabled() is False
     harness = get_self_harness()
     assert harness["enable"] is False

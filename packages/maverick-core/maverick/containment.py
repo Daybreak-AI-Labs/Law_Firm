@@ -9,24 +9,18 @@ into one switchable profile; it deliberately modifies no sandbox backend.
 
 What enforces "no egress" today (found by reading the seams):
 
-* **Container backends** deny at the engine level: ``DockerBackend`` /
-  ``PodmanBackend`` default to ``allow_network=False`` (``--network none``)
-  and ``FirecrackerBackend`` to ``network="egress-deny"`` — containment
-  relies on those defaults and never weakens them.
-* **In-process tools** are the real egress path on the default
-  ``LocalBackend`` (which has no packet-level deny — documented in
-  ``tools/shell.py``). The hard mechanism here is the registry ACL:
-  :func:`apply` denies the exfil-capable tools (http_fetch, web_search,
-  browser, websocket, the send-ish connectors) via ``registry.set_acl``.
-* **Egress policy layers** (``sandbox/network_policy.py``,
-  ``tenant_egress.py``, ``enterprise.py``) are *config*-driven in-process
-  checks — there is no ``MAVERICK_EGRESS_*`` env var to flip. The only
+* **Docker** denies at the engine level by default with ``--network none``;
+  containment relies on that default and never weakens it.
+* **In-process tools** are the remaining egress path under ``LocalBackend``.
+  The firm registry omits raw shell/browser/fetch tools, and the ACL here adds
+  defense in depth for any separately constructed registry.
+* **Central egress policy** in ``enterprise.py`` is an in-process check. The only
   env-mediated lever subprocess tooling actually respects is the standard
   proxy convention, so :func:`assert_no_network_env` black-holes
   ``HTTP(S)_PROXY``/``ALL_PROXY`` to an unroutable sink and strips
   ``NO_PROXY`` — best-effort for host subprocesses (curl/pip/requests honor
   it; a hostile raw socket does not), which is why the ACL denial above and
-  the container backends carry the hard guarantee. It also sets
+  Docker carries the hard process-level guarantee. It also sets
   ``MAVERICK_CONTAINMENT=1`` so a nested Maverick process self-applies the
   profile.
 
@@ -67,7 +61,7 @@ _PROXY_BYPASS_VARS = ("NO_PROXY", "no_proxy")
 # generic HTTP/web/browser/websocket plus the send-ish messaging connectors
 # (names confirmed against the registered tool names in maverick/tools/).
 DEFAULT_DENY_TOOLS = frozenset({
-    "http_fetch", "web_search", "browser", "websocket", "webrtc",
+    "web_search", "browser", "websocket", "webrtc",
     "email", "gmail", "ses", "sns", "twilio",
     "slack_bot", "discord_bot", "teams", "notify",
 })

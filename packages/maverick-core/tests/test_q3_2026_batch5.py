@@ -3,92 +3,21 @@ spend report tool, replay export."""
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
 
 # ---------- Android tool ----------
 
-def test_android_requires_op():
-    from maverick.tools.android import android
-    assert "op is required" in android().fn({})
 
 
-def test_android_missing_adb(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda b: None)
-    from maverick.tools.android import android
-    out = android().fn({"op": "devices"})
-    assert "adb not found" in out
 
 
-def test_android_devices_parses(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/adb")
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **k: MagicMock(
-            returncode=0,
-            stdout="List of devices attached\nemulator-5554\tdevice product:sdk_gphone\n",
-            stderr="",
-        ),
-    )
-    from maverick.tools.android import android
-    out = android().fn({"op": "devices"})
-    assert "emulator-5554" in out
 
 
-def test_android_no_devices(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/adb")
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **k: MagicMock(
-            returncode=0,
-            stdout="List of devices attached\n",
-            stderr="",
-        ),
-    )
-    from maverick.tools.android import android
-    out = android().fn({"op": "devices"})
-    assert "no devices attached" in out
 
 
-def test_android_tap_builds_input(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/adb")
-    captured = {"cmd": None}
-
-    def _run(cmd, *a, **k):
-        captured["cmd"] = cmd
-        return MagicMock(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    from maverick.tools.android import android
-    out = android().fn({"op": "tap", "x": 100, "y": 200, "device": "abc"})
-    assert "tapped (100,200)" in out
-    assert "shell" in captured["cmd"]
-    assert "input" in captured["cmd"]
-    assert "tap" in captured["cmd"]
-    assert "abc" in captured["cmd"]
 
 
-def test_android_screenshot_writes_bytes(monkeypatch, tmp_path):
-    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/adb")
-    fake_png = b"\x89PNG\r\n\x1a\n" + b"x" * 200
-
-    def _run(cmd, *a, **k):
-        return MagicMock(returncode=0, stdout=fake_png, stderr=b"")
-
-    monkeypatch.setattr("subprocess.run", _run)
-    out_file = tmp_path / "shot.png"
-    from maverick.tools.android import android
-    out = android().fn({"op": "screenshot", "out_path": str(out_file)})
-    assert "saved" in out
-    assert out_file.read_bytes() == fake_png
 
 
-def test_android_install_requires_apk():
-    from maverick.tools.android import android
-    out = android().fn({"op": "install"})
-    # Without an apk path we should hit the validation message before
-    # the adb shell out happens. Tolerate either "requires apk_path"
-    # or the adb-missing fallback.
-    assert "requires apk_path" in out or "adb not found" in out
 
 
 
@@ -112,70 +41,14 @@ def _patch_world(monkeypatch, episodes):
     monkeypatch.setattr(maverick.world_model, "WorldModel", lambda: _W())
 
 
-def test_spend_recent_empty(monkeypatch):
-    _patch_world(monkeypatch, [])
-    from maverick.tools.spend_report import spend_report
-    out = spend_report().fn({"op": "recent"})
-    assert "no episodes" in out
 
 
-def test_spend_recent_renders(monkeypatch):
-    import time as _time
-    now = _time.time()
-    eps = [
-        _FakeEp(1, "orchestrator", 0.05, now - 60),
-        _FakeEp(2, "proposer", 0.01, now - 30),
-    ]
-    _patch_world(monkeypatch, eps)
-    from maverick.tools.spend_report import spend_report
-    out = spend_report().fn({"op": "recent", "limit": 10})
-    assert "orchestrator" in out and "proposer" in out
-    assert "0.0500" in out
 
 
-def test_spend_by_role_aggregates(monkeypatch):
-    eps = [
-        _FakeEp(1, "orchestrator", 0.05, 0),
-        _FakeEp(2, "orchestrator", 0.03, 0),
-        _FakeEp(3, "proposer", 0.01, 0),
-    ]
-    _patch_world(monkeypatch, eps)
-    from maverick.tools.spend_report import spend_report
-    out = spend_report().fn({"op": "by_role"})
-    assert "orchestrator" in out
-    assert "0.0800" in out  # 0.05 + 0.03
-    assert "0.0100" in out
 
 
-def test_spend_anomalies_flags_outliers(monkeypatch):
-    eps = [
-        _FakeEp(1, "p", 0.01, 0),
-        _FakeEp(2, "p", 0.01, 0),
-        _FakeEp(3, "p", 0.01, 0),
-        _FakeEp(4, "p", 0.01, 0),
-        _FakeEp(5, "p", 0.50, 0),  # 50× the median
-    ]
-    _patch_world(monkeypatch, eps)
-    from maverick.tools.spend_report import spend_report
-    out = spend_report().fn({"op": "anomalies"})
-    assert "median" in out
-    assert "$0.5000" in out or "0.5000" in out
 
 
-def test_spend_total_renders(monkeypatch):
-    import time as _time
-    now = _time.time()
-    eps = [
-        _FakeEp(1, "p", 1.0, now - 30),       # in last hour
-        _FakeEp(2, "p", 2.0, now - 7200),     # in last 24h
-        _FakeEp(3, "p", 3.0, now - 86400 * 5),  # older
-    ]
-    _patch_world(monkeypatch, eps)
-    from maverick.tools.spend_report import spend_report
-    out = spend_report().fn({"op": "total"})
-    assert "lifetime:" in out and "6.0000" in out
-    assert "last 24h:" in out and "3.0000" in out
-    assert "last 1h:" in out and "1.0000" in out
 
 
 # ---------- Replay export ----------
@@ -237,27 +110,3 @@ def test_replay_export_empty_goal(tmp_path, monkeypatch):
     n = rex.export_html(123, out_file)
     assert n == 0
     assert "No events recorded" in out_file.read_text(encoding="utf-8")
-
-
-# ---------- registration smoke ----------
-
-def test_new_tools_register_opt_in(tmp_path):
-    from maverick.sandbox.local import LocalBackend
-    from maverick.tools import base_registry
-
-    class _W:
-        def open_questions(self, gid):
-            return []
-
-    reg_default = base_registry(_W(), LocalBackend(workdir=tmp_path))
-    names_default = {t.name for t in reg_default.all()}
-    assert "android" not in names_default
-    assert "spend_report" in names_default
-
-    reg_mobile = base_registry(
-        _W(),
-        LocalBackend(workdir=tmp_path),
-        enable_mobile_tools=True,
-    )
-    names_mobile = {t.name for t in reg_mobile.all()}
-    assert "android" in names_mobile

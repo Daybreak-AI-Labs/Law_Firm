@@ -20,11 +20,11 @@ def _world() -> WorldModel:
     return WorldModel(Path(tempfile.mkdtemp()) / "w.db")
 
 
-def test_small_fact_set_unchanged():
+def test_legacy_global_fact_never_enters_brief():
     w = _world()
     w.upsert_fact("region", "eu-west-1")
     block = _brief_facts_block(w, goal_id=1, shield=None)
-    assert "region: eu-west-1" in block
+    assert block == "  (none)"
 
 
 def test_fact_count_capped_newest_kept(monkeypatch):
@@ -37,11 +37,7 @@ def test_fact_count_capped_newest_kept(monkeypatch):
     for i in range(12):
         w.upsert_fact(f"k{i:02d}", f"v{i}")
     block = _brief_facts_block(w, goal_id=1, shield=None)
-    rendered = [ln for ln in block.splitlines() if ln.startswith("  k")]
-    assert len(rendered) == 5
-    assert "k11: v11" in block          # newest kept
-    assert "k00: v0" not in block       # oldest dropped
-    assert "7 more fact(s) omitted" in block
+    assert block == "  (none)"
 
 
 def test_upserted_fact_is_newest_even_when_wall_clock_ties(monkeypatch):
@@ -91,8 +87,7 @@ def test_long_value_truncated(monkeypatch):
     w = _world()
     w.upsert_fact("dump", "x" * 5_000)
     block = _brief_facts_block(w, goal_id=1, shield=None)
-    assert len(block) < 400
-    assert "truncated" in block
+    assert block == "  (none)"
 
 
 def test_defaults_are_generous_enough_for_normal_use():
@@ -100,4 +95,15 @@ def test_defaults_are_generous_enough_for_normal_use():
     for i in range(10):
         w.upsert_fact(f"pref{i}", "a short preference value")
     block = _brief_facts_block(w, goal_id=1, shield=None)
-    assert "omitted" not in block and "truncated" not in block
+    assert block == "  (none)"
+
+
+def test_brief_facts_never_reads_the_legacy_store():
+    class TrapWorld:
+        def get_facts(self):
+            raise AssertionError("legacy global facts read")
+
+        def get_facts_with_trust(self):
+            raise AssertionError("legacy global facts metadata read")
+
+    assert _brief_facts_block(TrapWorld(), goal_id=1, shield=None) == "  (none)"

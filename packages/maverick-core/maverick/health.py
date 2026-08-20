@@ -6,7 +6,6 @@ review).
 """
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -14,10 +13,6 @@ import sys
 
 import click
 
-from .sandbox.gvisor import (
-    GVisorRuntimeValidationError,
-    validate_docker_gvisor_runtime,
-)
 from .sandbox_names import BUILTIN_SANDBOX_BACKENDS
 
 GREEN = click.style("✓", fg="green")
@@ -211,216 +206,22 @@ def _check_sandbox_docker() -> None:
              fix="docker is installed but unresponsive -- restart Docker Desktop")
 
 
-def _check_sandbox_podman() -> None:
-    if not shutil.which("podman"):
-        _row(RED, "sandbox", "podman not on PATH",
-             fix="install podman, or change [sandbox] backend to 'docker'/'local' in ~/.maverick/config.toml")
-        return
-    try:
-        subprocess.run(
-            ["podman", "version"],
-            capture_output=True, timeout=5, check=True,
-        )
-        _row(GREEN, "sandbox", "podman responding")
-    except subprocess.CalledProcessError:
-        _row(RED, "sandbox", "podman present but not responding",
-             fix="check `podman version`; on Linux/macOS you may need `podman machine start`")
-    except subprocess.TimeoutExpired:
-        _row(RED, "sandbox", "podman version timed out",
-             fix="podman is installed but unresponsive")
-
-
-def _check_sandbox_gvisor(cfg: dict) -> None:
-    """Verify Docker reports an approved runsc runtime registration."""
-    if not shutil.which("docker"):
-        _row(
-            RED,
-            "sandbox",
-            "gvisor needs Docker, but docker is not on PATH",
-            fix="install Docker and gVisor/runsc, then register runsc with Docker",
-        )
-        return
-    configured = cfg.get("sandbox", {}).get("runtime", "runsc")
-    try:
-        runtime = validate_docker_gvisor_runtime(configured)
-    except GVisorRuntimeValidationError as exc:
-        _row(
-            RED,
-            "sandbox",
-            str(exc),
-            fix=(
-                "register an approved runsc runtime with an exact runsc path "
-                "or io.containerd.runsc.v1 runtimeType"
-            ),
-        )
-        return
-    except (OSError, subprocess.CalledProcessError):
-        _row(
-            RED,
-            "sandbox",
-            "gvisor Docker daemon/runtime probe failed",
-            fix="start Docker and confirm `docker info` succeeds",
-        )
-        return
-    except subprocess.TimeoutExpired:
-        _row(
-            RED,
-            "sandbox",
-            "gvisor Docker daemon/runtime probe timed out",
-            fix="restart Docker and confirm `docker info` succeeds",
-        )
-        return
-    _row(
-        GREEN,
-        "sandbox",
-        f"gvisor runtime {runtime!r} registration metadata validated; "
-        "Docker responding",
-    )
-
-
-def _check_sandbox_modal(cfg: dict) -> None:
-    allow_network = cfg.get("sandbox", {}).get("allow_network", False)
-    acknowledged = allow_network is True or (
-        isinstance(allow_network, str)
-        and allow_network.strip().lower() in {"1", "true", "yes", "on"}
-    )
-    if not acknowledged:
-        _row(
-            RED,
-            "sandbox",
-            "modal selected with allow_network=false; execution will fail closed",
-            fix="set [sandbox] allow_network = true to acknowledge Modal networking",
-        )
-        return
-    try:
-        modal_present = importlib.util.find_spec("modal") is not None
-    except (ImportError, ValueError):
-        modal_present = False
-    if not modal_present:
-        _row(
-            RED,
-            "sandbox",
-            "modal package is not installed",
-            fix="install the reviewed `packages/maverick-core[modal]` extra",
-        )
-        return
-    _row(
-        GREEN,
-        "sandbox",
-        "modal package present (authentication is verified on first execution)",
-    )
-
-
-def _check_sandbox_kubernetes(cfg: dict) -> None:
-    if not shutil.which("kubectl"):
-        _row(RED, "sandbox", "kubectl not on PATH",
-             fix="install kubectl and configure a kubeconfig context")
-        return
-    ctx = cfg.get("sandbox", {}).get("context")
-    try:
-        subprocess.run(
-            ["kubectl", "version", "--client"],
-            capture_output=True, timeout=5, check=True,
-        )
-        detail = "kubectl present" + (f", context={ctx}" if ctx else "")
-        _row(GREEN, "sandbox", f"{detail} (cluster reachability not checked)")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        _row(RED, "sandbox", "kubectl present but `kubectl version --client` failed",
-             fix="check your kubectl install")
-
-
-def _check_sandbox_firecracker(cfg: dict) -> None:
-    provider = str(cfg.get("sandbox", {}).get("provider", "local") or "local").strip().lower()
-    if provider == "e2b":
-        if os.environ.get("E2B_API_KEY"):
-            _row(GREEN, "sandbox", "firecracker via E2B (E2B_API_KEY set)")
-        else:
-            _row(RED, "sandbox", "firecracker provider=e2b but E2B_API_KEY unset",
-                 fix='export E2B_API_KEY=..., or set [sandbox] provider = "local"')
-    elif provider == "local":
-        if shutil.which("firecracker"):
-            _row(GREEN, "sandbox", "firecracker binary present")
-        else:
-            _row(RED, "sandbox", "firecracker binary not on PATH",
-                 fix='install firecracker, or set [sandbox] provider = "e2b"')
-    else:
-        _row(YELLOW, "sandbox", f"firecracker provider={provider!r} unknown",
-             fix='[sandbox] provider must be "local" or "e2b"')
-
-
 def _check_sandbox(cfg: dict) -> None:
-    # Match build_sandbox(): the backend is user-typed config and is compared
-    # case-sensitively below, so normalize or a valid "Docker" misreports as
-    # the "unsupported" catch-all while build_sandbox actually runs it.
-    backend = str(cfg.get("sandbox", {}).get("backend", "local") or "local").strip().lower()
+    """Report health for the exact retained backend catalog."""
+    backend = str(
+        cfg.get("sandbox", {}).get("backend", "local") or "local"
+    ).strip().lower()
     if backend == "local":
         _row(GREEN, "sandbox", "local subprocess")
         return
     if backend == "docker":
         _check_sandbox_docker()
         return
-    if backend == "gvisor":
-        _check_sandbox_gvisor(cfg)
-        return
-    if backend == "podman":
-        _check_sandbox_podman()
-        return
-    if backend == "devcontainer":
-        # The devcontainer backend builds/runs through Docker under the hood.
-        if not shutil.which("docker"):
-            _row(RED, "sandbox", "devcontainer needs Docker, not on PATH",
-                 fix="install Docker -- the devcontainer backend builds/runs via docker")
-            return
-        _row(YELLOW, "sandbox",
-             "devcontainer (Docker present; also needs a .devcontainer/devcontainer.json with an image)")
-        return
-    if backend == "kubernetes":
-        _check_sandbox_kubernetes(cfg)
-        return
-    if backend == "firecracker":
-        _check_sandbox_firecracker(cfg)
-        return
-    if backend == "modal":
-        _check_sandbox_modal(cfg)
-        return
-    if backend == "ssh":
-        host = cfg.get("sandbox", {}).get("host", "")
-        if not host:
-            _row(RED, "sandbox", "backend=ssh but no [sandbox] host=",
-                 fix='edit ~/.maverick/config.toml and add: host = "user@example.com"')
-            return
-        _row(YELLOW, "sandbox", f"ssh -> {host} (live check not performed)")
-        return
-    if backend.startswith("ep:"):
-        name = backend[3:].strip()
-        try:
-            from .sandbox.sdk import installed_entry_point_names
-
-            installed = installed_entry_point_names()
-        except Exception:
-            installed = ()
-        if name and name in installed:
-            _row(
-                GREEN,
-                "sandbox",
-                f"external sandbox entry point {name!r} is installed",
-            )
-        else:
-            _row(
-                RED,
-                "sandbox",
-                f"external sandbox entry point {name or '(empty)'!r} is not installed",
-                fix=(
-                    "install the backend package or select one of: "
-                    + (", ".join(installed) if installed else "no installed entry points")
-                ),
-            )
-        return
     _row(
-        YELLOW,
+        RED,
         "sandbox",
-        f"backend={backend} not recognized",
-        fix=f"supported: {', '.join(BUILTIN_SANDBOX_BACKENDS)}, or ep:<name>",
+        f"backend={backend} is not supported by the firm runtime",
+        fix=f"supported: {', '.join(BUILTIN_SANDBOX_BACKENDS)}",
     )
 
 
@@ -596,112 +397,6 @@ def _check_client_binding() -> None:
              fix="for an enterprise deployment set [client] id + enforce = true")
 
 
-def _check_governed_execution() -> None:
-    """Surface the two execution planes an operator can arm by accident.
-
-    The kernel runs model-written code, so an operator needs to see that it
-    is ON and — more importantly — whether it is running against a real
-    container sandbox or the local host backend. Refinement is flagged when
-    its approval gate is disarmed (the agent can then rewrite its own
-    standing instructions with no human in the loop) and when proposals are
-    piling up unread."""
-    try:
-        from .config import get_harness_refine, get_repl
-        repl_cfg = get_repl()
-        refine_cfg = get_harness_refine()
-    except Exception as e:  # pragma: no cover - never break doctor
-        _row(YELLOW, "governed-execution", f"config unavailable: {e}")
-        return
-    if not repl_cfg.get("enable"):
-        _row(GREEN, "session-kernel", "disabled (default)")
-    else:
-        contained = False
-        try:
-            from .sandbox import container_backend_required
-            contained = bool(container_backend_required())
-        except Exception:  # pragma: no cover
-            contained = False
-        if contained:
-            _row(GREEN, "session-kernel",
-                 "enabled — statements run in a container sandbox")
-        else:
-            _row(YELLOW, "session-kernel",
-                 "enabled WITHOUT a container backend — model-written code "
-                 "runs on this host with a scrubbed environment",
-                 fix="set [sandbox] backend to a container runtime, or "
-                     "unset [repl] enable")
-    if not refine_cfg.get("enable"):
-        _row(GREEN, "self-refinement", "disabled (default)")
-        return
-    if not refine_cfg.get("require_approval"):
-        _row(RED, "self-refinement",
-             "ENABLED with require_approval OFF — the agent can rewrite its "
-             "own standing instructions with no human decision",
-             fix="set [harness_refine] require_approval = true")
-        return
-    try:
-        from .harness_refine import list_proposals
-        pending = len(list_proposals(status="pending"))
-    except Exception:  # pragma: no cover
-        pending = 0
-    detail = "enabled — every change needs a human approval"
-    if pending:
-        _row(YELLOW, "self-refinement",
-             f"{detail}; {pending} proposal(s) awaiting a decision",
-             fix="review them in the approvals queue")
-    else:
-        _row(GREEN, "self-refinement", detail)
-
-
-_TLS_CERT_HORIZON_S = 30 * 86400  # warn when a TLS cert expires within 30 days
-
-
-def _check_tls_cert_expiry() -> None:
-    """Warn before a configured gRPC/federation TLS server cert expires — there
-    is no other signal until clients suddenly fail to connect."""
-    try:
-        from .config import load_config
-        from .grpc_tls import tls_enabled
-        cfg = load_config() or {}
-    except Exception:  # pragma: no cover - never break doctor
-        return
-    try:
-        from cryptography import x509
-    except Exception:
-        return  # cert parsing needs cryptography; at-rest check already flags it
-    import datetime as _dt
-    now = _dt.datetime.now(_dt.timezone.utc)
-    for section in ("grpc", "federation"):
-        try:
-            if not tls_enabled(section, cfg):
-                continue
-            path = ((cfg.get(section) or {}).get("tls_cert"))
-            if not path:
-                continue
-            from pathlib import Path as _P
-            data = _P(str(path)).expanduser().read_bytes()
-            cert = x509.load_pem_x509_certificate(data)
-            try:
-                not_after = cert.not_valid_after_utc  # cryptography >= 42
-            except AttributeError:  # pragma: no cover - older cryptography
-                not_after = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
-            remaining = (not_after - now).total_seconds()
-            if remaining <= 0:
-                _row(RED, f"tls:{section}",
-                     f"server cert EXPIRED ({not_after:%Y-%m-%d})",
-                     fix=f"renew [{section}] tls_cert")
-            elif remaining <= _TLS_CERT_HORIZON_S:
-                _row(YELLOW, f"tls:{section}",
-                     f"server cert expires in {remaining / 86400:.1f} day(s) "
-                     f"({not_after:%Y-%m-%d})",
-                     fix=f"renew [{section}] tls_cert before it lapses")
-            else:
-                _row(GREEN, f"tls:{section}",
-                     f"server cert valid until {not_after:%Y-%m-%d}")
-        except Exception as e:  # pragma: no cover - a misconfigured cert path
-            _row(YELLOW, f"tls:{section}", f"cert unreadable: {type(e).__name__}")
-
-
 def _check_proxy_auth() -> None:
     """Flag an insecure reverse-proxy-SSO config: proxy auth enabled, but no
     `trusted_proxies` pin and the loopback fallback still active -- any
@@ -749,8 +444,6 @@ def diagnose() -> int:
     _check_channels(cfg)
     _check_world_db()
     _check_shield()
-    _check_governed_execution()
-    _check_tls_cert_expiry()
     click.echo("")
     if _FAILURES:
         click.echo(click.style(

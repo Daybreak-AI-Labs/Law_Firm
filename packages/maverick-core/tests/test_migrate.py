@@ -58,9 +58,9 @@ def test_unknown_section_lint_with_suggestion(tmp_path):
 
 def test_known_sections_cover_real_config_surface():
     for section in (
-        "budget", "channels", "safety", "tools", "world_model",
-        "plugins", "compliance", "routing", "grpc_dispatch",
-        "models", "capabilities", "features", "security", "mcp_servers",
+        "budget", "safety", "tools", "world_model",
+        "compliance",
+        "models", "capabilities", "features", "security",
         "tenancy",
     ):
         assert section in KNOWN_SECTIONS
@@ -69,14 +69,13 @@ def test_known_sections_cover_real_config_surface():
 def test_runtime_sections_do_not_lint_as_unknown(tmp_path):
     p = _cfg(tmp_path, """
 [models]
-planner = "openai:gpt-5"
+default = "openai:gpt-5"
 [capabilities]
 web_search = true
 [features]
 skills = true
 [security]
 allowed_tools = ["read"]
-[mcp_servers]
 [tenancy]
 by_user = true
 """)

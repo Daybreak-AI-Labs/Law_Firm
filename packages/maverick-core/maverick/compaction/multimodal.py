@@ -9,8 +9,8 @@ showed) survives while the base64 payload does not:
 
     [image: 1.2MB image/png 1280x800, described: login page with error toast]
 
-The description comes through the injected ``llm`` seam (configured vision
-role model) when available; otherwise the stub is deterministic — media type,
+The description comes through the injected ``llm`` seam (the selected run
+model acting in the vision role) when available; otherwise the stub is deterministic — media type,
 byte size, and dimensions sniffed from the PNG/GIF/JPEG header with no
 imaging dependency. Text blocks are never touched, the first message and the
 recent tail pass through verbatim (mirroring ``compact_messages``), and any

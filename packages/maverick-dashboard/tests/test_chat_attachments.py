@@ -79,5 +79,5 @@ def test_chat_page_has_attach_control(monkeypatch, tmp_path):
     r = _client().get("/chat")
     assert r.status_code == 200
     assert 'name="files"' in r.text
-    assert 'id="attach-btn"' in r.text
+    assert 'id="goal-files"' in r.text
     assert 'enctype="multipart/form-data"' in r.text

@@ -15,20 +15,6 @@ attribution and license obligations can be tracked.
 > (`.github/workflows/ci.yml`) and reproduce each dependency's required license
 > text and `NOTICE` (Apache-2.0) per its terms.
 
-## ⚠️ Copyleft / requires legal review before redistribution
-
-These carry obligations beyond permissive attribution (e.g. LGPL relink/notice,
-GPL). Confirm each against the actual installed version and your distribution
-model (the in-tree license scanner denies only *strong*-copyleft by default and
-scans only the installed tree — optional extras can slip past it):
-
-| Package | Likely license | Note |
-|---|---|---|
-| `psycopg` (psycopg 3) | LGPL-3.0 | Weak copyleft. Optional `[postgres]` extra in `maverick-core` and `maverick-knowledge`. LGPL notice/relink obligations apply. |
-| `python-telegram-bot` | LGPL-3.0 | Weak copyleft. Optional channel dependency. |
-| `caldav` | `GPL-3.0-or-later OR Apache-2.0` | **Verified against PyPI metadata (`license_expression`), July 2026: dual-licensed, so Apache-2.0 may be elected and there is no copyleft obligation.** Optional `[calendar]` extra, and `calendar_tool._get_caldav_calendar` imports it inside the function body, so it is never bundled. Not a redistribution risk; kept in this table only because the name recurs in scanner output. |
-| `matrix-nio` | ISC (verify) | Generally permissive, but confirm — some optional crypto extras pull copyleft. |
-
 ## Permissive dependencies (attribution required)
 
 The following are distributed under permissive licenses (MIT / BSD / Apache-2.0
@@ -57,35 +43,19 @@ installed version:
 | websockets | BSD-3-Clause |
 | pyjwt | MIT |
 | cryptography | Apache-2.0 OR BSD-3-Clause |
-| sigstore | Apache-2.0 |
 | boto3 | Apache-2.0 |
-| google-auth | Apache-2.0 |
-| grpcio | Apache-2.0 |
-| grpcio-tools | Apache-2.0 |
 | redis | MIT |
 | arq | MIT |
-| pymongo | Apache-2.0 |
 | psutil | BSD-3-Clause |
 | prometheus-client | Apache-2.0 |
 | opentelemetry-api | Apache-2.0 |
 | opentelemetry-sdk | Apache-2.0 |
 | opentelemetry-exporter-otlp-proto-http | Apache-2.0 |
 | sentry-sdk | MIT |
-| pandas | BSD-3-Clause |
-| pyarrow | Apache-2.0 |
-| numpy (via pandas) | BSD-3-Clause |
-| duckdb | MIT |
-| sympy | BSD-3-Clause |
-| latex2mathml | MIT |
 | torch | BSD-3-Clause |
 | transformers | Apache-2.0 |
 | sentence-transformers | Apache-2.0 |
 | fastembed | Apache-2.0 |
-| faster-whisper | MIT |
-| chromadb | Apache-2.0 |
-| qdrant-client | Apache-2.0 |
-| weaviate-client | BSD-3-Clause |
-| langchain-core | MIT |
 | pdfplumber | MIT |
 | pypdf | BSD-3-Clause |
 | python-docx | MIT |
@@ -93,20 +63,6 @@ installed version:
 | lxml | BSD-3-Clause |
 | pillow | MIT-CMU (HPND) |
 | pytesseract | Apache-2.0 |
-| playwright | Apache-2.0 |
-| mss | MIT |
-| pyautogui | BSD-3-Clause |
-| pyperclip | BSD-3-Clause |
-| pyserial | BSD-3-Clause |
-| smbus2 | MIT |
-| roslibpy | MIT |
-| aiortc | BSD-3-Clause |
-| twilio | MIT |
-| slack_sdk | MIT |
-| discord.py | MIT |
-| youtube-transcript-api | MIT |
-| modal | Apache-2.0 |
-| zstandard | BSD-3-Clause |
 | tomli | MIT |
 
 ## Build / dev / test tooling (not redistributed in runtime artifacts)

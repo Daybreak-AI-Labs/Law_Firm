@@ -19,7 +19,7 @@
       <strong>{{ name }}</strong>
       {% if badge %}<span class="badge {{ badge_class }}">{{ badge }}</span>{% endif %}
     </div>
-    {% if copy %}<p class="hero-statebox__copy">{{ copy | safe }}</p>{% endif %}
+    {% if copy %}<p class="hero-statebox__copy">{{ copy }}</p>{% endif %}
   </div>
 {% endmacro %}
 
@@ -28,9 +28,9 @@
          aria-labelledby="{{ title_id }}">
   <div>
     <div class="hero-kicker">{{ kicker }}</div>
-    <h1 class="page-title hero-title" id="{{ title_id }}">{{ title | safe }}</h1>
+    <h1 class="page-title hero-title" id="{{ title_id }}">{{ title }}</h1>
     {% if subtitle %}<div class="hero-subtitle">{{ subtitle }}</div>{% endif %}
-    {% if lede %}<p class="hero-lede">{{ lede | safe }}</p>{% endif %}
+    {% if lede %}<p class="hero-lede">{{ lede }}</p>{% endif %}
   </div>
   {% if caller is defined %}{{ caller() }}{% endif %}
 </section>

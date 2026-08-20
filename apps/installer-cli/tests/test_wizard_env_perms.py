@@ -34,8 +34,7 @@ def test_env_file_created_at_0600(tmp_path: Path, monkeypatch):
         from maverick_installer.wizard import write_config
         write_config(
             providers=["anthropic"],
-            role_models={},
-            channels={},
+            run_model="anthropic:claude-sonnet-4-6",
             safety={"profile": "balanced"},
             budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
             sandbox={"backend": "local", "workdir": "~/maverick-workspace"},
@@ -69,8 +68,7 @@ def test_env_file_overwrites_existing(tmp_path: Path, monkeypatch):
     from maverick_installer.wizard import write_config
     write_config(
         providers=["openai"],
-        role_models={},
-        channels={},
+        run_model="openai:gpt-5.4",
         safety={"profile": "balanced"},
         budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
         sandbox={"backend": "local", "workdir": "~/maverick-workspace"},
@@ -111,8 +109,7 @@ def test_existing_env_backup_created_at_0600(tmp_path: Path, monkeypatch):
 
         write_config(
             providers=["anthropic"],
-            role_models={},
-            channels={},
+            run_model="anthropic:claude-sonnet-4-6",
             safety={"profile": "balanced"},
             budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
             sandbox={"backend": "local", "workdir": "~/maverick-workspace"},
@@ -139,8 +136,7 @@ def test_identical_wizard_retry_does_not_rewrite_or_create_backups(
     monkeypatch.setattr(wizard, "CONFIG_FILE", tmp_path / "config.toml")
     kwargs = {
         "providers": ["anthropic"],
-        "role_models": {},
-        "channels": {},
+        "run_model": "anthropic:claude-sonnet-4-6",
         "safety": {"profile": "balanced"},
         "budget": {
             "max_dollars": 5.0,

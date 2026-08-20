@@ -21,6 +21,7 @@ def _stub(monkeypatch, tmp_path: Path, *, smoke: bool):
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
     monkeypatch.setattr(wizard, "smoke_test", lambda: smoke)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "anthropic:claude-sonnet-4-6")
     return wizard
 
 
@@ -46,3 +47,23 @@ def test_the_config_is_still_written_before_the_smoke_test_verdict(
     wizard = _stub(monkeypatch, tmp_path, smoke=False)
     assert wizard.run_fast() == 1
     assert (tmp_path / ".maverick" / "config.toml").is_file()
+
+
+def test_fast_setup_rejects_missing_model_pin_before_write(monkeypatch, tmp_path):
+    wizard = _stub(monkeypatch, tmp_path, smoke=True)
+    monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE")
+
+    assert wizard.run_fast() == 1
+    assert not (tmp_path / ".maverick" / "config.toml").exists()
+
+
+def test_fast_setup_derives_provider_from_exact_model_pin(monkeypatch, tmp_path):
+    wizard = _stub(monkeypatch, tmp_path, smoke=True)
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "openai:gpt-5.4")
+    monkeypatch.setenv("OPENAI_API_KEY", "operator-selected-key")
+
+    assert wizard.run_fast() == 0
+    config = (tmp_path / ".maverick" / "config.toml").read_text()
+    assert '[providers.openai]' in config
+    assert 'default = "openai:gpt-5.4"' in config
+    assert '[providers.anthropic]' not in config

@@ -21,6 +21,7 @@ shape = "table"
 deliverable = "intake triage & routing log"
 consumers = ["legal_operations_manager", "general_counsel"]
 cadence = "daily"
+gate = "review"
 
 [[workflow]]
 name = "Capture request"
@@ -40,3 +41,4 @@ instruction = "Escalate every substantive legal question to an attorney rather t
 [[workflow]]
 name = "Log and route"
 instruction = "Record the routing decision and SLA clock in the triage log for legal ops."
+gate = "review"

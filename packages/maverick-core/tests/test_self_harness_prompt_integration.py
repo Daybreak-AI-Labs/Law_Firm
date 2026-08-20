@@ -15,12 +15,19 @@ from maverick import self_harness as sh
 from maverick.agent import Agent
 from maverick.blackboard import Blackboard
 from maverick.budget import Budget
+from maverick.matter_context import (
+    GOAL_EXECUTION_PURPOSE,
+    MatterContext,
+    matter_context_scope,
+)
 from maverick.sandbox import LocalBackend
 from maverick.swarm import SwarmContext
 from maverick.world_model import WorldModel
 
 _BLOCK = "Operating guidance learned for this model:\n- ALWAYS verify the export window first"
 _NEEDLE = "verify the export window first"
+_MATTER_ID = 71
+_OWNER = "user:alice"
 
 
 @pytest.fixture
@@ -44,12 +51,57 @@ def _agent(ctx, model):
     return Agent(ctx=ctx, role="orchestrator", brief="do a thing", model_override=model)
 
 
+def _matter_context(matter_id: int = _MATTER_ID) -> MatterContext:
+    return MatterContext(
+        matter_id=matter_id,
+        client_id=7,
+        principal=_OWNER,
+        membership_role="attorney",
+        domain="legal",
+        jurisdiction="Tennessee",
+        purpose=GOAL_EXECUTION_PURPOSE,
+        source="test",
+    )
+
+
 def test_addendum_reaches_system_prompt(ctx, store, monkeypatch):
     monkeypatch.setenv("MAVERICK_SELF_HARNESS", "1")
     sh._write_addenda({"model-x": _BLOCK}, store)
     agent = _agent(ctx, "model-x")
     assert agent.model == "model-x"
     assert _NEEDLE in agent.system          # the learned guidance is in the prompt
+
+
+def test_secure_prompt_requires_exact_bound_matter_context(
+    ctx, store, monkeypatch,
+):
+    monkeypatch.setenv("MAVERICK_SELF_HARNESS", "1")
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_PER_TENANT", "0")
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", "44" * 32)
+    owner_scope = sh._owner_scope_digest(_OWNER)
+    exact_key = sh._matter_scoped_key(
+        "model-x", matter_id=_MATTER_ID, owner_scope=owner_scope,
+    )
+    sh._write_addenda(
+        {
+            "model-x": (
+                "Operating guidance learned for this model:\n"
+                "- GLOBAL CLIENT SECRET"
+            ),
+            exact_key: _BLOCK,
+        },
+        store,
+    )
+
+    assert _NEEDLE not in _agent(ctx, "model-x").system
+    with matter_context_scope(_matter_context(_MATTER_ID + 1)):
+        assert _NEEDLE not in _agent(ctx, "model-x").system
+    with matter_context_scope(_matter_context()):
+        system = _agent(ctx, "model-x").system
+    assert _NEEDLE in system
+    assert "GLOBAL CLIENT SECRET" not in system
 
 
 def test_model_resolved_before_build_system(ctx, store, monkeypatch):

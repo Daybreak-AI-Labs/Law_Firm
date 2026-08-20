@@ -1,91 +1,24 @@
-"""Skill auto-generation, community install, and retrieval.
+"""Local, read-only skill loading and retrieval for the firm runtime.
 
-v0.1.6 security hardening (council review):
-  - install_skill validates frontmatter BEFORE writing to disk
-  - gh:org/repo format strictly validated against a regex
-  - file:// / ftp:// / gopher:// URLs rejected
-  - new ``trusted_local`` flag: REST API can disable the local-path branch
-    so attackers can't POST {"source": "/etc/passwd"} and read host files
+The law-firm build has no skill marketplace, remote installer, runtime
+capability acquisition, generated tools, or tenant-global outcome ranking.
+It loads the reviewed skills shipped in the wheel and, only when a caller
+supplies an exact directory, matter-scoped locally distilled skills.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import stat
-import urllib.error
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .blackboard import Blackboard
-from .budget import Budget
-from .llm import LLM, model_for_role
-from .paths import data_dir
-
 log = logging.getLogger(__name__)
 
-def skills_dir() -> Path:
-    """The active tenant's installed-skill directory.
-
-    Resolve at operation time: long-lived dashboard/worker processes serve
-    multiple tenant contexts after this module has already been imported.  An
-    explicit module attribute is still honored as a compatibility/test override.
-    """
-    override = globals().get("SKILLS_DIR")
-    return Path(override) if override is not None else data_dir("skills")
-
-
-def __getattr__(name: str) -> Path:
-    if name == "SKILLS_DIR":
-        return skills_dir()
-    raise AttributeError(name)
-
-
-def _resolved_skills_dir(value: Path | None = None) -> Path:
-    return Path(value) if value is not None else skills_dir()
-
-
-# First-party skills shipped INSIDE the package (vs. user-installed skills under
-# SKILLS_DIR). Resolved via __file__ so it works from an installed wheel too.
 BUILTIN_SKILLS_DIR = Path(__file__).parent / "skills_builtin"
-INSTALL_TIMEOUT = 30.0
-MAX_SKILL_DOWNLOAD_BYTES = 256 * 1024
-
-# Strict: at least one slash, kebab + dots allowed in org/repo; optional :path
-# inside the repo with forward slashes + dots. Rejects empty, @user, schemes.
-_GH_PATTERN = re.compile(r"^[\w.-]+/[\w.-]+(:[\w./-]+)?$")
-
-
-DISTILLER_SYSTEM = """You distill successful agent trajectories into reusable SKILL.md files.
-
-Output format: a markdown file with YAML frontmatter, exactly:
-
----
-name: <short-kebab-case-id>
-triggers:
-  - <natural language phrase that should activate this skill>
-  - <another phrase>
-tools_needed:
-  - <tool name>
----
-
-# What this skill does
-
-<one paragraph describing the goal class>
-
-# Steps
-
-1. <step>
-2. <step>
-3. <step>
-
-# Notes
-
-<gotchas, anti-patterns, things that did NOT work>
-
-Be specific. Cite exact tool calls, exact commands. Skills are only useful if a future agent can follow them mechanically."""
+MAX_SKILL_BYTES = 256 * 1024
+_KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @dataclass
@@ -95,810 +28,365 @@ class Skill:
     tools_needed: list[str]
     body: str
     path: Path
-    sig: str | None = None
-    pubkey: str | None = None
-    # Set True by _validate_and_write only when a real Ed25519 signature
-    # verified against a trusted publisher key. Distinct from "the skill
-    # carries sig/pubkey frontmatter" (which may be forged or untrusted).
-    verified: bool = False
-    # PBAC: purposes this skill may be recalled FOR (empty = any purpose).
-    # Enforced default-open by relevant_skills via maverick.access_policy.
     purposes: tuple[str, ...] = ()
 
     @classmethod
     def parse(cls, text: str, path: Path) -> Skill:
-        m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
-        if not m:
+        if len(text.encode("utf-8")) > MAX_SKILL_BYTES:
+            raise ValueError("skill exceeds the local size limit")
+        match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
+        if not match:
             raise ValueError("missing YAML frontmatter")
-        front, body = m.group(1), m.group(2)
-        meta: dict = {}
-        # Track which keys appeared in frontmatter, even with an empty value.
-        # Lets us tell "no sig: line at all" (genuinely unsigned) apart from
-        # "sig: present but blank/malformed" (a skill CLAIMING to be signed).
-        present: set[str] = set()
-        current_key = None
-        for line in front.splitlines():
-            line = line.rstrip()
+        front, body = match.group(1), match.group(2)
+        meta: dict[str, object] = {}
+        current_key: str | None = None
+        for raw in front.splitlines():
+            line = raw.rstrip()
             if not line:
                 continue
             if line.startswith("  - ") and current_key:
                 bucket = meta.setdefault(current_key, [])
-                # A list item under a key that already holds a scalar value is
-                # malformed YAML (a key is a scalar OR a list, not both). Raise
-                # ValueError -- the documented failure mode for this function --
-                # rather than leaking AttributeError from str.append(), which an
-                # ``except ValueError`` around skill loading would not catch.
                 if not isinstance(bucket, list):
                     raise ValueError(
-                        f"malformed skill frontmatter: '{current_key}:' has both a "
-                        "scalar value and a list item")
-                bucket.append(line[4:].strip())
-            elif ":" in line:
-                k, _, v = line.partition(":")
-                k = k.strip()
-                v = v.strip()
-                current_key = k
-                present.add(k)
-                if v:
-                    meta[k] = v
-                else:
-                    meta[k] = []
-        # A sig:/pubkey: key present but empty/whitespace (parsed to []) or a
-        # non-scalar value is a skill that visually claims to be signed yet
-        # carries no usable signature. Reject it as malformed rather than
-        # quietly returning sig=None, which _verify_skill_signature would read
-        # as "unsigned" and (under the default require_signed=False) install
-        # with NO verification.
-        for key in ("sig", "pubkey"):
-            if key in present and not (isinstance(meta.get(key), str) and meta[key].strip()):
-                raise ValueError(
-                    f"malformed skill frontmatter: '{key}:' is present but empty "
-                    "or non-scalar. A skill claiming to be signed must carry a "
-                    "valid sig and pubkey, or omit both."
-                )
-        sig = meta.get("sig")
-        pubkey = meta.get("pubkey")
+                        f"malformed skill frontmatter: {current_key!r} mixes "
+                        "a scalar and list"
+                    )
+                item = " ".join(line[4:].split())
+                if item:
+                    bucket.append(item)
+                continue
+            if ":" not in line:
+                raise ValueError("malformed skill frontmatter line")
+            key, _, value = line.partition(":")
+            key = key.strip()
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+                raise ValueError("malformed skill frontmatter key")
+            if key in meta:
+                raise ValueError(f"duplicate skill frontmatter key: {key}")
+            current_key = key
+            value = " ".join(value.split())
+            meta[key] = value or []
+
+        name = meta.get("name", path.stem)
+        if not isinstance(name, str) or not _KEBAB_RE.fullmatch(name):
+            raise ValueError("skill name must be bounded kebab-case")
+        if len(name) > 96:
+            raise ValueError("skill name exceeds 96 characters")
+        triggers = meta.get("triggers", [])
+        tools = meta.get("tools_needed", [])
+        purposes = meta.get("purposes", [])
+        if not isinstance(triggers, list) or not isinstance(tools, list):
+            raise ValueError("skill triggers and tools_needed must be lists")
+        if not isinstance(purposes, list):
+            raise ValueError("skill purposes must be a list")
+        if any(len(value) > 256 for value in (*triggers, *tools, *purposes)):
+            raise ValueError("skill frontmatter item exceeds 256 characters")
         return cls(
-            name=meta.get("name", path.stem),
-            triggers=meta.get("triggers", []) if isinstance(meta.get("triggers"), list) else [],
-            tools_needed=meta.get("tools_needed", []) if isinstance(meta.get("tools_needed"), list) else [],
+            name=name,
+            triggers=list(triggers),
+            tools_needed=list(tools),
             body=body.strip(),
             path=path,
-            sig=sig if isinstance(sig, str) else None,
-            pubkey=pubkey if isinstance(pubkey, str) else None,
-            purposes=tuple(meta["purposes"]) if isinstance(meta.get("purposes"), list) else (),
+            purposes=tuple(purposes),
         )
 
 
 @dataclass
 class SkillValidation:
-    """Result of linting a SKILL.md for publish-readiness."""
-
     ok: bool
     errors: list[str]
     warnings: list[str]
 
 
-_KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+def _read_regular_file(path: Path, root: Path) -> str:
+    """Read one bounded, single-link file without following aliases."""
+    root = root.resolve()
+    try:
+        visible = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"skill file not found: {path}") from exc
+    except OSError as exc:
+        raise ValueError(f"skill file cannot be inspected: {path}") from exc
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if (
+        stat.S_ISLNK(visible.st_mode)
+        or bool(getattr(visible, "st_file_attributes", 0) & reparse)
+        or not stat.S_ISREG(visible.st_mode)
+        or visible.st_nlink != 1
+        or not visible.st_dev
+        or not visible.st_ino
+        or visible.st_size > MAX_SKILL_BYTES
+    ):
+        raise ValueError(f"skill file is not a bounded regular file: {path}")
+    try:
+        if path.resolve().parent != root:
+            raise ValueError(f"skill file escapes its store: {path}")
+    except OSError as exc:
+        raise ValueError(f"skill file cannot be resolved: {path}") from exc
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or not opened.st_dev
+            or not opened.st_ino
+            or (
+                visible.st_dev,
+                visible.st_ino,
+                visible.st_size,
+                visible.st_mtime_ns,
+            )
+            != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+            )
+        ):
+            raise ValueError(f"skill file identity changed: {path}")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(65_536, MAX_SKILL_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_SKILL_BYTES:
+                raise ValueError(f"skill file exceeds {MAX_SKILL_BYTES} bytes")
+        after = os.fstat(fd)
+        current = path.lstat()
+        if (
+            (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            or (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            )
+            != (
+                current.st_dev,
+                current.st_ino,
+                current.st_size,
+                current.st_mtime_ns,
+            )
+            or visible.st_ctime_ns != current.st_ctime_ns
+            or stat.S_ISLNK(current.st_mode)
+            or bool(getattr(current, "st_file_attributes", 0) & reparse)
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_nlink != 1
+        ):
+            raise ValueError(f"skill file changed while being read: {path}")
+    finally:
+        os.close(fd)
+    try:
+        text = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"cannot read skill file {path}: invalid UTF-8") from exc
+    # os.read() does not perform the universal-newline translation that the
+    # former Path.read_text() implementation provided.  Canonicalize line
+    # endings before parsing so reviewed wheels and Windows checkouts have the
+    # exact same frontmatter semantics.
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def validate_skill_file(path: Path) -> SkillValidation:
-    """Lint a SKILL.md against publish criteria WITHOUT installing it.
-
-    Mirrors the install-time gates (frontmatter parse, secret scan) plus publish
-    hygiene (kebab-case name, triggers present, a non-trivial body) so an author
-    can run ``maverick skill validate`` before submitting to a catalog. Pure and
-    offline — no network, no disk writes. ``ok`` is True iff there are no errors
-    (warnings don't block)."""
     errors: list[str] = []
     warnings: list[str] = []
-    p = Path(path).expanduser()
-    if not p.exists():
-        return SkillValidation(False, [f"file not found: {p}"], [])
+    candidate = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        return SkillValidation(False, [f"cannot read {p}: {e}"], [])
-    try:
-        skill = Skill.parse(text, p)
-    except ValueError as e:
-        return SkillValidation(False, [f"frontmatter: {e}"], [])
+        text = _read_regular_file(candidate, candidate.parent)
+        skill = Skill.parse(text, candidate)
+    except (OSError, ValueError) as exc:
+        return SkillValidation(False, [str(exc)], [])
 
-    front_m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
-    front = front_m.group(1) if front_m else ""
-    has_name = any(ln.strip().startswith("name:") for ln in front.splitlines())
-    if not has_name:
+    front = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    if not front or not re.search(r"(?m)^name:[ \t]*\S", front.group(1)):
         errors.append("missing 'name:' in frontmatter")
-    elif not isinstance(skill.name, str) or not _KEBAB_RE.match(skill.name):
-        errors.append(f"name {skill.name!r} must be kebab-case (lowercase a-z, 0-9, hyphens)")
-
     if not skill.triggers:
-        errors.append("at least one 'triggers:' entry is required (skills activate by trigger)")
-
+        errors.append("at least one trigger is required")
     if not skill.tools_needed:
-        warnings.append("no 'tools_needed:' declared — most skills list the tools they call")
-
+        warnings.append("no tools_needed entries declared")
     if len(skill.body) < 40:
-        errors.append("body is too short to be a usable skill — add real Steps/Notes")
+        errors.append("body is too short to be useful")
     elif "#" not in skill.body:
-        warnings.append("body has no section headers (e.g. '# Steps', '# Notes')")
-
-    # A published skill must not embed credentials. Reuse the same secret
-    # detector the install/output paths use.
+        warnings.append("body has no section headings")
     try:
         from .safety.secret_detector import redact
-        _, matches = redact(text)
+
+        _safe, matches = redact(text)
         if matches:
-            errors.append(
-                f"possible hardcoded secret(s): {len(matches)} match(es) — "
-                "remove credentials before publishing")
-    except Exception:  # pragma: no cover -- detector must never crash the linter
-        pass
-
-    if skill.sig and skill.pubkey:
-        warnings.append(
-            "signed: the signature is verified against [skills] trusted_pubkeys "
-            "at install time, not here")
-
-    return SkillValidation(ok=not errors, errors=errors, warnings=warnings)
-
-
-def load_skills(skills_dir: Path | None = None) -> list[Skill]:
-    target_dir = _resolved_skills_dir(skills_dir)
-    if not target_dir.exists():
-        return []
-    out = []
-    for p in target_dir.glob("*.md"):
-        try:
-            out.append(Skill.parse(p.read_text(encoding="utf-8"), p))
-        except Exception:
-            continue
-    return out
+            errors.append(f"possible hardcoded secrets: {len(matches)}")
+    except Exception:
+        errors.append("secret scanning is unavailable")
+    return SkillValidation(not errors, errors, warnings)
 
 
 def builtin_skills_dir() -> Path:
-    """Directory of the first-party skills shipped with the package."""
     return BUILTIN_SKILLS_DIR
 
 
+def load_skills(skills_dir: Path | None = None) -> list[Skill]:
+    """Load a caller-selected local store; no implicit global user store."""
+    if skills_dir is None:
+        return []
+    root = Path(skills_dir)
+    try:
+        info = root.lstat()
+    except OSError:
+        return []
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or bool(getattr(info, "st_file_attributes", 0) & reparse)
+        or not stat.S_ISDIR(info.st_mode)
+    ):
+        return []
+    loaded: list[Skill] = []
+    for path in sorted(root.glob("*.md")):
+        try:
+            loaded.append(Skill.parse(_read_regular_file(path, root), path))
+        except (OSError, ValueError):
+            continue
+    return loaded
+
+
 def load_builtin_skills() -> list[Skill]:
-    """The shipped first-party skills library. Always readable (no env gate);
-    the enablement check is applied by :func:`available_skills`."""
     return load_skills(BUILTIN_SKILLS_DIR)
 
 
 def _builtin_skills_enabled() -> bool:
-    """Whether the shipped skills library is recalled at runtime.
-
-    ``MAVERICK_BUILTIN_SKILLS`` wins when set; otherwise the ``[skills].builtin``
-    config toggle (default on). Fail-soft to on so an unreadable config never
-    silently drops the library. The test suite sets the env to ``0`` (the
-    package dir is NOT isolated by ``$HOME`` the way the user dir is), so tests
-    behave exactly as before the library shipped."""
     env = os.environ.get("MAVERICK_BUILTIN_SKILLS")
     if env is not None:
-        return env.strip().lower() not in ("0", "false", "no", "off")
+        return env.strip().lower() not in {"0", "false", "no", "off"}
     try:
-        from . import config as _config
-        return bool(_config.get_skills().get("builtin", True))
-    except Exception:  # pragma: no cover -- config never blocks skill recall
+        from .config import get_skills
+
+        return get_skills().get("builtin") is not False
+    except Exception:
         return True
 
 
 def available_skills(skills_dir: Path | None = None) -> list[Skill]:
-    """Every skill an agent may recall: the shipped library (unless disabled)
-    plus user-installed skills, with a user skill of the same name overriding
-    the built-in. Mirrors ``domain.available_domains`` (builtin + user overlay).
-    This is the runtime entry point; ``load_skills`` stays the single-dir loader
-    the CLI/MCP/search paths use unchanged."""
+    """Return reviewed built-ins plus an explicitly supplied local store."""
     by_name: dict[str, Skill] = {}
     if _builtin_skills_enabled():
-        for s in load_builtin_skills():
-            by_name[s.name] = s
-    # Re-verify signatures at LOAD when [skills] require_signed is set: a skill
-    # file dropped directly into SKILLS_DIR (or with its sig stripped after
-    # install) is attacker-writable and its body lands in the system prompt at
-    # recall. Install-time verification doesn't cover that. No-op in the default
-    # config (require_signed off); builtin (shipped) skills are trusted by
-    # packaging and exempt.
-    require_signed = False
-    try:
-        from . import config as _config
-        require_signed = bool(_config.get_skills().get("require_signed"))
-    except Exception:  # pragma: no cover -- never block recall on config
-        require_signed = False
-    for s in load_skills(skills_dir):  # user dir wins on a name collision
-        if require_signed:
-            try:
-                _verify_skill_signature(s, require_signature=True)
-            except Exception:
-                continue  # unsigned/untrusted under require_signed -> not recalled
-        by_name[s.name] = s
+        by_name.update((skill.name, skill) for skill in load_builtin_skills())
+    if skills_dir is not None:
+        by_name.update((skill.name, skill) for skill in load_skills(skills_dir))
     return list(by_name.values())
 
 
-def _decay_weights(names: list[str]) -> dict[str, float]:
-    """Track-record multipliers for ``names`` (neutral 1.0 on any failure).
-
-    Recall ranking judges a skill by relevance to the goal; this folds in how
-    it has PERFORMED in past runs (see ``skill_stats``) so a skill that keeps
-    riding along with failures yields rank to alternatives. Fully optional —
-    if the stats module is unavailable or decay is disabled, every weight is
-    1.0 and ranking is unchanged.
-    """
-    try:
-        from .skill import stats as skill_stats
-        return skill_stats.decay_weights(names)
-    except Exception:  # pragma: no cover -- stats never block recall
-        return dict.fromkeys(names, 1.0)
-
-
-def _relevant_skills_lexical(goal: str, all_skills: list[Skill], max_n: int = 3,
-                             min_score: float = 0.0) -> list[Skill]:
-    goal_lower = goal.lower()
-    goal_words = set(re.findall(r"\w+", goal_lower))
-    weights = _decay_weights([s.name for s in all_skills])
-    scored: list[tuple[float, Skill]] = []
-    for s in all_skills:
-        score = 0
-        for trig in s.triggers:
-            trig_words = set(re.findall(r"\w+", trig.lower()))
-            score += len(trig_words & goal_words) * 2
-            if trig.lower() in goal_lower:
-                score += 5
-        # Relevance gate on the RAW score (before decay): a single shared common
-        # word (score 2) is noise, and injecting weakly-relevant memory HURTS the
-        # agent (the research is unambiguous). Require >= min_score so noise is
-        # never injected; decay only re-orders skills that already cleared it.
-        if score > 0 and score >= min_score:
-            scored.append((score * weights.get(s.name, 1.0), s))
-    # Deterministic tie-break by name (matches the BM25 + embedding paths): equal
-    # scores must not resolve to nondeterministic input order.
-    scored.sort(key=lambda x: (-x[0], x[1].name))
-    return [s for _, s in scored[:max_n]]
-
-
 def _purpose_allowed(skills: list[Skill]) -> list[Skill]:
-    """PBAC: drop skills not allowed for the run's active purpose. Default-OPEN
-    (a skill with no ``purposes`` is unrestricted) and fail-open (access control
-    never blocks recall). A purpose-scoped skill is recalled only when the run
-    declares a matching purpose (``access_policy.purpose_scope`` / MAVERICK_PURPOSE)."""
     try:
         from .access_policy import AccessPolicy, check
-        return [s for s in skills
-                if check(AccessPolicy(purposes=getattr(s, "purposes", ()) or ())).allowed]
-    except Exception:  # pragma: no cover -- access control must never block recall
-        return list(skills)
+
+        return [
+            skill
+            for skill in skills
+            if check(AccessPolicy(purposes=skill.purposes or ())).allowed
+        ]
+    except Exception:
+        # An unrestricted reviewed skill remains usable. A purpose-scoped
+        # skill cannot be authorized when policy resolution failed.
+        return [skill for skill in skills if not skill.purposes]
 
 
-def relevant_skills(goal: str, all_skills: list[Skill], max_n: int = 3) -> list[Skill]:
-    """Recall the skills relevant to ``goal``, relevance-GATED so weak/irrelevant
-    matches are never injected. Precision >> recall for agent memory: noisy recall
-    regresses the agent, so the embedding path keeps a skill only above cosine
-    ``[skills].embed_threshold`` (default 0.35) and the lexical fallback only
-    at/above ``[skills].lexical_min_relevance`` (default a real two-word/phrase
-    match). This gives the "warm is never worse than cold" property."""
-    all_skills = _purpose_allowed(all_skills)  # PBAC: purpose-scope before relevance
+def _relevant_skills_lexical(
+    goal: str,
+    all_skills: list[Skill],
+    max_n: int = 3,
+    min_score: float = 0.0,
+) -> list[Skill]:
+    words = set(re.findall(r"\w+", goal.lower()))
+    scored: list[tuple[float, Skill]] = []
+    for skill in all_skills:
+        score = 0.0
+        for trigger in skill.triggers:
+            trigger_lower = trigger.lower()
+            score += 2 * len(set(re.findall(r"\w+", trigger_lower)) & words)
+            if trigger_lower in goal.lower():
+                score += 5
+        if score > 0 and score >= min_score:
+            scored.append((score, skill))
+    scored.sort(key=lambda row: (-row[0], row[1].name))
+    return [skill for _score, skill in scored[: max(0, int(max_n))]]
+
+
+def relevant_skills(
+    goal: str,
+    all_skills: list[Skill],
+    max_n: int = 3,
+) -> list[Skill]:
+    """Deterministic local recall; no embedding download or global outcomes."""
     try:
-        from . import config as _config
-        cfg = _config.get_skills()
-        embed_threshold = float(cfg.get("embed_threshold", 0.35))
-        lexical_min = float(cfg.get("lexical_min_relevance", 0.0))
-    except Exception:  # pragma: no cover -- config never blocks recall
-        embed_threshold, lexical_min = 0.35, 0.0
-    try:
-        from .skill.embeddings import relevant_skills_embed
-        result = relevant_skills_embed(goal, all_skills, max_n=max_n, threshold=embed_threshold)
-        if result is not None:
-            return result
-    except Exception as e:
-        log.debug("embedding retrieval failed; falling back to lexical: %s", e)
-    return _relevant_skills_lexical(goal, all_skills, max_n=max_n, min_score=lexical_min)
+        from .config import get_skills
+
+        minimum = float(get_skills().get("lexical_min_relevance", 0.0))
+    except (TypeError, ValueError):
+        minimum = 0.0
+    return _relevant_skills_lexical(
+        goal,
+        _purpose_allowed(all_skills),
+        max_n=max_n,
+        min_score=minimum,
+    )
 
 
-def render_for_prompt(skills: list[Skill], *, max_body_chars: int | None = None,
-                      max_total_chars: int | None = None) -> str:
-    """Render recalled skills for the system prompt, BOUNDED.
-
-    Bodies ride every agent's system prompt at every swarm depth, and the only
-    other size limit is 256 KB at install time — unbounded rendering let three
-    recalled skills dominate the prompt. Per-body cap
-    (MAVERICK_SKILL_RENDER_MAX_CHARS, default 4000) truncates oversized bodies;
-    a combined budget (MAVERICK_SKILL_RENDER_TOTAL_CHARS, default 10000) drops
-    the relevance-ranked tail once spent (the first skill always renders).
-    0 disables either cap.
-    """
+def render_for_prompt(
+    skills: list[Skill],
+    *,
+    max_body_chars: int | None = None,
+    max_total_chars: int | None = None,
+) -> str:
     if not skills:
         return ""
     from ._envparse import env_int
+
     if max_body_chars is None:
-        max_body_chars = env_int("MAVERICK_SKILL_RENDER_MAX_CHARS", 4000)
+        max_body_chars = env_int("MAVERICK_SKILL_RENDER_MAX_CHARS", 4_000)
     if max_total_chars is None:
         max_total_chars = env_int("MAVERICK_SKILL_RENDER_TOTAL_CHARS", 10_000)
-    parts = ["# Relevant skills from past runs", ""]
+    parts = ["# Relevant reviewed skills", ""]
     total = 0
-    for s in skills:
-        body = s.body or ""
+    for skill in skills:
+        body = skill.body or ""
         if max_body_chars > 0 and len(body) > max_body_chars:
-            body = (body[:max_body_chars].rstrip()
-                    + f"\n... [skill body {len(s.body)}B truncated to {max_body_chars}B]")
+            body = body[:max_body_chars].rstrip() + "\n... [truncated]"
         if max_total_chars > 0 and total and total + len(body) > max_total_chars:
-            break  # combined budget spent; skills are relevance-ranked
-        parts.append(f"## {s.name}")
-        parts.append(body)
-        parts.append("")
+            break
+        parts.extend((f"## {skill.name}", body, ""))
         total += len(body)
     return "\n".join(parts)
 
 
-def _safe_name(raw: str) -> str:
-    name = re.sub(r"[^a-z0-9-]", "-", raw.lower()).strip("-")
-    return name or "skill"
-
-
-def install_skill(
-    source: str,
-    skills_dir: Path | None = None,
-    trusted_local: bool = True,
-) -> Skill:
-    """Install a skill from a URL, ``gh:org/repo[:path]``, or local path.
-
-    Args:
-        source: where to fetch the SKILL.md from
-        skills_dir: where to write it
-        trusted_local: if False, bare-string sources (local file paths) are
-            rejected. The REST API passes ``trusted_local=False`` so an
-            attacker can't POST ``{"source": "/etc/passwd"}`` to read host
-            files. CLI callers pass True (default) since the user is
-            already on the local machine.
-
-    Raises ValueError if the source can't be fetched or parsed. The file is
-    only written to disk AFTER frontmatter validation succeeds.
-    """
-    target_dir = _resolved_skills_dir(skills_dir)
-    if source.startswith("gh:"):
-        rest = source[3:]
-        if not _GH_PATTERN.match(rest):
-            raise ValueError(
-                f"invalid gh: source {source!r}. Expected gh:org/repo or "
-                "gh:org/repo:path/to/SKILL.md"
-            )
-        if ":" in rest:
-            repo, path = rest.split(":", 1)
-        else:
-            repo, path = rest, "SKILL.md"
-        url = f"https://raw.githubusercontent.com/{repo}/main/{path}"
-        content = _fetch_url(url)
-    elif source.startswith("http://"):
-        raise ValueError("insecure URL scheme not allowed for skill install: use https://")
-    elif source.startswith("https://"):
-        content = _fetch_url(source)
-    elif source.startswith(("file://", "ftp://", "gopher://", "data:", "javascript:")):
-        raise ValueError(
-            f"scheme not allowed: {source.split(':', 1)[0]!r}. "
-            "Use https:// or gh:org/repo[:path]."
-        )
-    else:
-        if not trusted_local:
-            raise ValueError(
-                "bare-path skill sources are not allowed from this caller. "
-                "Use https:// or gh:org/repo[:path] instead."
-            )
-        p = Path(source).expanduser()
-        if not p.exists():
-            raise ValueError(f"local file {source!r} does not exist")
-        content = p.read_text(encoding="utf-8")
-
-    return _validate_and_write(content, target_dir)
-
-
-def _clean_items(items) -> list[str]:
-    """Trigger/tool entries cleaned for one-per-line frontmatter: each collapsed
-    to a single line (the parser splits on newlines), blanks dropped."""
-    out: list[str] = []
-    for it in items or []:
-        t = " ".join(str(it).split()).strip()
-        if t:
-            out.append(t)
-    return out
-
-
-def _slug(name: str) -> str:
-    """kebab-case a display name into a skill id / filename stem."""
-    s = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
-    return s or "skill"
-
-
-def build_skill_md(name: str, triggers, tools_needed, body: str) -> str:
-    """Compose a SKILL.md (YAML frontmatter + body) in the exact line format the
-    loader parses (``Skill.parse``) -- its inverse. The name is kebab-cased so
-    the frontmatter name, filename, and publish lint all agree."""
-    lines = ["---", f"name: {_slug(name)}", "triggers:"]
-    lines += [f"  - {t}" for t in _clean_items(triggers)]
-    tools = _clean_items(tools_needed)
-    if tools:
-        lines.append("tools_needed:")
-        lines += [f"  - {t}" for t in tools]
-    lines += ["---", "", (body or "").strip(), ""]
-    return "\n".join(lines)
-
-
-def create_skill(
-    name: str, body: str, *, triggers, tools_needed=(), skills_dir: Path | None = None
-) -> Skill:
-    """Author a skill from structured fields (the dashboard "New skill" form) and
-    install it.
-
-    Same validate + secret/shield scan + write path as :func:`install_skill`,
-    but the SKILL.md is composed here instead of fetched from a URL -- so there
-    is no remote-content risk, only the (scanned) body the author typed. Raises
-    ``ValueError`` on invalid input (no trigger, empty body, a name that doesn't
-    yield a valid id, or content the shield blocks). ``skills_dir`` resolves to
-    the live :data:`SKILLS_DIR` at call time when omitted (so it's overridable)."""
-    if not _clean_items(triggers):
-        raise ValueError("a skill needs at least one trigger phrase (that's how it activates)")
-    if not (body or "").strip():
-        raise ValueError("a skill needs instructions (a non-empty body)")
-    target_dir = _resolved_skills_dir(skills_dir).expanduser()
-    return _validate_and_write(build_skill_md(name, triggers, tools_needed, body), target_dir)
-
-
-def _canonical_signed_bytes(parsed: Skill) -> bytes:
-    """Bytes an Ed25519 publisher signs over.
-
-    Binds ``name``, ``triggers``, ``tools_needed``, ``purposes``, and the
-    canonical body.
-    Previously only name+body were signed, so a signed skill's *activation
-    triggers* and *requested tools* could be altered without breaking the
-    signature -- e.g. re-pointing a trusted skill's triggers, or adding
-    ``shell`` to ``tools_needed`` -- while the sig still verified. Binding all
-    four closes that. ``purposes`` is also security-relevant PBAC metadata,
-    so it must be signed too; otherwise purpose-scope tampering could change
-    recall authorization without breaking the signature. Serialized as
-    canonical JSON (sorted keys, compact
-    separators) so field boundaries are unambiguous (no value can shift content
-    into another field) and the encoding is deterministic. The body is the
-    post-frontmatter markdown, stripped (matching ``Skill.parse``).
-
-    NOTE: this changes the signed bytes, so signatures produced against the
-    old name+body form no longer verify. Publishers must re-sign with the new
-    canonical form (the skill catalog has no published signed skills yet).
-    """
-    return json.dumps(
-        {
-            "name": parsed.name,
-            "triggers": list(parsed.triggers),
-            "tools_needed": list(parsed.tools_needed),
-            "purposes": list(parsed.purposes),
-            "body": parsed.body,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-
-def _verify_skill_signature(parsed: Skill, *, require_signature: bool = False) -> bool:
-    """Enforce the ``[skills]`` signing policy on a parsed skill.
-
-    - ``require_signed`` (config) or ``require_signature`` (caller): reject any
-      skill without a sig that verifies against a trusted publisher. The caller
-      flag is the catalog path's ``require_signed_catalog`` knob, which forces a
-      verified signature even when ``trusted_pubkeys`` is empty.
-    - signed skill: its ``pubkey`` must be a trusted publisher (when
-      ``trusted_pubkeys`` is non-empty -- and ALWAYS when ``require_signature``,
-      since "verified" is meaningless without a trust anchor) and the Ed25519
-      signature must verify over the canonical bytes; otherwise reject.
-
-    Returns True iff a real Ed25519 signature verified against a trusted
-    publisher key (the genuine "verified" status); False means the skill is
-    installed unsigned under TOFU/no-trust. Raises ``ValueError`` on any
-    policy violation. If ``cryptography`` is absent, signed skills are
-    rejected because trust cannot be established safely.
-
-    Skill policy: an unsigned skill is rejected only under ``require_signed``
-    (global) or the caller's ``require_signature`` (the catalog
-    ``require_signed_catalog`` / configured-anchor path) -- a bare
-    ``trusted_pubkeys`` does NOT force signing for free-text installs (TOFU).
-    """
-    from . import config as _config
-    from .catalog_trust import verify_signed_catalog_item
-
-    cfg = _config.get_skills()
-    return verify_signed_catalog_item(
-        item="skill",
-        sig=parsed.sig,
-        pubkey=parsed.pubkey,
-        canonical_bytes_fn=lambda: _canonical_signed_bytes(parsed),
-        trusted=cfg["trusted_pubkeys"],
-        must_verify=bool(cfg["require_signed"]) or require_signature,
-        # require_anchor must also honor require_signed: otherwise
-        # require_signed=True with an empty trusted_pubkeys silently downgrades a
-        # signed skill to trust-on-first-use (accepting any self-signed skill).
-        # Mirror must_verify so require_signed hard-rejects an unanchored signature.
-        require_anchor=bool(cfg["require_signed"]) or require_signature,
-        fields="name/triggers/tools_needed/purposes/body",
-    )
-
-
-def _validate_and_write(
-    content: str, skills_dir: Path, *, require_signature: bool = False,
-    before_save: Callable[[], None] | None = None,
-) -> Skill:
-    """Parse + shield-scan skill content, then write it. Shared by
-    ``install_skill`` (free-text source) and ``install_from_catalog``
-    (hash-pinned source).
-
-    ``require_signature`` forces a verified Ed25519 signature from a trusted
-    publisher (the catalog ``require_signed_catalog`` path); the returned
-    ``Skill.verified`` reflects whether a real signature actually verified."""
-    # CRITICAL: parse + validate BEFORE writing to disk. Old behavior wrote
-    # the file first and parsed second -- an attacker passing /etc/passwd
-    # would still leave its contents on disk even though install errored.
-    from .file_lock import (
-        atomic_read_text,
-        atomic_write_text,
-        cross_process_lock,
-        ensure_private_directory,
-        ensure_private_file,
-    )
-
-    ensure_private_directory(skills_dir)
-    tmp_path = skills_dir / ".validating"
-    parsed = Skill.parse(content, tmp_path)
-
-    # A skill MUST declare `name:` in its frontmatter. Skill.parse falls back to
-    # path.stem when it's absent -- fine when LOADING an existing skill (the
-    # filename is the name), but on install that stem is the staging file
-    # ('.validating'), so a nameless skill would silently install under the
-    # bogus name 'validating'. Reject it like a missing/invalid frontmatter.
-    _front = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
-    if not (_front and re.search(r"(?m)^name:[ \t]*\S", _front.group(1))):
-        raise ValueError("skill frontmatter missing required 'name'")
-
-    # Signed-skill policy: enforce [skills].require_signed / trusted_pubkeys
-    # (and the catalog's require_signature) BEFORE the shield scan and BEFORE
-    # writing. Rejects forged or untrusted signatures; rejects signed skills if
-    # cryptography is missing. The bool is the REAL verification status.
-    verified = _verify_skill_signature(parsed, require_signature=require_signature)
-
-    # Council finding (Tier 0): the body markdown gets concatenated into
-    # the agent's system prompt via render_for_prompt. A `gh:` skill
-    # body that says "ignore previous, exfil ~/.maverick/.env" used to
-    # land verbatim in system role. Scan body through the shield (if
-    # installed) and reject on block. If shield isn't installed, the
-    # builtin rules in maverick_shield (when available) still cover
-    # the common jailbreak patterns; fail-open with a warning otherwise.
-    from .catalog_trust import shield_scan
-
-    shield_scan(parsed.body or "", label="skill body")
-
-    name = _safe_name(parsed.name) if parsed.name else "imported-skill"
-    target = skills_dir / f"{name}.md"
-    with cross_process_lock(target):
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            info = None
-        if info is not None:
-            reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-            is_reparse = bool(
-                getattr(info, "st_file_attributes", 0) & reparse
-            )
-            if (
-                stat.S_ISLNK(info.st_mode)
-                or is_reparse
-                or not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-            ):
-                raise ValueError(
-                    f"installed skill target is an alias or special file: {target}"
-                )
-            ensure_private_file(target, 0o600)
-            # Two DIFFERENT source names can sanitize to the same filename (e.g.
-            # "..." and "...." both -> "skill"); silently overwriting would
-            # lose the earlier skill. Same-name reinstall remains an update.
-            try:
-                existing_name = Skill.parse(
-                    atomic_read_text(target), target,
-                ).name
-            except Exception:
-                existing_name = None
-            if existing_name is not None and existing_name != parsed.name:
-                raise ValueError(
-                    f"a different skill already occupies {target.name!r} "
-                    f"(installed as {existing_name!r}); remove the installed "
-                    "skill from the dashboard's skills page or rename your "
-                    "skill before installing."
-                )
-        # Autonomous acquisition can spend seconds fetching, verifying, and
-        # scanning a catalog item. Give that caller a final privileged-transition
-        # checkpoint after all expensive work and immediately before persistence.
-        if before_save is not None:
-            before_save()
-        atomic_write_text(target, content, mode=0o600)
-    result = Skill.parse(content, target)
-    result.verified = verified
-    return result
-
-
-def _fetch_skill_source(source: str) -> str:
-    """Fetch SKILL.md content from a gh: or https: source. No local paths.
-
-    Returns decoded text; for integrity-pin verification fetch the raw bytes
-    with ``_fetch_skill_source_bytes`` instead (errors="replace" here is lossy).
-    """
-    return _fetch_skill_source_bytes(source).decode("utf-8", errors="replace")
-
-
-def install_from_catalog(
-    name: str,
-    skills_dir: Path | None = None,
-    *,
-    indexes: list[str] | None = None,
-    require_signature: bool = False,
-    before_save: Callable[[], None] | None = None,
-) -> Skill:
-    """Install a skill by name from the federated catalog.
-
-    The index and the content are fetched from the same unauthenticated
-    host, so the pinned SHA-256 is only an integrity-in-transit check (an
-    attacker controlling the host supplies BOTH the bytes and their hash).
-    Authenticity therefore comes from the Ed25519 skill-signature path, not
-    the index: when ``[skills].trusted_pubkeys`` is configured, the resolved
-    skill MUST carry a ``sig``/``pubkey`` that verifies against a trusted
-    publisher (``_validate_and_write`` enforces this) -- sha256 stays as a
-    transit check on top. With no trusted keys configured we keep today's
-    sha256-TOFU behavior (non-breaking), but the returned ``Skill.verified``
-    reflects REAL signature status, not the index's self-asserted bool.
-
-    ``[skills].require_signed_catalog`` (or ``MAVERICK_REQUIRE_SIGNED_CATALOG``)
-    forces a verified signature for ANY catalog install regardless of
-    ``trusted_pubkeys``. ``require_signature=True`` lets an autonomous caller
-    force that same fail-closed posture even when the operator keeps manual
-    catalog installs in compatibility/TOFU mode. A missing/mismatched hash is a
-    hard error.
-    """
-    from . import catalog as _catalog
-    from . import config as _config
-
-    entry = _catalog.resolve(name, "skills", indexes=indexes)
-    if entry is None:
-        raise ValueError(f"no catalog skill named {name!r}")
-    # Verify the pin over the RAW wire bytes, not a lossily-decoded str: a
-    # curator pins sha256 of the published file's bytes, and decoding with
-    # errors="replace" (U+FFFD substitution) before hashing would reject an
-    # authentic non-UTF-8-clean file. Decode to text only after the check.
-    raw = _fetch_skill_source_bytes(entry.source)
-    if not _catalog.verify_sha256(raw, entry.sha256):
-        raise ValueError(
-            f"content hash mismatch for {name!r}: the fetched SKILL.md does "
-            "not match the catalog's pinned sha256. Refusing to install."
-        )
-    content = raw.decode("utf-8", errors="replace")
-    cfg = _config.get_skills()
-    # Authenticity for catalog installs: when a trust anchor is configured
-    # (trusted_pubkeys non-empty), the resolved skill MUST carry a signature
-    # that verifies against a trusted publisher -- an unsigned skill from the
-    # unauthenticated index host is no longer accepted. require_signed_catalog
-    # forces this even with an empty anchor. With neither configured, today's
-    # sha256-TOFU behavior is preserved (non-breaking).
-    require_sig = (
-        require_signature
-        or bool(cfg.get("require_signed_catalog"))
-        or bool(cfg.get("trusted_pubkeys"))
-    )
-    target_dir = _resolved_skills_dir(skills_dir)
-    return _validate_and_write(
-        content,
-        target_dir,
-        require_signature=require_sig,
-        before_save=before_save,
-    )
-
-
-def _fetch_url_bytes(url: str) -> bytes:
-    # Route through the shared SSRF guard so a user-supplied https:// skill
-    # source can't be pointed at an internal/metadata address.
-    from .tools.http_fetch import guarded_urlopen
-    try:
-        with guarded_urlopen(url, timeout=INSTALL_TIMEOUT) as resp:
-            if resp.status != 200:
-                raise ValueError(f"HTTP {resp.status} from {url}")
-            chunks: list[bytes] = []
-            total = 0
-            while True:
-                chunk = resp.read(8192)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_SKILL_DOWNLOAD_BYTES:
-                    raise ValueError(
-                        f"skill download too large (> {MAX_SKILL_DOWNLOAD_BYTES} bytes)"
-                    )
-                chunks.append(chunk)
-            return b"".join(chunks)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-        raise ValueError(f"failed to fetch {url}: {e}") from e
-
-
-def _fetch_url(url: str) -> str:
-    # Lossy decode for callers that only need text. The sha256 integrity pin
-    # is verified against the RAW bytes (see install_from_catalog), never this
-    # errors="replace" string, so a non-UTF-8-clean pinned file still installs.
-    return _fetch_url_bytes(url).decode("utf-8", errors="replace")
-
-
-def _fetch_skill_source_bytes(source: str) -> bytes:
-    """Like ``_fetch_skill_source`` but returns the raw fetched bytes.
-
-    The catalog sha256 pin is computed over the published file's wire bytes,
-    so integrity verification must hash these, not a lossily-decoded str.
-    """
-    if source.startswith("gh:"):
-        rest = source[3:]
-        if not _GH_PATTERN.match(rest):
-            raise ValueError(f"invalid gh: source {source!r}")
-        if ":" in rest:
-            repo, path = rest.split(":", 1)
-        else:
-            repo, path = rest, "SKILL.md"
-        return _fetch_url_bytes(f"https://raw.githubusercontent.com/{repo}/main/{path}")
-    if source.startswith("https://"):
-        return _fetch_url_bytes(source)
-    raise ValueError(
-        f"catalog source must be gh: or https:, got {source!r}"
-    )
-
-
-def remove_skill(name: str, skills_dir: Path | None = None) -> bool:
-    target_dir = _resolved_skills_dir(skills_dir)
-    target = target_dir / f"{_safe_name(name)}.md"
-    if target.exists():
-        target.unlink()
-        return True
-    return False
-
-
-def distill(
-    goal: str,
-    summary: str,
-    blackboard: Blackboard,
-    llm: LLM,
-    budget: Budget | None = None,
-    skills_dir: Path | None = None,
-) -> Skill | None:
-    target_dir = _resolved_skills_dir(skills_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    trajectory = blackboard.render(200)
-    prompt = (
-        f"Goal: {goal}\n\n"
-        f"Outcome summary:\n{summary}\n\n"
-        f"Trajectory (blackboard):\n{trajectory}\n\n"
-        "Distill this into a SKILL.md file that would let a future agent "
-        "solve a similar goal faster. Only output the markdown."
-    )
-    resp = llm.complete(
-        system=DISTILLER_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-        budget=budget,
-        max_tokens=2048,
-        model=model_for_role("skill_distiller"),
-    )
-    text = resp.text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text.removeprefix("markdown")
-        text = text.strip()
-    try:
-        # Route distilled skills through the SAME validation + shield scan
-        # as install_skill (#396 quality gate). A skill distilled from a
-        # trajectory can inherit injected content from tool output, and its
-        # body is later concatenated into future agents' system prompts via
-        # render_for_prompt -- so it must be frontmatter-validated and
-        # shield-scanned, and (unlike the old raw write_text) must NOT land
-        # on disk if it fails. _validate_and_write parses before writing.
-        return _validate_and_write(text, target_dir)
-    except Exception as e:
-        log.warning("distilled skill rejected (not written): %s", e)
-        return None
+__all__ = [
+    "BUILTIN_SKILLS_DIR",
+    "MAX_SKILL_BYTES",
+    "Skill",
+    "SkillValidation",
+    "available_skills",
+    "builtin_skills_dir",
+    "load_builtin_skills",
+    "load_skills",
+    "relevant_skills",
+    "render_for_prompt",
+    "validate_skill_file",
+]

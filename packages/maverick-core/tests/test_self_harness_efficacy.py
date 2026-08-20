@@ -33,6 +33,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 CLASSES = ["auth_timeout", "schema_drift", "rate_limit", "pagination_bug", "retry_storm"]
 CONTROL = "unmined_flake"          # never taught -> must never improve
 BASE_P, GUIDED_P = 0.15, 0.90      # competence without / with the right guidance
@@ -67,7 +69,7 @@ def _learn(cls, store):
     recs = [{"model_id": "M", "failure_class": cls, "goal_text": f"{cls} task variant",
              "failure_msg": f"{cls} precondition missed", "channel": None, "user_id": None}
             for _ in range(5)]
-    return sh.run_self_harness(
+    return run_operator_harness(
         recs, model_id="M", min_support=3,
         held_in=_cases(cls, 10, "hi"), held_out=_cases(cls, 20, "ho"),
         score_with=_scorer(1), score_without=_scorer(2), controller=ctrl, path=store)
@@ -143,7 +145,7 @@ def test_gate_refuses_guidance_that_does_not_help(tmp_path):
              "goal_text": "auth_timeout task", "failure_msg": "missed",
              "channel": None, "user_id": None} for _ in range(5)]
     flat = _scorer(3)                      # same scorer both sides -> zero delta
-    rep = sh.run_self_harness(
+    rep = run_operator_harness(
         recs, model_id="M", min_support=3, held_in=_cases("auth_timeout", 10, "hi"),
         held_out=_cases("auth_timeout", 20, "ho"),
         score_with=flat, score_without=flat, controller=ctrl, path=store)

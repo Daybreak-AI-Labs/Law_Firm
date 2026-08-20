@@ -1,6 +1,4 @@
-"""The goal page renders a structured result as the deliverable its pack
-declares -- a forecast as a real grid with a titled, gated card -- and leaves a
-generic goal as today's plain prose."""
+"""The goal page renders a legal pack's declared deliverable safely."""
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -8,13 +6,13 @@ from maverick_dashboard.app import app
 
 client = TestClient(app)
 
-_FORECAST_RESULT = """\
-Rolling 13-week cash forecast, every figure tied to its system of record.
+_OBLIGATIONS_RESULT = """\
+Contract obligations extracted for attorney review.
 
-| Week | Inflows | Outflows | Net |
-| --- | ---: | ---: | ---: |
-| W1 | 1,200 | 900 | 300 |
-| W2 | 1,100 | 1,000 | 100 |
+| Date | Obligation | Notice |
+| --- | --- | --- |
+| May 1 | Renewal | 30 days |
+| June 3 | Security report | Annual |
 """
 
 
@@ -24,20 +22,18 @@ def _world(tmp_path, monkeypatch):
     return world_model.WorldModel(tmp_path / "world.db")
 
 
-def test_forecast_goal_renders_as_a_deliverable_grid(tmp_path, monkeypatch):
+def test_legal_goal_renders_as_a_review_gated_deliverable_grid(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Refresh the cash forecast", "", domain="finance_cashflow")
-    w.set_goal_status(gid, "done", result=_FORECAST_RESULT)
+    gid = w.create_goal("Review contract obligations", "", domain="legal_obligations")
+    w.set_goal_status(gid, "done", result=_OBLIGATIONS_RESULT)
 
     t = client.get(f"/chat/goal/{gid}").text
-    # Titled, gated deliverable card keyed off the pack's output contract.
-    assert "13-week cash forecast" in t
+    assert "obligations &amp; renewals tracker" in t
     assert "review gate" in t
-    assert "fpa_analyst" in t
-    # The result is a real table, not a <pre> dump.
+    assert "legal_counsel" in t
     assert '<table class="deliverable__table">' in t
-    assert "<th scope=\"col\">Week</th>" in t
-    assert "<td>1,200</td>" in t
+    assert "<th scope=\"col\">Obligation</th>" in t
+    assert "<td>Renewal</td>" in t
 
 
 def test_generic_goal_keeps_plain_prose(tmp_path, monkeypatch):
@@ -46,7 +42,7 @@ def test_generic_goal_keeps_plain_prose(tmp_path, monkeypatch):
     w.set_goal_status(gid, "done", result="A short prose summary.")
 
     t = client.get(f"/chat/goal/{gid}").text
-    assert '<pre id="result"' in t
+    assert '<div class="prose prewrap" id="goal-result">' in t
     assert "A short prose summary." in t
     # No deliverable card is rendered (the .deliverable__table *style* is always
     # present in the page's <style> block; assert on the rendered markup).

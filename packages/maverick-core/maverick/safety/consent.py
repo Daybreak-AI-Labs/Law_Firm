@@ -721,23 +721,28 @@ def _emit(
     scope: str | None,
     detail: str | None,
 ) -> ConsentDecision:
-    """Log the consent decision to the audit log (fail-safe)."""
-    try:
-        from ..audit import EventKind, record
-        record(
-            EventKind.CONSENT_PROMPT,
-            action=action, risk=decision.risk,
-            scope=scope, detail=detail,
-        )
-        record(
-            EventKind.CONSENT_RESULT,
-            action=action,
-            decision="approve" if decision.granted else "deny",
-            source=decision.source,
-            decided_by=decision.actor,
-        )
-    except Exception:  # pragma: no cover -- never crash on audit
-        pass
+    """Log the decision without copying client text into the live audit file."""
+    from ..audit import EventKind, audit_event
+
+    def _digest(value: str | None) -> str | None:
+        if value is None:
+            return None
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    audit_event(
+        EventKind.CONSENT_PROMPT,
+        action=action,
+        risk=decision.risk,
+        scope_sha256=_digest(scope),
+        detail_sha256=_digest(detail),
+    )
+    audit_event(
+        EventKind.CONSENT_RESULT,
+        action=action,
+        decision="approve" if decision.granted else "deny",
+        source=decision.source,
+        decided_by=decision.actor,
+    )
     return decision
 
 

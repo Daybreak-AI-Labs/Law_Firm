@@ -34,11 +34,13 @@ from pathlib import Path
 
 from .control_data_plane_e2e import _WORKER_KIND
 from .queue_dispatcher import JOB_NAME, QueueDispatcher
-from .worker import Worker
+from .worker import Worker, _verify_job_matter_context
 from .world_model import WorldModel
 
 _DEFAULT_GOALS = 60
 _DEFAULT_WORKERS = 4
+_HARNESS_PRINCIPAL = "user:soak"
+_HARNESS_DOMAIN = "legal"
 
 
 def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
@@ -49,10 +51,34 @@ def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
     world_db = workdir / "world.db"
     jobs_db = workdir / "jobs.db"
 
+    # Queue producers and workers independently open the canonical world. Pin
+    # that canonical path to this harness's isolated store for the whole soak.
+    from . import world_model as world_model_mod
+
+    prior_default_db = world_model_mod.DEFAULT_DB
+    world_model_mod.DEFAULT_DB = world_db
     control_world = WorldModel(path=world_db)
     try:
-        goal_ids = [control_world.create_goal(f"soak goal {i}", "harness")
-                    for i in range(goals)]
+        matter_id = control_world.create_client_matter(
+            "Queue soak matter",
+            principal=_HARNESS_PRINCIPAL,
+            domain=_HARNESS_DOMAIN,
+            matter_number="SOAK-001",
+            jurisdiction="Test jurisdiction",
+            client_name="Queue Soak Test Client",
+        )
+        goal_ids = []
+        for i in range(goals):
+            goal_id = control_world.create_matter_goal(
+                f"soak goal {i}",
+                "harness",
+                principal=_HARNESS_PRINCIPAL,
+                domain=_HARNESS_DOMAIN,
+                project_id=matter_id,
+            )
+            if goal_id is None:  # pragma: no cover - harness invariant
+                raise RuntimeError("could not create governed soak goal")
+            goal_ids.append(goal_id)
 
         # --- Control plane: enqueue all, execute none --------------------------
         from .job_queue import JobQueue
@@ -69,7 +95,13 @@ def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
         cap = goals + 1
         t_submit = time.time()
         for gid in goal_ids:
-            dispatcher.submit(gid, max_dollars=1.0, channel="soak", user_id="soak")
+            dispatcher.submit(
+                gid,
+                max_dollars=1.0,
+                channel="soak",
+                user_id="soak",
+                concurrency_principal=_HARNESS_PRINCIPAL,
+            )
         enqueued = len(control_queue.list(status="pending", limit=cap))
         pending_after_submit = sum(
             1 for g in goal_ids if control_world.get_goal(g).status == "pending")
@@ -89,6 +121,13 @@ def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
 
             def _execute(job) -> None:
                 gid = int(job.payload["goal_id"])
+                context = _verify_job_matter_context(job.payload, gid)
+                if (
+                    context.matter_id != matter_id
+                    or context.principal != _HARNESS_PRINCIPAL
+                    or context.domain != _HARNESS_DOMAIN
+                ):
+                    raise RuntimeError("worker accepted mismatched matter context")
                 with counter_lock:
                     exec_counts[gid] = exec_counts.get(gid, 0) + 1
                 w.set_goal_status(gid, "done", result="soak")
@@ -120,6 +159,7 @@ def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
         stuck_threads = [t.name for t in threads if t.is_alive()]
     finally:
         control_world.close()
+        world_model_mod.DEFAULT_DB = prior_default_db
 
     zero_loss = done == goals and not lost
     # CAVEAT: this proves DB-level exactly-once -- claim() atomically flips
@@ -136,6 +176,11 @@ def run_soak(workdir: Path, *, goals: int = _DEFAULT_GOALS,
 
     return {
         "harness": "control_data_plane_soak",
+        "matter_context": {
+            "matter_id": matter_id,
+            "principal": _HARNESS_PRINCIPAL,
+            "domain": _HARNESS_DOMAIN,
+        },
         "scale": {"goals": goals, "workers": workers},
         "control_plane": {
             "enqueued": enqueued,

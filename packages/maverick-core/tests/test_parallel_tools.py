@@ -83,11 +83,9 @@ def _two_calls(name_a: str, name_b: str) -> list[LLMResponse]:
 class TestParallelToolExecution:
     def test_read_tools_are_marked_parallel_safe(self, ctx):
         reg = base_registry(ctx.world, ctx.sandbox)
-        for name in ("read_file", "list_dir", "repo_map", "dep_graph"):
-            assert reg.get(name).parallel_safe is True, name
-        # Stateful tools must stay serial.
-        for name in ("write_file", "shell", "ask_user"):
-            assert reg.get(name).parallel_safe is False, name
+        assert reg.get("read_file").parallel_safe is True
+        # The retained stateful user-interaction tool must stay serial.
+        assert reg.get("ask_user").parallel_safe is False
 
     @pytest.mark.asyncio
     async def test_all_parallel_safe_run_concurrently(self, ctx, fake_llm):

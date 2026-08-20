@@ -357,10 +357,41 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
                             f"for goal #{goal_id} (available steps: {steps})")
     if fork:
         g = world.get_goal(goal_id)
+        if g is None:
+            return RewindResult(False, f"fork failed: goal #{goal_id} no longer exists")
         title = getattr(g, "title", None) or f"rewind of #{goal_id}"
         desc = getattr(g, "description", "") or ""
         domain = getattr(g, "domain", "") or ""
-        new_goal = world.create_goal(title, desc, parent_id=goal_id, domain=domain)
+        owner = getattr(g, "owner", "") or ""
+        project_id = getattr(g, "project_id", None)
+        if (
+            not owner
+            or not domain
+            or isinstance(project_id, bool)
+            or not isinstance(project_id, int)
+            or project_id <= 0
+        ):
+            return RewindResult(
+                False,
+                "fork failed: parent lacks an exact matter, owner, or domain",
+            )
+        try:
+            new_goal = world.create_matter_goal(
+                title,
+                desc,
+                parent_id=goal_id,
+                principal=owner,
+                domain=domain,
+                project_id=project_id,
+            )
+        except Exception as exc:
+            log.warning("checkpoint: governed fork creation failed: %s", exc)
+            new_goal = None
+        if new_goal is None:
+            return RewindResult(
+                False,
+                "fork failed: parent matter membership is no longer active",
+            )
         if not ck.copy_checkpoint(target, new_goal):
             return RewindResult(False, "fork failed: could not copy the checkpoint")
         try:

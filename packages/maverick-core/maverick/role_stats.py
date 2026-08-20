@@ -1,4 +1,4 @@
-"""Per-role credit tracking — routing memory fed by CSCA.
+"""Per-role credit tracking for counterfactual swarm routing.
 
 Counterfactual swarm credit (``maverick.credit``) tells us, after each fan-out,
 which sub-agent *roles* actually moved the answer. This module accumulates that
@@ -6,20 +6,15 @@ signal across runs so the orchestrator can prefer the roles that historically
 contribute and stop spawning the ones that ride along adding nothing. It's the
 routing consumer of CSCA (the donation record is the learning consumer).
 
-Storage: ``~/.maverick/role_stats.json`` (chmod 600), a flat map of
-``role -> {runs, credit_sum, last}``. Fully fail-safe: stats are an
-optimization, never a correctness dependency, so any I/O error degrades to "no
-signal". Recording is gated on CSCA being enabled (``credit.enabled()``) since
-that's what produces the signal.
-
-Department dimension: a swarm spawned by a domain-pack agent records its
-credit BOTH globally (key ``role``) and per department (key
-``<domain>::<role>``), so routing guidance for a finance run is steered by
-what contributed on past *finance* swarms, falling back to the global signal
-when the department has too little history. Old stat files load unchanged.
+In the firm posture every store is authenticated ciphertext under an exact
+matter plus hashed-principal namespace. Reads re-resolve live authority and
+have no domain, tenant, or global fallback. Missing context, revocation, and
+authentication failures therefore yield no routing signal. Explicit legacy
+mode retains the old global and department-scoped compatibility format.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -95,6 +90,40 @@ def _resolve(path: Path | None) -> Path:
     return _tenant_path("role_stats.json", DEFAULT_PATH)
 
 
+def _secure_execution() -> bool:
+    try:
+        from .security_defaults import secure_by_default
+
+        return bool(secure_by_default())
+    except Exception:
+        return True
+
+
+def _secure_scope_path() -> Path | None:
+    """Resolve one live matter/principal namespace; no global fallback."""
+    if not _secure_execution():
+        return None
+    try:
+        from .file_lock import ensure_private_directory
+        from .matter_context import refresh_matter_context
+
+        context = refresh_matter_context()
+        owner_scope = hashlib.sha256(context.principal.encode("utf-8")).hexdigest()
+        root = data_dir(
+            "role-stats",
+            f"matter-{context.matter_id}",
+            f"owner-{owner_scope}",
+        )
+        ensure_private_directory(root)
+        return root / "role_stats.json"
+    except Exception:
+        return None
+
+
+def _active_path(path: Path | None) -> Path | None:
+    return _secure_scope_path() if _secure_execution() else _resolve(path)
+
+
 def _tenant_path(name: str, legacy):
     """Item-30 isolation: with an ACTIVE tenant, this store lives under the
     tenant's data dir (one tenant's learned memory can never feed another's
@@ -109,11 +138,19 @@ def _tenant_path(name: str, legacy):
 
 
 
-def _load(path: Path) -> dict[str, RoleStat]:
+def _load(path: Path, *, strict: bool = False) -> dict[str, RoleStat]:
     if not path.exists():
         return {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        from .learning_crypto import decode_text, protected_learning_enabled
+
+        stored = path.read_text(encoding="utf-8")
+        decoded = decode_text(stored)
+        if decoded is None:
+            if strict and protected_learning_enabled() and stored.strip():
+                raise RuntimeError("role stats store authentication failed")
+            return {}
+        raw = json.loads(decoded)
     except (json.JSONDecodeError, OSError):
         return {}
     out: dict[str, RoleStat] = {}
@@ -146,24 +183,29 @@ def _save(stats: dict[str, RoleStat], path: Path) -> None:
     # _load() reader sees a half-written file -> its JSONDecodeError is swallowed
     # as an empty store and all accumulated routing credit is silently discarded.
     from .file_lock import atomic_write_text
-    atomic_write_text(path, json.dumps({k: asdict(v) for k, v in stats.items()}))
+    from .learning_crypto import encode_text
+
+    body = json.dumps({k: asdict(v) for k, v in stats.items()})
+    atomic_write_text(path, encode_text(body))
 
 
 def record(role: str, credit: float, path: Path | None = None, *,
            domain: str | None = None) -> None:
     """Accumulate one (role, marginal-credit) observation. Fail-safe no-op.
 
-    With ``domain`` set, the observation lands in BOTH the global role entry
-    and the department-scoped ``<domain>::<role>`` entry. Role and domain
-    strings are model-controlled, so each is sanitized via ``safe_role`` before
-    it enters the persisted store.
+    Firm mode ignores caller paths/domains and records only after resolving the
+    exact live matter/principal namespace. Legacy mode also writes a
+    department-scoped key when ``domain`` is supplied.
     """
     role_key = safe_role(role)
     if role_key is None:
         return
-    path = _resolve(path)
+    secure = _secure_execution()
+    path = _active_path(path)
+    if path is None:
+        return
     keys = [role_key]
-    if domain:
+    if domain and not secure:
         domain_key = safe_role(domain)
         if domain_key:
             keys.append(f"{domain_key}{_SCOPE_SEP}{role_key}")
@@ -173,7 +215,7 @@ def record(role: str, credit: float, path: Path | None = None, *,
     from .file_lock import cross_process_lock
     with _lock, cross_process_lock(path):
         try:
-            stats = _load(path)
+            stats = _load(path, strict=secure)
             for key in keys:
                 st = stats.get(key) or RoleStat()
                 st.runs += 1
@@ -181,7 +223,7 @@ def record(role: str, credit: float, path: Path | None = None, *,
                 st.last = time.time()
                 stats[key] = st
             _save(stats, path)
-        except OSError as e:  # pragma: no cover -- stats never block a run
+        except (OSError, RuntimeError) as e:  # pragma: no cover
             log.debug("role_stats record failed: %s", e)
 
 
@@ -200,13 +242,17 @@ def top_roles(k: int = 5, *, min_runs: int = 2, path: Path | None = None,
               domain: str | None = None) -> list[tuple[str, float]]:
     """Roles ranked by average credit (only those with >= ``min_runs`` samples).
 
-    With ``domain`` set, only that department's scoped entries are ranked
-    (keys are returned with the scope stripped); otherwise only global ones.
+    Firm mode reads only the exact live matter/principal namespace. Legacy
+    mode uses ``domain`` to select department-scoped compatibility entries.
     """
-    stats = _load(_resolve(path))
+    secure = _secure_execution()
+    resolved = _active_path(path)
+    if resolved is None:
+        return []
+    stats = _load(resolved)
     # Keys are stored under safe_role(domain) (see record); sanitize the lookup
     # the same way so a domain needing normalization still matches its entries.
-    domain_key = safe_role(domain) if domain else None
+    domain_key = safe_role(domain) if domain and not secure else None
     prefix = f"{domain_key}{_SCOPE_SEP}" if domain_key else None
     ranked = []
     for key, st in stats.items():
@@ -225,9 +271,8 @@ def top_roles(k: int = 5, *, min_runs: int = 2, path: Path | None = None,
 def guidance(path: Path | None = None, *, domain: str | None = None) -> str | None:
     """A one-line brief addendum nudging toward high-credit roles, or None.
 
-    Only fires when CSCA is enabled and there is enough history to be useful.
-    A domain run prefers its own department's track record and falls back to
-    the global signal when the department hasn't seen enough swarms yet.
+    Firm mode requires current matter authority and never falls back across a
+    matter or principal. Legacy mode retains its department/global fallback.
     """
     try:
         from . import credit
@@ -235,6 +280,15 @@ def guidance(path: Path | None = None, *, domain: str | None = None) -> str | No
             return None
     except Exception:  # pragma: no cover
         return None
+    if _secure_execution():
+        top = top_roles(3, path=path)
+        helpful = [role for role, value in top if value > 0]
+        if not helpful:
+            return None
+        return (
+            "Matter routing memory: these roles contributed most in prior "
+            f"authorized runs — prefer them where they fit: {', '.join(helpful)}."
+        )
     if domain:
         top = top_roles(3, path=path, domain=domain)
         helpful = [r for r, c in top if c > 0]

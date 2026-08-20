@@ -11,8 +11,8 @@ with a deliberate split of authority:
   Art. 28 list in :mod:`maverick.privacy_ops` for a DPA, and the CCPA/CPRA
   service-provider list here for an Addendum. A model never gets to invent a
   finding, and never gets to clear one.
-* **The model only drafts prose.** Opus (via ``get_role_model("reviewer")``,
-  never a hard-coded id) is asked to tailor our standard clause to the
+* **The model only drafts prose.** The exact run-wide model pin, acting in the
+  reviewer role, is asked to tailor our standard clause to the
   vendor's defined terms and numbering so the redline reads like their
   document. If it is unavailable, unaffordable, or returns something that
   drifts from our position, we fall back to our template language verbatim.
@@ -622,8 +622,8 @@ def _acceptable_draft(drafted: str, ours: str) -> bool:
 
 
 def draft_language(review: PaperReview, *, budget_dollars: float = 2.0) -> PaperReview:
-    """Tailor each proposed clause to the vendor's drafting, using the reviewer
-    role model (Opus by configuration, never hard-coded).
+    """Tailor each proposed clause to the vendor's drafting, using the selected
+    run model acting in the reviewer role.
 
     Degrades silently and completely: with no provider key, no budget, or a
     draft that drifts from our position, the template language stands. The gap

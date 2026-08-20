@@ -1,7 +1,7 @@
 """AES-256-GCM encryption at rest for Maverick's sensitive local stores.
 
-The kernel keeps its state in plaintext on disk by default (the world model, the
-audit log, and the cross-session memory directory). That is fine for a personal
+The kernel keeps sensitive state on disk (the world model, audit log, and
+matter-scoped learning stores). Plaintext may be acceptable for a personal
 agent but is a GDPR Art. 32 / HIPAA exposure the moment the agent handles
 sensitive data: anyone who can read ``~/.maverick`` sees everything.
 
@@ -36,7 +36,7 @@ Coverage (what is actually sealed today):
     — facts (+ fact history values), conversation turns/messages, open
     questions, goal content (titles/descriptions/results) + per-agent goal
     events, episode summaries/outcomes, parked-approval action/scope/detail,
-    artifact content, project names/descriptions, and sign-off notes.
+    artifact titles/content, project names/descriptions, and sign-off notes.
   The audit log's **closed day-files** can be sealed via ``maverick audit seal``
   (``audit/sealing.py``); the *current* day-file stays plaintext for the live
   append + signing path, and reads/``audit verify`` decrypt sealed segments
@@ -924,6 +924,57 @@ def seal_to_str(text: str) -> str:
     return _STR_PREFIX + base64.b64encode(seal(text.encode("utf-8"))).decode("ascii")
 
 
+def lookup_digest(text: str, *, purpose: str) -> str:
+    """Return a deterministic, domain-separated digest for encrypted lookups.
+
+    Randomized AEAD ciphertext cannot be compared for equality.  A caller that
+    must group encrypted values stores this digest beside the ciphertext and
+    compares the digest instead.  When at-rest encryption is enabled the digest
+    is HMAC-SHA256 under the same durable key boundary as the ciphertext (the
+    exact tenant DEK in per-tenant mode); the clear value is therefore not
+    susceptible to an offline dictionary attack without that key.  The digest
+    deliberately leaks equality within one purpose, which is the minimum needed
+    for an equality index.
+
+    The ``h1:``/``u1:`` scheme prefix lets migrations detect indexes created
+    under a different encryption posture instead of silently splitting a
+    logical version history.  Encryption-off compatibility uses an unkeyed
+    digest because no confidentiality promise exists in that posture.
+    """
+    if not isinstance(text, str):
+        raise TypeError("lookup text must be a string")
+    if not isinstance(purpose, str) or not purpose or "\x00" in purpose:
+        raise ValueError("lookup purpose must be a non-empty string without NUL")
+    purpose_bytes = purpose.encode("utf-8")
+    material = (
+        b"maverick-keyed-lookup/v1\x00"
+        + str(len(purpose_bytes)).encode("ascii")
+        + b":"
+        + purpose_bytes
+        + b"\x00"
+        + text.encode("utf-8")
+    )
+    if not at_rest_enabled():
+        return "u1:" + hashlib.sha256(material).hexdigest()
+    if not _FORCE_DEPLOYMENT_KEY.get() and per_tenant_at_rest():
+        from .paths import current_tenant_id
+        from .tenant.kms import tenant_dek
+
+        key = tenant_dek(current_tenant_id())
+    elif _FORCE_EXTERNAL_FLEET_KEY.get() or _FORCE_DEPLOYMENT_KEY.get():
+        key = _admitted_shared_key()
+    else:
+        # The legacy/root key is stable across additive keyring rotations.  A
+        # lookup index must remain stable while new ciphertext moves to v2 keys.
+        key = _load_or_create_key()
+    index_key = hmac.new(
+        key,
+        b"maverick-keyed-lookup-key/v1\x00" + purpose_bytes,
+        hashlib.sha256,
+    ).digest()
+    return "h1:" + hmac.new(index_key, material, hashlib.sha256).hexdigest()
+
+
 def unseal_from_str(s: str) -> str:
     """Inverse of :func:`seal_to_str`.
 
@@ -985,6 +1036,7 @@ __all__ = [
     "seal_text",
     "unseal_to_text",
     "seal_to_str",
+    "lookup_digest",
     "unseal_from_str",
     "unseal_many_from_str",
     "rotate_at_rest_key",

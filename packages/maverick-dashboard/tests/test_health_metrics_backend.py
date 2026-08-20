@@ -43,6 +43,22 @@ def test_metrics_goal_counts_from_configured_backend(monkeypatch, tmp_path):
     assert "# TYPE maverick_goals_total gauge" in text
     assert 'maverick_goals_total{status="done"} 1' in text
     assert 'maverick_goals_total{status="pending"} 1' in text
+    assert 'maverick_metrics_backend_up{backend="world"} 1' in text
+
+
+def test_metrics_exposes_world_backend_failure(monkeypatch, tmp_path):
+    _use_sqlite(monkeypatch, tmp_path)
+
+    class _Broken:
+        def goal_status_counts(self):
+            raise RuntimeError("db down")
+
+    from maverick_dashboard import app as dash_app
+
+    monkeypatch.setattr(dash_app, "_world", lambda: _Broken())
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert 'maverick_metrics_backend_up{backend="world"} 0' in response.text
 
 
 def test_health_and_metrics_use_public_inflight_snapshot(monkeypatch, tmp_path):

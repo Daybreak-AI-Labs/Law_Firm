@@ -7,6 +7,7 @@ the parse/adapter robustness (fail-closed on garbage) and explicit opt-out.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from maverick.reasoning_reward import (
@@ -231,11 +232,17 @@ def test_default_rubric_weights_sum_to_one():
 def test_to_audit_summary_is_compact_and_stable():
     dims = (DimensionScore("correctness", 0.9, "good"),
             DimensionScore("safety", 0.2, "risky", vetoes=True))
+    critique = "Client Falcon's merger advice quotes privileged attachment text"
     r = ReasoningReward(score=0.7, confidence=0.8, reasoning="trace " * 100,
-                        critique="x" * 500, dimensions=dims)
+                        critique=critique, dimensions=dims)
     s = r.to_audit_summary()
-    assert "reasoning" not in s              # long trace dropped
-    assert len(s["critique"]) <= 280         # critique truncated
+    assert "reasoning" not in s
+    assert "critique" not in s
+    assert s["critique_bytes"] == len(critique.encode("utf-8"))
+    assert s["critique_sha256"] == hashlib.sha256(
+        critique.encode("utf-8")
+    ).hexdigest()
+    assert critique not in json.dumps(s, ensure_ascii=False)
     assert s["vetoed"] is True
     assert s["dimensions"][1] == {"name": "safety", "score": 0.2, "vetoes": True}
     assert json.loads(json.dumps(s)) == s    # signed-chain needs a stable dict

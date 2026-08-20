@@ -41,8 +41,7 @@ def test_pick_mode_express_selectable(monkeypatch):
 
 def test_run_express_enables_all_safe_features(monkeypatch, tmp_path: Path):
     """Express writes a single valid config that turns the safe single-user
-    features ON, keeps host-dangerous ones OFF, and never enables license
-    enforcement (which would gate paid features off)."""
+    features ON and keeps host-dangerous ones OFF."""
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     rc = wizard.run_express()
     assert rc == 0
@@ -60,33 +59,23 @@ def test_run_express_enables_all_safe_features(monkeypatch, tmp_path: Path):
     assert config["data_engine"]["enable"] is True
     assert config["capabilities"]["web_search"] is True
 
-    # Host-dangerous capabilities stay OFF (opt-in only).
-    assert config["capabilities"]["computer_use"] is False
-    assert config["capabilities"]["code_exec"] is False
-    denied_tools = set(config["security"]["denied_tools"])
-    assert denied_tools >= {
-        "computer",
-        "browser",
-        "shell",
-        "write_file",
-        "apply_patch",
-        "str_replace_editor",
-    }
-    # Self-learning is on WITHOUT executable-tool or external-MCP autonomy.
-    assert config["self_learning"]["create_tools"] is False
-    assert config["self_learning"]["allow_mcp_acquisition"] is False
+    # Retired host-dangerous capabilities are absent from the firm config; the
+    # fixed runtime registry is the enforcement boundary.
+    assert not ({"computer_use", "browser", "code_exec"} & set(config["capabilities"]))
+    assert "security" not in config
+    # Self-learning is local and provider egress remains off.
+    assert config["self_learning"]["allow_provider_egress"] is False
     assert config["self_learning"]["distill_local"] is True
     # DGM is a separate, explicit production decision even in express mode.
     assert "self_modify" not in config
 
-    # License enforcement must NOT be on -- fail-open keeps everything unlocked.
-    assert "license" not in config or not config["license"].get("enforce")
-
     # The smoke-test canary: sandbox survives the round-trip (no [flows] dup).
     assert config["sandbox"]["backend"] == "local"
+    assert config["models"] == {"default": "anthropic:claude-sonnet-4-6"}
+    assert "routing" not in config
 
 
-def test_run_express_docker_mode_keeps_host_mutation_tools_enabled(
+def test_run_express_never_guesses_a_mutable_docker_image(
     monkeypatch, tmp_path: Path,
 ):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
@@ -96,9 +85,9 @@ def test_run_express_docker_mode_keeps_host_mutation_tools_enabled(
 
     assert rc == 0
     config = tomllib.loads((tmp_path / ".maverick" / "config.toml").read_text())
-    assert config["sandbox"]["backend"] == "docker"
-    denied_tools = set(config["security"]["denied_tools"])
-    assert denied_tools == {"computer", "browser"}
+    assert config["sandbox"]["backend"] == "local"
+    assert "security" not in config
+    assert not ({"computer_use", "browser", "code_exec"} & set(config["capabilities"]))
 
 
 def test_run_express_routed_via_pick_mode(monkeypatch, tmp_path: Path):
@@ -129,9 +118,19 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
     ])
     # Each _q_text call pops the next answer.
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(answers))
-    monkeypatch.setattr(wizard, "_q_secret", lambda *a, **kw: key)
     monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **kw: True)
     monkeypatch.setattr(wizard, "_q_select", lambda *a, **kw: "$5")
+    monkeypatch.setattr(wizard, "pick_providers", lambda: ["anthropic"])
+    monkeypatch.setattr(
+        wizard,
+        "pick_run_model",
+        lambda providers: "anthropic:claude-sonnet-4-6",
+    )
+    monkeypatch.setattr(
+        wizard,
+        "collect_api_keys",
+        lambda providers, extra_envs: ({"ANTHROPIC_API_KEY": key} if key else {}),
+    )
 
     # Fix the config dir + skip the real preflight (uses console output).
     monkeypatch.setattr(wizard, "CONFIG_DIR", tmp_path / ".maverick")
@@ -146,10 +145,6 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     # Pretend Docker is unavailable so the test is hermetic.
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
-    # Stub the validator so we don't hit Anthropic.
-    monkeypatch.setattr(
-        wizard, "_validate_anthropic_key", lambda k: (True, "validated"),
-    )
     return wizard
 
 
@@ -163,24 +158,20 @@ def test_run_consumer_writes_safe_defaults(monkeypatch, tmp_path: Path):
     assert config["safety"]["profile"] == "strict"
     assert config["safety"]["block_threshold"] == "medium"
     assert config["sandbox"]["backend"] == "local"          # no docker
-    assert "computer" in config["security"]["denied_tools"]
-    assert "browser" in config["security"]["denied_tools"]
-    assert "shell" in config["security"]["denied_tools"]
-    assert "write_file" in config["security"]["denied_tools"]
+    assert "security" not in config
+    assert not ({"computer_use", "browser", "code_exec"} & set(config["capabilities"]))
     assert config["retention"]["audit_days"] == 30
     assert config["rate_limits"]["web_search"] == "5/60"
     assert config["persona"]["user_name"] == "Alex"
     assert config["budget"]["max_dollars"] == 5.0
     assert config["capabilities"]["web_search"] is True
     assert config["self_learning"]["enable"] is True
-    assert config["self_learning"]["create_tools"] is False
-    assert config["self_learning"]["allow_mcp_acquisition"] is False
+    assert config["self_learning"]["allow_provider_egress"] is False
     assert config["self_learning"]["distill_local"] is True
+    assert config["models"] == {"default": "anthropic:claude-sonnet-4-6"}
     assert "self_modify" not in config
-    # No channels, no MCP, no plugins.
+    # No legacy channel configuration.
     assert "channels" not in config
-    assert "mcp_servers" not in config
-    assert "plugins" not in config
 
     # API key landed in .env at chmod 600.
     env = (tmp_path / ".maverick" / ".env").read_text()
@@ -202,24 +193,23 @@ def test_run_consumer_skip_key_succeeds(monkeypatch, tmp_path: Path):
     assert not (tmp_path / ".maverick" / ".env").exists()
 
 
-def test_run_consumer_docker_default_when_available(monkeypatch, tmp_path: Path):
+def test_run_consumer_never_guesses_a_mutable_docker_image(monkeypatch, tmp_path: Path):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "_docker_available", lambda: True)
     wizard.run_consumer()
     config = tomllib.loads((tmp_path / ".maverick" / "config.toml").read_text())
-    assert config["sandbox"]["backend"] == "docker"
+    assert config["sandbox"]["backend"] == "local"
 
 
-def test_run_consumer_docker_mode_keeps_host_mutation_tools_enabled(monkeypatch, tmp_path: Path):
+def test_run_consumer_with_docker_available_does_not_regrow_host_tools(
+    monkeypatch, tmp_path: Path,
+):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "_docker_available", lambda: True)
     wizard.run_consumer()
     config = tomllib.loads((tmp_path / ".maverick" / "config.toml").read_text())
-    denied = config["security"]["denied_tools"]
-    assert "computer" in denied
-    assert "browser" in denied
-    assert "shell" not in denied
-    assert "write_file" not in denied
+    assert "security" not in config
+    assert not ({"computer_use", "browser", "code_exec"} & set(config["capabilities"]))
 
 
 def test_run_consumer_demo_panel_points_at_dashboard(monkeypatch, tmp_path: Path, capsys):
@@ -230,7 +220,7 @@ def test_run_consumer_demo_panel_points_at_dashboard(monkeypatch, tmp_path: Path
     out = capsys.readouterr().out
     # The closing panel prints the next step + the curated demo prompt.
     assert "maverick dashboard" in out
-    assert "haiku about Tuesday" in out  # the curated demo prompt
+    assert "source-cited research memo" in out
 
 
 def test_run_consumer_creates_workdir(monkeypatch, tmp_path: Path):

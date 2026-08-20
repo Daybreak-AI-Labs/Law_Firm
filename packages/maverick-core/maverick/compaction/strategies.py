@@ -8,7 +8,6 @@ module layers the roadmap strategies on top of it, selected the same way
     [context]
     compaction_strategy = "learned"     # v3: LLM summarizer + outcome ledger
     # or "multimodal"                   # v5: media blocks -> compact text stubs
-    # or "streaming"                    # v7: incremental running summary
     # or "graph"                        # v8: entity-relation graph digest
 
 Env override: ``MAVERICK_COMPACTION_STRATEGY``. Unset / unrecognised values
@@ -26,7 +25,7 @@ from . import KEEP_RECENT_TURNS, MAX_TOOL_OUTPUT_BYTES, compact_messages
 
 log = logging.getLogger(__name__)
 
-STRATEGIES = ("learned", "multimodal", "streaming", "graph")
+STRATEGIES = ("learned", "multimodal", "graph")
 
 
 def configured_strategy() -> str:
@@ -62,10 +61,9 @@ def compact_with_strategy(
     """Compact ``messages`` with the configured (or given) strategy.
 
     With no strategy configured this is exactly ``compact_messages(...)``.
-    ``llm`` is the injected seam used by the learned / multimodal / streaming /
-    graph strategies when present; every strategy degrades deterministically
-    without it. ``conversation_id`` keys the streaming strategy's persisted
-    cursor. Any strategy error falls back to the default path.
+    ``llm`` is the injected seam used by the learned / multimodal / graph
+    strategies when present; every strategy degrades deterministically without
+    it. Any strategy error falls back to the default path.
     """
     name = configured_strategy() if strategy is None else strategy
     if name not in STRATEGIES:
@@ -89,15 +87,6 @@ def compact_with_strategy(
             return compact_messages(
                 compact_media(
                     messages, keep_recent=keep_recent, llm=llm, budget=budget),
-                keep_recent=keep_recent, max_tool_bytes=max_tool_bytes,
-            )
-        if name == "streaming":
-            from .streaming import compact_streaming
-            return compact_messages(
-                compact_streaming(
-                    messages, conversation_id=conversation_id,
-                    keep_recent=keep_recent, llm=llm, budget=budget,
-                ),
                 keep_recent=keep_recent, max_tool_bytes=max_tool_bytes,
             )
         from .graph import compact_graph

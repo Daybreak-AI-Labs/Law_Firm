@@ -80,16 +80,52 @@ def test_load_template_rejects_absolute_path():
         load_template("/tmp/secret")
 
 
-def test_starter_goals_library_has_at_least_ten():
-    # The bundled starter-goals library must reach all 10 documented goals.
-    names = list_templates()
-    assert len(names) >= 10
+def test_no_bundled_template_catalog(tmp_path, monkeypatch):
+    import maverick.templates as tpl_mod
+
+    monkeypatch.setattr(tpl_mod, "USER_TEMPLATES", tmp_path)
+    assert list_templates() == []
 
 
-def test_every_bundled_template_loads_and_parses():
-    for name in list_templates():
-        t = load_template(name)
-        assert t.name == name
-        assert t.body  # non-empty goal body
-        assert t.budget_dollars > 0
-        assert t.budget_wall_seconds > 0
+def test_only_operator_authored_local_templates_are_loaded(tmp_path, monkeypatch):
+    import maverick.templates as tpl_mod
+
+    monkeypatch.setattr(tpl_mod, "USER_TEMPLATES", tmp_path)
+    (tmp_path / "nda-review.md").write_text(
+        "---\ntitle: NDA review\n---\nDraft a deviation memo for attorney review.",
+        encoding="utf-8",
+    )
+    assert list_templates() == ["nda-review"]
+    template = load_template("nda-review")
+    assert template.body == "Draft a deviation memo for attorney review."
+
+
+def test_user_template_path_resolves_current_tenant_at_call_time(tmp_path, monkeypatch):
+    """One long-lived process must not pin tenant A's template dir at import."""
+    import maverick.templates as tpl_mod
+    from maverick.paths import reset_tenant, set_tenant
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    name = "tenant-isolation-probe-7391"
+
+    token = set_tenant("acme")
+    try:
+        tpl_mod.save_user_template(name, title="Acme", body="acme-only")
+        assert tpl_mod.load_template(name).body == "acme-only"
+    finally:
+        reset_tenant(token)
+
+    token = set_tenant("globex")
+    try:
+        with pytest.raises(FileNotFoundError):
+            tpl_mod.load_template(name)
+        tpl_mod.save_user_template(name, title="Globex", body="globex-only")
+        assert tpl_mod.load_template(name).body == "globex-only"
+    finally:
+        reset_tenant(token)
+
+    token = set_tenant("acme")
+    try:
+        assert tpl_mod.load_template(name).body == "acme-only"
+    finally:
+        reset_tenant(token)

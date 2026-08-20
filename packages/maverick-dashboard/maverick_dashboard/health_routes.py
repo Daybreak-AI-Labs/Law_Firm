@@ -93,14 +93,6 @@ def health_should_redact() -> bool:
     except Exception:
         # An unreadable auth posture is not permission to disclose internals.
         return True
-    try:
-        from maverick.proxy_auth import proxy_auth_enabled
-
-        if proxy_auth_enabled():
-            return True
-    except Exception:
-        # An unreadable auth posture is not permission to disclose internals.
-        return True
     return False
 
 
@@ -196,7 +188,9 @@ async def metrics_response(
         world = world_provider()
         status_counts = world.goal_status_counts()
         spend = world.total_spend()
+        world_metrics_up = 1
     except Exception:
+        world_metrics_up = 0
         status_counts = {}
         spend = {
             "dollars": 0,
@@ -206,6 +200,9 @@ async def metrics_response(
         }
 
     lines = [
+        "# HELP maverick_metrics_backend_up Metrics dependency probe (1 healthy, 0 failed)",
+        "# TYPE maverick_metrics_backend_up gauge",
+        f'maverick_metrics_backend_up{{backend="world"}} {world_metrics_up}',
         "# HELP maverick_goals_total Current goals by status",
         "# TYPE maverick_goals_total gauge",
     ]
@@ -225,7 +222,7 @@ async def metrics_response(
         "# HELP maverick_max_concurrent_goals Concurrency cap",
         "# TYPE maverick_max_concurrent_goals gauge",
         f"maverick_max_concurrent_goals {MAX_CONCURRENT_GOALS}",
-        "# HELP maverick_auth_failures_total Rejected dashboard/SCIM auth attempts by reason",
+        "# HELP maverick_auth_failures_total Rejected dashboard auth attempts by reason",
         "# TYPE maverick_auth_failures_total counter",
     ]
 
@@ -240,9 +237,12 @@ async def metrics_response(
         from maverick.job_queue import JobQueue
 
         queue_counts = JobQueue().counts()
+        queue_metrics_up = 1
     except Exception:
         queue_counts = {}
+        queue_metrics_up = 0
     lines += [
+        f'maverick_metrics_backend_up{{backend="queue"}} {queue_metrics_up}',
         "# HELP maverick_queue_jobs Job-queue jobs by status (incl. pending backlog and failed dead-letter)",
         "# TYPE maverick_queue_jobs gauge",
     ]

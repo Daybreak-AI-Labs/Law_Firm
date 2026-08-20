@@ -5,6 +5,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from maverick.oidc import VerifiedPrincipal
 from maverick_dashboard.app import app
 
 client = TestClient(app, headers={"Origin": "http://testserver"})
@@ -124,3 +125,108 @@ def test_stream_poll_parameter_does_not_control_sleep(monkeypatch, tmp_path):
     assert resp.status_code == 200
     assert "event: end" in resp.text
     assert sleeps == []
+
+
+def test_stream_stops_before_yielding_after_matter_membership_revocation(
+    monkeypatch, tmp_path,
+):
+    """A stream admitted while authorized must not survive an ethical-wall revoke."""
+    from maverick import world_model
+    from maverick_dashboard import auth
+
+    monkeypatch.setattr(auth, "oidc_enabled", lambda: True)
+    monkeypatch.setattr(
+        auth,
+        "verify_oidc_token",
+        lambda token, **_kwargs: VerifiedPrincipal(
+            sub=token,
+            issuer="https://issuer.example",
+            audience="maverick",
+            claims={"sub": token},
+        ),
+    )
+
+    world = world_model.WorldModel(world_model.DEFAULT_DB)
+    matter_id = world.create_project("Privileged matter", owner="user:alice")
+    world.add_project_member(
+        matter_id, "user:bob", "staff", added_by="user:alice",
+    )
+    goal_id = world.create_goal(
+        "Privileged work", "", owner="user:alice", project_id=matter_id,
+    )
+    world.append_event(goal_id, "attorney", "finding", "sealed client strategy")
+    world.set_goal_status(goal_id, "done")
+
+    original_goal_events = world_model.WorldModel.goal_events
+    revoked = False
+
+    def revoke_after_read(self, *args, **kwargs):
+        nonlocal revoked
+        events = original_goal_events(self, *args, **kwargs)
+        if not revoked:
+            revoked = True
+            assert self.deactivate_project_member(matter_id, "user:bob") is True
+        return events
+
+    monkeypatch.setattr(world_model.WorldModel, "goal_events", revoke_after_read)
+    response = client.get(
+        f"/api/v1/goals/{goal_id}/events/stream",
+        headers={"Authorization": "Bearer bob"},
+    )
+
+    assert response.status_code == 200
+    assert ": connected" in response.text
+    assert "sealed client strategy" not in response.text
+    assert "event: finding" not in response.text
+
+
+def test_stream_rechecks_fresh_goal_matter_before_yield(monkeypatch, tmp_path):
+    """Re-filing a goal cannot leave a stream authorized by its old matter."""
+    from maverick import world_model
+    from maverick_dashboard import auth
+
+    monkeypatch.setattr(auth, "oidc_enabled", lambda: True)
+    monkeypatch.setattr(
+        auth,
+        "verify_oidc_token",
+        lambda token, **_kwargs: VerifiedPrincipal(
+            sub=token,
+            issuer="https://issuer.example",
+            audience="maverick",
+            claims={"sub": token},
+        ),
+    )
+
+    world = world_model.WorldModel(world_model.DEFAULT_DB)
+    original_matter = world.create_project("Original matter", owner="user:alice")
+    new_matter = world.create_project("New matter", owner="user:carol")
+    world.add_project_member(
+        original_matter, "user:bob", "staff", added_by="user:alice",
+    )
+    goal_id = world.create_goal(
+        "Privileged work", "", owner="user:alice", project_id=original_matter,
+    )
+    world.append_event(goal_id, "attorney", "finding", "new matter strategy")
+    world.set_goal_status(goal_id, "done")
+
+    original_goal_events = world_model.WorldModel.goal_events
+    reassigned = False
+
+    def reassign_after_read(self, *args, **kwargs):
+        nonlocal reassigned
+        events = original_goal_events(self, *args, **kwargs)
+        if not reassigned:
+            reassigned = True
+            assert self.set_goal_project(goal_id, new_matter) is True
+        return events
+
+    monkeypatch.setattr(world_model.WorldModel, "goal_events", reassign_after_read)
+    response = client.get(
+        f"/api/v1/goals/{goal_id}/events/stream",
+        headers={"Authorization": "Bearer bob"},
+    )
+
+    assert response.status_code == 200
+    assert ": connected" in response.text
+    assert "new matter strategy" not in response.text
+    assert "event: finding" not in response.text

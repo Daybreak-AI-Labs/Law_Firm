@@ -1,16 +1,15 @@
-"""Revocable, expiring read-only share links (schema v20). The clear token is
-returned once; only its hash is stored."""
+"""Legacy share-link rows stay revocable but cannot authorize a release."""
 from __future__ import annotations
 
 from maverick.world_model import WorldModel
 
 
-def test_mint_and_resolve(tmp_path):
+def test_legacy_mint_is_deliberately_inert(tmp_path):
     w = WorldModel(tmp_path / "w.db")
     g = w.create_goal("forecast", domain="finance_cashflow")
     lid, token = w.create_share_link(g, created_by="user:a", ttl_seconds=3600)
     assert isinstance(lid, int) and len(token) > 20
-    assert w.resolve_share_link(token) == g
+    assert w.resolve_share_link(token) is None
     assert w.resolve_share_link("not-a-real-token") is None
     assert w.resolve_share_link("") is None
 
@@ -37,7 +36,7 @@ def test_revoke_is_goal_scoped(tmp_path):
     other = w.create_goal("other")
     lid, token = w.create_share_link(g)
     assert w.revoke_share_link(lid, goal_id=other) is False   # wrong goal: no-op
-    assert w.resolve_share_link(token) == g                    # still valid
+    assert w.resolve_share_link(token) is None                 # never authorized
     assert w.revoke_share_link(lid, goal_id=g) is True
     assert w.resolve_share_link(token) is None                 # now dead
 
@@ -52,4 +51,4 @@ def test_links_for_goal_lifecycle(tmp_path):
     states = {d["id"]: (d["active"], d["revoked"], d["expired"]) for d in w.share_links_for_goal(g)}
     assert states[live] == (False, True, False)
     assert states[expired] == (False, False, True)
-    assert any(s[0] for s in states.values())  # the untouched one is active
+    assert not any(s[0] for s in states.values())  # no legacy row is releasable

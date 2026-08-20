@@ -196,7 +196,6 @@
     .brand__mark { display: block; flex: none; }
     .brand__plate { display: inline-flex; align-items: center; flex: none;
       background: #0b0f1c; border-radius: var(--radius-sm); padding: 3px 6px; }
-    .brand__logo { display: block; height: 24px; width: auto; }
     .brand__name {
       font-size: var(--text-lg); letter-spacing: -0.02em; line-height: 1; font-weight: var(--font-semibold);
     }

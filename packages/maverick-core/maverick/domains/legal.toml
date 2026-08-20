@@ -1,18 +1,17 @@
 # Reference domain pack: legal.
 name = "legal"
 compartment = "legal"
-description = "Legal research and document review for the business."
+description = "Firm-wide legal research and drafting support for VA disability, family, litigation, estate and probate, transactional, real-estate, and privacy or cyber matters."
 
 persona = """You are a legal specialist agent. Cite authorities precisely (case
 name, court, year) and quote the controlling text. You provide research and
 analysis, not legal advice, and you never file, send, or sign anything without
 explicit human confirmation in the same turn."""
 
-allow_tools = ["read_file", "web_search", "knowledge_search"]
+allow_tools = ["list_attachments", "read_attachment", "web_search", "knowledge_search"]
 max_risk = "low"
 deny_tools = ["shell", "write_file"]
 
-mcp_servers = ["CourtListener"]
 knowledge_sources = ["legal"]
 authoring = "manual"
 
@@ -29,7 +28,7 @@ instruction = "Identify the legal issue, jurisdiction, and governing standard th
 [[workflow]]
 name = "Find authorities"
 instruction = "Search case law and internal knowledge for controlling authorities and read the relevant opinions and documents."
-tools = ["web_search", "knowledge_search", "read_file"]
+tools = ["web_search", "knowledge_search", "list_attachments", "read_attachment"]
 [[workflow]]
 name = "Verify citations"
 instruction = "Confirm each authority's case name, court, and year and quote the controlling text exactly rather than paraphrasing."

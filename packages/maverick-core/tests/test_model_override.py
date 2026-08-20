@@ -3,8 +3,7 @@
 The agents resolve their model via model_for_role(), not the LLM facade's
 default, so the global flag was silently ignored -- the orchestrator/workers
 used config/defaults regardless of --model. The flag now sets a run-wide
-override env that model_for_role honors (above config, below a per-role
-override so best-of-N still works).
+override env that model_for_role honors for the whole run.
 """
 from __future__ import annotations
 
@@ -14,6 +13,9 @@ from maverick.cli import main
 
 
 def test_global_override_beats_config(monkeypatch):
+    # Compatibility-mode precedence is separate from the secure pin contract
+    # asserted below.
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "0")
     monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE_ORCHESTRATOR", raising=False)
     monkeypatch.setattr("maverick.config.get_role_model", lambda role: "config:model")
 
@@ -24,11 +26,12 @@ def test_global_override_beats_config(monkeypatch):
     assert llm.model_for_role("orchestrator") == "flag:model"
 
 
-def test_per_role_override_still_beats_global(monkeypatch):
-    # best-of-N sets a per-role override; that must keep winning.
+def test_secure_run_ignores_per_role_override(monkeypatch):
+    monkeypatch.setattr(llm, "_secure_model_policy_enabled", lambda: True)
     monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "flag:model")
     monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_CODER", "perrole:model")
-    assert llm.model_for_role("coder") == "perrole:model"
+    monkeypatch.setattr(llm, "_allowed_model_specs", lambda: set())
+    assert llm.model_for_role("coder") == "flag:model"
 
 
 def test_cli_model_flag_sets_global_override(monkeypatch):

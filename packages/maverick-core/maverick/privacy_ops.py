@@ -1746,6 +1746,10 @@ def _document_text(
                 entries = z.infolist()
                 if (
                     len(entries) > _MAX_DOCX_ENTRIES
+                    or any(
+                        info.file_size < 0 or info.compress_size < 0
+                        for info in entries
+                    )
                     or sum(max(0, info.file_size) for info in entries)
                     > _MAX_DOCX_TOTAL_UNCOMPRESSED_BYTES
                 ):
@@ -1758,9 +1762,11 @@ def _document_text(
                     return ""
                 document = documents[0]
                 if (
-                    document.flag_bits & 0x1
+                    document.is_dir()
+                    or document.flag_bits & 0x1
                     or document.file_size < 0
                     or document.file_size > _MAX_DOCX_DOCUMENT_XML_BYTES
+                    or document.compress_size > len(data)
                     or (
                         document.file_size > 0
                         and (
@@ -1774,8 +1780,14 @@ def _document_text(
                 # Do not use ZipFile.read(): a forged/bomb entry can otherwise
                 # allocate its entire decompressed body before we inspect it.
                 with z.open(document, "r") as stream:
-                    raw = stream.read(_MAX_DOCX_DOCUMENT_XML_BYTES + 1)
-                if len(raw) > _MAX_DOCX_DOCUMENT_XML_BYTES:
+                    raw = stream.read(min(
+                        _MAX_DOCX_DOCUMENT_XML_BYTES + 1,
+                        document.file_size + 1,
+                    ))
+                if (
+                    len(raw) > _MAX_DOCX_DOCUMENT_XML_BYTES
+                    or len(raw) != document.file_size
+                ):
                     return ""
                 xml = raw.decode("utf-8", errors="ignore")
         except (
@@ -1783,7 +1795,9 @@ def _document_text(
             KeyError,
             NotImplementedError,
             OSError,
+            OverflowError,
             RuntimeError,
+            ValueError,
             zipfile.BadZipFile,
             zipfile.LargeZipFile,
         ):
@@ -1840,54 +1854,6 @@ def _build_document_evidence(
         evidence["referenced_streams"] = extraction["referenced_streams"]
     evidence["binding_sha256"] = _canonical_sha256(evidence)
     return evidence
-
-
-def review_dpa_from_document(vendor: str, source: str, doc_id: str, *,
-                             ref: dict | None = None,
-                             document_name: str = "",
-                             reviewed_by: str = "",
-                             principal: str | None = None,
-                             allow_ambient_credentials: bool = False) -> dict:
-    """Review a DPA straight from a connected source (MS Graph / Slack /
-    Google Drive via :mod:`maverick.doc_discovery`) — find the contract where
-    it already lives instead of pasting it. Raises ValueError when the source
-    is unconfigured or the document's format yields no text."""
-    from . import doc_discovery
-    data, mime = doc_discovery.fetch(
-        source,
-        doc_id,
-        ref,
-        max_bytes=_MAX_DOCUMENT_INPUT_BYTES,
-        principal=principal,
-        allow_ambient_credentials=allow_ambient_credentials,
-    )
-    mime = doc_discovery.resolve_mime(document_name or doc_id, mime)
-    display_name = str(document_name or "").strip() or "Connected document"
-    extraction: dict = {}
-    text = _document_text(data, mime, _metadata=extraction)
-    if not text.strip():
-        raise ValueError(
-            f"cannot extract text from {mime or 'unknown format'} — "
-            "supported: text, JSON/XML, docx, and digital (text-based) "
-            "PDFs. Scanned documents need pasting instead.")
-    return review_dpa(
-        vendor,
-        text,
-        # A connector locator can itself contain PII or secret-bearing path
-        # material. Keep it digest-only unless the caller supplied an explicit
-        # human-facing label.
-        document_name=display_name,
-        reviewed_by=reviewed_by,
-        _document_evidence=_build_document_evidence(
-            data=data,
-            text=text,
-            mime=mime,
-            source=source,
-            doc_id=doc_id,
-            ref=ref,
-            extraction=extraction,
-        ),
-    )
 
 
 def list_dpa_reviews() -> list[dict]:
@@ -2969,6 +2935,6 @@ __all__ = [
     "import_onetrust_ropa", "list_ai_systems", "open_dsar_from_message",
     "list_dpa_reviews", "list_dsars", "list_ropa", "open_dsar",
     "register_ai_system", "register_ai_system_from_assessment",
-    "retry_pending_audits", "review_dpa", "review_dpa_from_document",
+    "retry_pending_audits", "review_dpa",
     "upsert_ropa",
 ]

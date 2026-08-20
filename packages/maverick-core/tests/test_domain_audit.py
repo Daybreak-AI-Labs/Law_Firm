@@ -19,13 +19,13 @@ _BUILTIN = load_domains(builtin_dir())
 
 
 def test_audit_captures_governance_posture():
-    p = _BUILTIN["finance_ap"]
+    p = _BUILTIN["legal_contract_review"]
     a = audit_profile(p)
-    assert a.suite == "finance"
-    assert a.compartment.startswith("finance")
+    assert a.suite == "legal"
+    assert a.compartment.startswith("legal")
     assert a.is_builder is False
     assert a.reachable_dangerous == []          # a drafting agent reaches no mutator
-    assert "release_payment" in a.denied_irreversible
+    assert {"shell", "write_file"} <= set(p.deny_tools)
     assert a.human_gate in ("approval", "review")
     assert a.deliverable                        # declares a deliverable
     assert a.n_refusals >= 2                     # at least the universal refusals
@@ -34,7 +34,7 @@ def test_audit_captures_governance_posture():
 def test_roster_has_no_drafting_agent_reaching_a_mutator():
     # The headline provable-governance number across the whole roster.
     s = summarize(audit_roster(_BUILTIN))
-    assert s["packs"] >= 100
+    assert s["packs"] == 31
     assert s["drafting_agents_reaching_a_mutator"] == 0
     assert s["packs_with_deliverable"] == s["packs"]
 

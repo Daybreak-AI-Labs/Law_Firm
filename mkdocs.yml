@@ -88,24 +88,14 @@ nav:
   - Home:
       - Welcome: index.md
       - Getting started: getting-started.md
-      - Operator first run: operator-first-run.md
   - Guides:
       - Configuration: configuration.md
       - Pricing governance: pricing-governance.md
       - Environment variables: env-vars.md
       - Deployment: deployment.md
-      - Reference architectures: reference-architectures.md
       - Operations: operations.md
       - Safety: safety.md
-      - Governed execution: governed-execution.md
-      - Plugins: plugins.md
       - Connectors: connectors.md
-      - Starter goals: starter-goals.md
-  - Reference:
-      - API: api.md
-      - gRPC API: grpc.md
-  - Performance:
-      - Streaming parity: performance/streaming-parity.md
   - Security:
       - Threat model: security/threat-model.md
       - DGM evaluator evidence: security/dgm-evaluator-evidence.md
@@ -115,10 +105,7 @@ nav:
       - Regulated deployment: regulated-deployment.md
       - Compliance assessments: compliance-assessments.md
       - Agent threat hunting: threat-hunting.md
-  - Design notes:
-      - Oversight experience: ux/oversight-experience.md
   - Internal:
-      - Observability integrations: integrations/observability-partners.md
       - Working on this repo: CONTRIBUTING.md
       - Security policy: SECURITY.md
 
@@ -131,5 +118,3 @@ extra:
 # How to preview locally:
 #   pip install 'mkdocs-material'
 #   mkdocs serve
-# Production build (gh-pages):
-#   mkdocs gh-deploy --force

@@ -7,6 +7,9 @@ import time
 import pytest
 from maverick import entity_graph as eg
 
+MATTER_ID = 101
+OWNER = "user:alice"
+
 
 @pytest.fixture(autouse=True)
 def _fresh_home(tmp_path, monkeypatch):
@@ -285,14 +288,20 @@ def test_goal_titles_never_fabricate_vendor_edges(tmp_path, monkeypatch):
 
 # --- ring two: the procedural plane (skill lineage) --------------------------
 
-def _distill_skill(goal_ids, goal="reconcile vendor invoices"):
+def _distill_skill(
+    goal_ids, goal="reconcile vendor invoices", *,
+    project_id=MATTER_ID, owner=OWNER,
+):
     from maverick.skill.distillation_local import distill_and_save
     trajectories = [
         {"goal": goal, "goal_id": gid, "success": True,
-         "tools": ["ledger_read"], "t": 100.0 + gid}
+         "tools": ["ledger_read"], "t": 100.0 + gid,
+         "project_id": project_id, "owner": owner}
         for gid in goal_ids
     ]
-    return distill_and_save(trajectories)
+    return distill_and_save(
+        trajectories, project_id=project_id, owner=owner,
+    )
 
 
 def test_distiller_stamps_source_goal_ids_into_the_frontmatter(tmp_path, monkeypatch):
@@ -309,18 +318,27 @@ def test_tainted_run_reaches_the_skills_it_taught(tmp_path, monkeypatch):
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
     w = _world(tmp_path)
-    gid = w.create_goal("reconcile vendor invoices", domain="finance_ap")
+    project_id = w.create_project("Client matter", owner=OWNER)
+    gid = w.create_goal(
+        "reconcile vendor invoices", domain="finance_ap", owner=OWNER,
+        project_id=project_id,
+    )
     ep = w.start_episode(gid)
     w.end_episode(ep, "reconciled", "done", cost_dollars=0.10,
                   input_tokens=10, output_tokens=10)
-    path = _distill_skill([gid])
+    path = _distill_skill([gid], project_id=project_id, owner=OWNER)
     assert path is not None
-    eg.rebuild()
-    out = eg.blast_radius("goal", str(gid))
+    eg.rebuild(project_id=project_id, owner=OWNER)
+    out = eg.blast_radius(
+        "goal", str(gid), project_id=project_id, owner=OWNER,
+    )
     assert out["found"]
     assert path.stem in out["skills"]
     # And the skill's own neighborhood names its source goal with provenance.
-    skill_hood = eg.neighborhood("skill", path.stem, depth=1)
+    skill_hood = eg.neighborhood(
+        "skill", path.stem, depth=1,
+        project_id=project_id, owner=OWNER,
+    )
     src = next(e for e in skill_hood["edges"] if e["rel"] == "distilled_from")
     assert src["record_type"] == "skill" and src["record_id"] == path.stem
 
@@ -331,24 +349,36 @@ def test_skill_lineage_reads_only_the_active_tenant_store():
     with tenant_scope(tenant="tenant-a"):
         a_path = _distill_skill([101], goal="reconcile acme invoices")
         assert a_path is not None and "tenant-a" in a_path.parts
-        eg.rebuild()
-        assert eg.neighborhood("skill", a_path.stem, depth=1)["found"]
+        eg.rebuild(project_id=MATTER_ID, owner=OWNER)
+        assert eg.neighborhood(
+            "skill", a_path.stem, depth=1,
+            project_id=MATTER_ID, owner=OWNER,
+        )["found"]
 
     with tenant_scope(tenant="tenant-b"):
         # Tenant B must neither index nor resolve tenant A's learned skill.
         b_path = _distill_skill([202], goal="review globex contracts")
         assert b_path is not None and "tenant-b" in b_path.parts
-        eg.rebuild()
-        assert not eg.neighborhood("skill", a_path.stem, depth=1)["found"]
-        assert eg.neighborhood("skill", b_path.stem, depth=1)["found"]
+        eg.rebuild(project_id=MATTER_ID, owner=OWNER)
+        assert not eg.neighborhood(
+            "skill", a_path.stem, depth=1,
+            project_id=MATTER_ID, owner=OWNER,
+        )["found"]
+        assert eg.neighborhood(
+            "skill", b_path.stem, depth=1,
+            project_id=MATTER_ID, owner=OWNER,
+        )["found"]
 
     with tenant_scope(tenant="tenant-a"):
         # The other direction is isolated too; tenant A's existing graph never
         # acquires a tenant B node.
-        assert not eg.neighborhood("skill", b_path.stem, depth=1)["found"]
+        assert not eg.neighborhood(
+            "skill", b_path.stem, depth=1,
+            project_id=MATTER_ID, owner=OWNER,
+        )["found"]
 
 
-def test_pre_provenance_skill_reads_as_unknown_not_guessed(tmp_path, monkeypatch):
+def test_root_skill_store_is_never_a_lineage_fallback(tmp_path, monkeypatch):
     from maverick.paths import data_dir
     store = data_dir("learned-skills", tenant=None)
     store.mkdir(parents=True, exist_ok=True)
@@ -359,5 +389,75 @@ def test_pre_provenance_skill_reads_as_unknown_not_guessed(tmp_path, monkeypatch
         encoding="utf-8")
     eg.rebuild()
     hood = eg.neighborhood("skill", "old-skill", depth=1)
-    assert hood["found"]
-    assert not [e for e in hood["edges"] if e["rel"] == "distilled_from"]
+    assert not hood["found"]
+
+
+def test_skill_lineage_denies_cross_matter_and_owner(tmp_path):
+    first = _distill_skill(
+        [11], goal="reconcile first matter invoices",
+        project_id=MATTER_ID, owner=OWNER,
+    )
+    second = _distill_skill(
+        [22], goal="review second matter contracts",
+        project_id=202, owner="user:bob",
+    )
+    assert first is not None and second is not None
+
+    eg.rebuild(project_id=MATTER_ID, owner=OWNER)
+    assert eg.neighborhood(
+        "skill", first.stem, project_id=MATTER_ID, owner=OWNER,
+    )["found"]
+    assert not eg.neighborhood(
+        "skill", second.stem, project_id=MATTER_ID, owner=OWNER,
+    )["found"]
+    assert not eg.neighborhood("skill", first.stem)["found"]
+    assert not eg.neighborhood(
+        "skill", first.stem, project_id=MATTER_ID, owner="user:bob",
+    )["found"]
+
+
+def test_scoped_lineage_rejects_a_tampered_cross_matter_source_goal(
+    tmp_path, monkeypatch,
+):
+    from maverick import world_model
+
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    world = _world(tmp_path)
+    first_matter = world.create_project("First client", owner=OWNER)
+    second_owner = "user:bob"
+    second_matter = world.create_project("Second client", owner=second_owner)
+    first_goal = world.create_goal(
+        "first client work", owner=OWNER, project_id=first_matter,
+    )
+    second_goal = world.create_goal(
+        "second client work", owner=second_owner, project_id=second_matter,
+    )
+    skill = _distill_skill(
+        [first_goal], goal="first client work",
+        project_id=first_matter, owner=OWNER,
+    )
+    assert skill is not None
+    text = skill.read_text(encoding="utf-8")
+    skill.write_text(
+        text.replace(
+            f"source_goal_ids: {first_goal}",
+            f"source_goal_ids: {first_goal} {second_goal}",
+        ),
+        encoding="utf-8",
+    )
+
+    eg.rebuild(project_id=first_matter, owner=OWNER)
+
+    hood = eg.neighborhood(
+        "skill", skill.stem, depth=1,
+        project_id=first_matter, owner=OWNER,
+    )
+    source_goal_names = {
+        edge["dst"]["name"]
+        for edge in hood["edges"]
+        if edge["rel"] == "distilled_from"
+    }
+    assert source_goal_names == {f"#{first_goal} first client work"}
+    assert not eg.neighborhood(
+        "goal", str(second_goal), project_id=first_matter, owner=OWNER,
+    )["found"]

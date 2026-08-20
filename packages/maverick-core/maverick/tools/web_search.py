@@ -1,16 +1,10 @@
-"""Web search tool.
+"""Bounded web search for the firm runtime.
 
-Supports multiple search backends; tries them in order until one
-succeeds. No API key needed for DuckDuckGo; others use BYOK via env.
-
-Backend order:
-  1. Tavily  (TAVILY_API_KEY)        — best ranking, returns rich snippets
-  2. Brave   (BRAVE_API_KEY)         — fast, good freshness
-  3. SerpAPI (SERPAPI_API_KEY)       — broad coverage
-  4. DuckDuckGo HTML (no key)        — last-resort, brittle but free
-
-Override via ``MAVERICK_SEARCH_BACKEND=tavily|brave|serpapi|ddg`` to
-force a specific backend (skips fall-through).
+Secure execution requires one explicit canonical backend, selected with
+``MAVERICK_SEARCH_BACKEND`` or ``[firm] search_backend``. The privileged query
+is sent to that backend at most once and is never replayed to another vendor.
+The historical credential-driven fallback chain exists only when secure
+defaults are explicitly disabled and no matter is bound.
 
 Each search returns up to ``num_results`` (default 10) entries with
 title + URL + snippet.
@@ -244,6 +238,50 @@ _BACKEND_HOSTS = {
 }
 
 
+def _secure_search_boundary_active() -> bool:
+    """Return True when vendor fallback would cross a firm security boundary."""
+    try:
+        from ..security_defaults import secure_by_default
+
+        if secure_by_default():
+            return True
+    except Exception:
+        # Failure to resolve the security posture cannot authorize query replay.
+        return True
+    try:
+        from ..matter_context import current_matter_context
+
+        return current_matter_context() is not None
+    except Exception:
+        return True
+
+
+def _configured_backend() -> tuple[str | None, str | None]:
+    """Resolve the single firm backend; malformed configuration fails closed."""
+    raw = os.environ.get("MAVERICK_SEARCH_BACKEND")
+    if raw is None:
+        try:
+            from ..config import load_config
+
+            config = load_config() or {}
+            firm = config.get("firm") or {}
+            raw = firm.get("search_backend") if isinstance(firm, dict) else None
+        except Exception as exc:
+            return None, f"web_search backend policy is unavailable: {type(exc).__name__}"
+    backend = str(raw or "").strip().lower()
+    if not backend:
+        return None, (
+            "secure web_search requires one explicit backend in "
+            "MAVERICK_SEARCH_BACKEND or [firm] search_backend"
+        )
+    if backend not in _BACKENDS:
+        return None, (
+            f"unsupported web_search backend {backend!r}; choose one of "
+            + ", ".join(sorted(_BACKENDS))
+        )
+    return backend, None
+
+
 def _run_search(args: dict[str, Any]) -> str:
     query = (args.get("query") or "").strip()
     if not query:
@@ -252,23 +290,43 @@ def _run_search(args: dict[str, Any]) -> str:
     site = args.get("site")
     full_query = _augment_query(query, site)
 
-    forced = os.environ.get("MAVERICK_SEARCH_BACKEND", "").strip().lower()
-    if forced and forced in _BACKENDS:
-        backends = [(forced, _BACKENDS[forced])]
+    secure_boundary = _secure_search_boundary_active()
+    if secure_boundary:
+        selected, policy_error = _configured_backend()
+        if policy_error is not None or selected is None:
+            return f"ERROR: {policy_error}"
+        backends = [(selected, _BACKENDS[selected])]
     else:
-        # Try in preference order; first one with credentials (or DDG
-        # as last-resort) returns results.
-        backends = [
-            ("tavily",  _try_tavily),
-            ("brave",   _try_brave),
-            ("serpapi", _try_serpapi),
-            ("ddg",     _try_duckduckgo),
-        ]
+        forced = os.environ.get("MAVERICK_SEARCH_BACKEND", "").strip().lower()
+        if forced:
+            if forced not in _BACKENDS:
+                return f"ERROR: unsupported web_search backend {forced!r}"
+            backends = [(forced, _BACKENDS[forced])]
+        else:
+            # Compatibility-only behavior for an explicitly insecure legacy
+            # runtime. Firm/matter execution never reaches this fallback chain.
+            backends = [
+                ("tavily", _try_tavily),
+                ("brave", _try_brave),
+                ("serpapi", _try_serpapi),
+                ("ddg", _try_duckduckgo),
+            ]
 
     # Enterprise mode: the query egresses to a third-party search API. Keep only
     # backends whose host the operator allow-listed; if none, the boundary wins.
-    from ..enterprise import egress_permitted, enterprise_enabled
-    if enterprise_enabled():
+    from ..enterprise import (
+        egress_permitted,
+        enterprise_egress_denial,
+        enterprise_enabled,
+    )
+    if secure_boundary:
+        name, _fn = backends[0]
+        denial = enterprise_egress_denial(
+            f"https://{_BACKEND_HOSTS[name]}", tool="web_search"
+        )
+        if denial is not None:
+            return f"ERROR: {denial}"
+    elif enterprise_enabled():
         backends = [
             (name, fn) for name, fn in backends
             if egress_permitted(f"https://{_BACKEND_HOSTS.get(name, '')}")
@@ -287,11 +345,20 @@ def _run_search(args: dict[str, Any]) -> str:
         except Exception as e:
             last_err = f"{name}: {type(e).__name__}: {e}"
             log.warning("backend %s raised: %s", name, e)
+            if secure_boundary:
+                return f"ERROR: configured web_search backend {name} failed"
             continue
         if results is None:
-            continue  # backend skipped (no key or no httpx)
+            if secure_boundary:
+                return (
+                    f"ERROR: configured web_search backend {name} is unavailable; "
+                    "no fallback was attempted"
+                )
+            continue  # compatibility fallback: no key or no httpx
         if not results:
             last_err = f"{name}: returned no results"
+            if secure_boundary:
+                return f"ERROR: {last_err}; no fallback was attempted"
             continue
         log.info("web_search backend=%s query=%r num=%d", name, query, len(results))
         return f"[backend: {name}]\n\n" + _format_results(results)
@@ -303,11 +370,9 @@ def web_search() -> Tool:
     return Tool(
         name="web_search",
         description=(
-            "Search the web. Returns up to num_results (default 10) entries "
-            "with title, URL, and snippet. Tries Tavily, Brave, SerpAPI, "
-            "then DuckDuckGo in order based on which API keys are available. "
-            "Use the 'site' arg to scope (e.g. site='github.com'). Use the "
-            "'browser' tool to fetch specific URL contents."
+            "Search the web through the firm's single configured backend. "
+            "Returns up to num_results (default 10) entries with title, URL, "
+            "and snippet. Use the 'site' arg to scope (e.g. site='github.com')."
         ),
         input_schema=_SEARCH_INPUT_SCHEMA,
         fn=_run_search,

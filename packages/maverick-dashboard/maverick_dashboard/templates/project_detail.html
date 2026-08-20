@@ -1,19 +1,109 @@
 {% extends "base.html" %}
-{% block title %}{{ project.name or 'project' }} · Bjerken and Day{% endblock %}
+{% block title %}{{ project.name or 'matter' }} · Bjerken and Day{% endblock %}
 {% block content %}
-  <p class="muted" style="margin-bottom: var(--space-2);"><a href="/projects">← Projects</a></p>
-  <h1 class="page-title">{{ project.name or 'Untitled project' }}</h1>
+  <p class="muted" style="margin-bottom: var(--space-2);"><a href="/projects">← Matters</a></p>
+  <h1 class="page-title">{{ project.name or 'Untitled matter' }}</h1>
   {% if project.description %}<p class="page-subtitle">{{ project.description }}</p>{% endif %}
 
   <div class="panel">
-    <p class="muted" style="margin: 0;">
-      {% if project.domain %}Department <code>{{ project.domain }}</code> · {% endif %}
+    <dl class="detail-grid">
+      <div><dt>Client</dt><dd>{{ project.client_name or 'Legacy matter — client not recorded' }}</dd></div>
+      <div><dt>Matter number</dt><dd>{{ project.matter_number or 'Not recorded' }}</dd></div>
+      <div><dt>Jurisdiction</dt><dd>{{ project.jurisdiction or 'Not recorded' }}</dd></div>
+      <div><dt>Legal workflow</dt><dd><code>{{ project.domain or 'Not recorded' }}</code></dd></div>
+    </dl>
+    <p class="muted">
       {{ goals|length }} goal{{ '' if goals|length == 1 else 's' }}
       {% if counts %} · {% for s, n in counts.items() %}{{ n }} {{ s }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}
     </p>
   </div>
 
-  <div class="section-head"><h2>Goals in this project</h2></div>
+  <div class="section-head"><h2>Conflict parties</h2></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th scope="col">party</th><th scope="col">role</th></tr></thead>
+      <tbody>
+      {% for party in parties %}
+        <tr><td>{{ party.name }}</td><td>{{ party.role }}</td></tr>
+      {% else %}
+        <tr><td colspan="2" class="muted">No conflict parties recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if membership_role == 'responsible_attorney' %}
+      <form method="post" action="/projects/{{ project.id }}/parties" class="form-row" style="margin-top: var(--space-3);">
+        <label>Party name <input class="input" name="name" maxlength="200" required></label>
+        <label>Party role
+          <select class="input" name="role">
+            <option value="adverse">Adverse</option>
+            <option value="related">Related</option>
+            <option value="witness">Witness</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Conflict-check and add party</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Matter team</h2></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th scope="col">principal</th><th scope="col">matter role</th><th scope="col"></th></tr></thead>
+      <tbody>
+      {% for m in members %}
+        <tr>
+          <td><code>{{ m.principal }}</code></td>
+          <td>{{ m.role | replace('_', ' ') }}</td>
+          <td>
+            {% if membership_role == 'responsible_attorney' %}
+              <form method="post" action="/projects/{{ project.id }}/members/{{ m.principal | urlencode }}/revoke">
+                <button class="btn btn-sm" type="submit">Revoke</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if membership_role == 'responsible_attorney' %}
+      <form method="post" action="/projects/{{ project.id }}/members" class="form-row" style="margin-top: var(--space-3);">
+        <label>User principal <input class="input" name="principal" placeholder="user:attorney@example.com" required></label>
+        <label>Matter role
+          <select class="input" name="role">
+            <option value="attorney">Attorney</option>
+            <option value="staff">Staff</option>
+            <option value="viewer">Viewer</option>
+            <option value="responsible_attorney">Responsible attorney</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Add member</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Client confidentiality</h2></div>
+  <div class="panel">
+    <p>
+      Current outbound policy:
+      <strong>{{ project.egress_mode | replace('_', ' ') }}</strong>.
+      Local-only keeps matter content on firm-controlled services.
+    </p>
+    {% if membership_role == 'responsible_attorney' %}
+      <form method="post" action="/projects/{{ project.id }}/egress" class="form-row">
+        <label>Outbound services
+          <select class="input" name="egress_mode">
+            <option value="local_only"{% if project.egress_mode == 'local_only' %} selected{% endif %}>Local only</option>
+            <option value="approved_services"{% if project.egress_mode == 'approved_services' %} selected{% endif %}>Firm-approved contracted services</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Update confidentiality policy</button>
+      </form>
+      <p class="muted">Enabling contracted services is not enough by itself: the provider and destination must also appear on the firm deployment's exact allow-lists.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Goals in this matter</h2></div>
   <div class="panel{% if not goals %} empty{% endif %}">
     {% if goals %}
       <table>
@@ -24,14 +114,19 @@
             <td><code>#{{ g.id }}</code></td>
             <td><span class="badge {{ g.status }}">{{ g.status }}</span></td>
             <td><a href="/chat/goal/{{ g.id }}">{{ g.title }}</a></td>
-            <td class="muted" style="white-space: nowrap;"><a href="/goals/{{ g.id }}/plan">plan</a> · <a href="/goals/{{ g.id }}/trajectory">replay</a></td>
+            <td class="muted" style="white-space: nowrap;"><a href="/chat/goal/{{ g.id }}">open</a></td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
     {% else %}
       <div class="mv-empty"><p class="mv-empty__title">No goals filed here yet</p>
-        <p class="mv-empty__body">Open a run and pick this project under “Project”.</p></div>
+        <p class="mv-empty__body">Open a run and file it under this matter.</p></div>
     {% endif %}
   </div>
+  <style>
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); margin: 0; }
+    .detail-grid dt { color: var(--muted); font-size: var(--text-sm); }
+    .detail-grid dd { margin: var(--space-1) 0 0; }
+  </style>
 {% endblock %}

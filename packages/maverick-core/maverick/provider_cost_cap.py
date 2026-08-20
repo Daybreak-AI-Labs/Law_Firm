@@ -216,8 +216,8 @@ def would_exceed(provider: str, projected_dollars: float, *,
     return st.spent + max(0.0, float(projected_dollars or 0.0)) > st.cap
 
 
-# (provider, period) pairs we've already paged the operator about, so a blown
-# cap alerts ONCE per period instead of on every subsequently-blocked dispatch.
+# (provider, period) pairs already logged locally, so a blown cap emits once per
+# period instead of on every subsequently blocked dispatch.
 _alerted: set[tuple[str, str]] = set()
 
 
@@ -241,17 +241,23 @@ def enforce(provider: str, *, projected_dollars: float = 0.0,
     if reached or would_exceed_cap:
         period = period_key(now)
         canon = _canon(provider)
-        # Page the operator ONCE per period only when the cap is actually
+        # Emit one structural operator alert per period only when the cap is
         # reached (spend >= cap). A projected-over block on a still-under-cap
         # provider is normal backpressure, not an exhaustion event.
         if reached and (canon, period) not in _alerted:
             _alerted.add((canon, period))
             try:
                 from .ops_alert import alert
-                alert("provider_cost_cap_exhausted",
-                      f"{canon} spend ${st.spent:.2f} reached the ${st.cap:.2f} "
-                      f"cap for period {period}; LLM calls are now blocked",
-                      severity="critical")
+                alert(
+                    "provider_cost_cap_exhausted",
+                    severity="critical",
+                    fields={
+                        "provider": canon,
+                        "spent_dollars": st.spent,
+                        "cap_dollars": st.cap,
+                        "period": period,
+                    },
+                )
             except Exception:  # pragma: no cover - alerting never blocks the gate
                 pass
         raise ProviderCapExceeded(canon, st.spent, float(st.cap or 0.0), period)

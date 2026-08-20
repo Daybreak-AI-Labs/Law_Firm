@@ -42,6 +42,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 # --------------------------------------------------------------------------
 # helpers (mirrors test_self_harness_battery.py)
 # --------------------------------------------------------------------------
@@ -120,7 +122,7 @@ def _hostile_pass(monkeypatch, tmp_path, payload):
              "channel": None, "user_id": None} for i in range(4)]
     # The proposer is the attacker-controlled seam; keep a benign tail so the
     # line survives sanitization (non-empty, <=280) and actually promotes.
-    sh.run_self_harness(
+    run_operator_harness(
         recs, model_id="M", min_support=3, controller=ctrl, path=store,
         propose_fn=lambda s: payload + " then verify the precondition", **ENOUGH, **GOOD_AB)
     return sh.recall_addendum("M", store)
@@ -165,7 +167,7 @@ def test_scoped_poison_never_reaches_recall(monkeypatch, tmp_path):
                "goal_text": f"local task run {i}", "failure_msg": evil,
                "channel": "slack:atk", "user_id": "atk"} for i in range(8)]
     # No unscoped traces at all -> nothing should be minable, recall empty.
-    sh.run_self_harness(scoped, model_id="M", min_support=3, controller=ctrl,
+    run_operator_harness(scoped, model_id="M", min_support=3, controller=ctrl,
                         path=store, **ENOUGH, **GOOD_AB)
     assert sh.recall_addendum("M", store) == ""
 

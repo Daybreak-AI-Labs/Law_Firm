@@ -6,11 +6,13 @@ from __future__ import annotations
 
 def test_steps_list_is_ordered_and_unique():
     from maverick_installer import wizard
-    assert len(wizard.STEPS) == 31
     keys = [k for k, _ in wizard.STEPS]
-    assert keys[0] == "deployment"
-    assert keys[-1] == "webhooks"
-    assert keys[18:21] == ["assessments", "security_suite", "advanced"]
+    assert keys == [
+        "deployment", "providers", "run_model", "safety", "signed_skills",
+        "budget", "sandbox", "self_learning", "flows", "knowledge",
+        "oauth_vault", "durable", "assessments", "security_suite", "advanced",
+        "web_search", "tool_acl", "rate_limits", "retention", "persona",
+    ]
     assert len(set(keys)) == len(keys)  # no dupes
 
 
@@ -19,14 +21,14 @@ def test_steps_list_is_ordered_and_unique():
 def test_step_indicator_formats_step_n_of_m():
     from maverick_installer import wizard
     out = wizard._step_indicator(3)
-    assert "Step 3/31" in out
+    assert "Step 3/20" in out
     assert wizard.STEPS[2][1] in out  # the label
 
 
 def test_step_indicator_includes_breadcrumb_of_done_labels():
     from maverick_installer import wizard
     out = wizard._step_indicator(3, done=["Deployment", "Providers"])
-    assert "Step 3/31" in out
+    assert "Step 3/20" in out
     assert "Deployment" in out
     assert "Providers" in out
 
@@ -34,7 +36,7 @@ def test_step_indicator_includes_breadcrumb_of_done_labels():
 def test_step_indicator_no_breadcrumb_when_done_empty():
     from maverick_installer import wizard
     out = wizard._step_indicator(1, done=[])
-    assert "Step 1/31" in out
+    assert "Step 1/20" in out
     assert "›" not in out
 
 
@@ -62,27 +64,24 @@ def test_run_prints_step_indicators(monkeypatch):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
 
     # Stub every pick_* with a benign return matching its shape.
-    monkeypatch.setattr(wizard, "pick_deployment", lambda: "desktop")
+    monkeypatch.setattr(wizard, "pick_deployment", lambda: "local")
     monkeypatch.setattr(wizard, "pick_providers", lambda: ["anthropic"])
-    monkeypatch.setattr(wizard, "pick_models_per_role", lambda providers: {})
+    monkeypatch.setattr(
+        wizard,
+        "pick_run_model",
+        lambda providers: "anthropic:claude-sonnet-4-6",
+    )
     monkeypatch.setattr(wizard, "pick_safety", dict)
     monkeypatch.setattr(wizard, "pick_signed_skills", dict)
     monkeypatch.setattr(wizard, "pick_budget", dict)
     monkeypatch.setattr(wizard, "pick_sandbox", dict)
-    monkeypatch.setattr(wizard, "pick_capabilities", dict)
     monkeypatch.setattr(wizard, "pick_security_suite", dict)
     monkeypatch.setattr(wizard, "pick_advanced", dict)
     monkeypatch.setattr(wizard, "pick_web_search", lambda: (False, []))
-    monkeypatch.setattr(wizard, "pick_mcp_servers", dict)
-    monkeypatch.setattr(wizard, "pick_plugins", list)
-    monkeypatch.setattr(wizard, "pick_tool_acl", lambda channels: {})
-    monkeypatch.setattr(wizard, "pick_rate_limits", lambda channels: {})
+    monkeypatch.setattr(wizard, "pick_tool_acl", dict)
+    monkeypatch.setattr(wizard, "pick_rate_limits", dict)
     monkeypatch.setattr(wizard, "pick_retention", dict)
-    monkeypatch.setattr(wizard, "pick_analytics", dict)
     monkeypatch.setattr(wizard, "pick_persona", dict)
-    monkeypatch.setattr(wizard, "pick_notifications", lambda: ({}, []))
-    monkeypatch.setattr(wizard, "pick_webhooks", lambda: ({}, []))
-
     # Avoid touching disk / network past the prompt loop.
     monkeypatch.setattr(wizard, "_save_partial", lambda state: None)
     monkeypatch.setattr(wizard, "collect_api_keys", lambda providers, envs: {})
@@ -98,9 +97,9 @@ def test_run_prints_step_indicators(monkeypatch):
     assert rc == 0
 
     out = wizard.console.file.getvalue()
-    assert "Step 1/31" in out
-    assert "Step 3/31" in out
-    assert "Step 20/31 Security & GRC" in out
-    assert "Step 31/31" in out
+    assert "Step 1/20" in out
+    assert "Step 3/20" in out
+    assert "Step 14/20 Security & GRC" in out
+    assert "Step 20/20" in out
     # Breadcrumb of earlier answers trails later steps.
     assert "Deployment" in out

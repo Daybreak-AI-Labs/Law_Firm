@@ -17,16 +17,16 @@ from maverick.domain_eval import (
 
 
 def test_includes_scores_fraction_present():
-    case = EvalCase("x", "t", expect_includes=("duplicate", "three-way", "variance"))
-    assert score_output(case, "I found a duplicate invoice").checks["includes"] == 1 / 3
-    full = score_output(case, "duplicate, three-way match, price variance")
+    case = EvalCase("x", "t", expect_includes=("deadline", "jurisdiction", "citation"))
+    assert score_output(case, "I found the filing deadline").checks["includes"] == 1 / 3
+    full = score_output(case, "deadline, jurisdiction, citation")
     assert full.checks["includes"] == 1.0 and full.passed
 
 
 def test_excludes_is_a_hard_zero_on_violation():
-    case = EvalCase("x", "t", expect_excludes=("payment released",))
-    assert score_output(case, "staged the batch").checks["excludes"] == 1.0
-    bad = score_output(case, "payment released to the vendor")
+    case = EvalCase("x", "t", expect_excludes=("conflict cleared",))
+    assert score_output(case, "escalated for attorney review").checks["excludes"] == 1.0
+    bad = score_output(case, "conflict cleared")
     assert bad.checks["excludes"] == 0.0 and not bad.passed
 
 
@@ -44,9 +44,9 @@ def test_citation_detection():
 
 
 def test_multi_dimension_average():
-    case = EvalCase("x", "t", expect_includes=("payer",), expect_refusal=True)
+    case = EvalCase("x", "t", expect_includes=("authority",), expect_refusal=True)
     # includes hit (1.0) + refusal miss (0.0) -> 0.5
-    r = score_output(case, "the payer requires prior auth")
+    r = score_output(case, "the cited authority controls")
     assert r.score == 0.5 and not r.passed
 
 
@@ -61,9 +61,9 @@ def test_runner_crash_scores_zero_not_abort():
 
 def test_run_eval_threads_runner_output():
     def runner(domain, task):
-        return "duplicate found; staged for review" if domain == "finance_ap" else ""
+        return "conflict identified; attorney review required" if domain == "legal_conflicts" else ""
     cases = [
-        EvalCase("finance_ap", "process invoices", expect_includes=("duplicate",)),
+        EvalCase("legal_conflicts", "check the new matter", expect_includes=("conflict",)),
         EvalCase("other", "x", expect_includes=("nope",)),
     ]
     results = run_eval(cases, runner)
@@ -74,15 +74,15 @@ def test_run_eval_threads_runner_output():
 def test_golden_suite_is_well_formed_against_the_roster():
     # Every shipped case names a real pack and carries a non-empty rubric.
     assert check_suite() == []
-    assert len(GOLDEN_CASES) >= 5
+    assert len(GOLDEN_CASES) == 3
 
 
 def test_check_suite_flags_unknown_pack_and_empty_rubric():
     bad = [
         EvalCase("does_not_exist", "t", expect_includes=("a",)),
-        EvalCase("finance_ap", "t"),  # no rubric
+        EvalCase("legal_research", "t"),  # no rubric
     ]
-    problems = check_suite(bad, domains={"finance_ap": object()})
+    problems = check_suite(bad, domains={"legal_research": object()})
     assert any("not in the roster" in p for p in problems)
     assert any("empty task or rubric" in p for p in problems)
 

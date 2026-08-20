@@ -1,9 +1,9 @@
 # Encryption at rest
 
-Maverick keeps its state under `~/.maverick`. By default that state is plaintext on
-disk — fine for a personal agent, but a GDPR Art. 32 / HIPAA exposure once the agent
-handles sensitive data. **At-rest encryption** seals the sensitive stores with
-AES-256-GCM.
+Maverick keeps its state under `~/.maverick`. Secure defaults seal sensitive
+application state with AES-256-GCM. Filesystem permissions and full-disk
+encryption remain defense-in-depth; they are not substitutes for application
+encryption when the system handles client data.
 
 ## Enable it
 
@@ -25,28 +25,34 @@ at_rest = false
   `MAVERICK_SECURE_DEFAULT=0` / `[security] secure_defaults = false`
   (see the security and compliance overview (`docs/security-hardening.md`)).
 
-Existing installs are safe to leave on: reads are plaintext-tolerant, so rows
-written before it was enabled are returned unchanged until rewritten — and are
-sealed as they are rewritten.
+Existing installs must run `maverick encryption migrate` before firm mode is
+enabled. Strict reads withhold legacy plaintext instead of returning it. The
+offline migration seals existing database fields, renames legacy attachment
+ciphertext files to opaque content-addressed pathnames, checkpoints the WAL, and rebuilds the
+database to remove recoverable plaintext residue.
 
 ## What gets sealed
 
 | Store | Location | Field(s) |
 |---|---|---|
-| Cross-session memory | `~/.maverick/memory/**` | whole files |
-| Channel conversation turns | world DB | `turns.content` |
+| Conversation turns | world DB | `turns.content`, `matter_turns.content` |
 | Persisted facts | world DB | `facts.value` |
 | Per-goal agent message log | world DB | `messages.content` |
 | Clarifying questions | world DB | `questions.question`, `questions.answer` |
 | Goal content | world DB | `goals.title`, `goals.description`, `goals.result` |
+| Deliverable artifacts | world DB | `artifacts.title`, `artifacts.content`; a goal-scoped HMAC title digest leaks equality only within one goal so versions remain groupable |
+| Attorney feedback | world DB | `goal_feedback.note` |
 | Per-agent goal events | world DB | `goal_events.content` |
 | Episode summaries | world DB | `episodes.summary`, `episodes.outcome` |
 | Parked approvals | world DB | `approvals.action`, `approvals.scope`, `approvals.detail` |
+| Attachments | `~/.maverick/attachments/**`, world DB | whole files; `attachments.filename`, `attachments.path` |
+| File-backed matter knowledge | knowledge SQLite DB | chunk text, vectors, metadata |
+| Dashboard-managed credentials | settings TOML | provider API keys, webhook signing secret |
 
-Sealing is transparent — values are encrypted on write and decrypted on read, so
-application behaviour is unchanged. A value written **before** encryption was enabled
-carries no seal marker and is read back as-is, so enabling encryption is a gradual
-migration, not a flag-day re-encrypt.
+Sealing is transparent for migrated values: application code receives plaintext
+only after authenticated decryption. In strict firm mode, an unsealed legacy
+value is treated as an integrity failure and withheld until the offline migration
+has completed.
 
 ## Key management
 
@@ -87,16 +93,19 @@ key matches still work.
   live append + signing path, so there is a confidentiality window on today's file
   until it rolls and is sealed. Secrets in audit payloads are redacted before write
   regardless.
-  The **qdrant**/**weaviate** backends embed server-side, so the sealed path isn't
-  wired for them yet: under at-rest the semantic path is **disabled** for those two
-  (it falls back to lexical recall over the sealed world DB rather than ship them
-  plaintext). With at-rest off, behaviour is unchanged. Metadata never carries the
-  sensitive `title`/`result` on any backend (hydrated from the sealed DB by
-  `goal_id`).
-- **Attachments** (`~/.maverick/attachments/**`) — on-disk uploaded files; only the
-  metadata row lives in the DB.
-- **`config.toml` / `.env`** — configuration and API keys; `.env` is already
-  `chmod 600`. Protect these with filesystem permissions / full-disk encryption.
+  Semantic knowledge uses the retained local SQLite store and local embedding
+  path; the firm build has no remote vector-store backend. Metadata never carries
+  sensitive `title`/`result` outside the sealed world database.
+- **Most of `config.toml` / `.env`** — only provider API keys and the dashboard
+  webhook signing secret written through the settings store are application-sealed.
+  Environment variables and other configuration values are not. Protect both
+  files with filesystem permissions, a credential manager, and full-disk encryption.
+
+Attachments are stricter than legacy database rows: durable plaintext attachment
+files are rejected rather than read. Existing installations must migrate those
+files before they can be downloaded or parsed. Decryption occurs only for a bounded
+authenticated read or a short-lived private parser input, which is removed after
+the call.
 
 ## Verify
 

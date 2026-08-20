@@ -1,51 +1,57 @@
-"""plain_language: plain-English narration of a plan/trace."""
+"""Plain-language run explanation remains after retiring the orphan UX store."""
 from __future__ import annotations
 
-from maverick.tools.plain_language import plain_language
+import types
+
+from maverick.plain_language import explain
 
 
-def _run(steps, op="explain"):
-    return plain_language().fn({"op": op, "steps": steps})
+def _goal(**kw):
+    base = {"title": "Migrate the billing DB", "status": "done", "result": ""}
+    base.update(kw)
+    return types.SimpleNamespace(**base)
 
 
-def test_numbered_narration_with_ordinals():
-    out = _run([
-        {"action": "read_file", "args": {"path": "a.py"}},
-        {"action": "write_file", "args": {"path": "b.py"}},
-    ])
-    lines = out.splitlines()
-    assert lines[0] == "1. First, I will read the file a.py."
-    assert lines[1] == "2. Then, I will write to the file b.py."
+def _ev(kind, content, agent="coder"):
+    return types.SimpleNamespace(kind=kind, content=content, agent=agent)
 
 
-def test_known_verb_friendly_phrasing():
-    out = _run([{"action": "shell", "args": {"command": "ls -la"}}])
-    assert "run the command ls -la" in out
+def test_explain_full_story():
+    events = [
+        _ev("plan", "1. snapshot 2. migrate 3. verify"),
+        _ev("finding", "the staging DB had drift"),
+        _ev("error", "first migration attempt timed out"),
+    ]
+    out = explain(_goal(), events)
+    assert "Migrate the billing DB" in out
+    assert "finished successfully" in out
+    assert "plan" in out and "snapshot" in out
+    assert "drift" in out
+    assert "timed out" in out and "recovered" in out
 
 
-def test_unknown_action_generic_phrasing():
-    out = _run([{"action": "frobnicate", "args": {"target": "widget"}}])
-    assert "perform 'frobnicate' on widget" in out
+def test_explain_failure_and_empty():
+    out = explain(_goal(status="failed"), [])
+    assert "couldn't get past" in out
+    assert "No detailed activity" in out
 
 
-def test_unknown_action_no_target():
-    out = _run([{"action": "reticulate"}])
-    assert "perform the 'reticulate' action" in out
+def test_explain_strips_markdown_and_clamps():
+    long_note = "**bold** `code` " + "x" * 400
+    out = explain(_goal(), [_ev("finding", long_note)])
+    assert "**" not in out and "`" not in out
+    assert "…" in out
 
 
-def test_args_as_plain_string():
-    out = _run([{"action": "web_search", "args": "latest news"}])
-    assert "search the web for latest news" in out
-
-
-def test_known_verb_missing_target_drops_placeholder():
-    out = _run([{"action": "read_file"}])
-    assert "{target}" not in out
-    assert "read the file" in out
-
-
-def test_errors():
-    t = plain_language()
-    assert t.fn({"op": "explain", "steps": []}).startswith("ERROR")
-    assert t.fn({"op": "explain", "steps": [{"no": "action"}]}).startswith("ERROR")
-    assert t.fn({"op": "nope", "steps": [{"action": "x"}]}).startswith("ERROR")
+def test_explain_dict_events_and_result():
+    out = explain(
+        {"title": "T", "status": "running", "result": "half done"},
+        [{
+            "kind": "observation",
+            "content": "API is rate limited",
+            "agent": "researcher",
+        }],
+    )
+    assert "still in progress" in out
+    assert "rate limited" in out
+    assert "half done" in out

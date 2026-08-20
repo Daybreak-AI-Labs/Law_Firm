@@ -1,18 +1,17 @@
 # maverick-dashboard
 
-Local web dashboard for Maverick. Reads `~/.maverick/world.db` and
-`~/.maverick/skills/` and surfaces:
+Local law-firm web dashboard for Maverick. The retained surface is deliberately
+small and matter-bound:
 
-- Goals: status, plan tree, trajectory replay, cancel, answer pending
-  questions inline.
-- Skills: installed list plus an install form (gated behind
-  `MAVERICK_ALLOW_SKILL_INSTALL=1`).
-- Facts: persistent key/value memory.
-- Spend: per-episode breakdown with CSV export.
-- Providers / tools / channels / plugins / MCP servers: read-only views
-  of what the kernel currently has wired.
-- Audit log: tail and grep over `~/.maverick/audit/`.
-- Halt button: arms `~/.maverick/HALT` from the header on any page.
+- Matter intake, party records, membership, jurisdiction, and per-matter egress.
+- Authenticated goal creation, status, attachments, pending questions, and cancel.
+- Attorney signoff, feedback, deliverable editing/history, and revocable sharing.
+- Matter-scoped chat and deliverable views.
+- Audit tail/search plus the firm-wide halt control.
+
+The inherited Skills, Facts, provider/tool/channel inventory, external-plugin,
+MCP, marketplace, billing, fleet, workflow-builder, and generic admin pages are
+not part of this package.
 
 ## Design
 

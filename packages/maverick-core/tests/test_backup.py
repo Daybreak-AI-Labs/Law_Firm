@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import sqlite3
 import tarfile
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,10 @@ def _bound_client(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CLIENT_ID", "acme")
     monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(32)).hex())
+    monkeypatch.setenv(
+        "MAVERICK_BACKUP_ENCRYPTION_KEY",
+        bytes(range(32, 64)).hex(),
+    )
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
     client.reset_client_cache()
     yield
@@ -35,6 +42,28 @@ def _seed(root):
     (root / "audit").mkdir(exist_ok=True)
     (root / "audit" / "2026-06-18.ndjson").write_text('{"kind":"x"}\n')
     (root / "agent_trust.json").write_text('[{"id":"vega"}]')
+
+
+@contextmanager
+def _plaintext_archive_path(archive):
+    """Expose a decrypted inner tar only inside a test-private temp tree."""
+    with tempfile.TemporaryDirectory(prefix="mvk-backup-test-") as temporary:
+        inner = Path(temporary) / "archive.tgz"
+        with backup._plaintext_archive(
+            archive,
+            allow_legacy_auth_off=False,
+        ) as (stream, legacy, _key):
+            assert legacy is False
+            with inner.open("wb") as output:
+                shutil.copyfileobj(stream, output)
+        yield inner
+
+
+def _encrypt_plain_archive(source, destination):
+    key = backup._encryption_key(required=True)
+    assert key is not None
+    backup._encrypt_archive_file(Path(source), Path(destination), key=key)
+    return Path(destination)
 
 
 def test_create_and_restore_round_trip():
@@ -67,6 +96,42 @@ def test_manifest_records_client():
     assert "world.db" in m["files"]
 
 
+def test_operator_cli_create_verify_and_deliberate_restore(tmp_path):
+    from click.testing import CliRunner
+    from maverick.cli import main
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    _seed(root)
+    archive = tmp_path / "operator-dr.mvkb"
+    runner = CliRunner()
+
+    created = runner.invoke(main, ["backup", "create", str(archive)])
+    assert created.exit_code == 0, created.output
+    assert archive.exists()
+    assert "Encrypted backup created" in created.output
+
+    verified = runner.invoke(main, ["backup", "verify", str(archive)])
+    assert verified.exit_code == 0, verified.output
+    assert "client='acme'" in verified.output
+
+    (root / "agent_trust.json").unlink()
+    declined = runner.invoke(
+        main,
+        ["backup", "restore", str(archive)],
+        input="n\n",
+    )
+    assert declined.exit_code != 0
+    assert not (root / "agent_trust.json").exists()
+
+    restored = runner.invoke(
+        main,
+        ["backup", "restore", "--yes", str(archive)],
+    )
+    assert restored.exit_code == 0, restored.output
+    assert (root / "agent_trust.json").read_text() == '[{"id":"vega"}]'
+
+
 def test_restore_refuses_cross_client(monkeypatch):
     from maverick.paths import data_dir
     _seed(data_dir())
@@ -89,13 +154,18 @@ def test_restore_rejects_file_not_in_manifest(tmp_path):
     _seed(data_dir())
     tar = backup.create_backup()
 
-    tampered = tmp_path / "tampered.tgz"
+    tampered_inner = tmp_path / "tampered-inner.tgz"
+    tampered = tmp_path / "tampered.mvkb"
     extra = tmp_path / "sneaky"
     extra.write_text("unverified payload")
-    with tarfile.open(tar, "r:gz") as src, tarfile.open(tampered, "w:gz") as dst:
-        for m in src.getmembers():
-            dst.addfile(m, src.extractfile(m) if m.isfile() else None)
-        dst.add(extra, arcname="data/sneaky.txt")
+    with _plaintext_archive_path(tar) as inner:
+        with tarfile.open(inner, "r:gz") as src, tarfile.open(
+            tampered_inner, "w:gz",
+        ) as dst:
+            for m in src.getmembers():
+                dst.addfile(m, src.extractfile(m) if m.isfile() else None)
+            dst.add(extra, arcname="data/sneaky.txt")
+    _encrypt_plain_archive(tampered_inner, tampered)
 
     with pytest.raises(backup.BackupError, match="not in the manifest"):
         backup.restore_backup(tampered)
@@ -114,7 +184,7 @@ def test_restore_rejects_path_traversal(tmp_path):
         tar.add(manifest, arcname="manifest.json")
         tar.add(payload / "x", arcname="data/../../escape")
     with pytest.raises(backup.BackupError):
-        backup.restore_backup(bad, allow_unsigned=True)
+        backup.restore_backup(bad, allow_legacy_auth_off=True)
 
 
 def test_backup_excludes_prior_backups(monkeypatch):
@@ -127,20 +197,33 @@ def test_backup_excludes_prior_backups(monkeypatch):
     assert first.exists()
     # A second backup must not contain the first .tgz under data/backups/.
     second = backup.create_backup()
-    with tarfile.open(second, "r:gz") as tar:
-        members = tar.getnames()
+    with _plaintext_archive_path(second) as inner:
+        with tarfile.open(inner, "r:gz") as tar:
+            members = tar.getnames()
     assert not any(name.startswith("data/backups/") for name in members), members
     assert "data/world.db" in members
 
 
-def _repack(src_tar, dst_tar, *, mutate_manifest=None, mutate_data=None, resign=False):
+def _repack(
+    src_tar,
+    dst_tar,
+    *,
+    mutate_manifest=None,
+    mutate_data=None,
+    resign=False,
+    encrypt=True,
+):
     """Rebuild a backup tarball, optionally mutating the manifest dict or a
     named data file's bytes — to forge corrupt / schema-incompatible backups."""
     import io
     import json
-    with tarfile.open(src_tar, "r:gz") as t:
-        members = t.getmembers()
-        blobs = {m.name: (t.extractfile(m).read() if m.isfile() else None) for m in members}
+    with _plaintext_archive_path(src_tar) as inner:
+        with tarfile.open(inner, "r:gz") as t:
+            members = t.getmembers()
+            blobs = {
+                m.name: (t.extractfile(m).read() if m.isfile() else None)
+                for m in members
+            }
     manifest = json.loads(blobs["manifest.json"].decode())
     if mutate_manifest:
         mutate_manifest(manifest)
@@ -152,13 +235,19 @@ def _repack(src_tar, dst_tar, *, mutate_manifest=None, mutate_data=None, resign=
     if mutate_data:
         name, data = mutate_data
         blobs[name] = data
-    with tarfile.open(dst_tar, "w:gz") as t:
-        for m in members:
-            if not m.isfile():
-                continue
-            info = tarfile.TarInfo(m.name)
-            info.size = len(blobs[m.name])
-            t.addfile(info, io.BytesIO(blobs[m.name]))
+    with tempfile.TemporaryDirectory(prefix="mvk-backup-repack-") as temporary:
+        plaintext = Path(temporary) / "archive.tgz"
+        with tarfile.open(plaintext, "w:gz") as t:
+            for m in members:
+                if not m.isfile():
+                    continue
+                info = tarfile.TarInfo(m.name)
+                info.size = len(blobs[m.name])
+                t.addfile(info, io.BytesIO(blobs[m.name]))
+        if encrypt:
+            _encrypt_plain_archive(plaintext, dst_tar)
+        else:
+            shutil.copyfile(plaintext, dst_tar)
 
 
 def test_restore_refuses_forward_schema(tmp_path, monkeypatch):
@@ -305,27 +394,140 @@ def test_create_requires_operator_key_by_default(monkeypatch):
     _seed(data_dir())
     monkeypatch.delenv("MAVERICK_BACKUP_SIGNING_KEY")
 
-    with pytest.raises(backup.BackupError, match="requires MAVERICK_BACKUP_SIGNING_KEY"):
+    with pytest.raises(backup.BackupError, match="MAVERICK_BACKUP_SIGNING_KEY"):
         backup.create_backup()
 
 
-def test_unsigned_compatibility_requires_explicit_opt_in(monkeypatch):
+def test_create_and_open_require_separate_encryption_key(monkeypatch):
+    from maverick.paths import data_dir
+
+    _seed(data_dir())
+    archive = backup.create_backup()
+    monkeypatch.delenv("MAVERICK_BACKUP_ENCRYPTION_KEY")
+
+    with pytest.raises(backup.BackupError, match="MAVERICK_BACKUP_ENCRYPTION_KEY"):
+        backup.read_manifest(archive)
+    with pytest.raises(backup.BackupError, match="MAVERICK_BACKUP_ENCRYPTION_KEY"):
+        backup.create_backup()
+
+
+def test_signing_and_encryption_key_values_must_be_independent(monkeypatch):
+    from maverick.paths import data_dir
+
+    _seed(data_dir())
+    signing = os.environ["MAVERICK_BACKUP_SIGNING_KEY"]
+    monkeypatch.setenv("MAVERICK_BACKUP_ENCRYPTION_KEY", signing)
+
+    with pytest.raises(backup.BackupError, match="independent key values"):
+        backup.create_backup()
+
+
+def test_archive_hides_plaintext_and_excludes_data_root_keys():
     from maverick.paths import data_dir
 
     root = data_dir()
     _seed(root)
-    monkeypatch.delenv("MAVERICK_BACKUP_SIGNING_KEY")
-    archive = backup.create_backup(allow_unsigned=True)
+    (root / "keys").mkdir()
+    (root / "keys" / "at_rest.key").write_bytes(b"AT-REST-KEY-MATERIAL")
+    (root / "audit" / "keys").mkdir()
+    (root / "audit" / "keys" / "signing.key").write_bytes(
+        b"AUDIT-SIGNING-KEY-MATERIAL"
+    )
 
-    with pytest.raises(backup.BackupError, match="unsigned"):
-        backup.read_manifest(archive)
-    manifest = backup.read_manifest(archive, allow_unsigned=True)
+    archive = backup.create_backup()
+    encrypted = archive.read_bytes()
+    assert archive.suffix == ".mvkb"
+    assert encrypted.startswith(backup._ENCRYPTED_MAGIC)
+    assert b"secret-data" not in encrypted
+    assert b'[{"id":"vega"}]' not in encrypted
+    assert b"AT-REST-KEY-MATERIAL" not in encrypted
+    assert b"AUDIT-SIGNING-KEY-MATERIAL" not in encrypted
+    for environment in (
+        "MAVERICK_BACKUP_SIGNING_KEY",
+        "MAVERICK_BACKUP_ENCRYPTION_KEY",
+    ):
+        encoded_key = os.environ[environment].encode("ascii")
+        raw_key = bytes.fromhex(os.environ[environment])
+        assert encoded_key not in encrypted
+        assert raw_key not in encrypted
+
+    manifest = backup.read_manifest(archive)
+    assert not any(
+        rel == "keys" or rel.startswith("keys/") or rel.startswith("audit/keys/")
+        for rel in manifest["files"]
+    )
+
+    shutil.rmtree(root / "keys")
+    shutil.rmtree(root / "audit" / "keys")
+    backup.restore_backup(archive)
+    assert not (root / "keys").exists()
+    assert not (root / "audit" / "keys").exists()
+
+
+def test_wrong_encryption_key_fails_before_restore_staging(monkeypatch):
+    from maverick.paths import data_dir
+
+    _seed(data_dir())
+    archive = backup.create_backup()
+    monkeypatch.setenv(
+        "MAVERICK_BACKUP_ENCRYPTION_KEY",
+        bytes(range(64, 96)).hex(),
+    )
+
+    def _must_not_stage(*_args, **_kwargs):
+        raise AssertionError("payload staging ran before GCM authentication")
+
+    monkeypatch.setattr(backup, "_extract_payload_stream", _must_not_stage)
+    with pytest.raises(backup.BackupError, match="wrong key or tampering"):
+        backup.restore_backup(archive)
+
+
+def test_ciphertext_tamper_fails_before_restore_staging(monkeypatch, tmp_path):
+    from maverick.paths import data_dir
+
+    _seed(data_dir())
+    archive = backup.create_backup()
+    forged = tmp_path / "tampered.mvkb"
+    data = bytearray(archive.read_bytes())
+    data[backup._ENVELOPE_HEADER_BYTES + 7] ^= 0x80
+    forged.write_bytes(data)
+
+    def _must_not_stage(*_args, **_kwargs):
+        raise AssertionError("payload staging ran before GCM authentication")
+
+    monkeypatch.setattr(backup, "_extract_payload_stream", _must_not_stage)
+    with pytest.raises(backup.BackupError, match="wrong key or tampering"):
+        backup.restore_backup(forged)
+
+
+def test_unsigned_unencrypted_compatibility_requires_explicit_auth_off(tmp_path):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    _seed(root)
+    archive = backup.create_backup()
+    legacy = tmp_path / "legacy-unsigned.tgz"
+
+    def _make_unsigned(manifest):
+        manifest["schema"] = 2
+        manifest["authentication"] = {"algorithm": "none"}
+
+    _repack(
+        archive,
+        legacy,
+        mutate_manifest=_make_unsigned,
+        encrypt=False,
+    )
+
+    with pytest.raises(backup.BackupError, match="not encrypted"):
+        backup.read_manifest(legacy)
+    manifest = backup.read_manifest(legacy, allow_legacy_auth_off=True)
     assert manifest["authentication"] == {"algorithm": "none"}
 
     (root / "agent_trust.json").unlink()
-    with pytest.raises(backup.BackupError, match="unsigned"):
-        backup.restore_backup(archive)
-    backup.restore_backup(archive, allow_unsigned=True)
+    with pytest.raises(backup.BackupError, match="not encrypted"):
+        backup.restore_backup(legacy)
+    backup.restore_backup(legacy, allow_legacy_auth_off=True)
     assert (root / "agent_trust.json").read_text() == '[{"id":"vega"}]'
 
 
@@ -344,12 +546,12 @@ def test_legacy_schema_one_restore_is_explicitly_unsigned(tmp_path):
         }
         manifest.pop("authentication", None)
 
-    _repack(archive, legacy, mutate_manifest=_to_legacy)
+    _repack(archive, legacy, mutate_manifest=_to_legacy, encrypt=False)
     (root / "agent_trust.json").unlink()
 
-    with pytest.raises(backup.BackupError, match="unsigned"):
+    with pytest.raises(backup.BackupError, match="not encrypted"):
         backup.restore_backup(legacy)
-    backup.restore_backup(legacy, allow_unsigned=True)
+    backup.restore_backup(legacy, allow_legacy_auth_off=True)
     assert (root / "agent_trust.json").exists()
 
 
@@ -388,14 +590,22 @@ def test_restore_rejects_symlink_archive_member(tmp_path):
 
     _seed(data_dir())
     archive = backup.create_backup()
-    malicious = tmp_path / "symlink-member.tgz"
-    with tarfile.open(archive, "r:gz") as source, tarfile.open(malicious, "w:gz") as out:
-        for member in source.getmembers():
-            out.addfile(member, source.extractfile(member) if member.isfile() else None)
-        link = tarfile.TarInfo("data/linked-secret")
-        link.type = tarfile.SYMTYPE
-        link.linkname = "../../outside"
-        out.addfile(link)
+    malicious_inner = tmp_path / "symlink-member-inner.tgz"
+    malicious = tmp_path / "symlink-member.mvkb"
+    with _plaintext_archive_path(archive) as inner:
+        with tarfile.open(inner, "r:gz") as source, tarfile.open(
+            malicious_inner, "w:gz",
+        ) as out:
+            for member in source.getmembers():
+                out.addfile(
+                    member,
+                    source.extractfile(member) if member.isfile() else None,
+                )
+            link = tarfile.TarInfo("data/linked-secret")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../outside"
+            out.addfile(link)
+    _encrypt_plain_archive(malicious_inner, malicious)
 
     with pytest.raises(backup.BackupError, match="unsupported archive member type"):
         backup.restore_backup(malicious)
@@ -406,20 +616,23 @@ def test_restore_rejects_duplicate_archive_member(tmp_path):
 
     _seed(data_dir())
     archive = backup.create_backup()
-    malicious = tmp_path / "duplicate-member.tgz"
-    with tarfile.open(archive, "r:gz") as source:
-        members = source.getmembers()
-        blobs = {
-            member.name: source.extractfile(member).read()
-            for member in members
-            if member.isfile()
-        }
-    with tarfile.open(malicious, "w:gz") as out:
+    malicious_inner = tmp_path / "duplicate-member-inner.tgz"
+    malicious = tmp_path / "duplicate-member.mvkb"
+    with _plaintext_archive_path(archive) as inner:
+        with tarfile.open(inner, "r:gz") as source:
+            members = source.getmembers()
+            blobs = {
+                member.name: source.extractfile(member).read()
+                for member in members
+                if member.isfile()
+            }
+    with tarfile.open(malicious_inner, "w:gz") as out:
         for member in members:
             out.addfile(member, io.BytesIO(blobs[member.name]) if member.isfile() else None)
         duplicate = tarfile.TarInfo("data/agent_trust.json")
         duplicate.size = len(blobs["data/agent_trust.json"])
         out.addfile(duplicate, io.BytesIO(blobs["data/agent_trust.json"]))
+    _encrypt_plain_archive(malicious_inner, malicious)
 
     with pytest.raises(backup.BackupError, match="duplicate"):
         backup.restore_backup(malicious)
@@ -432,6 +645,8 @@ def test_restore_rejects_duplicate_archive_member(tmp_path):
         "data/CON.txt",
         "data/a//b.txt",
         "data/.restore-transactions/forged-journal",
+        "data/keys/at_rest.key",
+        "data/audit/keys/signing.key",
         "data/" + "a" * 256,
     ],
 )
@@ -442,13 +657,21 @@ def test_restore_rejects_nonportable_or_reserved_member_paths(
 
     _seed(data_dir())
     archive = backup.create_backup()
-    malicious = tmp_path / f"bad-path-{abs(hash(member_name))}.tgz"
-    with tarfile.open(archive, "r:gz") as source, tarfile.open(malicious, "w:gz") as out:
-        for member in source.getmembers():
-            out.addfile(member, source.extractfile(member) if member.isfile() else None)
-        extra = tarfile.TarInfo(member_name)
-        extra.size = 1
-        out.addfile(extra, io.BytesIO(b"x"))
+    malicious_inner = tmp_path / f"bad-path-{abs(hash(member_name))}-inner.tgz"
+    malicious = tmp_path / f"bad-path-{abs(hash(member_name))}.mvkb"
+    with _plaintext_archive_path(archive) as inner:
+        with tarfile.open(inner, "r:gz") as source, tarfile.open(
+            malicious_inner, "w:gz",
+        ) as out:
+            for member in source.getmembers():
+                out.addfile(
+                    member,
+                    source.extractfile(member) if member.isfile() else None,
+                )
+            extra = tarfile.TarInfo(member_name)
+            extra.size = 1
+            out.addfile(extra, io.BytesIO(b"x"))
+    _encrypt_plain_archive(malicious_inner, malicious)
 
     with pytest.raises(backup.BackupError, match="unsafe|reserved|too long"):
         backup.restore_backup(malicious)
@@ -459,14 +682,22 @@ def test_restore_rejects_casefold_path_collision(tmp_path):
 
     _seed(data_dir())
     archive = backup.create_backup()
-    malicious = tmp_path / "case-collision.tgz"
-    with tarfile.open(archive, "r:gz") as source, tarfile.open(malicious, "w:gz") as out:
-        for member in source.getmembers():
-            out.addfile(member, source.extractfile(member) if member.isfile() else None)
-        for name in ("data/Readme.txt", "data/README.TXT"):
-            extra = tarfile.TarInfo(name)
-            extra.size = 1
-            out.addfile(extra, io.BytesIO(b"x"))
+    malicious_inner = tmp_path / "case-collision-inner.tgz"
+    malicious = tmp_path / "case-collision.mvkb"
+    with _plaintext_archive_path(archive) as inner:
+        with tarfile.open(inner, "r:gz") as source, tarfile.open(
+            malicious_inner, "w:gz",
+        ) as out:
+            for member in source.getmembers():
+                out.addfile(
+                    member,
+                    source.extractfile(member) if member.isfile() else None,
+                )
+            for name in ("data/Readme.txt", "data/README.TXT"):
+                extra = tarfile.TarInfo(name)
+                extra.size = 1
+                out.addfile(extra, io.BytesIO(b"x"))
+    _encrypt_plain_archive(malicious_inner, malicious)
 
     with pytest.raises(backup.BackupError, match="case-insensitive"):
         backup.restore_backup(malicious)

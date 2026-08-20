@@ -1,6 +1,7 @@
 """Graph-structured compaction (v8): history -> triples + rendered digest."""
 from __future__ import annotations
 
+import pytest
 from maverick.compaction import compact_messages
 from maverick.compaction.graph import (
     compact_graph,
@@ -13,6 +14,12 @@ _PROSE = (
     "deploy requires green CI. "
     "release v2 contains the parser fix."
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_run_model(monkeypatch):
+    """Compaction LLM seams always receive an exact run-wide model pin."""
+    monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "fake:test")
 
 
 def _msgs() -> list[dict]:
@@ -52,10 +59,11 @@ class TestExtractTriples:
         assert triples[0] == ["parser-service", "depends_on", "redis"]
         assert ["omega", "produces", "sigma"] in triples
 
-    def test_llm_uses_configured_summarizer_role_model(
+    def test_llm_uses_selected_run_model_as_summarizer(
         self, monkeypatch, fake_llm, make_llm_response,
     ):
-        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE_SUMMARIZER", "testprov:tiny-sum")
+        monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+        monkeypatch.setenv("MAVERICK_MODEL_OVERRIDE", "testprov:tiny-sum")
         fake_llm.scripted = [make_llm_response("")]
         extract_triples(_PROSE, llm=fake_llm)
         assert fake_llm.calls[0]["model"] == "testprov:tiny-sum"

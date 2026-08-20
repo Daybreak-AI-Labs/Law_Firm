@@ -2,10 +2,10 @@
 
 A leaked ``mvk_session`` cookie or a still-valid OIDC bearer is otherwise good
 until its natural expiry (<=12h), with no way for an admin to force-invalidate
-it -- and a SCIM-deprovisioned user keeps a live dashboard session. This keeps a
+it -- and an offboarded user keeps a live dashboard session. This keeps a
 per-principal **revocation epoch** (a UTC timestamp): any credential whose
 issued-at (``iat``) predates a principal's epoch is rejected. Bumping the epoch
--- "log out everywhere" or a SCIM deprovision -- invalidates every credential
+-- "log out everywhere" or firm offboarding -- invalidates every credential
 that principal holds at once, across processes.
 
 Store: ``<maverick_home>/session-revocations.json`` (0600 via atomic_write_text),

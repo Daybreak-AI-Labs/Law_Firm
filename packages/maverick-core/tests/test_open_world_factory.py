@@ -32,7 +32,7 @@ def test_open_world_defaults_to_sqlite(tmp_path, monkeypatch):
 def test_open_world_no_path_floors_to_client(tmp_path, monkeypatch):
     """No explicit path + a bound client -> the canonical world resolves to
     that client's isolated tenants/<client>/world.db (not the shared root), so
-    serve/runner/worker/gRPC/dashboard all open the SAME per-client DB."""
+    runner/worker/dashboard all open the SAME per-client DB."""
     monkeypatch.delenv("MAVERICK_WORLD_BACKEND", raising=False)
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CLIENT_ID", "acme")

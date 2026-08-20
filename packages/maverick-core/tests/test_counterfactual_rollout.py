@@ -11,7 +11,6 @@ from maverick.counterfactual_rollout import (
     estimate_effect_via_rollout,
     transitions_from_trajectories,
 )
-from maverick.si_producers import propose_with_effect
 from maverick.trajectory_store import TrajectoryStep
 
 START = ("start",)
@@ -102,19 +101,6 @@ def test_naive_contrast_is_recorded():
         naive_effect=1.0)
     assert est.naive_effect == 1.0          # recorded for contrast, never gates
     assert abs(est.effect - 20 / 21) < 1e-9  # the adjusted estimate is what counts
-
-
-def test_feeds_propose_with_effect():
-    model = TransitionModel().fit(_confounded_corpus())
-    est = estimate_effect_via_rollout(
-        model, [START], treated_action="A", control_action="B", rollouts=20)
-    # A trustworthy, positive estimate clears the producer's calibration gate and
-    # reaches the default-on controller, which still fails closed because this
-    # estimate represents only one supported starting context (prompt promotion
-    # requires five evidence samples).
-    verdict = propose_with_effect("prompt", "rollout win", est, rollback="snap")
-    assert not verdict.promote
-    assert "insufficient evidence: 1 < 5 samples" in verdict.blocking_reason
 
 
 def test_transitions_from_trajectories():

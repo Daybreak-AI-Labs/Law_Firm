@@ -31,6 +31,7 @@ def test_classify_offline_shapes():
     assert classify("CREATE TABLE t (id INTEGER)") == "offline"   # not IF NOT EXISTS
     assert classify("CREATE TRIGGER immutable BEFORE UPDATE ON t BEGIN END") == "offline"
     assert classify("UPDATE t SET a = 1") == "offline"
+    assert classify("INSERT OR IGNORE INTO acl SELECT * FROM legacy") == "offline"
     assert classify("DELETE FROM t WHERE a = 1") == "offline"
     assert classify("DROP TABLE t") == "offline"
     assert classify("DROP TRIGGER immutable") == "offline"
@@ -50,6 +51,17 @@ def test_plan_orders_pending_steps():
     assert [s.kind for s in steps] == ["online", "online", "offline"]
     # Nothing pending when already current.
     assert plan(3, 3, migrations=migs) == []
+
+
+def test_v39_transfer_retirement_requires_a_maintenance_window():
+    from maverick.world_model import MIGRATIONS
+
+    steps = plan(38, 39, migrations=MIGRATIONS)
+
+    assert len(steps) == 1
+    assert steps[0].version == 39
+    assert steps[0].kind == "offline"
+    assert online_only(steps) is False
 
 
 def test_online_only_gate():

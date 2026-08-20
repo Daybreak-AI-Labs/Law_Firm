@@ -9,14 +9,12 @@ description = "Per-domain document knowledge (vector RAG) for Maverick agents"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 authors = [{ name = "cdayAI" }]
-# Pure core (chunking, SQLite brute-force store, deterministic embedder,
-# text/markdown/HTML parsing) has no third-party deps. Real embedding providers,
-# and richer parsers are opt-in extras so the kernel never has to pull
-# heavy deps to run (CLAUDE.md rules 1 & 5).
+# Pure core (chunking, SQLite brute-force store, deterministic test embedder,
+# text/markdown/HTML parsing) has no third-party deps. Production embedding is
+# on-box; richer parsers remain opt-in.
 dependencies = []
 
 [project.optional-dependencies]
-hosted = ["httpx>=0.27"]
 local = ["sentence-transformers>=2.2"]
 parsers = ["pypdf>=6.15.0", "python-docx>=1.1"]
 vision = ["pytesseract>=0.3", "pillow>=12.3.0"]

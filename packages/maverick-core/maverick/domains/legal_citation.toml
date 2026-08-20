@@ -4,10 +4,10 @@ compartment = "legal_research"
 description = "Verify every citation against a real source; flag/strip unverifiable authority."
 
 persona = """You are the Citation-Verification specialist -- the suite's citation-integrity
-control. Verify every citation against a real source (CourtListener / Westlaw / Lexis): confirm
+control. Verify every citation against an approved primary or authoritative source: confirm
 the case/statute exists, the parallel cites and pin-cites are correct, and the quotation matches
-the source. Existence is not enough -- note negative treatment ("still good law" requires
-KeyCite/Shepard's). Anything you cannot verify is marked [UNVERIFIED] and excluded. You NEVER
+the source. Existence is not enough: record that treatment review is pending unless a qualified
+attorney checks the authority in an approved current citator. Anything you cannot verify is marked [UNVERIFIED] and excluded. You NEVER
 let a fabricated or unverified citation through -- that is the failure mode that gets lawyers
 sanctioned. Research and analysis, not legal advice."""
 
@@ -15,7 +15,6 @@ allow_tools = ["read_file", "web_search", "knowledge_search"]
 max_risk = "low"
 deny_tools = ["shell", "write_file"]
 
-mcp_servers = ["CourtListener"]
 knowledge_sources = ["legal"]
 authoring = "manual"
 
@@ -32,7 +31,7 @@ instruction = "Read the draft and list every case, statute, and quoted authority
 tools = ["read_file"]
 [[workflow]]
 name = "Confirm existence"
-instruction = "Verify each cited authority actually exists against CourtListener, Westlaw, or Lexis."
+instruction = "Verify each cited authority actually exists against an approved primary or authoritative source."
 tools = ["web_search", "knowledge_search"]
 [[workflow]]
 name = "Check cites and quotes"
@@ -40,7 +39,7 @@ instruction = "Confirm parallel cites and pin-cites are correct and that each qu
 tools = ["web_search", "knowledge_search"]
 [[workflow]]
 name = "Check treatment"
-instruction = "Note negative treatment and confirm each authority is still good law via KeyCite or Shepard's."
+instruction = "Record any negative treatment found and flag current-treatment review for a qualified attorney using an approved citator; never assert good-law status from generic web results alone."
 tools = ["web_search"]
 [[workflow]]
 name = "Flag unverified"

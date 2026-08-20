@@ -2,7 +2,7 @@
 time-bounded edges derived from the records the platform already governs.
 
 The memory layers exist (episodic ``world_model``, semantic
-``assessment_memory``, procedural ``procedural_memory``, consolidation in
+``assessment_memory``, matter-scoped learned skills, consolidation in
 ``dreaming``), but they are silos: "Acme Corp" in a DPA review, in a paper
 redline, in a security vendor assessment, and in an assessment subject are four
 unlinked strings. This module is the connective tissue -- the spine that says
@@ -86,13 +86,70 @@ def enabled() -> bool:
     return str(value).strip().lower() not in ("0", "false", "no", "off")
 
 
-def _db_path() -> Path:
+def _scope_requested(project_id: int | None, owner: str | None) -> bool:
+    return project_id is not None or owner is not None
+
+
+def _skill_scope(
+    project_id: int | None, owner: str | None,
+) -> tuple[Path, int, str] | None:
+    """Resolve one exact learned-skill namespace without a global fallback."""
+    from .skill.distillation_local import scoped_store
+
+    store = scoped_store(None, project_id=project_id, owner=owner)
+    if store is None:
+        return None
+    try:
+        matter_id = int(store.parent.name.removeprefix("matter-"))
+        owner_scope = store.name.removeprefix("owner-")
+    except (TypeError, ValueError):
+        return None
+    if matter_id <= 0 or not re.fullmatch(r"[0-9a-f]{16}", owner_scope):
+        return None
+    return store, matter_id, owner_scope
+
+
+def _live_skill_scope_allowed(project_id: int, owner: str) -> bool:
+    """Firm lineage may decrypt learned skills only under live authority."""
+    try:
+        from .learning_crypto import protected_learning_enabled
+
+        protected = protected_learning_enabled()
+    except Exception:
+        protected = True
+    if not protected:
+        return True
+    try:
+        from .matter_context import refresh_matter_context
+
+        context = refresh_matter_context()
+    except Exception:
+        return False
+    return context.matter_id == project_id and context.principal == owner
+
+
+def _db_path(
+    *, project_id: int | None = None, owner: str | None = None,
+) -> Path:
     from .paths import data_dir
-    return data_dir("entity_graph") / "graph.db"
+    root = data_dir("entity_graph")
+    if not _scope_requested(project_id, owner):
+        return root / "graph.db"
+    scope = _skill_scope(project_id, owner)
+    if scope is None:
+        raise ValueError("entity graph skill lineage requires exact matter and owner")
+    _store, matter_id, owner_scope = scope
+    return (
+        root / "matters" / f"matter-{matter_id}"
+        / f"owner-{owner_scope}" / "graph.db"
+    )
 
 
-def _connect(path: Path | None = None) -> sqlite3.Connection:
-    target = path or _db_path()
+def _connect(
+    path: Path | None = None, *, project_id: int | None = None,
+    owner: str | None = None,
+) -> sqlite3.Connection:
+    target = path or _db_path(project_id=project_id, owner=owner)
     target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(target)
     conn.row_factory = sqlite3.Row
@@ -357,7 +414,9 @@ def _derive_registry_and_intake(b: _Builder, sources: dict) -> None:
                detail=str(record.get("severity") or ""))
 
 
-def _derive_world(b: _Builder) -> None:
+def _derive_world(
+    b: _Builder, *, project_id: int | None = None, owner: str | None = None,
+) -> set[int]:
     """The episodic ring, on exact keys only: every episode belongs to a goal
     (foreign key), every goal names the specialist pack that ran it
     (``goal.domain``) and its owner. A goal's TITLE is prose and is never
@@ -368,11 +427,17 @@ def _derive_world(b: _Builder) -> None:
         # actually runs on (the repo's factory guard enforces this).
         from .world_model import open_world
         world = open_world()
-        goals = world.list_goals(limit=5000)
-        episodes = world.list_episodes(limit=5000)
+        if project_id is not None and owner is not None:
+            goals = world.list_goals(
+                project_id=project_id, owner=owner, limit=5000,
+            )
+            episodes = world.list_episodes(limit=5000, owner=owner)
+        else:
+            goals = world.list_goals(limit=5000)
+            episodes = world.list_episodes(limit=5000)
     except Exception as e:  # pragma: no cover -- world plane optional
         log.debug("entity_graph: world sources unavailable: %s", e)
-        return
+        return set()
     goal_nodes: dict[int, int | None] = {}
     for g in goals:
         gid = int(getattr(g, "id", 0) or 0)
@@ -404,13 +469,19 @@ def _derive_world(b: _Builder) -> None:
                record_type="episode", record_id=str(eid),
                valid_from=started,
                detail=f"{outcome} ${cost:.2f}".strip())
+    return set(goal_nodes)
 
 
 _FRONTMATTER_ID_RE = re.compile(r"^source_goal_ids:\s*([0-9 ]+)\s*$")
 _FRONTMATTER_AT_RE = re.compile(r"^distilled_at:\s*(\S+)\s*$")
+_FRONTMATTER_MATTER_RE = re.compile(r"^matter_id:\s*([1-9][0-9]*)\s*$")
+_FRONTMATTER_OWNER_RE = re.compile(r"^owner_scope:\s*([0-9a-f]{16})\s*$")
 
 
-def _derive_skills(b: _Builder) -> None:
+def _derive_skills(
+    b: _Builder, *, store: Path | None, matter_id: int | None,
+    owner_scope: str | None, allowed_goal_ids: set[int] | None = None,
+) -> None:
     """The procedural ring: learned skills, linked to the exact goals they
     were distilled from (``source_goal_ids`` in the SKILL.md frontmatter,
     stamped by the distiller). A skill written before that key existed gets a
@@ -418,24 +489,25 @@ def _derive_skills(b: _Builder) -> None:
     than guessed. This is what makes 'this run was tainted; which learned
     skills depend on it?' a graph query."""
     import calendar
-    try:
-        from .paths import data_dir
-        # Distillation resolves its default store through the active tenant.
-        # Read the identical namespace here: forcing the legacy/shared root
-        # makes a tenant's learned skills invisible to its own graph and risks
-        # indexing unrelated root-level skills instead.
-        store = data_dir("learned-skills")
-        paths = sorted(store.glob("*.md"))
-    except Exception as e:  # pragma: no cover -- skills plane optional
-        log.debug("entity_graph: skill store unavailable: %s", e)
+    # A root/global scan is never a fallback. Client-derived skills enter this
+    # index only when the caller supplied one exact matter + owner namespace.
+    if (
+        store is None or matter_id is None or owner_scope is None
+        or not store.is_dir()
+    ):
         return
+    paths = sorted(store.glob("*.md"))
+    from .skill.distillation_local import read_sealed_skill
+
     for path in paths[:2000]:
-        try:
-            head = path.read_text(encoding="utf-8", errors="ignore")[:4000]
-        except OSError:
+        text = read_sealed_skill(path, store)
+        if text is None:
             continue
+        head = text[:4000]
         gids: list[int] = []
         stamped = 0.0
+        recorded_matter: int | None = None
+        recorded_owner: str | None = None
         for line in head.splitlines()[:40]:
             m = _FRONTMATTER_ID_RE.match(line)
             if m:
@@ -447,12 +519,29 @@ def _derive_skills(b: _Builder) -> None:
                         m.group(1), "%Y-%m-%dT%H:%M:%SZ"))
                 except ValueError:
                     stamped = 0.0
+            m = _FRONTMATTER_MATTER_RE.match(line)
+            if m:
+                recorded_matter = int(m.group(1))
+            m = _FRONTMATTER_OWNER_RE.match(line)
+            if m:
+                recorded_owner = m.group(1)
+        # Folder placement alone is not provenance. Refuse a moved, legacy,
+        # or tampered skill whose stamped scope disagrees with the namespace.
+        if recorded_matter != matter_id or recorded_owner != owner_scope:
+            continue
         valid_from = stamped or (path.stat().st_mtime if path.exists() else 0)
         node = b.entity("skill", path.stem)
         for gid in gids:
+            # A stamped skill cannot introduce a bare goal from another
+            # matter merely by naming its numeric id. Only goals independently
+            # admitted through the exact WorldModel query are valid lineage.
+            if allowed_goal_ids is not None and gid not in allowed_goal_ids:
+                continue
             b.edge(node, "distilled_from", b.entity("goal", str(gid)),
                    record_type="skill", record_id=path.stem,
-                   valid_from=valid_from)
+                   valid_from=valid_from,
+                   detail=(f"matter_id={matter_id} "
+                           f"owner_scope={owner_scope}"))
 
 
 def _close_superseded(conn: sqlite3.Connection) -> None:
@@ -495,13 +584,40 @@ def _close_superseded(conn: sqlite3.Connection) -> None:
         chains[key] = row
 
 
-def rebuild() -> dict:
+def rebuild(
+    *, project_id: int | None = None, owner: str | None = None,
+) -> dict:
     """Regenerate the whole graph from the governed stores. Idempotent; the
-    result can only ever say what the records say."""
+    result can only ever say what the records say.
+
+    Learned-skill lineage is included only for an explicitly supplied exact
+    matter/owner scope. Unscoped rebuilds retain the non-learning graph planes
+    but deliberately contain no client-derived skill nodes.
+    """
     if not enabled():
         return {"enabled": False, "entities": 0, "edges": 0}
+    requested = _scope_requested(project_id, owner)
+    scope = _skill_scope(project_id, owner) if requested else None
+    if requested and scope is None:
+        return {
+            "enabled": True, "entities": 0, "edges": 0,
+            "scope_valid": False,
+        }
+    if scope is not None and not _live_skill_scope_allowed(
+        int(project_id),
+        str(owner),
+    ):
+        return {
+            "enabled": True,
+            "entities": 0,
+            "edges": 0,
+            "scope_valid": False,
+        }
+    skill_store = scope[0] if scope is not None else None
+    matter_id = scope[1] if scope is not None else None
+    owner_scope = scope[2] if scope is not None else None
     with _LOCK:
-        conn = _connect()
+        conn = _connect(project_id=project_id, owner=owner)
         try:
             conn.executescript(_SCHEMA)
             with conn:
@@ -511,12 +627,30 @@ def rebuild() -> dict:
                 b = _Builder(conn)
                 _derive_assessments(b)
                 _derive_privacy(b)
-                _derive_world(b)
-                _derive_skills(b)
+                allowed_goal_ids = _derive_world(
+                    b, project_id=matter_id,
+                    owner=owner if scope is not None else None,
+                )
+                _derive_skills(
+                    b, store=skill_store, matter_id=matter_id,
+                    owner_scope=owner_scope,
+                    allowed_goal_ids=(
+                        allowed_goal_ids if scope is not None else None
+                    ),
+                )
                 _close_superseded(conn)
                 conn.execute(
                     "INSERT OR REPLACE INTO meta(key, value) "
                     "VALUES ('rebuilt_at', ?)", (str(time.time()),))
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    "VALUES ('matter_id', ?)",
+                    (str(matter_id) if matter_id is not None else "",),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    "VALUES ('owner_scope', ?)", (owner_scope or "",),
+                )
             entities = conn.execute(
                 "SELECT COUNT(*) AS n FROM entities").fetchone()["n"]
             edges = conn.execute(
@@ -526,16 +660,23 @@ def rebuild() -> dict:
             conn.close()
 
 
-def refresh(max_age_seconds: float | None = None) -> None:
+def refresh(
+    max_age_seconds: float | None = None, *, project_id: int | None = None,
+    owner: str | None = None,
+) -> None:
     """Rebuild when the index is older than the staleness window. Cheap by
     design: the graph is small (thousands of records), so correctness beats
     incremental cleverness."""
     if not enabled():
         return
+    if _scope_requested(project_id, owner) and _skill_scope(
+        project_id, owner,
+    ) is None:
+        return
     window = (float(_config().get("staleness_seconds",
                                   _DEFAULT_STALENESS_SECONDS))
               if max_age_seconds is None else max_age_seconds)
-    conn = _connect()
+    conn = _connect(project_id=project_id, owner=owner)
     try:
         conn.executescript(_SCHEMA)
         row = conn.execute(
@@ -544,7 +685,7 @@ def refresh(max_age_seconds: float | None = None) -> None:
         conn.close()
     age = time.time() - float(row["value"]) if row else None
     if age is None or age > window:
-        rebuild()
+        rebuild(project_id=project_id, owner=owner)
 
 
 # --------------------------------------------------------------------------- #
@@ -583,13 +724,18 @@ def _edge_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
 
 
 def neighborhood(kind: str, name: str, *, depth: int = 2,
-                 as_of: float | None = None) -> dict:
+                 as_of: float | None = None, project_id: int | None = None,
+                 owner: str | None = None) -> dict:
     """Breadth-first slice around one entity: the nodes and provenance-carrying
     edges within ``depth`` hops, optionally as the graph stood at ``as_of``."""
     if not enabled():
         return {"enabled": False, "found": False, "nodes": [], "edges": []}
-    refresh()
-    conn = _connect()
+    if _scope_requested(project_id, owner) and _skill_scope(
+        project_id, owner,
+    ) is None:
+        return {"enabled": True, "found": False, "nodes": [], "edges": []}
+    refresh(project_id=project_id, owner=owner)
+    conn = _connect(project_id=project_id, owner=owner)
     try:
         start = _resolve(conn, kind, name)
         if start is None:
@@ -632,10 +778,16 @@ def neighborhood(kind: str, name: str, *, depth: int = 2,
         conn.close()
 
 
-def dossier(vendor: str, *, as_of: float | None = None) -> dict:
+def dossier(
+    vendor: str, *, as_of: float | None = None,
+    project_id: int | None = None, owner: str | None = None,
+) -> dict:
     """Everything the graph knows about one vendor in one governed query --
     the context pack an agent (or a reviewer) opens a case with."""
-    hood = neighborhood("vendor", vendor, depth=2, as_of=as_of)
+    hood = neighborhood(
+        "vendor", vendor, depth=2, as_of=as_of,
+        project_id=project_id, owner=owner,
+    )
     if not hood.get("found"):
         return hood
     edges = hood["edges"]
@@ -680,14 +832,19 @@ def dossier(vendor: str, *, as_of: float | None = None) -> dict:
     }
 
 
-def why(vendor: str) -> dict:
+def why(
+    vendor: str, *, project_id: int | None = None,
+    owner: str | None = None,
+) -> dict:
     """The regulator's first question: *why did you approve this vendor?*
 
     Finds the latest decision touching the vendor and walks it back to its
     evidence: the deciding record, the reviewer, every review in force at
     decision time, each clause finding, and the documents behind them -- every
     hop citing the record id a human can pull."""
-    hood = neighborhood("vendor", vendor, depth=2)
+    hood = neighborhood(
+        "vendor", vendor, depth=2, project_id=project_id, owner=owner,
+    )
     if not hood.get("found"):
         return hood
     edges = hood["edges"]
@@ -753,7 +910,10 @@ def why(vendor: str) -> dict:
             "decision": chain[0], "chain": chain}
 
 
-def blast_radius(kind: str, name: str) -> dict:
+def blast_radius(
+    kind: str, name: str, *, project_id: int | None = None,
+    owner: str | None = None,
+) -> dict:
     """This thing turned out to be bad -- what relied on it?
 
     Reverse reachability from a clause or document: the records that touched
@@ -761,8 +921,13 @@ def blast_radius(kind: str, name: str) -> dict:
     version of a product recall."""
     if not enabled():
         return {"enabled": False, "found": False}
-    refresh()
-    conn = _connect()
+    if _scope_requested(project_id, owner) and _skill_scope(
+        project_id, owner,
+    ) is None:
+        return {"enabled": True, "found": False, "records": [],
+                "vendors": [], "skills": [], "decisions": []}
+    refresh(project_id=project_id, owner=owner)
+    conn = _connect(project_id=project_id, owner=owner)
     try:
         start = _resolve(conn, kind, name)
         if start is None:
@@ -814,11 +979,18 @@ def blast_radius(kind: str, name: str) -> dict:
         conn.close()
 
 
-def stats() -> dict:
+def stats(
+    *, project_id: int | None = None, owner: str | None = None,
+) -> dict:
     """Index size + freshness, for doctor/status surfaces."""
     if not enabled():
         return {"enabled": False}
-    conn = _connect()
+    if _scope_requested(project_id, owner) and _skill_scope(
+        project_id, owner,
+    ) is None:
+        return {"enabled": True, "entities": 0, "edges": 0,
+                "rebuilt_at": None, "scope_valid": False}
+    conn = _connect(project_id=project_id, owner=owner)
     try:
         conn.executescript(_SCHEMA)
         row = conn.execute(

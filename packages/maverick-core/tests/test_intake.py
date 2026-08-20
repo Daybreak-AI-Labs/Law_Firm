@@ -12,6 +12,7 @@ from maverick.intake import (
     save_profile,
     validate_profile,
 )
+from maverick_knowledge import matter_collection
 
 
 class TestValidateClamp:
@@ -95,14 +96,18 @@ class TestSaveAndRoundtrip:
 
 class TestIngestDocs:
     def test_ingests_uploaded_files(self, tmp_path):
-        from maverick_knowledge import DeterministicEmbedder, KnowledgeBase
+        from maverick_knowledge import (
+            DeterministicEmbedder,
+            KnowledgeBase,
+            matter_collection,
+        )
 
         doc = tmp_path / "policy.txt"
         doc.write_text("Our refund window is thirty days from purchase.")
         spec = IntakeSpec(name="Zeta Co", doc_paths=[str(doc)])
         kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
-        assert ingest_docs(spec, kb) >= 1
-        hits = kb.search("zeta_co", "refund window", k=3)
+        assert ingest_docs(spec, kb, matter_id=7) >= 1
+        hits = kb.search(matter_collection(7, "zeta_co"), "refund window", k=3)
         assert hits and "refund" in hits[0].text.lower()
 
 
@@ -143,7 +148,10 @@ class TestLLMProposer:
 class TestRunIntake:
     def test_generates_without_ingesting_before_approval(self, tmp_path):
         from maverick.intake import run_intake
-        from maverick_knowledge import DeterministicEmbedder, KnowledgeBase
+        from maverick_knowledge import (
+            DeterministicEmbedder,
+            KnowledgeBase,
+        )
         doc = tmp_path / "handbook.txt"
         doc.write_text("Employees accrue paid leave monthly.")
         kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
@@ -164,14 +172,16 @@ class TestRunIntake:
         kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
         spec = IntakeSpec(name="Finance", doc_paths=[str(doc)])
         prof = run_intake(spec, kb=kb)
-        chunks = attach_docs_to_profile(spec, prof, kb)
+        chunks = attach_docs_to_profile(spec, prof, kb, matter_id=11)
 
         assert chunks >= 1
         assert prof.name == "finance"
         assert prof.knowledge_sources != ["finance"]
         assert prof.knowledge_sources[0].startswith("intake_pending_finance_")
         assert not kb.search("finance", "POISONED", k=3)
-        assert kb.search(prof.knowledge_sources[0], "POISONED", k=3)
+        assert kb.search(
+            matter_collection(11, prof.knowledge_sources[0]), "POISONED", k=3,
+        )
 
 
 class TestIntakeSession:

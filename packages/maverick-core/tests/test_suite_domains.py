@@ -1,12 +1,10 @@
-"""Built-in practice domain packs: load + safety invariants.
+"""Built-in legal-practice domain packs: roster + safety invariants.
 
-These packs are the agents the firm spawns for legal work (the Legal suite plus the
-tax, finance, security, knowledge, employment, corporate, real-estate and insurance
-seats that support it). Every agent *analyzes and drafts* but never acts on the
-world, so it must load, carry a persona + a sealed compartment, and run under a
-read-only, low/medium-risk capability envelope (deny wins; the whitelist excludes
-shell/write). This test is the contract that keeps a new or edited pack from quietly
-granting a dangerous tool.
+Every shipped agent analyzes or drafts legal work but never acts on the world, so
+it must load, carry a persona plus a sealed legal compartment, and run under a
+read-only, low/medium-risk capability envelope.  This test is the contract that
+keeps a new or edited pack from quietly broadening the firm's product or granting a
+dangerous tool.
 
 The roster carries no *builder* packs (coding agents with sandbox shell/code_exec) --
 the enterprise Product&Engineering suite is not part of the firm's fork. The builder
@@ -29,28 +27,51 @@ def _by_prefix(pre: str) -> dict:
     return {k: v for k, v in _BUILTIN.items() if k.startswith(pre)}
 
 
-_LEGAL = _by_prefix("legal_")
-_TAX = _by_prefix("tax_")
-_FINANCE = _by_prefix("finance_")
-_SEC = _by_prefix("sec_")
-_KM = _by_prefix("km_")
-_HR = _by_prefix("hr_")
-_EXEC = _by_prefix("exec_")
-_RE = _by_prefix("re_")
-_INS = _by_prefix("ins_")
-
-# Every read-only/sealed pack across all suites obeys the same envelope.
-_SUITE = {**_LEGAL, **_TAX, **_FINANCE, **_SEC, **_KM, **_HR, **_EXEC, **_RE, **_INS}
+_EXPECTED_LEGAL_ROSTER = {
+    "legal",
+    "legal_board",
+    "legal_briefs",
+    "legal_citation",
+    "legal_conflicts",
+    "legal_contract_drafting",
+    "legal_contract_intake",
+    "legal_contract_review",
+    "legal_data_breach_legal",
+    "legal_dpa_negotiation",
+    "legal_ediscovery",
+    "legal_employment",
+    "legal_entity_mgmt",
+    "legal_hold",
+    "legal_intake",
+    "legal_investigations",
+    "legal_km",
+    "legal_litigation_mgmt",
+    "legal_matter_intake",
+    "legal_matter_mgmt",
+    "legal_msa_playbook",
+    "legal_nda_desk",
+    "legal_negotiation",
+    "legal_obligations",
+    "legal_privacy",
+    "legal_privacy_litigation",
+    "legal_research",
+    "legal_saas_agreement",
+    "legal_settlement",
+    "legal_subpoena",
+    "legal_vendor_contract_review",
+}
+_LEGAL = {name: pack for name, pack in _BUILTIN.items()
+          if name == "legal" or name.startswith("legal_")}
+_SUITE = dict(_LEGAL)
 
 
 def test_suites_present():
-    # Legal is the practice; the rest are the supporting seats a firm actually
-    # uses. Floors, not exact counts, so authoring a new pack never fails a test.
-    assert len(_LEGAL) >= 76, f"expected >=76 Legal packs, found {len(_LEGAL)}"
-    for label, packs in (("tax", _TAX), ("finance", _FINANCE), ("security", _SEC),
-                         ("knowledge", _KM), ("employment", _HR), ("corporate", _EXEC),
-                         ("real estate", _RE), ("insurance", _INS)):
-        assert packs, f"no {label} support packs discovered"
+    # This fork intentionally ships an exact reviewed legal roster.  A new pack
+    # is a product-scope change and must update this explicit contract.
+    assert set(_BUILTIN) == _EXPECTED_LEGAL_ROSTER
+    for non_law_prefix in ("tax_", "finance_", "sec_", "km_", "hr_", "exec_",
+                           "re_", "ins_", "ops_", "mfg_", "util_"):
+        assert not _by_prefix(non_law_prefix), non_law_prefix
 
 
 def test_every_suite_pack_loads_with_persona_and_compartment():
@@ -99,13 +120,12 @@ def test_legal_matter_packs_deny_external_web_search():
 
 
 def test_suite_compartments_match_their_prefix():
-    # A pack's compartment shares its suite prefix, so a Rung-2 seal quarantines the
-    # whole suite at once (the factory<->safety hinge).
-    for pre, packs in (("legal_", _LEGAL), ("tax_", _TAX), ("finance_", _FINANCE),
-                       ("sec_", _SEC), ("km_", _KM), ("hr_", _HR), ("exec_", _EXEC),
-                       ("re_", _RE), ("ins_", _INS)):
-        for name, p in packs.items():
-            assert p.compartment.startswith(pre), f"{name}: compartment={p.compartment!r}"
+    # A pack's compartment stays inside the legal namespace, so a Rung-2 seal
+    # cannot accidentally target a retired cross-industry suite.
+    for name, p in _LEGAL.items():
+        assert p.compartment == "legal" or p.compartment.startswith("legal_"), (
+            f"{name}: compartment={p.compartment!r}"
+        )
 
 
 # Every built-in pack that is NOT a coding builder (no shell/code_exec in its
@@ -118,7 +138,7 @@ _NON_BUILDERS = {n: p for n, p in _BUILTIN.items() if n not in _BUILDERS}
 
 
 def test_every_non_builder_pack_is_read_only_and_safe():
-    assert len(_NON_BUILDERS) > 100, f"only {len(_NON_BUILDERS)} non-builders?"
+    assert set(_NON_BUILDERS) == _EXPECTED_LEGAL_ROSTER
     for name, p in _NON_BUILDERS.items():
         # A high ceiling is legitimate only for a spawn-router (it holds the
         # privileged PARENT grant so children can attenuate down); everything
@@ -249,19 +269,6 @@ def test_vendor_connector_packs_scope_their_egress_hosts():
                         "allow_hosts -- the egress lock would block the connector")
 
 
-def test_every_hr_pack_refuses_eu_ai_act_art5():
-    # Every HR specialist carries the workplace emotion-inference + biometric
-    # prohibitions (EU AI Act Art. 5) -- the suite with refused, not gated, uses.
-    from maverick.domain_refusals import refusals_for
-    hr = {n: p for n, p in _BUILTIN.items() if n.startswith("hr_")}
-    assert hr
-    for name in hr:
-        items = refusals_for(name)
-        assert any("emotion" in r for r in items), f"{name}: no Art-5 emotion refusal"
-        assert any("biometric" in r for r in items), f"{name}: no biometric refusal"
-
-
-# The physical-world refusal test (ops_/mfg_/util_ packs must refuse safety
-# actuation) is not carried over: the firm's roster ships no packs that touch
-# industrial equipment. maverick.domain_refusals still enforces the rule, so
-# re-adding such a pack re-arms it.
+def test_non_law_workforce_and_physical_world_packs_are_absent():
+    retired = ("hr_", "workforce_", "ops_", "mfg_", "util_")
+    assert not {name for name in _BUILTIN if name.startswith(retired)}

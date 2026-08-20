@@ -32,6 +32,8 @@ def test_principal_semaphore_is_per_principal():
 
 def _stub_run(monkeypatch, *, gate: threading.Event, started: dict):
     """Stub run_goal_in_thread's heavy deps; run_goal_sync blocks on ``gate``."""
+    from maverick.matter_context import MatterContext
+
     class _Goal:
         status = "done"
 
@@ -60,6 +62,19 @@ def _stub_run(monkeypatch, *, gate: threading.Event, started: dict):
         gate.wait(timeout=5.0)
 
     monkeypatch.setattr("maverick.orchestrator.run_goal_sync", _blocking_run)
+    monkeypatch.setattr(
+        "maverick.matter_context.resolve_goal_matter_context",
+        lambda _world, _goal_id, *, principal, source: MatterContext(
+            matter_id=1,
+            client_id=1,
+            principal=principal,
+            membership_role="attorney",
+            domain="legal",
+            jurisdiction="Tennessee",
+            purpose="goal-execution",
+            source=source,
+        ),
+    )
 
 
 def test_one_user_full_lane_does_not_block_another(monkeypatch):
@@ -70,7 +85,9 @@ def test_one_user_full_lane_does_not_block_another(monkeypatch):
     def fire(user_id, goal_id):
         threading.Thread(
             target=runner.run_goal_in_thread,
-            args=(goal_id,), kwargs={"user_id": user_id}, daemon=True,
+            args=(goal_id,),
+            kwargs={"user_id": user_id, "concurrency_principal": user_id},
+            daemon=True,
         ).start()
 
     # Alice fills her lane (2) and queues a 3rd that must wait on HER lane.

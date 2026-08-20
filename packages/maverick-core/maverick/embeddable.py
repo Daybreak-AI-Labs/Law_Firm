@@ -1,8 +1,8 @@
 """Embeddable-mode markers.
 
 Library users who import ``maverick`` to drive an agent from inside
-their own app don't want Maverick's CLI cost: click imports, command
-discovery, plugin entry-point scanning, etc. They can set
+their own app don't want Maverick's CLI cost: click imports and command
+discovery. They can set
 ``MAVERICK_NO_CLI=1`` in the environment before importing, and the
 core kernel skips CLI-only paths.
 

@@ -1,15 +1,11 @@
 """Issue #465 — cost/billing accuracy.
 
-Pins four fixes:
+Pins two fixes:
   1. Provider-aware cache-read multiplier: Anthropic 0.1x (default) vs
      OpenAI/o-series/gpt-5 auto-cache ~0.5x, while record_tokens stays
      backward-compatible (no new required args).
-  2. cost_router._PRICING model ids all resolve in llm.MODEL_PRICES
-     (one source of truth for prices).
-  3. budget_dollars is a lifetime total that callers inc() by the per-call
+  2. budget_dollars is a lifetime total that callers inc() by the per-call
      delta, so a second goal can't stomp the running total.
-  4. cost_router.pick excludes a provider whose recent error rate is over a
-     configurable threshold, falling back to the cheapest healthy one.
 """
 from __future__ import annotations
 
@@ -77,30 +73,7 @@ def test_openai_provider_passes_openai_cache_mult():
     assert b.dollars == pytest.approx(5.5 * 0.5)
 
 
-# --- Task 2: cost_router ids all resolve in MODEL_PRICES -------------------
-
-def test_router_pricing_ids_resolve_in_model_prices():
-    from maverick.cost.router import _PRICING
-    from maverick.llm import MODEL_PRICES
-    for provider, mid, _tier, in_rate, out_rate in _PRICING:
-        assert mid in MODEL_PRICES, f"{provider}:{mid} not in MODEL_PRICES"
-        # Rates are derived FROM the canonical catalog, so they must match.
-        assert (in_rate, out_rate) == MODEL_PRICES[mid], mid
-
-
-def test_price_for_model_matches_canonical_catalog():
-    from maverick.cost.router import _PRICING, price_for_model
-    from maverick.llm import MODEL_PRICES, MODEL_PRICING_PROVIDER
-    for _provider, mid, *_ in _PRICING:
-        quote = MODEL_PRICING_PROVIDER.rates[mid]
-        if quote.verified:
-            assert price_for_model(mid) == MODEL_PRICES[mid]
-        else:
-            assert price_for_model(mid) is None
-            assert price_for_model(mid, estimate_only=True) == MODEL_PRICES[mid]
-
-
-# --- Task 3: lifetime budget_dollars metric isn't stomped across goals -----
+# --- Task 2: lifetime budget_dollars metric isn't stomped across goals -----
 
 def test_budget_dollars_metric_accumulates_across_goals(monkeypatch):
     import maverick.observability as obs
@@ -141,90 +114,3 @@ def test_budget_dollars_metric_accumulates_across_goals(monkeypatch):
     # Counter summing these yields ~$4 lifetime instead of being stomped to $2.
     assert all(d == pytest.approx(2.0, rel=1e-3) for d in deltas)
     assert sum(deltas) == pytest.approx(4.0, rel=1e-3)
-
-
-# --- Task 4: unhealthy provider excluded from routing ----------------------
-
-@pytest.fixture
-def _route_env(monkeypatch):
-    monkeypatch.setenv("MAVERICK_COST_ROUTING", "1")
-    monkeypatch.delenv("MAVERICK_ROUTING_MAX_ERROR_RATE", raising=False)
-    for prov in ("ANTHROPIC", "OPENAI", "DEEPSEEK", "MOONSHOT",
-                 "XAI", "GEMINI", "GOOGLE"):
-        monkeypatch.delenv(f"{prov}_API_KEY", raising=False)
-    monkeypatch.setenv("HOME", "/nonexistent-465-routing-test")
-    from maverick.provider_health import get
-    get().reset()
-    yield
-    get().reset()
-
-
-def test_unhealthy_cheap_model_excluded(_route_env, monkeypatch):
-    # Only openai keyed, with two base-tier models (the cheaper gpt-5.4 and
-    # the premium gpt-5.4-pro which also qualifies for base-tier filtering).
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-
-    from maverick.cost.router import TIER_BASE, CostSignal, pick
-    from maverick.provider_health import get
-
-    # The cheapest base-tier openai model (gpt-5.4) is down: 5 errors (100%).
-    h = get()
-    for _ in range(5):
-        h.record("openai", "gpt-5.4", latency_ms=10, error=True)
-
-    got = pick(CostSignal(role="coder", tier=TIER_BASE))
-    # Health is tracked per (provider, model): the down gpt-5.4 is excluded
-    # even though it's the cheapest, so routing falls back to the next
-    # cheapest HEALTHY openai model rather than the down one.
-    assert got is not None
-    assert got.startswith("openai:"), got
-    assert got != "openai:gpt-5.4", got
-
-
-def test_healthy_cheap_provider_still_wins(_route_env, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-
-    from maverick.cost.router import TIER_BASE, CostSignal, pick
-    from maverick.provider_health import get
-
-    # deepseek healthy (errors below threshold) -> still the cheapest pick.
-    h = get()
-    for _ in range(10):
-        h.record("deepseek", "deepseek-v4-flash", latency_ms=10, error=False)
-
-    got = pick(CostSignal(role="coder", tier=TIER_BASE))
-    assert got.startswith("deepseek:"), got
-
-
-def test_single_early_error_does_not_exclude(_route_env, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-
-    from maverick.cost.router import TIER_BASE, CostSignal, pick
-    from maverick.provider_health import get
-
-    # 1/1 = 100% error rate, but below the min sample count -> not excluded.
-    get().record("deepseek", "deepseek-v4-flash", latency_ms=10, error=True)
-    got = pick(CostSignal(role="coder", tier=TIER_BASE))
-    assert got.startswith("deepseek:"), got
-
-
-def test_error_rate_threshold_config_knob(_route_env, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-    # Tighten the ceiling to 20%; a 40% error rate now excludes deepseek.
-    monkeypatch.setenv("MAVERICK_ROUTING_MAX_ERROR_RATE", "0.2")
-
-    from maverick.cost.router import TIER_BASE, CostSignal, pick
-    from maverick.provider_health import get
-
-    h = get()
-    # Both deepseek base-tier models at 40% error -> both excluded under the
-    # 20% ceiling, so routing falls back to the cheapest healthy openai model.
-    for mid in ("deepseek-v4-flash", "deepseek-v4-pro"):
-        for i in range(10):
-            h.record("deepseek", mid, latency_ms=10, error=(i < 4))
-
-    got = pick(CostSignal(role="coder", tier=TIER_BASE))
-    assert got.startswith("openai:"), got

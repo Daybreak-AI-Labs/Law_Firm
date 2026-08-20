@@ -15,10 +15,8 @@ Use:
     from maverick.workflow import Step, Workflow
 
     wf = Workflow(steps=[
-        Step("fetch", "http_fetch", {"url": "https://news.ycombinator.com"}),
-        Step("snap",  "ocr",        {"op": "extract_url", "url": "${fetch.url}"}),
-        Step("note",  "notify",     {"title": "OCR done",
-                                       "body": "${snap.out}"}),
+        Step("matter", "knowledge_search", {"query": "governing agreement"}),
+        Step("public", "web_search", {"query": "controlling authority"}),
     ])
     result = wf.run(registry)
 

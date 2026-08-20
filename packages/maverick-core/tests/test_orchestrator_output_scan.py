@@ -63,10 +63,13 @@ async def test_run_goal_blocks_flagged_final_answer(
         goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
     )
 
-    assert "Output blocked by Shield" in out
+    assert "output withheld by Shield" in out
     assert "test-policy" in out
     # The flagged answer text must be withheld, not handed back.
     assert "the answer is 42" not in out
+    goal = world.get_goal(gid)
+    assert goal is not None and goal.status == "blocked"
+    assert "the answer is 42" not in (goal.result or "")
 
 
 @pytest.mark.asyncio

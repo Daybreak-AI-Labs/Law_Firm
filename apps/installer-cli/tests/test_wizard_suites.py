@@ -19,8 +19,8 @@ def _write(cfg_dir, monkeypatch, suites):
     monkeypatch.setattr("maverick_installer.wizard.CONFIG_FILE", cfg_dir / "config.toml")
     from maverick_installer.wizard import write_config
     write_config(
-        providers=["anthropic"], role_models={},
-        channels={}, safety={"profile": "balanced"},
+        providers=["anthropic"], run_model="anthropic:claude-sonnet-4-6",
+        safety={"profile": "balanced"},
         budget={"max_dollars": 5.0, "max_wall_seconds": 600, "max_tool_calls": 30},
         sandbox={"backend": "local", "workdir": "~/ws"},
         keys={"ANTHROPIC_API_KEY": "x"},

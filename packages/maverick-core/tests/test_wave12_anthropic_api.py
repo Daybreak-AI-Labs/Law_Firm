@@ -10,12 +10,11 @@ from __future__ import annotations
 
 
 class TestCacheTtlConsistent:
-    def test_messages_breakpoint_uses_default_ttl_5m_in_coding(self, monkeypatch):
+    def test_messages_breakpoint_uses_default_ttl_5m(self, monkeypatch):
         from maverick.providers.anthropic_provider import (
             _add_messages_cache_breakpoint,
         )
         monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
-        monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
         msgs = [
             {"role": "user", "content": "first turn"},
             {"role": "assistant", "content": "response"},
@@ -26,8 +25,7 @@ class TestCacheTtlConsistent:
         target = out[0]
         cc = target["content"][0]["cache_control"]
         assert cc["ttl"] == "5m", (
-            "in coding mode the messages breakpoint should also be 5m, "
-            "matching system/tools — prior code hardcoded 1h here, "
+            "the messages breakpoint should be 5m — prior code hardcoded 1h, "
             "causing Budget over-bill on write surcharge"
         )
 
@@ -43,7 +41,6 @@ class TestCacheTtlConsistent:
         )
         monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
         monkeypatch.delenv("MAVERICK_ANTHROPIC_MSG_CACHE_TTL", raising=False)
-        monkeypatch.delenv("MAVERICK_CODING_MODE", raising=False)
         msgs = [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
@@ -58,7 +55,6 @@ class TestCacheTtlConsistent:
             _add_messages_cache_breakpoint,
         )
         monkeypatch.setenv("MAVERICK_ANTHROPIC_CACHE_TTL", "1h")
-        monkeypatch.setenv("MAVERICK_CODING_MODE", "1")  # would default to 5m
         msgs = [
             {"role": "user", "content": "first"},
             {"role": "assistant", "content": "ok"},

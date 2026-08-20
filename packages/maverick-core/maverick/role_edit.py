@@ -1,23 +1,21 @@
 """Per-client customization of the core agent ROLES.
 
 Each of the kernel's roles (orchestrator, researcher, coder, writer, analyst,
-revisor, summarizer, verifier, ...) can be tailored per tenant along three axes,
+revisor, summarizer, verifier, ...) can be tailored per tenant along two axes,
 all stored in one TOML file in the tenant workspace -- ``roles.toml``, a table
 per role::
 
     [orchestrator]
     system_addendum = "For ACME, always open with the risk summary first."
-    model = "anthropic:claude-opus-4-8"
     effort = "high"
 
 Every field is optional:
 
   * ``system_addendum`` is appended to the role's base system template at spawn
     (:func:`role_addendum`, read by ``maverick.agent``).
-  * ``model`` / ``effort`` override what the kernel would otherwise resolve from
-    the global ``[models]`` / ``[effort]`` config -- :func:`maverick.config.
-    get_role_model` and :func:`maverick.effort.effort_for_role` consult these
-    per-tenant overrides first (:func:`override_model` / :func:`override_effort`).
+  * ``effort`` overrides what the kernel would otherwise resolve from the
+    global ``[effort]`` config. Model selection is deliberately not editable
+    per role: secure firm runs use one exact global ``provider:model`` pin.
 
 A role with no override behaves exactly as before.
 """
@@ -39,12 +37,10 @@ from .llm import ROLE_MODELS
 # override and is unaffected.
 ROLES: tuple[str, ...] = tuple(ROLE_MODELS.keys())
 
-# An addendum rides on every spawn of that role, so keep it bounded; a model
-# spec is short.
+# An addendum rides on every spawn of that role, so keep it bounded.
 _MAX_ADDENDUM = 4000
-_MAX_MODEL = 200
 # Fields we persist per role, in stable order.
-_FIELDS = ("system_addendum", "model", "effort")
+_FIELDS = ("system_addendum", "effort")
 
 
 def roles_file() -> Path:
@@ -80,12 +76,6 @@ def role_addendum(role: str) -> str:
     return str(_table(role).get("system_addendum") or "")
 
 
-def override_model(role: str) -> str | None:
-    """The client's per-role model override (``None`` if unset). Consulted by
-    ``maverick.config.get_role_model`` ahead of the global ``[models]`` config."""
-    return str(_table(role).get("model") or "") or None
-
-
 def override_effort(role: str) -> str | None:
     """The client's per-role effort override (``None`` if unset). Consulted by
     ``maverick.effort.effort_for_role`` ahead of the global ``[effort]`` config."""
@@ -93,17 +83,15 @@ def override_effort(role: str) -> str | None:
 
 
 def validate_role(role: str, patch: dict) -> list[str]:
-    """Errors that block a save: an unknown role, an over-long addendum or model
-    spec, or an effort level the runtime doesn't know."""
+    """Errors that block a save: unknown role/addendum/effort/model keys."""
     errors: list[str] = []
     if role not in ROLES:
         errors.append(f"unknown role {role!r} (expected one of {sorted(ROLES)})")
     addendum = str(patch.get("system_addendum") or "")
     if len(addendum) > _MAX_ADDENDUM:
         errors.append(f"system_addendum too long ({len(addendum)} > {_MAX_ADDENDUM} chars)")
-    model = str(patch.get("model") or "")
-    if len(model) > _MAX_MODEL:
-        errors.append(f"model spec too long ({len(model)} > {_MAX_MODEL} chars)")
+    if "model" in patch:
+        errors.append("per-role model selection is not supported")
     effort = str(patch.get("effort") or "").strip()
     if effort:
         from .effort import _LEVELS
@@ -130,7 +118,7 @@ def _dump(tables: dict) -> str:
 
 
 def write_role_override(role: str, patch: dict, path: str | Path | None = None) -> str:
-    """Validate then persist a role's override (addendum / model / effort). The
+    """Validate then persist a role's addendum / effort override. The
     entry is replaced by the patch's non-empty fields; an all-empty patch clears
     the override. Raises ``ValueError`` on a validation error. Returns the path."""
     errors = validate_role(role, patch)
@@ -162,15 +150,15 @@ def remove_role_override(role: str, path: str | Path | None = None) -> bool:
 
 
 def _effective_model_effort(role: str) -> tuple[str | None, str | None]:
-    """The model + reasoning effort the role actually resolves to -- through the
-    kernel resolvers, so any per-tenant override is already reflected. Defensive:
-    never raises into the view."""
+    """The run-wide model + role effort, defensively resolved for display."""
     model = None
     try:
-        from .config import get_role_model
-        model = get_role_model(role) or ROLE_MODELS.get(role)
+        from .llm import model_for_role
+        model = model_for_role(role)
     except Exception:
-        model = ROLE_MODELS.get(role)
+        # Do not display a legacy built-in as if it were an executable secure
+        # pin. Missing/broken run-model authority remains visibly unresolved.
+        model = None
     effort = None
     try:
         from .effort import effort_for_role
@@ -183,13 +171,12 @@ def _effective_model_effort(role: str) -> tuple[str | None, str | None]:
 def resolved_role(role: str, path: str | Path | None = None) -> dict | None:
     """The merged view the editor renders: the role's *effective* model/effort
     (``model``/``effort``), the *editable* per-tenant overrides
-    (``model_override``/``effort_override``/``system_addendum``), and provenance.
+    (``effort_override``/``system_addendum``), and provenance.
     ``None`` for an unknown role."""
     if role not in ROLES:
         return None
     table = _table(role, path)
     addendum = str(table.get("system_addendum") or "")
-    model_ov = str(table.get("model") or "")
     effort_ov = str(table.get("effort") or "")
     eff_model, eff_effort = _effective_model_effort(role)
     return {
@@ -197,17 +184,16 @@ def resolved_role(role: str, path: str | Path | None = None) -> dict | None:
         "model": eff_model,            # effective (resolved) -- display
         "effort": eff_effort,          # effective (resolved) -- display
         "system_addendum": addendum,
-        "model_override": model_ov,    # editable; "" = inherit the config default
         "effort_override": effort_ov,  # editable; "" = inherit
-        "is_override": bool(addendum or model_ov or effort_ov),
+        "is_override": bool(addendum or effort_ov),
         "errors": validate_role(
-            role, {"system_addendum": addendum, "model": model_ov, "effort": effort_ov}),
+            role, {"system_addendum": addendum, "effort": effort_ov}),
     }
 
 
 def list_roles(path: str | Path | None = None) -> list[dict]:
-    """Roster for the editor: every role, its effective model, and whether the
-    client has overridden it (any of addendum / model / effort)."""
+    """Roster for the editor: every role, its run model, and whether the
+    client has overridden its addendum or effort."""
     tables = _load(path)
     out: list[dict] = []
     for role in ROLES:
@@ -222,7 +208,7 @@ def list_roles(path: str | Path | None = None) -> list[dict]:
 
 
 __all__ = [
-    "ROLES", "roles_file", "role_addendum", "override_model", "override_effort",
+    "ROLES", "roles_file", "role_addendum", "override_effort",
     "validate_role", "write_role_override", "remove_role_override",
     "resolved_role", "list_roles",
 ]

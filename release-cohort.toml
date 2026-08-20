@@ -2,8 +2,8 @@ schema_version = 1
 version = "0.1.7"
 repository = "Daybreak-AI-Labs/Law_Firm"
 
-# The eight public Python distributions are released, tested, and supported as
-# one lockstep cohort.  Release workflows and tests consume this manifest
+# The five retained Python distributions are built, tested, and installed as
+# one lockstep private cohort. Build and validation tooling consume this manifest
 # instead of maintaining independent package lists.
 
 [[packages]]
@@ -20,11 +20,6 @@ runtime_module = "maverick_shield"
 distribution = "maverick-dashboard"
 path = "packages/maverick-dashboard"
 runtime_module = "maverick_dashboard"
-
-[[packages]]
-distribution = "maverick-mcp-server"
-path = "packages/maverick-mcp"
-runtime_module = "maverick_mcp"
 
 [[packages]]
 distribution = "maverick-knowledge"

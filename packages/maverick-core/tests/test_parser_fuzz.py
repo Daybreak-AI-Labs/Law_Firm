@@ -124,16 +124,6 @@ def test_fuzz_web_session():
          lambda v: verify_session("a.b", v if isinstance(v, str) else "s"))
 
 
-def test_fuzz_webhook_signature():
-    from maverick.webhooks import verify_signature
-    _run("verify_signature",
-         lambda v: verify_signature(
-             b"body",
-             v if isinstance(v, str) else "sha256=00",
-             "secret",
-             timestamp=v if isinstance(v, str) else None))
-
-
 def test_fuzz_share_link(monkeypatch):
     monkeypatch.setenv("MAVERICK_SHARE_SECRET", "s3cr3t")
     from maverick import share_link
@@ -163,17 +153,3 @@ def test_fuzz_oidc_verify():
              v if isinstance(v, str) else "a.b.c", config=cfg,
              signing_key="not-a-key"),
          allowed=(OIDCError,))
-
-
-def test_fuzz_compute_evaluator():
-    from maverick.tools.compute import _run as compute_run
-    # Must always return a string (never raise / never hang); the AST guards +
-    # exponent bound keep even pathological expressions bounded.
-    rng = random.Random(9)
-    exprs = [v for v in corpus(9) if isinstance(v, str)]
-    exprs += ["9" * 4000, "(" * 3000 + "1" + ")" * 3000, "1" + "+1" * 9000,
-              "2**100*2**100", "sqrt(-1)", "log(0)", "" + "x*" * 5000 + "x"]
-    for expr in exprs:
-        out = compute_run({"op": "evaluate", "expr": expr})
-        assert isinstance(out, str)
-    del rng

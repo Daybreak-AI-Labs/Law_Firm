@@ -49,7 +49,19 @@ def test_rewind_in_place_truncates_and_reblocks(tmp_path):
 
 def test_rewind_fork_creates_child_and_preserves_original(tmp_path):
     world = WorldModel(tmp_path / "world.db")
-    gid = world.create_goal("finance close", domain="finance_ap")
+    owner = "user:finance-lead"
+    matter_id = world.create_project(
+        "Finance close matter",
+        owner=owner,
+        domain="finance_ap",
+    )
+    gid = world.create_matter_goal(
+        "finance close",
+        principal=owner,
+        domain="finance_ap",
+        project_id=matter_id,
+    )
+    assert gid is not None
     ck = _seed(world, gid, agent_id="finance_ap-0", steps=5)
 
     res = ckpt_mod.rewind(world, gid, 3, fork=True)
@@ -65,7 +77,50 @@ def test_rewind_fork_creates_child_and_preserves_original(tmp_path):
     fg = world.get_goal(new)
     assert fg.parent_id == gid
     assert fg.domain == "finance_ap"
+    assert fg.owner == owner
+    assert fg.project_id == matter_id
     assert fg.status == "blocked"
+    world.close()
+
+
+def test_rewind_fork_rejects_matterless_parent(tmp_path):
+    world = WorldModel(tmp_path / "world.db")
+    gid = world.create_goal("legacy matterless goal", domain="finance_ap")
+    _seed(world, gid, agent_id="finance_ap-0", steps=2)
+
+    result = ckpt_mod.rewind(world, gid, 1, fork=True)
+
+    assert result.ok is False
+    assert "lacks an exact matter" in result.detail
+    assert world.get_goal(gid + 1) is None
+    world.close()
+
+
+def test_rewind_fork_rechecks_active_parent_membership(tmp_path):
+    world = WorldModel(tmp_path / "world.db")
+    owner = "user:finance-lead"
+    matter_id = world.create_project("Finance matter", owner=owner, domain="finance_ap")
+    gid = world.create_matter_goal(
+        "finance close",
+        principal=owner,
+        domain="finance_ap",
+        project_id=matter_id,
+    )
+    assert gid is not None
+    _seed(world, gid, agent_id="finance_ap-0", steps=2)
+    world.add_project_member(
+        matter_id,
+        "user:backup-attorney",
+        "responsible_attorney",
+        added_by=owner,
+    )
+    assert world.deactivate_project_member(matter_id, owner) is True
+
+    result = ckpt_mod.rewind(world, gid, 1, fork=True)
+
+    assert result.ok is False
+    assert "membership is no longer active" in result.detail
+    assert world.get_goal(gid + 1) is None
     world.close()
 
 

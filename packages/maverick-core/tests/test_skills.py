@@ -1,260 +1,224 @@
-"""Skill management tests."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import patch
 
+import maverick.skills as skills_module
 import pytest
 from maverick.skills import (
+    MAX_SKILL_BYTES,
     Skill,
-    _safe_name,
-    build_skill_md,
-    create_skill,
-    install_skill,
+    _relevant_skills_lexical,
+    available_skills,
     load_skills,
     relevant_skills,
-    remove_skill,
-)
-
-SKILL_BODY = (
-    "---\n"
-    "name: my-test-skill\n"
-    "triggers:\n"
-    "  - test thing\n"
-    "  - try this\n"
-    "tools_needed:\n"
-    "  - shell\n"
-    "---\n"
-    "\n"
-    "# What it does\n"
-    "\n"
-    "Testing skills installation.\n"
+    render_for_prompt,
+    validate_skill_file,
 )
 
 
-class TestSafeName:
-    def test_simple(self):
-        assert _safe_name("my-skill") == "my-skill"
-
-    def test_strips_special_chars(self):
-        assert _safe_name("My Skill!") == "my-skill"
-
-    def test_path_traversal_neutralized(self):
-        # Slashes and dots get stripped -- no path escape via skill name.
-        result = _safe_name("../etc/passwd")
-        assert "/" not in result
-        assert ".." not in result
-
-    def test_empty_fallback(self):
-        assert _safe_name("") == "skill"
-        assert _safe_name("!!!") == "skill"
+def test_remote_and_runtime_skill_mutation_surfaces_are_absent():
+    for name in (
+        "create_skill",
+        "distill",
+        "install_from_catalog",
+        "install_skill",
+        "remove_skill",
+        "_fetch_skill_source",
+        "_fetch_url",
+    ):
+        assert not hasattr(skills_module, name)
 
 
-class TestCreateSkill:
-    def test_authors_a_valid_skill_that_round_trips(self, tmp_path: Path):
-        d = tmp_path / "skills"
-        s = create_skill(
-            "My Cool Skill",
-            "# What this does\n\nDo the thing.\n\n# Steps\n1. One.\n2. Two.",
-            triggers=["do the thing", "make it happen"],
-            tools_needed=["read_file"],
-            skills_dir=d,
-        )
-        assert s.name == "my-cool-skill"                 # display name -> kebab id
-        assert (d / "my-cool-skill.md").exists()
-        # loads back through the normal loader with fields intact
-        loaded = {x.name: x for x in load_skills(d)}
-        assert "my-cool-skill" in loaded
-        assert loaded["my-cool-skill"].triggers == ["do the thing", "make it happen"]
-        assert loaded["my-cool-skill"].tools_needed == ["read_file"]
-
-    def test_requires_a_trigger(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="trigger"):
-            create_skill("x", "body text", triggers=[], skills_dir=tmp_path / "s")
-
-    def test_requires_a_body(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="instructions|body"):
-            create_skill("x", "   ", triggers=["go"], skills_dir=tmp_path / "s")
-
-    def test_build_skill_md_is_parseable(self):
-        md = build_skill_md("Weekly Rollup", ["weekly status"], ["read_file"], "Body here.")
-        parsed = Skill.parse(md, Path("weekly-rollup.md"))
-        assert parsed.name == "weekly-rollup"
-        assert parsed.triggers == ["weekly status"]
-        assert parsed.tools_needed == ["read_file"]
-        assert "Body here." in parsed.body
-
-    def test_multiline_trigger_is_collapsed(self, tmp_path: Path):
-        # A trigger with embedded newlines can't break the line-based frontmatter.
-        s = create_skill("t", "Body.", triggers=["line one\nline two"],
-                         skills_dir=tmp_path / "s")
-        assert s.triggers == ["line one line two"]
+def _markdown(
+    name: str = "client-intake",
+    *,
+    trigger: str = "open a new client matter",
+    body: str | None = None,
+) -> str:
+    body = body or "# Steps\n\n1. Confirm the conflict check.\n2. Gather intake facts."
+    return (
+        f"---\nname: {name}\ntriggers:\n  - {trigger}\n"
+        "tools_needed:\n  - read_attachment\n---\n\n"
+        f"{body}\n"
+    )
 
 
-class TestInstallSkill:
-    def test_from_local_path(self, tmp_path: Path):
-        source = tmp_path / "my.md"
-        source.write_text(SKILL_BODY)
-        skills_dir = tmp_path / "skills"
-        s = install_skill(str(source), skills_dir=skills_dir)
-        assert s.name == "my-test-skill"
-        assert (skills_dir / "my-test-skill.md").exists()
-        assert "test thing" in s.triggers
-
-    def test_local_missing_raises(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="does not exist"):
-            install_skill(str(tmp_path / "nope.md"), skills_dir=tmp_path / "skills")
-
-    def test_creates_skills_dir(self, tmp_path: Path):
-        source = tmp_path / "x.md"
-        source.write_text(SKILL_BODY)
-        skills_dir = tmp_path / "deep" / "path" / "that" / "doesnt" / "exist"
-        install_skill(str(source), skills_dir=skills_dir)
-        assert skills_dir.is_dir()
-
-    def test_http_url_rejected(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="insecure URL scheme"):
-            install_skill("http://example.com/skill.md", skills_dir=tmp_path / "skills")
-
-    def test_https_download_has_size_limit(self, tmp_path: Path):
-        class FakeResp:
-            status = 200
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self, n: int = -1) -> bytes:
-                return b"x" * (300 * 1024)
-
-        # guarded_urlopen fetches through a custom opener (to revalidate
-        # redirect hops against the SSRF guard), so patch the opener's open().
-        with patch("urllib.request.OpenerDirector.open", return_value=FakeResp()):
-            with pytest.raises(ValueError, match="too large"):
-                install_skill("https://example.com/skill.md", skills_dir=tmp_path / "skills")
+def test_skill_parse_round_trips_local_frontmatter(tmp_path: Path):
+    path = tmp_path / "client-intake.md"
+    skill = Skill.parse(_markdown(), path)
+    assert skill.name == "client-intake"
+    assert skill.triggers == ["open a new client matter"]
+    assert skill.tools_needed == ["read_attachment"]
+    assert "Confirm the conflict check" in skill.body
 
 
-class TestRemoveSkill:
-    def test_removes_existing(self, tmp_path: Path):
-        skills_dir = tmp_path / "skills"
-        skills_dir.mkdir()
-        (skills_dir / "to-go.md").write_text(SKILL_BODY)
-        assert remove_skill("to-go", skills_dir=skills_dir) is True
-        assert not (skills_dir / "to-go.md").exists()
-
-    def test_returns_false_when_missing(self, tmp_path: Path):
-        assert remove_skill("never-installed", skills_dir=tmp_path / "skills") is False
-
-    def test_name_sanitized(self, tmp_path: Path):
-        # Even adversarial names can't escape the skills_dir.
-        skills_dir = tmp_path / "skills"
-        skills_dir.mkdir()
-        outside = tmp_path / "outside.md"
-        outside.write_text("important")
-        # _safe_name strips '..' and '/', so this targets skills_dir/...md or similar
-        remove_skill("../outside", skills_dir=skills_dir)
-        assert outside.exists()  # not touched
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("not frontmatter", "frontmatter"),
+        ("---\nname: Bad Name\n---\nbody", "kebab"),
+        (
+            "---\nname: x\ntriggers: scalar\n  - list\n---\nbody",
+            "mixes",
+        ),
+        ("---\nname: x\nbroken\n---\nbody", "frontmatter line"),
+        ("---\nname: x\nname: y\n---\nbody", "duplicate"),
+    ],
+)
+def test_skill_parse_rejects_malformed_input(tmp_path: Path, text: str, expected: str):
+    with pytest.raises(ValueError, match=expected):
+        Skill.parse(text, tmp_path / "x.md")
 
 
-class TestSkillParse:
-    def test_missing_frontmatter_raises(self, tmp_path: Path):
-        bad = tmp_path / "bad.md"
-        bad.write_text("just text no frontmatter")
-        with pytest.raises(ValueError, match="missing YAML frontmatter"):
-            Skill.parse(bad.read_text(), bad)
-
-    def test_parses_triggers(self, tmp_path: Path):
-        path = tmp_path / "x.md"
-        path.write_text(SKILL_BODY)
-        s = Skill.parse(path.read_text(), path)
-        assert s.triggers == ["test thing", "try this"]
-        assert s.tools_needed == ["shell"]
+def test_load_skills_requires_an_explicit_store(tmp_path: Path):
+    (tmp_path / "client-intake.md").write_text(_markdown(), encoding="utf-8")
+    assert load_skills() == []
+    assert [skill.name for skill in load_skills(tmp_path)] == ["client-intake"]
 
 
-class TestRelevantSkills:
-    @pytest.fixture(autouse=True)
-    def _force_lexical(self, monkeypatch):
-        # These exercise the LEXICAL scorer specifically, so force it -- the
-        # result must not depend on whether fastembed happens to be installed
-        # (the embedding path has its own cosine gate).
-        monkeypatch.setattr("maverick.skill.embeddings._have_fastembed", lambda: False)
-
-    def _make_skill(self, name: str, triggers: list[str]) -> Skill:
-        return Skill(
-            name=name, triggers=triggers, tools_needed=[], body="", path=Path("/x"),
-        )
-
-    def test_relevance_gate_drops_weak_matches(self):
-        # A skill sharing only a common word ("the") is noise and must be gated
-        # out (precision >> recall for agent memory).
-        strong = self._make_skill("strong", ["deploy the service"])
-        weak = self._make_skill("weak", ["the weather forecast"])
-        out = relevant_skills("deploy the service now", [strong, weak])
-        assert strong in out and weak not in out
-
-    def test_gate_is_configurable(self):
-        from maverick.skills import _relevant_skills_lexical
-        weak = self._make_skill("weak", ["the weather"])  # shares only "the"
-        assert weak in _relevant_skills_lexical("the price", [weak], min_score=0.0)
-        assert weak not in _relevant_skills_lexical("the price", [weak], min_score=4.0)
-
-    def test_word_overlap_scoring(self):
-        s1 = self._make_skill("a", ["web search results"])
-        s2 = self._make_skill("b", ["send email"])
-        out = relevant_skills("please do a web search", [s1, s2])
-        assert s1 in out
-        assert s2 not in out
-
-    def test_substring_bonus_ranks_higher(self):
-        s1 = self._make_skill("a", ["deploy a new service"])
-        s2 = self._make_skill("b", ["deploy something"])
-        out = relevant_skills("deploy a new service today", [s1, s2])
-        # s1's full-phrase match beats s2's partial overlap.
-        assert out[0] == s1
-
-    def test_max_n_caps_results(self):
-        skills = [self._make_skill(f"s{i}", ["test trigger"]) for i in range(10)]
-        out = relevant_skills("test trigger", skills, max_n=3)
-        assert len(out) == 3
+def test_load_skills_skips_oversized_and_non_utf8_files(tmp_path: Path):
+    (tmp_path / "too-large.md").write_bytes(b"x" * (MAX_SKILL_BYTES + 1))
+    (tmp_path / "binary.md").write_bytes(b"---\nname: binary\n---\n\xff")
+    assert load_skills(tmp_path) == []
 
 
-class TestPurposeScopedRecall:
-    @pytest.fixture(autouse=True)
-    def _force_lexical(self, monkeypatch):
-        monkeypatch.setattr("maverick.skill.embeddings._have_fastembed", lambda: False)
-
-    def _skill(self, purposes=()):
-        return Skill(name="s", triggers=["reconcile the general ledger"],
-                     tools_needed=[], body="", path=Path("/x"), purposes=purposes)
-
-    def test_unrestricted_skill_always_recalled(self):
-        s = self._skill()
-        assert s in relevant_skills("reconcile the general ledger now", [s])
-
-    def test_purpose_scoped_hidden_without_purpose(self):
-        # PBAC default: a purpose-scoped skill is NOT recalled when no purpose
-        # is declared for the run.
-        s = self._skill(purposes=("audit",))
-        assert relevant_skills("reconcile the general ledger now", [s]) == []
-
-    def test_purpose_scoped_recalled_within_matching_purpose(self):
-        from maverick.access_policy import purpose_scope
-        s = self._skill(purposes=("audit",))
-        with purpose_scope("audit"):
-            assert s in relevant_skills("reconcile the general ledger now", [s])
-
-    def test_purpose_scoped_hidden_under_wrong_purpose(self):
-        from maverick.access_policy import purpose_scope
-        s = self._skill(purposes=("audit",))
-        with purpose_scope("marketing"):
-            assert relevant_skills("reconcile the general ledger now", [s]) == []
+def test_load_skills_rejects_hardlink_alias(tmp_path: Path):
+    original = tmp_path / "original.md"
+    alias = tmp_path / "alias.md"
+    original.write_text(_markdown(), encoding="utf-8")
+    try:
+        os.link(original, alias)
+    except OSError:
+        pytest.skip("hard links unavailable on this host")
+    assert load_skills(tmp_path) == []
 
 
-class TestSkillPurposeParse:
-    def test_parse_reads_purposes_frontmatter(self, tmp_path):
-        text = ("---\nname: p\ntriggers:\n  - do x\npurposes:\n  - audit\n  - finance\n"
-                "---\n\n# What\n\nA body long enough to be a valid skill file.\n")
-        s = Skill.parse(text, tmp_path / "p.md")
-        assert s.purposes == ("audit", "finance")
+def test_load_skills_rejects_symlink_alias(tmp_path: Path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text(_markdown(), encoding="utf-8")
+    link = tmp_path / "link.md"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable on this host")
+    assert load_skills(tmp_path) == []
+
+
+def test_load_skills_rejects_path_replacement_during_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    candidate = tmp_path / "client-intake.md"
+    original = tmp_path / "original.md"
+    attacker = tmp_path / "attacker.swap"
+    candidate.write_text(_markdown(), encoding="utf-8")
+    attacker.write_text(_markdown(name="attacker"), encoding="utf-8")
+    real_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags):
+        nonlocal swapped
+        if Path(path) == candidate and not swapped:
+            swapped = True
+            candidate.replace(original)
+            attacker.replace(candidate)
+        return real_open(path, flags)
+
+    monkeypatch.setattr("maverick.skills.os.open", swapping_open)
+    assert load_skills(tmp_path) == []
+
+
+def test_load_skills_rejects_in_place_mutation_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    candidate = tmp_path / "client-intake.md"
+    candidate.write_text(_markdown(), encoding="utf-8")
+    real_read = os.read
+    mutated = False
+
+    def mutating_read(fd, size):
+        nonlocal mutated
+        chunk = real_read(fd, size)
+        if chunk and not mutated:
+            mutated = True
+            candidate.write_text(_markdown(name="attacker"), encoding="utf-8")
+        return chunk
+
+    monkeypatch.setattr("maverick.skills.os.read", mutating_read)
+    assert load_skills(tmp_path) == []
+
+
+def test_validate_skill_is_local_read_only_and_secret_scanned(tmp_path: Path):
+    good = tmp_path / "good.md"
+    good.write_text(_markdown(), encoding="utf-8")
+    result = validate_skill_file(good)
+    assert result.ok, result.errors
+
+    bad = tmp_path / "bad.md"
+    bad.write_text(_markdown(body="# Steps\n\nshort"), encoding="utf-8")
+    result = validate_skill_file(bad)
+    assert not result.ok
+    assert any("short" in error for error in result.errors)
+
+
+def test_available_skills_uses_reviewed_builtins_and_explicit_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("MAVERICK_BUILTIN_SKILLS", "0")
+    (tmp_path / "client-intake.md").write_text(_markdown(), encoding="utf-8")
+    assert available_skills() == []
+    assert [skill.name for skill in available_skills(tmp_path)] == ["client-intake"]
+
+
+def test_lexical_recall_is_deterministic_and_drops_noise():
+    strong = Skill(
+        "strong",
+        ["review the vendor agreement"],
+        [],
+        "body",
+        Path("strong.md"),
+    )
+    weak = Skill("weak", ["the weather"], [], "body", Path("weak.md"))
+    out = _relevant_skills_lexical(
+        "review the vendor agreement now",
+        [weak, strong],
+        min_score=4,
+    )
+    assert out == [strong]
+
+
+def test_purpose_scoped_skill_fails_closed_when_policy_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    unrestricted = Skill("a", ["draft motion"], [], "body", Path("a.md"))
+    scoped = Skill(
+        "b",
+        ["draft motion"],
+        [],
+        "body",
+        Path("b.md"),
+        purposes=("litigation",),
+    )
+    monkeypatch.setattr(
+        "maverick.access_policy.check",
+        lambda _policy: (_ for _ in ()).throw(RuntimeError("unavailable")),
+    )
+    assert relevant_skills("draft motion", [scoped, unrestricted]) == [unrestricted]
+
+
+def test_render_for_prompt_is_bounded():
+    skills = [
+        Skill("one", ["x"], [], "A" * 100, Path("one.md")),
+        Skill("two", ["x"], [], "B" * 100, Path("two.md")),
+    ]
+    rendered = render_for_prompt(
+        skills,
+        max_body_chars=20,
+        max_total_chars=30,
+    )
+    assert "## one" in rendered
+    assert "## two" not in rendered
+    assert "A" * 21 not in rendered

@@ -136,9 +136,9 @@ def load_cohort(
         seen_distributions.add(distribution)
         seen_modules.add(runtime_module)
         packages.append(CohortPackage(distribution, source, runtime_module))
-    if len(packages) != 6:
+    if len(packages) != 5:
         raise ValueError(
-            f"release cohort must contain exactly 6 packages, found {len(packages)}"
+            f"release cohort must contain exactly 5 packages, found {len(packages)}"
         )
     return version, packages
 

@@ -148,7 +148,7 @@ def _provider_state(cfg: dict[str, Any] | None) -> tuple[Check, bool]:
                 "provider",
                 "Model provider",
                 "blocked",
-                "No selected model route has complete offline prerequisites.",
+                "The selected run model lacks complete offline prerequisites.",
                 "maverick init",
             ),
             False,
@@ -158,36 +158,19 @@ def _provider_state(cfg: dict[str, Any] | None) -> tuple[Check, bool]:
             "provider",
             "Model provider",
             "ready",
-            f"Ready selected provider route(s): {', '.join(ready)}.",
+            f"Ready selected model provider: {ready[0]}.",
         ),
         True,
     )
 
 
 def _model_specs(cfg: dict[str, Any]) -> tuple[str, ...]:
-    """Deterministically resolve every model route a normal swarm may use.
-
-    The resolver is shared with ``model_for_role`` for environment, tenant
-    role edits, config, dashboard pins, and the admin allow-list. Dynamic
-    cost/local/energy routing performs live probes and therefore belongs to
-    ``doctor``, not this offline preflight.
-    """
+    """Resolve the one exact run-wide model without network probes."""
     try:
-        from .llm import ROLE_MODELS, offline_model_for_role
+        from .llm import offline_model_for_role
     except Exception:
         return ()
-    configured = cfg.get("models")
-    configured = configured if isinstance(configured, dict) else {}
-    roles = set(ROLE_MODELS) | {
-        str(role)
-        for role, value in configured.items()
-        if isinstance(value, str) and value.strip()
-    }
-    specs = {
-        offline_model_for_role(role, config=cfg)
-        for role in roles
-    }
-    return tuple(sorted(specs))
+    return (offline_model_for_role("orchestrator", config=cfg),)
 
 
 def _provider_table(cfg: dict[str, Any], provider: str) -> Mapping[str, Any]:
@@ -270,7 +253,12 @@ def _route_configuration_missing(
 def _routed_configuration_missing(
     cfg: dict[str, Any],
 ) -> dict[str, tuple[str, ...]]:
-    """Canonical provider prerequisite state for every selected model route."""
+    """Canonical prerequisite state for the selected run model.
+
+    The historical name remains as a private compatibility seam for the
+    dashboard's offline health check; secure firm execution resolves exactly
+    one provider here.
+    """
     from .providers import _canonical
 
     routed: dict[str, tuple[str, ...]] = {}
@@ -311,28 +299,13 @@ def _format_route_missing(
     return "; ".join(rendered)
 
 
-def _role_configuration_missing(
-    role: str,
-    cfg: dict[str, Any],
-) -> tuple[str, tuple[str, ...]]:
-    """Return the deterministic effective provider and prerequisites for ROLE."""
-    from .llm import offline_model_for_role
-    from .providers import _canonical
-
-    spec = offline_model_for_role(role, config=cfg)
-    provider = _canonical(
-        spec.split(":", 1)[0] if ":" in spec else "anthropic"
-    )
-    return provider, _route_configuration_missing(provider, cfg)
-
-
 def _route_state(cfg: dict[str, Any] | None) -> Check:
     if cfg is None:
         return Check(
             "model_routes",
-            "Model routes",
+            "Run model",
             "blocked",
-            "Model routes cannot be checked until config is valid.",
+            "The run model cannot be checked until config is valid.",
             "maverick init --fast",
         )
     try:
@@ -340,9 +313,9 @@ def _route_state(cfg: dict[str, Any] | None) -> Check:
     except Exception as exc:
         return Check(
             "model_routes",
-            "Model routes",
+            "Run model",
             "blocked",
-            f"Model routes could not be inspected ({type(exc).__name__}).",
+            f"The run model could not be inspected ({type(exc).__name__}).",
             "maverick config-lint",
         )
     missing = {
@@ -352,17 +325,17 @@ def _route_state(cfg: dict[str, Any] | None) -> Check:
         detail = _format_route_missing(missing)
         return Check(
             "model_routes",
-            "Model routes",
+            "Run model",
             "blocked",
-            f"Routed provider setup is incomplete ({detail}).",
+            f"The selected provider setup is incomplete ({detail}).",
             "maverick init",
         )
     labels = ", ".join(sorted(routed)) or "none"
     return Check(
         "model_routes",
-        "Model routes",
+        "Run model",
         "ready",
-        f"Offline prerequisites are present for: {labels}.",
+        f"Offline prerequisites are present for {labels}.",
     )
 
 
@@ -402,7 +375,7 @@ def _sdk_state(
         "provider_dependencies",
         "Provider dependencies",
         "ready",
-        "SDK or local-provider executable is available for routed models.",
+        "The SDK or local-provider executable is available for the run model.",
     )
 
 

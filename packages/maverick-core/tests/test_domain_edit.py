@@ -162,14 +162,6 @@ class TestResolvedView:
     def test_unknown_pack_returns_none(self, tenant_dir):
         assert resolved_view("does_not_exist_anywhere") is None
 
-    def test_view_exposes_output_contract(self, tenant_dir):
-        # The merged view carries the deliverable so the editor/API can render it.
-        view = resolved_view("finance_cashflow")
-        assert view["output"]["shape"] == "forecast"
-        assert view["output"]["deliverable"] == "Cash-flow & liquidity runway"
-        assert "treasurer" in view["output"]["consumers"]
-
-
 class TestValidateAndList:
     def test_validate_surfaces_errors_without_writing(self, tenant_dir):
         errors, _ = validate_override("nope", {"persona": "x" * 250})

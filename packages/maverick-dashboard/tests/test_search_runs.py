@@ -44,5 +44,5 @@ def test_search_path_not_shadowed_by_goal_id():
 def test_goals_page_renders_search_box():
     resp = client.get("/goals")
     assert resp.status_code == 200
-    assert 'id="run-search-q"' in resp.text
+    assert 'id="goal-search"' in resp.text
     assert "/api/v1/goals/search?q=" in resp.text

@@ -12,7 +12,6 @@ def _fresh_home(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
     monkeypatch.delenv("MAVERICK_ASSESS_LEARN", raising=False)
-    monkeypatch.delenv("MAVERICK_ASSESS_DISCOVERY", raising=False)
     reset_config_cache()
     yield
     reset_config_cache()
@@ -106,18 +105,14 @@ class TestRecordSession:
 class TestConfig:
     def test_defaults(self):
         cfg = get_assessments()
-        assert cfg == {"doc_discovery": True,
-                       "sources": ["msgraph", "slack", "gdrive"],
-                       "learn": True}
+        assert cfg == {"learn": True}
 
     def test_section_overrides(self, tmp_path, monkeypatch):
         cfg_file = tmp_path / "config.toml"
         cfg_file.write_text(
-            '[assessments]\ndoc_discovery = false\nsources = ["slack"]\n',
+            '[assessments]\nlearn = false\n',
             encoding="utf-8")
         monkeypatch.setenv("MAVERICK_CONFIG", str(cfg_file))
         reset_config_cache()
         cfg = get_assessments()
-        assert cfg["doc_discovery"] is False
-        assert cfg["sources"] == ["slack"]
-        assert cfg["learn"] is True
+        assert cfg == {"learn": False}

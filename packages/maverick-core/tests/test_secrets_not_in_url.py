@@ -9,32 +9,6 @@ full request URL) and into any request/access log. Regression for:
 import logging
 
 
-def test_newsapi_key_goes_in_header_not_url(monkeypatch):
-    monkeypatch.setenv("NEWSAPI_KEY", "SECRET123")
-    captured: dict = {}
-
-    class _Resp:
-        status_code = 200
-
-        def json(self):
-            return {"status": "ok", "articles": []}
-
-    import httpx
-
-    def fake_get(url, params=None, headers=None, timeout=None):
-        captured["params"] = params or {}
-        captured["headers"] = headers or {}
-        return _Resp()
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    from maverick.tools.newsapi_tool import _get
-    _get("/top-headlines", {"country": "us"})
-
-    assert "apiKey" not in captured["params"]
-    assert "SECRET123" not in str(captured["params"])
-    assert captured["headers"].get("X-Api-Key") == "SECRET123"
-
-
 def test_serpapi_key_redacted_from_error_log(monkeypatch, caplog):
     monkeypatch.setenv("SERPAPI_API_KEY", "SECRET456")
     import httpx

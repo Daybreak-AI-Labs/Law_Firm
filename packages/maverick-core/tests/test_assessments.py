@@ -17,13 +17,13 @@ HIGH_RISK = {
     "kind": "agent", "subject": "danger_bot", "description": "does risky things",
     "allow_tools": ["shell", "web_search", "file_write", "email"],
     "deny_tools": [], "max_risk": "high", "allow_paths": ["/etc"],
-    "allow_hosts": ["api.example.com"], "mcp_servers": [], "knowledge_sources": ["hr_records"],
+    "allow_hosts": ["api.example.com"], "knowledge_sources": ["hr_records"],
     "has_human_gate": False, "steps": 2,
 }
 SAFE = {
     "kind": "agent", "subject": "calm_bot", "description": "reads and summarizes",
     "allow_tools": ["read_file"], "deny_tools": [], "max_risk": "low",
-    "allow_paths": [], "allow_hosts": [], "mcp_servers": [], "knowledge_sources": [],
+    "allow_paths": [], "allow_hosts": [], "knowledge_sources": [],
     "has_human_gate": True, "steps": 1,
 }
 

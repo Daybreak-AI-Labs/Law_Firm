@@ -1,7 +1,7 @@
 """Per-tenant daily-spend cap on the CORE run path (#74), plan-cap fallback
 (#81), and fail-closed spend reads (#77).
 
-The channel door already enforced the per-tenant cap; dashboard/CLI/gRPC runs
+The channel door already enforced the per-tenant cap; dashboard/CLI runs
 bypass that door, so run_goal must enforce it too. All opt-in: a tenant cap only
 exists once provisioned (or under [billing] enforce_plan_caps). Hermetic,
 mirroring test_quota_enforcement.py (FakeLLM + tmp world db + LocalBackend)."""

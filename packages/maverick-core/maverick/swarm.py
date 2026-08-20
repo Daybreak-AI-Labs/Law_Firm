@@ -7,7 +7,6 @@ Every agent in a swarm shares:
   - one Blackboard (shared workspace for the run)
   - one Sandbox (execution backend)
   - one Shield (input/tool-call/output scans; may be None if disabled)
-  - zero or more MCPClient instances (external tool servers via stdio)
 
 Children inherit the parent's context but get their own brief, role, and depth.
 """
@@ -84,7 +83,6 @@ class SwarmContext:
     # Per-domain document knowledge (vector RAG). None == disabled. Set when
     # [knowledge] is enabled; the knowledge_search tool binds to it per agent.
     knowledge: Any | None = None
-    mcp_clients: list = field(default_factory=list)
     channel: str | None = None
     user_id: str | None = None
     # P0 identity layer: the root principal's capability grant for this run.
@@ -108,12 +106,14 @@ class SwarmContext:
     # attempt doesn't pick up a sibling's checkpoint. Defaults to 0 for
     # callers that don't checkpoint.
     episode_id: int = 0
+    # Exact client-matter boundary for every run-scoped memory/knowledge path.
+    # ``None`` is legacy/unfiled and must fail closed for client-derived recall.
+    matter_id: int | None = None
     max_total_spawns: int = field(default_factory=_default_max_total_spawns)
-    # Names of skills recalled into any agent's prompt during this run. The
-    # orchestrator attributes the run's final outcome to them at finalize
-    # (see skill_stats.record_outcome) so the library curates itself. Shared
-    # across the swarm; mutated only on the single event loop, so a plain set
-    # is safe.
+    # Names of skills recalled into any agent's prompt during this run. Retained
+    # only as ephemeral governed-action provenance; no tenant-global use or
+    # outcome statistics are written. Shared across the swarm and mutated only
+    # on the single event loop, so a plain set is safe.
     skills_used: set[str] = field(default_factory=set)
     # Models whose learned self-harness guidance was recalled into any agent's
     # prompt during this run (stamped by Agent._with_harness_addendum). The
@@ -127,12 +127,9 @@ class SwarmContext:
     # answer entropy of the most recent swarm fan-out (0 == consensus); it is
     # stamped by ``spawn_swarm``. ``last_verifier_confidence`` is the most
     # recent verifier verdict's confidence (1.0 == not yet verified, i.e. no
-    # tightening). ``escalate_verification`` is set when a high-disagreement
-    # fan-out asks the orchestrator's FINAL to be verified by the cross-family
-    # ensemble instead of a single judge.
+    # tightening).
     last_disagreement: float = 0.0
     last_verifier_confidence: float = 1.0
-    escalate_verification: bool = False
     # Counterfactual swarm credit (maverick.credit): agent name -> marginal
     # credit from the most recent fan-out, when CSCA is enabled. Read by the
     # donation selector / routing; empty when not computed.

@@ -3,7 +3,6 @@ per-domain ingest/search pipeline with shield-scanned ingestion."""
 from __future__ import annotations
 
 import sys
-import types
 from types import SimpleNamespace
 
 import pytest
@@ -30,46 +29,202 @@ class TestStoreGuards:
         assert s.search("c", [1.0, 0.0], k=0) == []
 
 
+class TestMatterCollections:
+    def test_exact_matter_and_public_namespaces(self):
+        from maverick_knowledge import matter_collection, public_collection
+
+        assert matter_collection(42, "legal") == "matter:42:legal"
+        assert public_collection("legal") == "public:legal"
+        with pytest.raises(ValueError, match="positive matter_id"):
+            matter_collection(0, "legal")
+        with pytest.raises(ValueError, match="safe non-empty"):
+            matter_collection(1, "../client-name")
+
+    def test_same_source_never_crosses_matters(self):
+        from maverick_knowledge import matter_collection
+
+        kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=32))
+        kb.ingest_text(
+            matter_collection(1, "legal"), "alpha privileged strategy",
+        )
+        kb.ingest_text(
+            matter_collection(2, "legal"), "beta privileged strategy",
+        )
+        hits = kb.search(matter_collection(1, "legal"), "strategy", k=5)
+        assert hits and all("beta" not in hit.text for hit in hits)
+
+
 class TestBuildStore:
     def test_default_is_sqlite(self):
         from maverick_knowledge.store import SqliteVectorStore as S
         from maverick_knowledge.store import build_store
         assert isinstance(build_store({}), S)
 
-class TestHostedEmbedderOrdering:
-    def test_reorders_response_by_index(self, monkeypatch):
-        from maverick_knowledge.embed import HostedEmbedder
 
-        class _Resp:
-            def raise_for_status(self):
-                pass
+def _pinned_model(tmp_path):
+    from maverick_knowledge.local_embed import model_tree_digest
 
-            def json(self):
-                # Provider returned the batch out of order; `index` is the truth.
-                return {"data": [
-                    {"index": 1, "embedding": [2.0]},
-                    {"index": 0, "embedding": [1.0]},
-                ]}
-
-        monkeypatch.setitem(
-            sys.modules, "httpx", types.SimpleNamespace(post=lambda *a, **k: _Resp())
-        )
-        e = HostedEmbedder(model="m", base_url="http://x", api_key="k", dim=1)
-        # chunk 0 -> [1.0], chunk 1 -> [2.0], despite the reordered response.
-        assert e.embed(["a", "b"]) == [[1.0], [2.0]]
+    model_dir = tmp_path / "operator-provisioned-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "modules.json").write_text(
+        '[{"type":"sentence_transformers.models.Transformer"}]',
+        encoding="utf-8",
+    )
+    (model_dir / "model.safetensors").write_bytes(b"safe-test-weights")
+    return model_dir.resolve(), model_tree_digest(model_dir)
 
 
 class TestLocalEmbedder:
-    def test_module_provides_lazy_local_embedder(self):
-        # Guards the bug where build_embedder imported a non-existent module, so
-        # `embedder = "local"` always silently degraded to the hash fallback.
+    def test_module_admits_only_a_digest_pinned_local_tree(self, tmp_path):
         from maverick_knowledge.local_embed import LocalEmbedder
 
-        e = LocalEmbedder("some-model")
-        assert e.model_name == "some-model"
+        model_dir, digest = _pinned_model(tmp_path)
+        e = LocalEmbedder(str(model_dir), digest)
+        assert e.model_name == str(model_dir)
         assert isinstance(e.dim, int)
 
-    def test_local_fails_loud_when_extra_missing(self, monkeypatch):
+    def test_repository_id_is_rejected(self):
+        from maverick_knowledge.local_embed import LocalEmbedder
+
+        with pytest.raises(RuntimeError, match="absolute"):
+            LocalEmbedder("sentence-transformers/all-MiniLM-L6-v2", "")
+
+    def test_missing_model_directory_is_rejected(self, tmp_path):
+        from maverick_knowledge.local_embed import LocalEmbedder
+
+        missing = tmp_path / "not-provisioned"
+        with pytest.raises(RuntimeError, match="missing"):
+            LocalEmbedder(str(missing.resolve()), "sha256:" + "0" * 64)
+
+    def test_digest_mismatch_is_rejected(self, tmp_path):
+        from maverick_knowledge.local_embed import LocalEmbedder
+
+        model_dir, _digest = _pinned_model(tmp_path)
+        with pytest.raises(RuntimeError, match="digest mismatch"):
+            LocalEmbedder(str(model_dir), "sha256:" + "0" * 64)
+
+    @pytest.mark.parametrize("suffix", [".bin", ".pkl", ".py"])
+    def test_unsafe_weight_or_code_artifact_is_rejected(self, tmp_path, suffix):
+        from maverick_knowledge.local_embed import model_tree_digest
+
+        model_dir, _digest = _pinned_model(tmp_path)
+        (model_dir / f"unsafe{suffix}").write_bytes(b"not trusted")
+        with pytest.raises(RuntimeError, match="unsafe model artifact"):
+            model_tree_digest(model_dir)
+
+    def test_custom_code_metadata_is_rejected(self, tmp_path):
+        from maverick_knowledge.local_embed import model_tree_digest
+
+        model_dir, _digest = _pinned_model(tmp_path)
+        (model_dir / "config.json").write_text(
+            '{"auto_map":{"AutoModel":"custom.Model"}}',
+            encoding="utf-8",
+        )
+        with pytest.raises(RuntimeError, match="custom/remote model code"):
+            model_tree_digest(model_dir)
+
+    def test_loader_is_offline_local_only_and_remote_code_disabled(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        import os
+        import socket
+
+        from maverick_knowledge.local_embed import LocalEmbedder
+
+        model_dir, digest = _pinned_model(tmp_path)
+        observed = {}
+
+        def forbidden_network(*_args, **_kwargs):
+            raise AssertionError("local embedder attempted network access")
+
+        class FakeSentenceTransformer:
+            def __init__(
+                self,
+                model_name_or_path,
+                *,
+                local_files_only,
+                trust_remote_code,
+                model_kwargs,
+                tokenizer_kwargs,
+                config_kwargs,
+            ):
+                observed.update(
+                    path=model_name_or_path,
+                    local_files_only=local_files_only,
+                    trust_remote_code=trust_remote_code,
+                    model_kwargs=model_kwargs,
+                    tokenizer_kwargs=tokenizer_kwargs,
+                    config_kwargs=config_kwargs,
+                    offline={
+                        key: os.environ.get(key)
+                        for key in (
+                            "HF_HUB_OFFLINE",
+                            "TRANSFORMERS_OFFLINE",
+                            "HF_DATASETS_OFFLINE",
+                        )
+                    },
+                )
+
+            @staticmethod
+            def get_sentence_embedding_dimension():
+                return 2
+
+            @staticmethod
+            def encode(texts, *, normalize_embeddings):
+                assert normalize_embeddings is True
+                return [[1.0, 0.0] for _ in texts]
+
+        monkeypatch.setattr(socket, "create_connection", forbidden_network)
+        monkeypatch.setitem(
+            sys.modules,
+            "sentence_transformers",
+            SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+        )
+        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "0")
+        monkeypatch.setenv("HF_DATASETS_OFFLINE", "0")
+
+        embedder = LocalEmbedder(str(model_dir), digest)
+        assert embedder.embed(["privileged matter text"]) == [[1.0, 0.0]]
+        assert observed == {
+            "path": str(model_dir),
+            "local_files_only": True,
+            "trust_remote_code": False,
+            "model_kwargs": {
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+            "tokenizer_kwargs": {
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+            "config_kwargs": {
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+            "offline": {
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+            },
+        }
+        assert os.environ["HF_HUB_OFFLINE"] == "0"
+        assert os.environ["TRANSFORMERS_OFFLINE"] == "0"
+        assert os.environ["HF_DATASETS_OFFLINE"] == "0"
+
+    def test_model_mutation_after_admission_is_rejected(self, tmp_path):
+        from maverick_knowledge.local_embed import LocalEmbedder
+
+        model_dir, digest = _pinned_model(tmp_path)
+        embedder = LocalEmbedder(str(model_dir), digest)
+        (model_dir / "model.safetensors").write_bytes(b"substituted")
+        with pytest.raises(RuntimeError, match="changed after admission"):
+            embedder.embed(["text"])
+
+    def test_local_fails_loud_when_extra_missing(self, monkeypatch, tmp_path):
         import importlib.util
 
         from maverick_knowledge.embed import build_embedder
@@ -84,12 +239,15 @@ class TestLocalEmbedder:
                 else original_find_spec(name, *args, **kwargs)
             ),
         )
-        # A missing extra must surface, not silently degrade to the hash
-        # fallback (which returns plausible-looking but meaningless hits).
-        # Simulate the missing optional package even in full CI environments so
-        # this offline test never downloads a model from the network.
+        model_dir, digest = _pinned_model(tmp_path)
         with pytest.raises(RuntimeError, match="local"):
-            build_embedder({"embedder": "local"})
+            build_embedder(
+                {
+                    "embedder": "local",
+                    "model": str(model_dir),
+                    "model_digest": digest,
+                }
+            )
 
 
 class TestBuildEmbedderFailLoud:
@@ -103,25 +261,17 @@ class TestBuildEmbedderFailLoud:
         assert isinstance(e, DeterministicEmbedder)
         assert e.dim == 64
 
-    def test_hosted_without_key_raises(self, monkeypatch):
+    @pytest.mark.parametrize("provider", ["hosted", "cohere"])
+    def test_external_providers_are_removed(self, monkeypatch, provider):
         from maverick_knowledge.embed import build_embedder
 
         monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
-        # Default provider is hosted; with no key it must raise, not quietly
-        # return a hash embedder that scores garbage against the corpus.
-        # allow_external_embedding is set so this reaches the key check --
-        # the vendor-acknowledgement gate is covered in test_embed_egress.py.
-        with pytest.raises(RuntimeError, match="API key"):
-            build_embedder({"allow_external_embedding": True})
-
-    def test_hosted_with_key_builds_hosted(self, monkeypatch):
-        from maverick_knowledge.embed import HostedEmbedder, build_embedder
-
-        monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        e = build_embedder({"embedder": "hosted", "api_key": "k", "dim": 8,
-                            "allow_external_embedding": True})
-        assert isinstance(e, HostedEmbedder) and e.dim == 8
+        with pytest.raises(RuntimeError, match="removed"):
+            build_embedder({
+                "embedder": provider,
+                "api_key": "legacy-key-must-not-reenable-egress",  # pragma: allowlist secret
+                "allow_external_embedding": True,
+            })
 
     def test_unknown_provider_raises(self, monkeypatch):
         from maverick_knowledge.embed import build_embedder
@@ -133,9 +283,9 @@ class TestBuildEmbedderFailLoud:
     def test_env_overrides_cfg_to_deterministic(self, monkeypatch):
         from maverick_knowledge.embed import DeterministicEmbedder, build_embedder
 
-        # Operator escape hatch: force deterministic even if config says hosted.
+        # Operator escape hatch: force deterministic over a stale legacy value.
         monkeypatch.setenv("MAVERICK_EMBED_PROVIDER", "deterministic")
-        e = build_embedder({"embedder": "hosted"})  # would otherwise need a key
+        e = build_embedder({"embedder": "hosted"})
         assert isinstance(e, DeterministicEmbedder)
 
 
@@ -443,89 +593,145 @@ class TestImageIngestion:
 
 
 class TestStorePersistence:
-    def test_store_creates_parent_dir_and_persists(self, tmp_path):
+    def test_store_creates_parent_dir_and_persists(self, tmp_path, monkeypatch):
         from maverick_knowledge.store import SqliteVectorStore
 
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
         e = DeterministicEmbedder(dim=32)
         path = tmp_path / "nested" / "deep" / "knowledge.db"
         store = SqliteVectorStore(path)  # parent dirs don't exist yet
         assert path.parent.is_dir()
-        store.add("c", [("1", "refund policy", e.embed(["refund policy"])[0], {})])
-        del store
+        store.add(
+            "matter:1:c",
+            [("1", "refund policy", e.embed(["refund policy"])[0], {})],
+        )
+        store.close()
         # A fresh store at the same path still has the data (persisted to disk).
         reopened = SqliteVectorStore(path)
-        assert reopened.search("c", e.embed(["refund policy"])[0], k=1)
+        assert reopened.search("matter:1:c", e.embed(["refund policy"])[0], k=1)
+        reopened.close()
+
+    def test_file_store_seals_text_vector_and_metadata(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        path = tmp_path / "knowledge.db"
+        store = SqliteVectorStore(path)
+        store.add("matter:7:legal", [(
+            "chunk-1",
+            "privileged settlement position",
+            [1.0, 0.0],
+            {"source": "strategy.docx", "sensitivity": "privileged"},
+        )])
+        store.close()
+
+        conn = sqlite3.connect(path)
+        raw = conn.execute("SELECT text, vec, meta FROM chunks").fetchone()
+        conn.close()
+        assert all(value.startswith("MVKAR1:") for value in raw)
+        assert "privileged" not in " ".join(raw)
+        assert "strategy.docx" not in " ".join(raw)
+
+        reopened = SqliteVectorStore(path)
+        [match] = reopened.search("matter:7:legal", [1.0, 0.0], k=1)
+        assert match.text == "privileged settlement position"
+        assert match.meta["source"] == "strategy.docx"
+
+    def test_file_store_refuses_explicitly_disabled_encryption(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
+        with pytest.raises(RuntimeError, match="plaintext"):
+            SqliteVectorStore(tmp_path / "knowledge.db")
+
+    def test_file_store_refuses_unscoped_domain_collection(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        store = SqliteVectorStore(tmp_path / "knowledge.db")
+        with pytest.raises(ValueError, match="matter:<id>"):
+            store.add("legal", [("1", "secret", [1.0], {})])
+
+    def test_legacy_plaintext_rows_are_rejected_without_auto_migration(
+        self, tmp_path, monkeypatch,
+    ):
+        import sqlite3
+
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        path = tmp_path / "legacy" / "knowledge.db"
+        store = SqliteVectorStore(path)
+        store.close()
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "INSERT INTO chunks VALUES (?,?,?,?,?)",
+            ("matter:7:legal", "legacy", "PLAINTEXT CLIENT FACT", "[1.0]", "{}"),
+        )
+        conn.commit()
+        conn.close()
+
+        with pytest.raises(RuntimeError, match="validation failed"):
+            SqliteVectorStore(path)
+
+        conn = sqlite3.connect(path)
+        raw = conn.execute("SELECT text FROM chunks WHERE id='legacy'").fetchone()[0]
+        conn.close()
+        assert raw == "PLAINTEXT CLIENT FACT"
+
+    def test_plaintext_injected_after_open_is_withheld_on_read(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        store = SqliteVectorStore(tmp_path / "injected" / "knowledge.db")
+        store.add(
+            "matter:7:legal",
+            [("chunk", "sealed fact", [1.0], {"source": "sealed.docx"})],
+        )
+        store._db.execute(
+            "UPDATE chunks SET text = ? WHERE id = ?",
+            ("INJECTED PLAINTEXT", "chunk"),
+        )
+        store._db.commit()
+
+        with pytest.raises(RuntimeError, match="unsealed chunk text"):
+            store.search("matter:7:legal", [1.0], k=1)
+        store.close()
+
+    def test_wrong_key_refuses_store_open(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", (b"a" * 32).hex())
+        path = tmp_path / "wrong-key" / "knowledge.db"
+        store = SqliteVectorStore(path)
+        store.add("matter:7:legal", [("chunk", "client fact", [1.0], {})])
+        store.close()
+
+        monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", (b"b" * 32).hex())
+        with pytest.raises(RuntimeError, match="validation failed"):
+            SqliteVectorStore(path)
+
+    def test_private_parent_is_proven_before_sqlite_connect(
+        self, tmp_path, monkeypatch,
+    ):
+        import sqlite3
+
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        calls: list[str] = []
+
+        def refuse_parent(_path):
+            raise PermissionError("permissive parent")
+
+        def connect(*_args, **_kwargs):
+            calls.append("sqlite")
+            raise AssertionError("SQLite opened before private parent verification")
+
+        monkeypatch.setattr("maverick.file_lock.prepare_private_directory", refuse_parent)
+        monkeypatch.setattr(sqlite3, "connect", connect)
+        path = tmp_path / "permissive" / "knowledge.db"
+
+        with pytest.raises(RuntimeError, match="private vector-store path"):
+            SqliteVectorStore(path)
+        assert calls == []
+        assert not path.exists()
 
 
-class TestCohereEmbedder:
-    def test_cohere_v2_float_shape(self, monkeypatch):
-        from maverick_knowledge.embed import CohereEmbedder
-
-        captured = {}
-
-        class _Resp:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"embeddings": {"float": [[1.0, 2.0], [3.0, 4.0]]}}
-
-        def _post(url, **kwargs):
-            captured["url"] = url
-            captured["json"] = kwargs.get("json")
-            return _Resp()
-
-        monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=_post))
-        e = CohereEmbedder(model="embed-english-v3.0", api_key="k", base_url="http://x/v2", dim=2)
-        vecs = e.embed(["a", "b"])
-        assert vecs == [[1.0, 2.0], [3.0, 4.0]]
-        assert captured["url"] == "http://x/v2/embed"
-        assert captured["json"]["input_type"] == "search_document"
-        assert captured["json"]["embedding_types"] == ["float"]
-
-    def test_cohere_v1_list_shape_fallback(self, monkeypatch):
-        from maverick_knowledge.embed import CohereEmbedder
-
-        class _Resp:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"embeddings": [[5.0], [6.0]]}
-
-        monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(post=lambda *a, **k: _Resp()))
-        e = CohereEmbedder(model="embed-english-v3.0", api_key="k", dim=1)
-        assert e.embed(["a", "b"]) == [[5.0], [6.0]]
-
-    def test_build_cohere_with_key(self, monkeypatch):
-        from maverick_knowledge.embed import CohereEmbedder, build_embedder
-
-        monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        e = build_embedder({"embedder": "cohere", "api_key": "k", "dim": 1024,
-                            "allow_external_embedding": True})
-        assert isinstance(e, CohereEmbedder) and e.dim == 1024
-
-    def test_build_cohere_without_key_raises(self, monkeypatch):
-        from maverick_knowledge.embed import build_embedder
-
-        monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
-        with pytest.raises(RuntimeError, match="API key"):
-            build_embedder({"embedder": "cohere",
-                            "allow_external_embedding": True})
-
-    def test_build_cohere_reads_cohere_api_key_env(self, monkeypatch):
-        from maverick_knowledge.embed import CohereEmbedder, build_embedder
-
-        monkeypatch.delenv("MAVERICK_EMBED_PROVIDER", raising=False)
-        monkeypatch.delenv("MAVERICK_EMBED_API_KEY", raising=False)
-        monkeypatch.setenv("COHERE_API_KEY", "from-env")
-        e = build_embedder({"embedder": "cohere",
-                            "allow_external_embedding": True})
-        assert isinstance(e, CohereEmbedder) and e.api_key == "from-env"
-
-
+class TestRetrievalProvenance:
     def test_cross_source_containment_never_relabels(self):
         # Shared boilerplate makes doc B's chunk contain doc A's chunk; both
         # must render under their OWN sources — absorbing would cite A for

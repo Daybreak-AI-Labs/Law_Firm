@@ -275,7 +275,7 @@ def test_direct_constructor_primary_is_rejected_before_client_work(monkeypatch):
         lambda _provider: pytest.fail("provider client must not be constructed"),
     )
     with pytest.raises(ModelNotAllowedError, match="openai:blocked"):
-        dispatcher.complete("system", [], _no_failover=True)
+        dispatcher.complete("system", [])
 
 
 def test_unreadable_operator_policy_is_not_treated_as_unrestricted(monkeypatch):
@@ -299,7 +299,7 @@ def test_unreadable_operator_policy_is_not_treated_as_unrestricted(monkeypatch):
         runtime_overrides.RuntimeOverridesSecurityError,
         match="policy unreadable",
     ):
-        dispatcher.complete("system", [], _no_failover=True)
+        dispatcher.complete("system", [])
 
 
 def test_per_call_override_is_rejected_sync_and_async(monkeypatch):
@@ -314,11 +314,11 @@ def test_per_call_override_is_rejected_sync_and_async(monkeypatch):
     )
 
     with pytest.raises(ModelNotAllowedError, match="openai:blocked"):
-        dispatcher.complete("system", [], model="gpt:blocked", _no_failover=True)
+        dispatcher.complete("system", [], model="gpt:blocked")
     with pytest.raises(ModelNotAllowedError, match="openai:blocked"):
         asyncio.run(
             dispatcher.complete_async(
-                "system", [], model="chatgpt:blocked", _no_failover=True
+                "system", [], model="chatgpt:blocked"
             )
         )
 
@@ -345,149 +345,13 @@ def test_alias_and_bare_specs_are_canonicalized_at_dispatch(monkeypatch):
 
     dispatcher = LLM(model="claude:allowed")
     monkeypatch.setattr(dispatcher, "_get_client", lambda _provider: Client())
-    assert dispatcher.complete("system", [], _no_failover=True).text == "ok"
+    assert dispatcher.complete("system", []).text == "ok"
     assert asyncio.run(
         dispatcher.complete_async(
-            "system", [], model="allowed", _no_failover=True
+            "system", [], model="allowed"
         )
     ).text == "ok"
     assert seen == ["allowed", "allowed"]
-
-
-def test_failover_never_attempts_disallowed_configured_model(monkeypatch):
-    from maverick import failover_policy, provider_failover
-    from maverick.llm import LLM, LLMResponse
-
-    _allow_only(
-        monkeypatch,
-        "anthropic:primary",
-        "openai:allowed-fallback",
-    )
-    _quiet_dispatch(monkeypatch)
-    monkeypatch.setattr(
-        provider_failover,
-        "fallback_models",
-        lambda _primary: ["gemini:blocked", "gpt:allowed-fallback"],
-    )
-    monkeypatch.setattr(failover_policy, "order_chain", lambda models: list(models))
-    attempted = []
-
-    class Client:
-        def __init__(self, provider):
-            self.provider = provider
-
-        def complete(self, **kwargs):
-            attempted.append(f"{self.provider}:{kwargs['model']}")
-            if self.provider == "anthropic":
-                raise RuntimeError("primary unavailable")
-            return LLMResponse(
-                text="fallback",
-                thinking=None,
-                tool_calls=[],
-                stop_reason="end_turn",
-            )
-
-    dispatcher = LLM(model="claude:primary")
-    monkeypatch.setattr(
-        dispatcher, "_get_client", lambda provider: Client(provider)
-    )
-
-    response = dispatcher.complete("system", [])
-    assert response.text == "fallback"
-    assert attempted == [
-        "anthropic:primary",
-        "openai:allowed-fallback",
-    ]
-
-
-def test_failover_finds_chain_declared_under_canonical_primary(monkeypatch):
-    from maverick import failover_policy, provider_failover
-    from maverick.llm import LLM, LLMResponse
-
-    _allow_only(
-        monkeypatch,
-        "anthropic:primary",
-        "openai:allowed-fallback",
-    )
-    _quiet_dispatch(monkeypatch)
-    lookups = []
-
-    def fallback_models(primary):
-        lookups.append(primary)
-        if primary == "anthropic:primary":
-            return ["openai:allowed-fallback"]
-        return []
-
-    monkeypatch.setattr(provider_failover, "fallback_models", fallback_models)
-    monkeypatch.setattr(failover_policy, "order_chain", lambda models: list(models))
-
-    class Client:
-        def __init__(self, provider):
-            self.provider = provider
-
-        def complete(self, **kwargs):
-            if self.provider == "anthropic":
-                raise RuntimeError("primary unavailable")
-            return LLMResponse(
-                text="fallback",
-                thinking=None,
-                tool_calls=[],
-                stop_reason="end_turn",
-            )
-
-    dispatcher = LLM(model="claude:primary")
-    monkeypatch.setattr(
-        dispatcher, "_get_client", lambda provider: Client(provider)
-    )
-
-    assert dispatcher.complete("system", []).text == "fallback"
-    assert lookups == ["claude:primary", "anthropic:primary"]
-
-
-def test_async_failover_never_attempts_disallowed_configured_model(monkeypatch):
-    from maverick import failover_policy, provider_failover
-    from maverick.llm import LLM, LLMResponse
-
-    _allow_only(
-        monkeypatch,
-        "anthropic:primary",
-        "openai:allowed-fallback",
-    )
-    _quiet_dispatch(monkeypatch)
-    monkeypatch.setattr(
-        provider_failover,
-        "fallback_models",
-        lambda _primary: ["google:blocked", "chatgpt:allowed-fallback"],
-    )
-    monkeypatch.setattr(failover_policy, "order_chain", lambda models: list(models))
-    attempted = []
-
-    class Client:
-        def __init__(self, provider):
-            self.provider = provider
-
-        async def complete_async(self, **kwargs):
-            attempted.append(f"{self.provider}:{kwargs['model']}")
-            if self.provider == "anthropic":
-                raise RuntimeError("primary unavailable")
-            return LLMResponse(
-                text="fallback",
-                thinking=None,
-                tool_calls=[],
-                stop_reason="end_turn",
-            )
-
-    dispatcher = LLM(model="claude:primary")
-    monkeypatch.setattr(
-        dispatcher, "_get_client", lambda provider: Client(provider)
-    )
-
-    response = asyncio.run(dispatcher.complete_async("system", []))
-    assert response.text == "fallback"
-    assert attempted == [
-        "anthropic:primary",
-        "openai:allowed-fallback",
-    ]
 
 
 def test_cli_rejects_disallowed_explicit_model(monkeypatch):
@@ -503,21 +367,6 @@ def test_cli_rejects_disallowed_explicit_model(monkeypatch):
     assert "openai:blocked" in result.output
     assert "not allowed" in result.output
     assert "MAVERICK_MODEL_OVERRIDE" not in __import__("os").environ
-
-
-def test_self_improvement_explicit_model_policy_error_is_not_downgraded(
-    monkeypatch,
-):
-    from maverick import self_improvement_runner
-    from maverick.llm import ModelNotAllowedError
-
-    _allow_only(monkeypatch, "anthropic:allowed")
-    with pytest.raises(ModelNotAllowedError, match="openai:blocked"):
-        self_improvement_runner.run_self_harness_cycle(
-            model_id="openai:blocked"
-        )
-
-
 def test_self_harness_llm_runner_does_not_swallow_model_policy(monkeypatch):
     from maverick import self_harness_eval
     from maverick.llm import LLM, ModelNotAllowedError

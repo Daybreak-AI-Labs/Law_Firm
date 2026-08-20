@@ -1,91 +1,34 @@
-# DGM evaluator evidence contract
+# DGM evaluator evidence boundary
 
-## Current readiness
+## Current firm posture
 
-Maverick's governed code-rung evaluator is fail-closed. No bundled sandbox
-backend currently supplies controller-authenticated terminal test counts, so
-the stock DGM runner refuses before a model proposal or candidate test runs.
+The firm distribution retains two execution backends: local subprocesses and
+Docker. Neither backend can produce controller-authenticated terminal test
+evidence. The governed code rung therefore fails closed before a model proposal
+or candidate test runs. It does not infer fitness from candidate-controlled
+stdout, JUnit files, coverage files, plugins, or exit status.
 
-This is an external runtime dependency, not a Python package omission. Docker,
-Podman, Kubernetes, Firecracker, and similar process backends can report an
-exit code and bounded output, but the candidate controls pytest stdout, JUnit
-files in its workspace, and plugins loaded in its process. Treating any of
-those as authoritative would allow reward laundering through forged summaries,
-skipped collection, early successful exit, or substituted result files.
+This limitation is deliberate. A candidate can forge files and summaries in
+its workspace, and a process exit code does not prove which tests were
+collected or executed. Docker provides resource and network containment, not
+an independent evidence authority.
 
-## Required protocol
+## Evidence contract
 
-A production evaluator backend must be installed through the sandbox SDK and
-provide all of these attributes:
+Enabling code-rung fitness in a future reviewed release would require an
+independent evaluator boundary that:
 
-```python
-authenticated_test_results = True
-test_evidence_protocol = "maverick.test-evidence.v1"
-test_evidence_authority = "<stable non-secret issuer or key id>"
+- authenticates a controller-issued nonce and the exact command, immutable
+  subject digest, execution-context digest, baseline/candidate arm, and pinned
+  policy;
+- observes terminal passed, failed, skipped, and error counts outside the
+  candidate process;
+- authenticates its response under a pinned, non-secret authority identity;
+- rejects duplicate nonces and retains an append-only audit record; and
+- enforces non-host execution, deny-by-default egress, non-root execution,
+  bounded output, process and memory limits, and an exact workspace binding.
 
-def exec_authenticated_tests(request, timeout=None):
-    ...
-```
-
-`request` is an `AuthenticatedTestRequest` issued by the Maverick controller.
-It binds a fresh 256-bit nonce to the exact command, a controller-computed
-SHA-256 manifest of the evaluated artifact/workspace, and a stable execution-
-context digest covering the baseline/candidate arm, sandbox identity, pinned
-sandbox policy, evidence protocol, and evidence authority. The method returns
-an exact `AuthenticatedTestEvidence` carrying:
-
-- the same protocol, nonce, request, subject, and execution-context digests;
-- the backend's pinned non-secret authority identity; and
-- terminal passed, failed, skipped, and error counts.
-
-Maverick rejects a stale nonce, a command/digest mismatch, a wrong artifact or
-arm/context binding, another authority, a subclass or lookalike result object,
-non-terminal evidence, negative or boolean counts, zero outcomes, and
-implausibly large totals. Skips and errors remain in the denominator. The
-broker must independently verify that the compartment it ran matches both
-digests; merely echoing controller fields does not satisfy the contract.
-
-## Trust-boundary requirements
-
-The backend is responsible for authenticating the runner event before it
-constructs `AuthenticatedTestEvidence`. A conforming deployment needs a trust
-boundary the candidate cannot write to, such as a mutually authenticated
-evaluator broker, a sidecar with an isolated result channel and pinned key, or
-a remotely attested execution controller.
-
-The following do **not** satisfy the contract on their own:
-
-- parsing pytest stdout or stderr;
-- reading JUnit, JSON, coverage, or marker files from the candidate workspace;
-- signing a file after reading it from that workspace;
-- loading a "trusted" pytest plugin in the same Python process as candidate
-  code; or
-- deriving a pass count only from process exit status.
-
-The broker must also enforce the stock DGM sandbox profile: non-host execution,
-deny-by-default egress, non-root execution, bounded output, process and memory
-limits, and an exact workspace binding for each baseline/candidate arm.
-
-## Provider implementation checklist
-
-1. Pin a stable evaluator image and runner identity outside the editable source
-   tree.
-2. Accept the exact nonce-, artifact-, and execution-context-bound request over
-   an authenticated controller channel, and independently verify those bindings
-   against the compartment selected for execution.
-3. Run baseline and candidate in independent, resource-limited compartments.
-   Re-materialize or verify the immutable subject before every request; mutable
-   caches or state from a prior split must not change the next evaluation arm.
-4. Observe terminal test events outside the candidate process and include
-   skipped, collection, and runtime errors.
-5. Authenticate the response before returning the exact Maverick evidence
-   type; never translate candidate-authored summaries into evidence.
-6. Refuse retries or duplicate response nonces at the broker, and retain an
-   append-only audit record keyed by request digest.
-7. Pin the backend as `[sandbox] backend = "ep:<name>"`, then run a stock DGM
-   cycle. Maverick performs static readiness and workspace-binding checks
-   before proposal/evaluation.
-
-Until that external provider exists and passes adversarial conformance tests,
-code-rung fitness remains unavailable rather than being replaced with a weaker
-or simulated score.
+No external sandbox-provider or plugin loading surface is shipped. Until a
+reviewed implementation is part of the fixed firm distribution and passes its
+adversarial conformance tests, code-rung fitness remains unavailable rather
+than degrading to a simulated score.

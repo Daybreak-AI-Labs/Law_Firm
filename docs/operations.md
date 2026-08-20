@@ -89,35 +89,39 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 Hard cap: `~/.maverick/config.toml` → `[budget] max_dollars`.
 
-For multi-user channels (Telegram, SMS, WhatsApp) the per-user budget
-work is on the roadmap. Today the cap is per-goal; any user can drain
-it. **Don't expose channel webhooks to the open internet unless you
-trust everyone who can DM the bot.**
+## Encrypted backup and transactional restore
 
-## Restoring `world.db`
-
-`~/.maverick/world.db` is SQLite in WAL mode. A naive `cp` while the
-writer is running produces a torn copy. To back up safely:
+Provision two independent 32-byte secrets in the operator secret manager and
+inject them only into the local operator process as
+`MAVERICK_BACKUP_SIGNING_KEY` and `MAVERICK_BACKUP_ENCRYPTION_KEY` (hex or
+base64). Never place either value below the Maverick data root. Then create and
+verify a complete client snapshot:
 
 ```sh
-umask 077
-sqlite3 "$HOME/.maverick/world.db" ".backup $HOME/maverick-backup-$(date +%Y%m%d).db"
-chmod 600 "$HOME/maverick-backup-$(date +%Y%m%d).db"
+maverick backup create /operator-custody/acme-2026-08-17.mvkb
+maverick backup verify /operator-custody/acme-2026-08-17.mvkb
 ```
 
-The `sqlite3 ... ".backup ..."` dot-command uses
-`sqlite3.Connection.backup()` under the hood — online +
-concurrent-write-safe. If `sqlite3` isn't installed, stop the writers
-and copy:
+The snapshot uses SQLite's online backup API, excludes backup/key/restore
+transaction directories, signs the bounded manifest, and encrypts the complete
+compressed archive with streaming AES-256-GCM. `verify` authenticates and
+decrypts the complete envelope into a private temporary file before parsing it.
+
+For disaster recovery, stop the dashboard and workers so no application writer
+can race the operation, verify the artifact, then deliberately restore it:
 
 ```sh
-# Stop the writers first.
 systemctl stop maverick
-cp ~/.maverick/world.db ~/maverick-backup.db
+maverick backup verify /operator-custody/acme-2026-08-17.mvkb
+maverick backup restore /operator-custody/acme-2026-08-17.mvkb
 systemctl start maverick
 ```
 
-To restore: stop the writers, replace `world.db`, restart.
+Restore prompts for confirmation (automation must pass `--yes` deliberately),
+verifies the client/schema boundary, authenticates the whole encrypted archive
+before restore staging, and journals the file-set application so a partial
+failure rolls back. `--force` overrides only client/schema compatibility; it
+never bypasses cryptography. There is no unencrypted or unsigned restore path.
 
 - **Single-writer enforcement:** this is no longer a convention. On startup the
   control plane takes an exclusive advisory lock on `control-plane.lock` in its
@@ -177,7 +181,7 @@ MAVERICK_LOG_FORMAT=json MAVERICK_LOG_LEVEL=DEBUG maverick dashboard
 ```
 
 Every log line emitted during a goal run carries `goal_id` and
-`conversation_id` (and `channel` when set), so you can grep:
+`conversation_id`, so you can grep:
 
 ```sh
 journalctl -u maverick --since "1 hour ago" -o json \
@@ -199,7 +203,7 @@ scrape_configs:
 
 Useful queries:
 
-- `rate(maverick_goals_total{status="done"}[5m])` — completion rate
+- `sum(maverick_goals_total{status="done"})` — current completed-goal rows
 - `maverick_concurrent_goals / maverick_max_concurrent_goals` —
   saturation
 - `increase(maverick_cost_dollars_total[1h])` — spend rate

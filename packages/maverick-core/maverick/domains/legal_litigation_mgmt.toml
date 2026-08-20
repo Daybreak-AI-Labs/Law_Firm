@@ -1,5 +1,5 @@
 # Legal — Tower 4 (Litigation, Disputes & E-Discovery) — Litigation Management.
-# Sealed matter compartment. CourtListener + PACER (to build) for dockets/case law.
+# Sealed matter compartment; docket and authority data must come from approved sources.
 name = "legal_litigation_mgmt"
 compartment = "legal_litigation"
 description = "Case management, docketing/deadlines, and litigation strategy support."
@@ -16,7 +16,6 @@ max_risk = "low"
 effort = "high"
 deny_tools = ["shell", "write_file", "web_search"]
 
-mcp_servers = ["CourtListener"]
 knowledge_sources = ["legal", "legal_matter"]
 authoring = "manual"
 

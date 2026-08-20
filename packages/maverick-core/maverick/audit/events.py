@@ -35,6 +35,9 @@ Payload shapes (kind -> required fields, all events also carry
   threat_hunt_record_changed: event_id:str, record_type:str, record_id:str,
                      revision:int, action:str, actor:str, record_sha256:str,
                      status:str, occurred_at:float
+  matter_intake:     actor:str, operation:str
+                     (preflight|open_matter|add_party), candidate_count:int,
+                     matter_id:int|None, client_id:int|None. Never party names.
 """
 from __future__ import annotations
 
@@ -118,17 +121,21 @@ class EventKind:
     # silent JSON edit. SCIM batch rows carry a stable scim_group_event_id,
     # old/new names, and complete member-set deltas or bounded commitments.
     ACCESS_GRANT_CHANGED = "access_grant_changed"
-    # Governed code execution: one row per statement run in a session kernel.
-    # Payload: session, statement_sha256, ok, exit_code, wall_seconds (never
-    # the code text or its output — those live in the lineage receipt and the
-    # session ledger, which redact and bound).
-    REPL_EXECUTED = "repl_executed"
-    # Harness self-refinement. PROPOSED carries the observed failure and the
-    # proposed change's digest; APPLIED carries the snapshot id that makes it
-    # reversible (and is accompanied by a LEARNING_UPDATE row, so learned-state
-    # verification covers it like any other learned write).
-    HARNESS_REFINEMENT_PROPOSED = "harness_refinement_proposed"
-    HARNESS_REFINEMENT_APPLIED = "harness_refinement_applied"
+    # A qualified matter attorney approved or rejected one exact deliverable.
+    # Queued transactionally with the DB signoff and release-blocking until
+    # delivered. Payload: event_id, matter_id, decision, decided_by,
+    # deliverable_updated_at, deliverable_sha256 (never note/result text).
+    LEGAL_SIGNOFF_DECISION = "legal_signoff_decision"
+    # Actual release of approved client work, distinct from the review itself.
+    # Payload is metadata-only: actor, matter/goal ids, action/destination
+    # class, exact version/digest, and optional opaque share id/expiry.
+    LEGAL_RELEASE = "legal_release"
+    # Conflict-oracle reads and client/matter/party mutations.  This is an
+    # audit-before-read/write intent, so a rejected conflict check is still
+    # visible. Payload is privacy-minimized: actor, operation, candidate count,
+    # and an already-known opaque matter/client id only; never a person's or
+    # entity's name.
+    MATTER_INTAKE = "matter_intake"
     # A run forked from another at a specific point in its event trail, so the
     # Operating Record can hold counterfactuals side by side.
     SESSION_FORKED = "session_forked"
@@ -158,10 +165,9 @@ class EventKind:
     # payload: action:str (write|write_blocked|recall_filter), plus key/source/
     # trust/sensitivity/reason/markers (writes) or kept/dropped/min_trust (recall).
     MEMORY_GUARD = "memory_guard"
-    # Tamper-evident before/after capture for a governed computer/browser action.
-    # payload: action:str (e.g. "browser.click"), phase:str (before|after),
-    # file:str (capture basename under data_dir("captures")), sha256:str (sealed
-    # digest, verifiable via screenshot_seal.verify_file).
+    # Matter intake recorded a bounded evidence collection in local knowledge.
+    # Payload carries the matter id, a collection-key digest, and document/chunk
+    # counts; it never includes client text or a source filesystem path.
     EVIDENCE_CAPTURE = "evidence_capture"
     # Human-oversight decision on a parked approval (approve/deny). Anchors the
     # who-decided-what in the signed chain so the integrity of the decision does
@@ -170,25 +176,6 @@ class EventKind:
     # approval_id:int, status:str (approved|denied), decided_by:str,
     # occurred_at:float (when the vote and outbox row committed).
     APPROVAL_DECISION = "approval_decision"
-    # Earned Autonomy (maverick.earned_autonomy): a consequence card pinned a
-    # prediction for a high-stakes action BEFORE it ran, so predicted-vs-actual
-    # accuracy is provable from the chain. payload: card:str, principal:str,
-    # action:str, risk:str, predicted:float, episode_id:int, reversible:bool,
-    # source:str (rehearsal|simulate|declared).
-    CONSEQUENCE_CARD = "consequence_card"
-    # Earned Autonomy dial movement: an action type earned policy-auto-approval,
-    # lost it on a missed prediction, or an operator withdrew it. payload:
-    # decision:str (graduate|demote|revoke), principal:str, action:str, plus
-    # streak/hits/misses ints on graduate, card:str on demote, reason:str on
-    # revoke.
-    AUTONOMY_GRADUATION = "autonomy_graduation"
-    # Earned Autonomy "Shadow Mode" (maverick.earned_autonomy.shadow_execute):
-    # a high-stakes action was previewed, gated (earned-auto or human-approved),
-    # and executed under the compensating saga -- the signed sim -> approve ->
-    # execute chain. payload: decision:str (denied|approved|auto), action:str,
-    # auto:bool, exposure:float|None; on execution also card:str|None and
-    # committed:bool.
-    SHADOW_EXECUTION = "shadow_execution"
     # AI system lifecycle: an AI system/component was retired (decommissioned).
     # Closes the ISO/IEC 42001 A.6.2 lifecycle at the far end — the signed chain
     # records the deliberate end-of-life the same way it records learning

@@ -4,7 +4,6 @@ Covers:
   - audit log writer (rotation, perms, tail, grep)
   - killswitch (file trigger, in-process trigger, check())
   - secret detector (scan, redact, all patterns)
-  - http_fetch tool (URL validation, private IP refusal, render modes)
   - read_pdf tool (page parsing, no-deps error path)
   - view_image tool (source loading, schema)
   - new CLI commands surfacing (smoke import only)
@@ -12,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import stat
-from unittest.mock import patch
 
 import pytest
 
@@ -223,88 +221,6 @@ def test_secret_detector_empty():
     assert redact("") == ("", [])
 
 
-# ---------- http_fetch ----------
-
-def test_http_fetch_rejects_empty_url():
-    from maverick.tools.http_fetch import http_fetch
-    assert "url is required" in http_fetch().fn({"url": ""}).lower()
-
-
-def test_http_fetch_rejects_non_http_scheme():
-    from maverick.tools.http_fetch import http_fetch
-    out = http_fetch().fn({"url": "file:///etc/passwd"})
-    assert "only http/https" in out.lower()
-
-
-def test_http_fetch_rejects_private_ip_by_default(monkeypatch):
-    monkeypatch.delenv("MAVERICK_FETCH_ALLOW_PRIVATE", raising=False)
-    from maverick.tools.http_fetch import _is_private_ip
-    # 127.0.0.1 / localhost should be detected as private.
-    assert _is_private_ip("127.0.0.1") is True
-
-
-def test_http_fetch_allow_private_override(monkeypatch):
-    """With MAVERICK_FETCH_ALLOW_PRIVATE=1, private addrs are not rejected."""
-    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
-    from maverick.tools import http_fetch as hf
-
-    class _Resp:
-        status_code = 200
-        reason_phrase = "OK"
-        encoding = "utf-8"
-        url = "http://localhost/"
-        headers = {"content-type": "text/plain"}
-        content = b"hello"
-
-        def raise_for_status(self): pass
-        def iter_bytes(self): yield self.content
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    class _Client:
-        def __init__(self, *a, **kw): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **kw): return _Resp()
-
-    import httpx
-    with patch.object(httpx, "Client", _Client):
-        out = hf.http_fetch().fn({"url": "http://127.0.0.1/", "render": "raw"})
-    assert "hello" in out
-
-
-def test_http_fetch_markdown_render(monkeypatch):
-    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
-    from maverick.tools import http_fetch as hf
-
-    html = "<h1>Title</h1><p>Hello <a href='https://x.example'>x</a></p>"
-
-    class _Resp:
-        status_code = 200
-        reason_phrase = "OK"
-        encoding = "utf-8"
-        url = "http://localhost/"
-        headers = {"content-type": "text/html"}
-        content = html.encode()
-
-        def raise_for_status(self): pass
-        def iter_bytes(self): yield self.content
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    class _Client:
-        def __init__(self, *a, **kw): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **kw): return _Resp()
-
-    import httpx
-    with patch.object(httpx, "Client", _Client):
-        out = hf.http_fetch().fn({"url": "http://127.0.0.1/", "render": "markdown"})
-    assert "# Title" in out
-    assert "[x](https://x.example)" in out
-
-
 # ---------- read_pdf ----------
 
 def test_read_pdf_rejects_empty_source():
@@ -329,21 +245,14 @@ def test_pdf_parse_pages_ranges():
 
 # ---------- view_image ----------
 
-def test_view_image_rejects_empty_source():
-    from maverick.tools.view_image import view_image
-    assert "source is required" in view_image().fn({"source": ""}).lower()
 
 
-def test_view_image_missing_file():
-    from maverick.tools.view_image import view_image
-    out = view_image().fn({"source": "/no/such/image.png"})
-    assert "could not load" in out.lower()
 
 
 # ---------- new tools registered ----------
 
 def test_q1_tools_in_base_registry():
-    """http_fetch, read_pdf, view_image must register by default."""
+    """Legacy media tools are not registered by the firm runtime."""
     from maverick.tools import base_registry
 
     class _FakeSandbox:
@@ -354,9 +263,8 @@ def test_q1_tools_in_base_registry():
 
     reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
     names = {t.name for t in reg.all()}
-    assert "http_fetch" in names
-    assert "read_pdf" in names
-    assert "view_image" in names
+    assert "read_pdf" not in names
+    assert "view_image" not in names
 
 
 # ---------- CLI surface (smoke import) ----------

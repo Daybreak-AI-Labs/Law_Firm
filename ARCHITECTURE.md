@@ -1,159 +1,117 @@
-# Architecture
+# Law-firm architecture
 
-The platform is a recursive multi-agent swarm with a safety layer at every chokepoint.
+This repository is the private practice platform for Bjerken and Day. Its
+architectural boundary is an exact client matter, a named human principal, and
+a reviewed legal profile. The dashboard is the only retained interactive
+product surface; the CLI is for installation and local operations.
 
-## Big picture
+## Retained release cohort
 
-```
-                          ┌────────────────┐
-  user message  ──────────▶ │  shield.scan   │ ──block──▶ reject
-                          └───────┬────────┘
-                                  │ pass
-                                  ▼
-                  ┌────────────────────────────────┐
-                  │    Orchestrator agent (Opus)        │
-                  │  plans → spawns → verifies → final  │
-                  └─┬────────────────────────────────┘
-                    │ spawn_swarm / spawn_subagent
-      ┌──────────┼──────────┐
-      ▼           ▼           ▼
-  researcher    coder       writer       (parallel Sonnet workers)
-      │           │           │
-      └────────────────────────────┘
-            shared state via SwarmContext:
-              • Blackboard (per run, in-memory)
-              • WorldModel (SQLite + FTS5, persistent)
-              • Budget (global token/$/wall/tool caps)
-              • Sandbox (local / docker / ssh)
-              • Shield (input / tool / output scans)
-```
+The repository ships five Python distributions as one lockstep cohort:
 
-## Components
-
-### `packages/maverick-core/`
-
-The agent kernel. Ported from `cdayAI/research/maverick/` and evolved here.
-
-| Module | Role |
+| Distribution | Responsibility |
 |---|---|
-| `agent.py` | The recursive `Agent`. Every node in the swarm is one of these. |
-| `orchestrator.py` | Entry point `run_goal()` — wires SwarmContext, spawns external MCP clients, runs the root agent, distills the trajectory into a skill. |
-| `swarm.py` | `SwarmContext` shared by all agents in a run. |
-| `blackboard.py` | Append-only shared workspace for one run. Mirrors entries into `world.goal_events` when `attach_world()` is called so the dashboard can stream live progress. |
-| `world_model.py` | SQLite + FTS5: goals, episodes, facts, questions, messages, goal_events. WAL mode + `busy_timeout=5000` for safe concurrent dashboard+agent access. Forward-only schema migrations (v1 → v23). |
-| `budget.py` | Hard caps on tokens, $, wall-clock, tool calls. Raises `BudgetExceeded`. |
-| `llm.py` | Multi-provider adapter: Anthropic, OpenAI, Azure, Bedrock, Gemini, xAI, DeepSeek, Moonshot, OpenRouter, Ollama, TGI, vLLM (+ OpenAI-compatible). Per-role model routing via config. |
-| `providers/` | One adapter file per provider + a shared OpenAI ↔ Anthropic translator (`translator.py`). |
-| `config.py` | TOML config loader. Per-role model choice + persona + MCP server table. |
-| `skills.py` | Auto-distill successful trajectories into reusable SKILL.md files. Strict skill source validation (`gh:`, `https:`, `mvk:`); rejects bare paths, `file://`, etc. |
-| `skill_embeddings.py` | Optional ONNX embeddings via fastembed; falls back to lexical match if unavailable. |
-| `persona.py` | `[persona]` config block renders a name/style/addendum into every agent's system prompt. |
-| `mcp_client.py` | Spawns external MCP servers as subprocesses, drains their stderr, registers their tools. |
-| `runner.py` | `run_goal_in_thread(...)` — process-wide BoundedSemaphore-capped background runner shared by the dashboard, REST API, and MCP server. |
-| `health.py` | `maverick doctor` — every red/yellow row carries an actionable `fix=...` remediation. |
-| `cli.py` | The operational surface: `maverick dashboard / mcp / worker / doctor / migrate / config-lint / audit / erase / erase-verify / export-user / halt / unhalt / knowledge / domains-lint / dream / tax / version`. Goals are created and run from the dashboard, not the CLI. |
-| `sandbox/` | Execution backends: `local.py` (subprocess), `docker.py` (`--network=none` default), gVisor (`runsc` runtime), `podman.py`, `devcontainer.py`, `kubernetes.py`, `firecracker.py`, `ssh.py` (uses user's `ssh` binary + keys), `modal_backend.py` — nine selectable. |
-| `tools/` | `read_file`, `write_file`, `list_dir`, `shell`, `ask_user`, `spawn_subagent`, `spawn_swarm`. |
+| `maverick-agent` | Matter-bound runner, durable SQLite world, providers, fixed tools, audit, queue, backup, and governed local improvement |
+| `maverick-dashboard` | Named-user client/matter intake, matter goals, attachments, review, sign-off, release, and operator health |
+| `maverick-knowledge` | Local deterministic embedding, bounded document parsing, chunking, and matter knowledge retrieval |
+| `maverick-shield` | Input, tool-argument, and output screening |
+| `maverick-installer` | Private configuration wizard and operator bootstrap |
 
-### `packages/maverick-shield/`
+`release-cohort.toml` is the source of truth for package names, paths, modules,
+and the shared version. `scripts/install_release_cohort.py` validates, builds,
+installs, and imports the cohort under the reviewed dependency constraints.
 
-Thin Python wrapper over `agent-shield`. Provides three chokepoints:
+## Mandatory execution path
 
-- `Shield.scan_input(text)` — before user input enters the orchestrator
-- `Shield.scan_tool_call(name, args)` — before any tool executes
-- `Shield.scan_output(text)` — before the final answer reaches the user
+1. A named attorney creates or selects a client and opens a matter with a firm
+   matter number, jurisdiction, reviewed legal domain, and responsible-attorney
+   membership. Those records commit atomically.
+2. A goal is stored with that exact matter, owner principal, and legal domain.
+   Matterless external producers are retired.
+3. The queue producer resolves durable `MatterContext` and signs the envelope's
+   version, goal, matter, and principal. Plaintext matter numbers are not copied
+   into queue messages.
+4. The worker verifies the signature, re-resolves the durable goal and active
+   membership, and compares the signed matter and principal immediately before
+   dispatch.
+5. The runner binds a frozen context containing the matter, client,
+   jurisdiction, principal, membership role, legal domain, purpose, source, and
+   current egress mode before model, sandbox, or tool work.
+6. Provider and HTTP dispatch refresh that durable authority. Revocation,
+   reassignment, a domain change, incomplete matter metadata, or a changed
+   egress policy fails closed.
+7. Draft output and artifacts remain unreleased until a qualified attorney
+   signs off on the exact current goal version and release digest. Release and
+   sign-off decisions are written through the audit outbox.
 
-If `agent-shield` is not installed, the shield falls back to ~20 high-impact built-in rules (`builtin_rules.py`): ignore-previous prompt injection, ChatML/DAN jailbreak, `rm -rf /`, curl-pipe-shell, sensitive file reads, etc. The shield never silently no-ops — `Shield.backend` reports which backend is active.
+There is no administrator bypass for matter execution. Viewer membership and
+the shared dashboard bearer are not execution identities.
 
-### `packages/maverick-dashboard/`
+## Confidentiality and ethical walls
 
-FastAPI local web UI + REST API.
+Each matter defaults to `local_only`. Loopback model endpoints remain subject
+to the live matter membership check. Public provider or tool egress requires
+both:
 
-- **HTML**: `/`, `/goals`, `/skills`, `/facts`, `/spend`, `/chat`, `/chat/goal/{id}` (live-streaming page that long-polls `/api/goal/{id}/events?since=`).
-- **REST**: `/api/v1/goals`, `/api/v1/goals/{id}`, `/api/v1/goals/{id}/events`, `/api/v1/goals/{id}/answer`, `/api/v1/facts`, `/api/v1/skills`, etc. OpenAPI schema at `/openapi.json`, Swagger UI at `/docs`.
-- **Auth**: layered. A bearer-token middleware (`MAVERICK_DASHBOARD_TOKEN`, `hmac.compare_digest`) plus an optional OIDC gate (`require_principal`) on every route; `/healthz`, `/openapi.json`, `/docs`, `/redoc` are exempt so monitors + API discovery work unauthenticated. HMAC-signed `/webhook/*`, signed `/share/*` links, and SCIM (`/scim/*`, see *enterprise layers*) carry their own credential and bypass both layers.
+- a responsible-attorney change of that exact matter to
+  `approved_services`; and
+- an exact operator allowlist entry in `[firm] approved_providers` or
+  `[firm] approved_hosts`.
 
-### `packages/maverick-mcp/`
+Non-loopback HTTP must use HTTPS, metadata-service destinations are denied, and
+private/link-local addresses do not become trusted merely because of their IP
+class. Denials are audited.
 
-The platform exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over both **stdio** and a **streamable HTTP** transport (`http_transport.py`), negotiating the current protocol version `2025-11-25` with a `2024-11-05` fallback. Core tools (`start_goal`, `goal_status`, `goal_events`, `list_goals`, `answer_question`, `set_fact`, `get_facts`, `list_skills`) plus spec features: async pollable **Tasks** and **elicitation**. The HTTP transport is bearer-gated with a DNS-rebinding (Host/Origin) defense for the loopback case; server-initiated `sampling` is the remaining unimplemented capability. Protocol errors return JSON-RPC `error` payloads (e.g. `-32602`). Run via `maverick mcp`.
+Client, matter, attachment, conversation, artifact-title, and artifact-content
+fields use authenticated at-rest sealing when the operator provisions the
+encryption key. Equality lookup uses purpose-separated keyed digests instead of
+plaintext metadata. Attachment content uses opaque content-addressed paths.
+Untrusted PDF and DOCX parsing runs in a bounded child process and fails closed
+when isolation cannot be established.
 
-### `packages/maverick-installer/` (`apps/installer-cli/` from spec)
+Backups are separately signed and streaming-encrypted with AES-256-GCM under an
+operator-custodied key that must not live in the data root. Restore authenticates
+and decrypts the complete archive before transactional staging.
 
-`maverick init` — the interactive wizard. The single source of truth for user-facing UX. Walks through:
+## Audit and operations
 
-1. Deployment target (Desktop / Docker / VPS / Phone companion)
-2. AI providers (Anthropic / OpenAI / Azure / Bedrock / Gemini / xAI / DeepSeek / Moonshot / OpenRouter / Ollama / TGI / vLLM)
-3. Per-role model picks
-4. Safety profile (Strict / Balanced / Permissive / Off)
-5. Sandbox backend
-6. Budget caps
-7. Channels (which surfaces to enable)
-8. API keys (stored in `~/.maverick/.env`, chmod 600)
+The audit writer is append-only and hash chained, with optional Ed25519 signing
+and retained local or S3 Object-Lock WORM export. Audit verification, encrypted
+backup create/verify/restore, schema migration governance, config lint, and
+legal-profile lint are local operator CLI functions.
 
-Writes `~/.maverick/config.toml`, then runs a smoke test.
+SQLite is the canonical firm world and uses a single-writer control-plane lock.
+The signed queue can move work to a worker process, but every worker resolves
+the same durable matter authority before execution. `/livez`, `/healthz`, and
+`/readyz` expose distinct process, dependency, and readiness posture.
 
-### `apps/installer-desktop/` (scaffold)
+## Governed local improvement
 
-Tauri-based GUI installer for users who would never open a terminal. Cargo + tauri.conf.json + Svelte UI + Python sidecar bridge in place. Notarized DMG / signed `.exe` / AppImage targets defined; CI build deferred until signing certs are wired up.
+Reflexion, dreaming, rehearsal, experience, and distilled skills carry the
+exact matter key (and owner where required). A missing matter never falls back
+to a global client-derived store. Candidate generation and evaluation are
+offline; runtime agents cannot acquire tools or promote code. Promotion is an
+explicit operator action governed by the retained self-harness and audit path.
 
-## Governance, learning & enterprise layers
+## Deliberately absent
 
-Beyond the swarm kernel, `maverick-core` carries the subsystems that make this
-a *governed, self-improving* platform rather than a bare runtime. All
-are opt-in and additive (kernel rule 1 — the kernel runs unchanged with them
-off). See `docs/FEATURES.md` for depth.
+The firm build has no inbound or outbound MCP runtime, gRPC server/plugin host,
+external plugin entry points, remote skill/catalog acquisition, fleet/global
+learning plane, messaging-channel package, browser/computer-use runtime,
+model-visible shell or generic code-execution tool, SCIM or SAML provisioning,
+or public PyPI/release workflow. Git history is the
+archive for those inherited surfaces.
 
-| Subsystem | Modules | Role |
-|---|---|---|
-| **Governed Actions** | `governed_actions.py`, `governed_connectors.py`, `governed_rest.py`, `governed_tools.py` | A consequential operation is a typed `ActionSpec`: **simulated** before commit, **gated** on risk/approval (`[actions] require_approval_at`), and **lineage-tracked** (tamper-evident hash chain). `governed_rest` adapts the LIVE enterprise REST connectors into this surface; `governed_tools` wraps them in the **live tool path** when `[governed_connectors] enable` — a connector write is previewed and approval-gated against a standing operator approver (the agent can't self-approve), instead of a bare confirm-gated call. |
-| **Closed learning loop** | `dreaming.py`, `hindsight.py`, `reflexion.py`, `self_learning.py`, `skills.py` | Offline consolidation (dream), regression detection (hindsight), snapshot + rollback with a per-cycle signed audit row. |
-| **Multi-tenancy** | `tenant/registry.py`, `tenant/kms.py`, `paths.py`, `world_model_backends/` | Per-tenant data isolation (`~/.maverick/tenants/<t>/`), per-tenant envelope encryption (DEK wrapped by a KEK), Postgres RLS. |
-| **Secrets at rest** | `tenant/kms.py`, `oauth_vault.py` | The OAuth vault seals captured access/refresh tokens under the tenant DEK (no plaintext token files, no cross-tenant readability). |
-| **Knowledge / RAG** | `maverick-knowledge/` | Per-domain vector retrieval; embedded `SqliteVectorStore` by default, `PgVectorStore` (pgvector `<=>` cosine + IVFFlat) as the scale-out backend. |
-| **Enterprise auth & provisioning** | `oidc.py`, `maverick_dashboard/oidc_login.py`, `maverick_dashboard/scim.py` | OIDC login + a static-bearer SCIM 2.0 `/scim/v2` surface so an IdP (Okta/Azure AD) provisions/deprovisions users → tenants automatically. |
-| **Trained-safety seam** | `maverick-shield/probe_model.py` | The Constitutional-v2 cheap probe can ensemble a trained linear classifier (plain-JSON weights, no pickle) by MAX, raising recall without weakening the heuristic floor. |
+## Known product limits
 
-## Long-horizon properties
-
-What lets the platform work a matter over hours or days rather than one prompt:
-
-1. **Persistent typed world model.** Goals, facts, episodes, and questions survive restarts. The agent can pause overnight and resume.
-2. **Recursive spawning with depth + budget caps.** Sub-agents can spawn sub-sub-agents until depth or budget runs out, never longer. Both `spawn_subagent` (blocking) and `spawn_swarm` (parallel) tools.
-3. **Closed learning loop.** Beyond per-run skill distillation, the platform runs a full learning lifecycle: `maverick dream` consolidates experience offline (replay → consolidate → rehearse → forget → prune), reflexions and insights are department-scoped, and learned state is snapshotted with rollback and a per-cycle audit row. See `docs/FEATURES.md` → *Dreaming*.
-4. **Per-role model routing.** Heavy roles (orchestrator, revisor) get the strongest model; cheap roles (summarizer) get the smallest. Configurable per user.
-5. **Async + streaming.** Workers run in parallel via `asyncio.gather`; orchestrator streams output back to user.
-
-## Multi-agent properties
-
-What makes this a real multi-agent system, not just N parallel instances:
-
-1. **Shared blackboard.** Specialists never talk directly; they post observations and findings to a single board the orchestrator reads.
-2. **Shared world model.** Facts written by one agent are visible to siblings.
-3. **Shared budget.** Tokens, $, tool calls are counted across the entire swarm. One greedy worker can't drain the run.
-4. **Shared sandbox.** All workers see the same filesystem and tool state.
-5. **Verifier role.** The orchestrator verifies child outputs before synthesizing. On failure, a `revisor` re-runs with extended thinking.
-
-## Deployment targets
-
-| Target | How it runs | Status |
-|---|---|---|
-| **Desktop** | Reviewed source checkout; runs in user's home dir. | v0.1.1 |
-| **Docker** | `docker run -v ~/.maverick:/root/.maverick ghcr.io/daybreak-ai-labs/maverick:<tag>`. Isolated sandbox. | v0.1.1 |
-| **VPS** | `deploy/vps/install.sh` provisions a systemd unit. `MAVERICK_VERSION=v0.1.0 deploy/vps/install.sh` pins the release. | v0.1.1 |
-| **Phone (companion)** | Swarm runs on Desktop or VPS; phone talks via Telegram / iMessage / WhatsApp / Signal / Discord / Slack / SMS / Matrix / email. Native iOS/Android later. | v0.1.1 |
-
-## Distribution channels
-
-`.github/workflows/release.yml` triggers on `git tag v*`:
-
-- **PyPI**: `maverick-agent` (squatted, so we ship under this name; the Python import name + CLI name remain `maverick`), `maverick-shield`, `maverick-dashboard`, `maverick-mcp-server`, `maverick-installer`. Gated on `PYPI_API_TOKEN`.
-- **GHCR**: multi-tag Docker image — `:latest`, `:vX.Y.Z`, `:vX.Y`.
-
-## Adding a new feature
-
-The rule of thumb (see CLAUDE.md):
-
-- Capability code goes in a package under `packages/`.
-- Entry points / UX go under `apps/`.
-- The wizard (`apps/installer-cli/`) must learn to enable/disable it, otherwise non-technical users can't reach it.
-- Defaults live in code; user overrides live in `~/.maverick/config.toml`.
+- The 31 reviewed profiles are a compact legal roster; dedicated VA,
+  family-law, estate/probate, and state-specific real-estate workflows still
+  need attorney-authored profiles and live evaluations.
+- Conflict intake performs exact normalized-name screening and returns only an
+  opaque potential-conflict result. Alias, affiliate, and fuzzy research remains
+  a conflicts-counsel workflow.
+- Technical controls do not approve a cloud vendor's retention terms,
+  privilege posture, or professional-responsibility suitability. The firm must
+  review those before adding an allowlist entry.
+- A local administrator can read process memory and replace the executable;
+  host hardening and operator key custody remain deployment responsibilities.

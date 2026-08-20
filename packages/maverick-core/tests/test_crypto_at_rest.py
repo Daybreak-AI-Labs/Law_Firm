@@ -98,6 +98,36 @@ def test_unseal_passthrough_for_plaintext():
     assert car.is_sealed(b"plain old note") is False
 
 
+def test_lookup_digest_marks_unencrypted_compatibility_mode():
+    digest = car.lookup_digest("Privileged Acquisition", purpose="artifact-title")
+    assert digest.startswith("u1:")
+    assert len(digest) == 67
+    assert "Privileged Acquisition" not in digest
+    assert digest == car.lookup_digest(
+        "Privileged Acquisition", purpose="artifact-title"
+    )
+
+
+@requires_crypto
+def test_lookup_digest_is_keyed_and_domain_separated(monkeypatch):
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", bytes(range(32)).hex())
+    first = car.lookup_digest("Privileged Acquisition", purpose="artifact-title")
+    assert first.startswith("h1:")
+    assert len(first) == 67
+    assert "Privileged Acquisition" not in first
+    assert first == car.lookup_digest(
+        "Privileged Acquisition", purpose="artifact-title"
+    )
+    assert first != car.lookup_digest(
+        "Privileged Acquisition", purpose="another-index"
+    )
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", bytes(reversed(range(32))).hex())
+    assert first != car.lookup_digest(
+        "Privileged Acquisition", purpose="artifact-title"
+    )
+
+
 @requires_crypto
 def test_each_seal_uses_fresh_nonce():
     a, b = car.seal(b"same"), car.seal(b"same")
@@ -196,36 +226,6 @@ def test_existing_key_permissions_are_repaired_before_read(monkeypatch):
         "key_private_before_read": True,
         "parent_private_before_read": True,
     }
-
-
-@requires_crypto
-def test_memory_tool_seals_on_disk(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
-    monkeypatch.setenv("MAVERICK_MEMORY_DIR", str(tmp_path / "mem"))
-    from maverick.tools.memory import memory
-
-    tool = memory()
-    out = tool.fn({"command": "create", "path": "notes.md",
-                   "file_text": "patient SSN 123-45-6789"})
-    assert "wrote" in out
-    raw = (tmp_path / "mem" / "notes.md").read_bytes()
-    assert car.is_sealed(raw)          # on-disk file is ciphertext
-    assert b"123-45-6789" not in raw   # plaintext absent on disk
-    view = tool.fn({"command": "view", "path": "notes.md"})
-    assert "123-45-6789" in view       # view transparently decrypts
-
-
-@requires_crypto
-def test_memory_reads_legacy_plaintext(monkeypatch, tmp_path):
-    memdir = tmp_path / "mem"
-    memdir.mkdir()
-    (memdir / "old.md").write_text("legacy note", encoding="utf-8")  # pre-encryption
-    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
-    monkeypatch.setenv("MAVERICK_MEMORY_DIR", str(memdir))
-    from maverick.tools.memory import memory
-
-    view = memory().fn({"command": "view", "path": "old.md"})
-    assert "legacy note" in view       # transparent plaintext fallback
 
 
 @requires_crypto

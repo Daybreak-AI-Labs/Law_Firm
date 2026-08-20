@@ -120,7 +120,7 @@ install_maverick() {
   STAGED_SOURCE=""
   # pipx names the venv after the core distribution (`maverick-agent`). Create
   # that environment without resolving a partial graph, then let the shared
-  # manifest-driven helper install all eight packages in one constrained
+  # manifest-driven helper install all five packages in one constrained
   # transaction and verify their imports.
   run_as_user pipx ensurepath || true
   run_as_user pipx install --force --pip-args=--no-deps \

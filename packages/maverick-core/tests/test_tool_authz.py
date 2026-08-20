@@ -153,7 +153,9 @@ def test_gate_summary_publishes_what_it_does_not_check() -> None:
 
 def test_dispatch_contract_is_clean_on_the_real_tree() -> None:
     hits, inspected = dispatch_contract.scan()
-    assert inspected > 500, inspected
+    # The firm-only prune removed hundreds of nonlegal dispatch modules while
+    # retaining a substantial scanner scope and the known-site controls below.
+    assert inspected >= 350, inspected
     assert dispatch_contract.violations(hits) == []
 
 

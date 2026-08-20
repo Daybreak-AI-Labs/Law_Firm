@@ -35,9 +35,9 @@ def test_web_search_empty_query():
 
 def test_web_search_tavily_path(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "tav-key")
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavily")
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-    monkeypatch.delenv("MAVERICK_SEARCH_BACKEND", raising=False)
 
     fake_resp = _FakeHttpxResponse(200, json_data={
         "results": [
@@ -60,6 +60,7 @@ def test_web_search_falls_through_to_ddg_when_no_keys(monkeypatch):
     for env in ("TAVILY_API_KEY", "BRAVE_API_KEY", "SERPAPI_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     monkeypatch.delenv("MAVERICK_SEARCH_BACKEND", raising=False)
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "0")
 
     # Minimal DDG html-lite output the regex can parse.
     html = (
@@ -90,7 +91,7 @@ def test_web_search_forced_backend_skipped_if_no_creds(monkeypatch):
 def test_web_search_site_filter(monkeypatch):
     """site arg should add 'site:' to the query."""
     monkeypatch.setenv("TAVILY_API_KEY", "k")
-    monkeypatch.delenv("MAVERICK_SEARCH_BACKEND", raising=False)
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavily")
     captured_payload = {}
 
     def fake_post(url, json=None, **kw):
@@ -140,82 +141,18 @@ def world_with_history(tmp_path):
     world.close()
 
 
-def test_recall_excludes_running_by_default(world_with_history):
-    from maverick.tools.recall import recall_past_goals
-    matches = recall_past_goals(
-        "refactor auth",
-        world=world_with_history,
-        num_results=10,
-        include_running=False,
-    )
-    ids = [g.id for _, g in matches]
-    assert 5 not in ids  # "Database migration" is active
 
 
-def test_recall_finds_relevant_by_jaccard(world_with_history):
-    """Without fastembed, jaccard should still rank refactor-auth as top."""
-    from maverick.tools.recall import recall_past_goals
-    matches = recall_past_goals(
-        "auth refactor session",
-        world=world_with_history,
-        num_results=3,
-    )
-    assert matches, "expected at least one match"
-    top_ids = [g.id for _, g in matches[:2]]
-    # Goal 1 or 3 (both auth-related) should be in top 2.
-    assert 1 in top_ids or 3 in top_ids
 
 
-def test_recall_returns_empty_on_empty_world(tmp_path):
-    from maverick.tools.recall import recall_past_goals
-    from maverick.world_model import WorldModel
-    world = WorldModel(tmp_path / "empty.sqlite")
-    try:
-        out = recall_past_goals("anything", world=world)
-        assert out == []
-    finally:
-        world.close()
 
 
-def test_recall_default_does_not_close_cached_tenant_world(tmp_path, monkeypatch):
-    import maverick.world_model as wm
-    from maverick.paths import tenant_scope
-    from maverick.tools.recall import recall_past_goals
-
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_CLIENT_ID", raising=False)
-    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
-    with tenant_scope(tenant="recall-tenant"):
-        cached = wm.world_for_tenant("recall-tenant")
-        assert recall_past_goals("anything") == []
-        assert wm.world_for_tenant("recall-tenant") is cached
-        assert cached.list_goals() == []
-    cached.close()
-    wm._tenant_worlds.pop(str(cached.path), None)
 
 
-def test_recall_tool_factory():
-    from maverick.tools.recall import recall
-    tool = recall()
-    assert tool.name == "recall_past_goals"
-    assert "query" in tool.input_schema["properties"]
 
 
-def test_recall_tool_runner_empty_query():
-    from maverick.tools.recall import _run_recall
-    assert "query is required" in _run_recall({"query": ""}).lower()
 
 
-def test_recall_includes_running_when_asked(world_with_history):
-    from maverick.tools.recall import recall_past_goals
-    matches = recall_past_goals(
-        "database",
-        world=world_with_history,
-        num_results=10,
-        include_running=True,
-    )
-    ids = [g.id for _, g in matches]
-    assert 5 in ids
 
 
 # ---------- monitor ----------
@@ -296,8 +233,8 @@ def test_monitor_render_shows_children(world_with_history):
 
 # ---------- registry includes new tools ----------
 
-def test_base_registry_excludes_web_search_by_default_but_keeps_recall():
-    """web_search is opt-in; recall remains enabled by default."""
+def test_base_registry_excludes_web_search_by_default():
+    """External search is opt-in and legacy global recall is retired."""
     from maverick.tools import base_registry
 
     class _FakeSandbox:
@@ -309,7 +246,7 @@ def test_base_registry_excludes_web_search_by_default_but_keeps_recall():
     reg = base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
     names = {t.name for t in reg.all()}
     assert "web_search" not in names
-    assert "recall_past_goals" in names
+    assert "recall_past_goals" not in names
 
 
 def test_base_registry_can_enable_web_search_explicitly():

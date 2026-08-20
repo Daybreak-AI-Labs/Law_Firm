@@ -207,139 +207,11 @@ def test_unknown_security_or_access_keys_fail_closed(monkeypatch, tmp_path):
         '[security]\ndenied_tool = ["shell"]\n',
         '[access]\nallow_models = ["anthropic:claude-sonnet-4-6"]\n',
         '[securty]\ndenied_tools = ["shell"]\n',
+        '[mcp_servers.retired]\ncommand = "node"\n',
     ):
         path.write_text(body)
         with pytest.raises(ro.RuntimeOverridesSecurityError):
             ro.denied_tools()
-
-
-def test_mcp_unknown_key_cannot_corrupt_policy_during_mutation(
-    monkeypatch, tmp_path
-):
-    import pytest
-
-    ro = _point_overlay(monkeypatch, tmp_path)
-    path = tmp_path / "runtime-overrides.toml"
-    original = (
-        '[mcp_servers.foo]\ncommand = "node"\n"bad key" = "value"\n'
-    )
-    path.write_text(original)
-
-    with pytest.raises(ro.RuntimeOverridesSecurityError):
-        ro.set_budget(5)
-    assert path.read_text() == original
-
-
-def test_mcp_schema_requires_exact_field_types_and_one_transport(
-    monkeypatch, tmp_path
-):
-    import pytest
-
-    ro = _point_overlay(monkeypatch, tmp_path)
-    path = tmp_path / "runtime-overrides.toml"
-    invalid_server_tables = (
-        'url = ""\n',
-        'command = "   "\n',
-        'command = "python"\nurl = "https://example.test"\n',
-        'command = 7\n',
-        'url = 7\n',
-        'command = "python"\nargs = "script.py"\n',
-        'command = "python"\nenv = []\n',
-        'url = "https://example.test"\nheaders = []\n',
-        'command = "python"\ninherit_env = "false"\n',
-        'url = "https://example.test"\nauth_token = 7\n',
-        'command = "python"\npin_sha256 = 7\n',
-        'url = "https://example.test"\noauth = "client"\n',
-        'command = "python"\nenabled = "false"\n',
-    )
-    for server_table in invalid_server_tables:
-        path.write_text(
-            '[security]\ndenied_tools = ["shell"]\n'
-            "[mcp_servers.bad]\n"
-            f"{server_table}"
-        )
-        with pytest.raises(ro.RuntimeOverridesSecurityError):
-            ro.denied_tools()
-
-
-def test_unexpected_mcp_delegation_failure_is_normalized(monkeypatch, tmp_path):
-    import pytest
-
-    ro = _point_overlay(monkeypatch, tmp_path)
-    (tmp_path / "runtime-overrides.toml").write_text(
-        '[security]\ndenied_tools = ["shell"]\n'
-        "[mcp_servers.bad]\n"
-        'command = "python"\n'
-    )
-    from maverick.mcp_client import MCPServerSpec
-
-    def broken_validator(_cls, _name, _cfg):
-        raise KeyError("unexpected delegate failure")
-
-    monkeypatch.setattr(
-        MCPServerSpec,
-        "from_config",
-        classmethod(broken_validator),
-    )
-    with pytest.raises(ro.RuntimeOverridesSecurityError) as caught:
-        ro.denied_tools()
-    assert isinstance(caught.value.__cause__, ValueError)
-    assert isinstance(caught.value.__cause__.__cause__, KeyError)
-
-
-def test_malformed_mcp_cannot_erase_other_policy_surfaces(
-    monkeypatch, tmp_path
-):
-    ro = _point_overlay(monkeypatch, tmp_path)
-    path = tmp_path / "runtime-overrides.toml"
-    valid = (
-        '[security]\ndenied_tools = ["shell"]\n'
-        '[access]\nallowed_models = ["ollama:only"]\n'
-        '[styles]\nactive = "formal"\n'
-    )
-    path.write_text(valid)
-
-    # Establish the complete, detached last-known-good snapshot.
-    assert ro.denied_tools() == {"shell"}
-    assert ro.allowed_models() == {"ollama:only"}
-    assert ro.style_override() == "formal"
-
-    # This table previously raised a raw KeyError from MCPServerSpec. Generic
-    # resilience catches then treated every unrelated policy surface as absent.
-    path.write_text(valid + '[mcp_servers.bad]\nurl = ""\n')
-
-    assert ro.denied_tools() == {"shell"}
-    assert ro.allowed_models() == {"ollama:only"}
-    assert ro.style_override() == "formal"
-
-
-def test_malformed_mcp_fails_closed_through_runtime_consumers(
-    monkeypatch, tmp_path
-):
-    import pytest
-
-    ro = _point_overlay(monkeypatch, tmp_path)
-    (tmp_path / "runtime-overrides.toml").write_text(
-        '[security]\ndenied_tools = ["shell"]\n'
-        '[access]\nallowed_models = ["ollama:only"]\n'
-        '[styles]\nactive = "formal"\n'
-        '[mcp_servers.bad]\nurl = ""\n'
-    )
-
-    from maverick import llm, styles
-    from maverick.safety import tool_acl
-
-    consumers = (
-        ro.denied_tools,
-        ro.allowed_models,
-        ro.style_override,
-        tool_acl.resolve_lists,
-        styles.active_style_name,
-        lambda: llm.model_for_role("coder"),
-    )
-    for consumer in consumers:
-        with pytest.raises(ro.RuntimeOverridesSecurityError):
-            consumer()
 
 
 def test_security_names_with_surrounding_whitespace_fail_closed(
@@ -364,14 +236,12 @@ def test_corrupt_policy_propagates_through_every_runtime_consumer(
     ro = _point_overlay(monkeypatch, tmp_path)
     (tmp_path / "runtime-overrides.toml").write_text("not valid TOML {")
 
-    from maverick import budget, llm, mcp_client, plugins, styles
+    from maverick import budget, llm, styles
     from maverick.safety import tool_acl
 
     consumers = (
         tool_acl.resolve_lists,
         budget.budget_from_config,
-        plugins._allowed_plugin_names,
-        mcp_client.load_mcp_specs_from_config,
         styles.active_style_name,
         lambda: llm.model_for_role("orchestrator"),
     )
@@ -487,3 +357,26 @@ def test_disable_racing_set_budget_keeps_both(monkeypatch, tmp_path):
 
     assert ro.denied_tools() == {"shell"}
     assert ro.budget_override() == 12.5
+
+
+def test_runtime_model_overlay_allows_one_exact_default(monkeypatch, tmp_path):
+    ro = _point_overlay(monkeypatch, tmp_path)
+    assert ro.set_default_model("anthropic:claude-sonnet-4-6") == (
+        "anthropic:claude-sonnet-4-6"
+    )
+    assert ro.default_model_override() == "anthropic:claude-sonnet-4-6"
+
+
+def test_runtime_model_overlay_rejects_bare_and_per_role_models(
+    monkeypatch, tmp_path
+):
+    import pytest
+
+    ro = _point_overlay(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="provider:model"):
+        ro.set_default_model("claude-sonnet-4-6")
+
+    path = tmp_path / "runtime-overrides.toml"
+    path.write_text('[models]\ncoder = "anthropic:claude-sonnet-4-6"\n')
+    with pytest.raises(ro.RuntimeOverridesSecurityError):
+        ro.default_model_override()

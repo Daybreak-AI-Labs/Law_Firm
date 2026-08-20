@@ -4,9 +4,18 @@ from __future__ import annotations
 import pytest
 from maverick.skill import distillation_v2 as v2
 
+MATTER_ID = 101
+OWNER = "user:alice"
 
-def _traj(goal, t=1.0, success=True, tools=None):
-    return {"goal": goal, "success": success, "t": t, "tools": tools or []}
+
+def _traj(
+    goal, t=1.0, success=True, tools=None, *,
+    project_id=MATTER_ID, owner=OWNER,
+):
+    return {
+        "goal": goal, "success": success, "t": t, "tools": tools or [],
+        "project_id": project_id, "owner": owner,
+    }
 
 
 # ---- pure helpers ----
@@ -115,18 +124,26 @@ def test_signatures_from_store_missing_dir(tmp_path):
 def test_distill_and_save_gated_saves_then_dedups(tmp_path):
     trajs = [_traj("deploy the billing service", t=2),
              _traj("deploy the billing api", t=1)]
-    path, reason = v2.distill_and_save_gated(trajs, store=tmp_path, min_examples=2)
+    path, reason = v2.distill_and_save_gated(
+        trajs, store=tmp_path, min_examples=2,
+        project_id=MATTER_ID, owner=OWNER,
+    )
     assert path is not None and reason == "ok" and path.exists()
 
     # second run with the same lesson -> recognized as duplicate, not saved again
-    path2, reason2 = v2.distill_and_save_gated(trajs, store=tmp_path, min_examples=2)
+    path2, reason2 = v2.distill_and_save_gated(
+        trajs, store=tmp_path, min_examples=2,
+        project_id=MATTER_ID, owner=OWNER,
+    )
     assert path2 is None and "duplicate" in reason2
-    assert len(list(tmp_path.glob("*.md"))) == 1
+    assert len(list(tmp_path.rglob("*.md"))) == 1
 
 
 def test_distill_and_save_gated_gate_blocks_one_off(tmp_path):
-    path, reason = v2.distill_and_save_gated([_traj("one off")], store=tmp_path,
-                                             min_examples=2)
+    path, reason = v2.distill_and_save_gated(
+        [_traj("one off")], store=tmp_path, min_examples=2,
+        project_id=MATTER_ID, owner=OWNER,
+    )
     assert path is None and "too few examples" in reason
     assert list(tmp_path.glob("*.md")) == []
 
@@ -140,7 +157,9 @@ def test_distill_and_save_rechecks_immediately_before_write(tmp_path):
 
     with pytest.raises(RuntimeError, match="operator stop"):
         v2.distill_and_save_gated(
-            trajs, store=tmp_path, min_examples=2, before_save=refuse)
+            trajs, store=tmp_path, min_examples=2, before_save=refuse,
+            project_id=MATTER_ID, owner=OWNER,
+        )
     assert list(tmp_path.glob("*.md")) == []
 
 
@@ -157,5 +176,37 @@ def test_direct_distillation_cannot_bypass_global_learning_halt(
     )
 
     with pytest.raises(Halted, match="operator stop"):
-        v2.distill_and_save_gated(trajs, store=tmp_path, min_examples=2)
+        v2.distill_and_save_gated(
+            trajs, store=tmp_path, min_examples=2,
+            project_id=MATTER_ID, owner=OWNER,
+        )
     assert list(tmp_path.glob("*.md")) == []
+
+
+def test_persisted_gate_requires_exact_matter_and_owner(tmp_path):
+    trajs = [_traj("deploy the billing service", t=2),
+             _traj("deploy the billing api", t=1)]
+    path, reason = v2.distill_and_save_gated(
+        trajs, store=tmp_path, min_examples=2,
+    )
+    assert path is None and "missing exact" in reason
+    assert not list(tmp_path.rglob("*.md"))
+
+
+def test_dedup_store_is_isolated_by_matter_and_owner(tmp_path):
+    matter_one = [_traj("deploy the billing service", t=2),
+                  _traj("deploy the billing api", t=1)]
+    matter_two = [
+        _traj("deploy the billing service", t=2, project_id=202),
+        _traj("deploy the billing api", t=1, project_id=202),
+    ]
+    first, _ = v2.distill_and_save_gated(
+        matter_one, store=tmp_path, min_examples=2,
+        project_id=MATTER_ID, owner=OWNER,
+    )
+    second, reason = v2.distill_and_save_gated(
+        matter_two, store=tmp_path, min_examples=2,
+        project_id=202, owner=OWNER,
+    )
+    assert first is not None and second is not None and reason == "ok"
+    assert first.parent != second.parent

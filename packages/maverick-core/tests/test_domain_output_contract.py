@@ -177,61 +177,6 @@ class TestBuiltinContract:
         assert out.gate == "review"
 
 
-class TestFinanceSuiteContracts:
-    """The finance suite declares contracts across its towers, so the persona
-    inbox is populated (not just the one proof pack)."""
-
-    def _finance_with_contract(self):
-        return {n: p for n, p in available_domains().items()
-                if n.startswith("finance_") and (p.output.deliverable or p.output.consumers)}
-
-    def test_many_finance_packs_declare_deliverables(self):
-        declared = self._finance_with_contract()
-        assert len(declared) >= 8, f"only {len(declared)} finance contracts"
-
-    def test_declared_finance_contracts_lint_clean(self):
-        for name, p in self._finance_with_contract().items():
-            errors, warnings = lint_profile(p)
-            assert not errors, (name, errors)
-            assert not [w for w in warnings if "output" in w], (name, warnings)
-
-    def test_consumer_roles_stay_a_consistent_vocabulary(self):
-        # A bounded, shared role set keeps the inbox's role filter meaningful --
-        # guard against a typo'd / one-off role drifting in.
-        allowed = {"controller", "fpa_analyst", "treasurer", "tax_analyst",
-                   "auditor", "risk_officer", "credit_officer", "cfo",
-                   "accounting_manager", "ir_lead", "internal_auditor",
-                   "tax_manager", "payroll_manager"}
-        roles = {r for p in self._finance_with_contract().values() for r in p.output.consumers}
-        assert roles and roles <= allowed, f"unexpected roles: {roles - allowed}"
-
-
-class TestInsuranceSuiteContracts:
-    """The insurance suite declares contracts across claims, underwriting,
-    reinsurance, actuarial, and compliance -- so the inbox covers ins_ too."""
-
-    _ALLOWED = {"underwriter", "actuary", "claims_adjuster", "claims_manager",
-                "reinsurance_analyst", "compliance_officer", "agency_manager",
-                "siu_investigator", "premium_auditor", "risk_officer", "controller"}
-
-    def _with_contract(self):
-        return {n: p for n, p in available_domains().items()
-                if n.startswith("ins_") and (p.output.deliverable or p.output.consumers)}
-
-    def test_many_insurance_packs_declare_deliverables(self):
-        assert len(self._with_contract()) >= 3
-
-    def test_declared_insurance_contracts_lint_clean(self):
-        for name, p in self._with_contract().items():
-            errors, warnings = lint_profile(p)
-            assert not errors, (name, errors)
-            assert not [w for w in warnings if "output" in w], (name, warnings)
-
-    def test_insurance_roles_stay_a_consistent_vocabulary(self):
-        roles = {r for p in self._with_contract().values() for r in p.output.consumers}
-        assert roles and roles <= self._ALLOWED, f"unexpected roles: {roles - self._ALLOWED}"
-
-
 class TestLegalSuiteContracts:
     """The legal suite is the practice: every seat declares who consumes its
     work product, so a drafted brief, memo or redline lands in a real inbox
@@ -245,18 +190,13 @@ class TestLegalSuiteContracts:
         packs = {n: p for n, p in available_domains().items() if n.startswith("legal_")}
         missing = sorted(n for n, p in packs.items() if not p.output.deliverable)
         assert not missing, f"legal packs with no declared deliverable: {missing}"
-        assert len(self._with_contract()) >= 76
+        assert len(self._with_contract()) == 30
 
     def test_declared_legal_contracts_lint_clean(self):
         for name, p in self._with_contract().items():
             errors, warnings = lint_profile(p)
             assert not errors, (name, errors)
             assert not [w for w in warnings if "output" in w], (name, warnings)
-
-    # Internal-workflow seats: their output is firm-internal routing or
-    # knowledge upkeep, not a work product that leaves the office, so they
-    # carry no sign-off gate. Everything else does.
-    _UNGATED = {"legal_intake", "legal_km"}
 
     def test_every_legal_deliverable_routes_to_a_human_reviewer(self):
         # Nothing a legal seat drafts is self-approving: the consumption side
@@ -265,16 +205,4 @@ class TestLegalSuiteContracts:
         # the fork's central guarantee -- the attorney reviews the work.
         for name, p in self._with_contract().items():
             assert p.output.consumers, f"{name}: deliverable with no consumer"
-            if name in self._UNGATED:
-                continue
             assert p.output.gate in ("review", "approval"), f"{name}: gate={p.output.gate!r}"
-
-    def test_the_ungated_allowlist_stays_honest(self):
-        # Guard the exception list itself: if one of these grows a gate, or a
-        # new pack is quietly added to the set, this fails rather than letting
-        # the allowlist rot into a hole in the rule above.
-        packs = available_domains()
-        for name in self._UNGATED:
-            assert name in packs, f"{name}: ungated allowlist names a missing pack"
-            assert packs[name].output.gate is None, (
-                f"{name}: now carries a gate -- drop it from _UNGATED")

@@ -4,112 +4,10 @@ Each test pins a behavior the prior code didn't enforce:
   - tool output goes through Shield.scan_output before reaching the LLM
   - persisted conversation history is re-scanned on read
   - skill body is scanned at install time (not just frontmatter)
-  - MCP tool descriptions are scanned before agent registration
-  - plugin entry_points require explicit allowlist
 """
 from __future__ import annotations
 
 import pytest
-from maverick import plugins
-
-# ---------- plugin allowlist ----------
-
-class _FakeEP:
-    def __init__(self, name, target):
-        self.name = name
-        self.target = target
-
-    def load(self):
-        if isinstance(self.target, Exception):
-            raise self.target
-        return self.target
-
-
-def _set_eps(monkeypatch, mapping):
-    monkeypatch.setattr(plugins, "_entry_points", lambda group: mapping.get(group, []))
-
-
-def test_plugin_allowlist_empty_by_default(monkeypatch, tmp_path):
-    """No env var + no [plugins] config => no plugins load.
-
-    This is the security default: an attacker who pip-installs a
-    package declaring `entry_points."maverick.tools"` does NOT get
-    automatic code execution on the next maverick run.
-    """
-    monkeypatch.delenv("MAVERICK_PLUGINS_ALLOW", raising=False)
-    # Point at a non-existent config so load_config sees no [plugins].
-    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "nonexistent.toml"))
-
-    executed = []
-
-    def factory():
-        executed.append("ran")
-        return "should-not-execute"
-
-    _set_eps(monkeypatch, {"maverick.tools": [_FakeEP("attacker", factory)]})
-    out = plugins.discover_tools()
-    assert out == []
-    # And the factory was never called -- this is the real safety
-    # property: the attacker's code did not execute.
-    assert executed == []
-
-
-def test_plugin_allowlist_explicit_names(monkeypatch):
-    """Only names in the allowlist load."""
-    monkeypatch.setenv("MAVERICK_PLUGINS_ALLOW", "weather,calendar")
-
-    _set_eps(monkeypatch, {
-        "maverick.tools": [
-            _FakeEP("weather", lambda: "ok-weather"),
-            _FakeEP("attacker", lambda: "DANGER"),
-            _FakeEP("calendar", lambda: "ok-calendar"),
-        ],
-    })
-    names = [name for name, _ in plugins.discover_tools()]
-    assert names == ["weather", "calendar"]
-
-
-def test_plugin_allowlist_wildcard(monkeypatch):
-    """`*` reverts to pre-v0.2 behavior (load everything)."""
-    monkeypatch.setenv("MAVERICK_PLUGINS_ALLOW", "*")
-    _set_eps(monkeypatch, {
-        "maverick.tools": [
-            _FakeEP("a", lambda: "a"),
-            _FakeEP("b", lambda: "b"),
-        ],
-    })
-    assert {n for n, _ in plugins.discover_tools()} == {"a", "b"}
-
-
-def test_hook_entry_points_require_plugin_allowlist(monkeypatch, tmp_path):
-    """Hook entry points use the same explicit plugin allowlist as tools.
-
-    With plugins disabled by default, merely installing a package that
-    declares `entry_points."maverick.hooks"` must not import or execute it.
-    """
-    from maverick.hooks import clear, load_from_entry_points
-
-    monkeypatch.delenv("MAVERICK_PLUGINS_ALLOW", raising=False)
-    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "nonexistent.toml"))
-    clear()
-
-    executed = []
-
-    class _HookEP:
-        name = "attacker"
-
-        def load(self):
-            executed.append("imported")
-            return list
-
-    monkeypatch.setattr(
-        "importlib.metadata.entry_points",
-        lambda group=None: [_HookEP()] if group == "maverick.hooks" else [],
-    )
-
-    assert load_from_entry_points() == 0
-    assert executed == []
-
 
 # ---------- tool-output scan ----------
 
@@ -324,6 +222,11 @@ def test_reclaim_orphan_goals(tmp_path):
     wm.set_goal_status(a, "active")
     wm.set_goal_status(b, "done", result="ok")
     # c stays 'pending' (default)
+    with wm._writing() as conn:
+        conn.executemany(
+            "UPDATE goals SET updated_at = updated_at - 1 WHERE id = ?",
+            [(a,), (c,)],
+        )
 
     reclaimed = wm.reclaim_orphan_goals(max_age_seconds=0)
     assert reclaimed == 2  # a (active) + c (pending)
@@ -340,6 +243,11 @@ def test_reclaim_includes_goal_exactly_at_cutoff(tmp_path, monkeypatch):
     wm = world_model.WorldModel(tmp_path / "equal-cutoff.db")
     goal_id = wm.create_goal("equal-cutoff", "")
     wm.set_goal_status(goal_id, "active")
+    with wm._writing() as conn:
+        conn.execute(
+            "UPDATE goals SET updated_at = ? WHERE id = ?",
+            (1_000.0, goal_id),
+        )
 
     assert wm.reclaim_orphan_goals(max_age_seconds=0) == 1
     assert wm.get_goal(goal_id).status == "blocked"

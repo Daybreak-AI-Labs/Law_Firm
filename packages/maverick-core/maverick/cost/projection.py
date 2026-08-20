@@ -195,7 +195,8 @@ def compare_against_budget(projection: PlanProjection, budget_dollars: float) ->
         verdict = "TIGHT"
         rec = (
             f"Projected ${total:.4f} is {total / budget:.0%} of the ${budget:.2f} budget — "
-            f"estimates skew low, so consider cheaper role models or fewer iterations."
+            "estimates skew low, so consider fewer iterations or an explicitly "
+            "cheaper run pin for a future run."
         )
     else:
         verdict = "OK"

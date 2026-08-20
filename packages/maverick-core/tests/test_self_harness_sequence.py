@@ -29,6 +29,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 HEADER = "Operating guidance learned for this model:"
 MAXL = sh._MAX_LINES_PER_MODEL
 MAXC = sh._MAX_ADDENDUM_CHARS
@@ -74,7 +76,7 @@ def _pass(store, model, line, *, promote=True):
     # promote=True -> A/B clears the gate; promote=False -> a flat no-op (rejected),
     # which must leave the store byte-identical.
     sw, swo = (0.95, 0.4) if promote else (0.5, 0.5)
-    sh.run_self_harness(
+    run_operator_harness(
         recs, model_id=model, min_support=3, held_in=["a", "b"],
         held_out=["c", "d", "e", "f", "g"], score_with=lambda a, c, _v=sw: _v,
         score_without=lambda a, c, _v=swo: _v, controller=ctrl,

@@ -1,9 +1,9 @@
-"""pick_sandbox() lets container users pick a coding language.
+"""The installer exposes exactly the retained local and Docker backends.
 
 0.1.4 added per-language sandbox images (sandbox._IMAGE_BY_LANGUAGE: rust ->
 rust:1, go -> golang:1, ...) but nothing in the wizard let a non-Python user
 reach it -- they'd land on python:3.12-slim with no cargo/go toolchain. The
-wizard now asks, for container backends only, and writes [sandbox] language.
+wizard asks for a language only for Docker and writes [sandbox] language.
 
 Python is the default image, so picking it (or a non-container backend) leaves
 the config byte-identical to before.
@@ -11,6 +11,8 @@ the config byte-identical to before.
 from __future__ import annotations
 
 import pytest
+
+_IMAGE = "firm-evaluator@sha256:" + ("a" * 64)
 
 
 def _answers(monkeypatch, backend_choice: str, language_choice: str | None):
@@ -23,7 +25,8 @@ def _answers(monkeypatch, backend_choice: str, language_choice: str | None):
         picks.append(language_choice)
     it = iter(picks)
     monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: next(it))
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "/tmp/ws")
+    texts = iter(["/tmp/ws", _IMAGE] if backend_choice.startswith("docker") else ["/tmp/ws"])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(texts))
     return wizard
 
 
@@ -35,6 +38,7 @@ def test_container_backend_writes_chosen_language(monkeypatch):
     )
     cfg = wizard.pick_sandbox()
     assert cfg["backend"] == "docker"
+    assert cfg["image"] == _IMAGE
     assert cfg["language"] == "rust"
 
 
@@ -61,6 +65,39 @@ def test_local_backend_skips_language_question(monkeypatch):
     cfg = wizard.pick_sandbox()
     assert cfg["backend"] == "local"
     assert "language" not in cfg
+
+
+def test_backend_choices_are_exactly_local_and_docker(monkeypatch):
+    from maverick_installer import wizard
+
+    prompts: list[list[str]] = []
+
+    def choose(_message, choices, default=None):
+        prompts.append(list(choices))
+        return default
+
+    monkeypatch.setattr(wizard, "_q_select", choose)
+    texts = iter(["/tmp/ws", _IMAGE])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(texts))
+    wizard.pick_sandbox()
+
+    assert [item.split()[0] for item in prompts[0]] == ["local", "docker"]
+
+
+def test_docker_reprompts_until_image_is_immutable(monkeypatch):
+    from maverick_installer import wizard
+
+    monkeypatch.setattr(
+        wizard,
+        "_q_select",
+        lambda *a, **k: "docker - Operator-built local image",
+    )
+    texts = iter(["/tmp/ws", "python:latest", _IMAGE])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(texts))
+
+    cfg = wizard.pick_sandbox()
+
+    assert cfg["image"] == _IMAGE
 
 
 def test_offered_languages_are_real_sandbox_keys(monkeypatch):

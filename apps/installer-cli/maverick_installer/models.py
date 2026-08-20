@@ -3,23 +3,10 @@
 Updated whenever providers ship new models. Each entry has an id, a
 notes string the wizard shows, and a status marker.
 
-Every provider listed here is wired up. Picking any of them in the wizard
-generates a config that the agent kernel actually dispatches to via
-the multi-provider LLM facade (``maverick.providers.get_provider_client``).
+Every provider listed here is wired up. The wizard requires the operator to
+select one provider and one exact model, then the kernel dispatches only to
+that explicitly selected provider.
 """
-
-ROLES: list[tuple[str, str]] = [
-    ("orchestrator",    "Plans, decomposes, verifies. Use a large model here."),
-    ("researcher",      "Searches and gathers information."),
-    ("coder",           "Writes and tests code."),
-    ("writer",          "Drafts longer-form prose."),
-    ("analyst",         "Synthesises findings; reasoning-heavy."),
-    ("revisor",         "Second-pass review when verification fails."),
-    ("verifier",        "Independent final-answer check."),
-    ("summarizer",      "Distillation. A small model is enough."),
-    ("skill_distiller", "Turns trajectories into reusable skills."),
-]
-
 
 PROVIDERS: dict[str, dict] = {
     "anthropic": {
@@ -99,7 +86,6 @@ PROVIDERS: dict[str, dict] = {
         "label": "OpenRouter (200+ models via one API)",
         "env": "OPENROUTER_API_KEY",
         "models": [
-            {"id": "auto",                       "notes": "OpenRouter picks for you."},
             {"id": "meta-llama/llama-3.3-70b",  "notes": "Open weight, strong general."},
             {"id": "google/gemini-pro-1.5",     "notes": "Long context."},
             {"id": "deepseek/deepseek-r1",      "notes": "Strong reasoning, cheap."},
@@ -160,17 +146,3 @@ PROVIDERS: dict[str, dict] = {
         ],
     },
 }
-
-
-def default_for_role(role: str) -> str:
-    return {
-        "orchestrator":    "anthropic:claude-opus-4-8",
-        "researcher":      "anthropic:claude-sonnet-4-6",
-        "coder":           "anthropic:claude-sonnet-4-6",
-        "writer":          "anthropic:claude-sonnet-4-6",
-        "analyst":         "anthropic:claude-sonnet-4-6",
-        "revisor":         "anthropic:claude-opus-4-8",
-        "verifier":        "anthropic:claude-sonnet-4-6",
-        "summarizer":      "anthropic:claude-haiku-4-5",
-        "skill_distiller": "anthropic:claude-sonnet-4-6",
-    }[role]

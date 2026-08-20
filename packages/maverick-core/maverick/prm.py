@@ -335,13 +335,13 @@ class LearnedPRM:
 
 class LinearPRM:
     """Torch-free learned PRM: a linear head over ``step_features``, stored as
-    plain JSON (no torch, no pickle -- safe to load and ship, the same
-    philosophy as ``maverick_shield.probe_model`` and
-    ``training.reward_model``).
+    plain JSON (no torch, no pickle -- safe to load and ship, following the
+    same artifact-validation philosophy as ``maverick_shield.probe_model``).
 
     Each head is ``tanh(w . features + b)`` over the shared 12-feature vector;
-    ``promise`` and ``progress`` have independent weights. Trained on CPU by
-    ``python -m maverick.training.prm_linear``. Like :class:`LearnedPRM` it
+    ``promise`` and ``progress`` have independent weights. The retained
+    :mod:`maverick.verifier_head` module trains and promotes these artifacts
+    through the governed offline path. Like :class:`LearnedPRM` it
     fails OPEN -- a missing, malformed, or vocabulary-mismatched artifact logs
     a warning ONCE and delegates every score to HeuristicPRM, so the swarm
     never blocks on model availability. A long-lived governed instance detects

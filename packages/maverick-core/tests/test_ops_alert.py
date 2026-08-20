@@ -1,76 +1,147 @@
-"""Operational alerting seam: off by default, routes through notifications when
-enabled, and never raises. Wired into the killswitch trip + provider cost cap."""
-from __future__ import annotations
+import hashlib
+import inspect
+import logging
+from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 from maverick import ops_alert
 
-
-@pytest.fixture
-def _spy_notify(monkeypatch):
-    calls = []
-    monkeypatch.setattr("maverick.notifications.notify",
-                        lambda body, **kw: calls.append((body, kw)) or 1)
-    return calls
+CORE_PACKAGE = Path(__file__).resolve().parents[1] / "maverick"
 
 
-def test_disabled_by_default_is_noop(_spy_notify, monkeypatch):
-    monkeypatch.delenv("MAVERICK_ALERTS", raising=False)
-    monkeypatch.setattr("maverick.config.load_config", dict)
-    assert ops_alert.alert("x", "detail") is False
-    assert _spy_notify == []
+def test_outbound_notification_transports_are_not_shipped() -> None:
+    retired = ("notifications.py", "notification_batcher.py", "push_v2.py")
+    assert not [name for name in retired if (CORE_PACKAGE / name).exists()]
 
 
-def test_enabled_via_env_routes_to_notify(_spy_notify, monkeypatch):
-    monkeypatch.setenv("MAVERICK_ALERTS", "1")
-    assert ops_alert.alert("killswitch_tripped", "boom", severity="critical") is True
-    assert len(_spy_notify) == 1
-    body, kw = _spy_notify[0]
-    assert body == "boom"
-    assert kw["priority"] == "max" and kw["category"] == "ops_alert"
+def test_alert_is_local_only_and_drops_unapproved_fields(caplog) -> None:
+    secret = "DISTINCTIVE CLIENT ALERT TEXT"  # pragma: allowlist secret
+    with caplog.at_level(logging.CRITICAL, logger="maverick.ops_alert"):
+        assert ops_alert.alert(
+            "killswitch_tripped",
+            severity="critical",
+            fields={
+                "source": "operator",
+                "reason_bytes": len(secret.encode("utf-8")),
+                "reason_sha256": hashlib.sha256(secret.encode("utf-8")).hexdigest(),
+                "raw_reason": secret,
+            },
+        )
+
+    assert "killswitch_tripped" in caplog.text
+    assert secret not in caplog.text
+    source = inspect.getsource(ops_alert)
+    assert "httpx" not in source
+    assert "notifications" not in source
 
 
-def test_enabled_via_config(_spy_notify, monkeypatch):
-    monkeypatch.delenv("MAVERICK_ALERTS", raising=False)
-    monkeypatch.setattr("maverick.config.load_config",
-                        lambda: {"alerts": {"enabled": True}})
-    assert ops_alert.alert("e") is True
+def test_unknown_event_is_digest_only(caplog) -> None:
+    secret = "client-name-in-an-untrusted-event"  # pragma: allowlist secret
+    expected = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    with caplog.at_level(logging.ERROR, logger="maverick.ops_alert"):
+        assert ops_alert.alert(secret)
+
+    assert secret not in caplog.text
+    assert expected in caplog.text
 
 
-def test_alert_never_raises(monkeypatch):
-    monkeypatch.setenv("MAVERICK_ALERTS", "1")
+def test_malformed_structural_field_is_dropped(caplog) -> None:
+    with caplog.at_level(logging.CRITICAL, logger="maverick.ops_alert"):
+        assert ops_alert.alert(
+            "killswitch_tripped",
+            severity="critical",
+            fields={"source": ["not", "a", "token"]},
+        )
 
-    def _boom(*a, **k):
-        raise RuntimeError("transport down")
-
-    monkeypatch.setattr("maverick.notifications.notify", _boom)
-    assert ops_alert.alert("e") is False  # swallowed
-
-
-# ---- wiring -----------------------------------------------------------------
+    assert '"fields":{}' in caplog.text
 
 
-def test_killswitch_halt_alerts(_spy_notify, monkeypatch):
-    monkeypatch.setenv("MAVERICK_ALERTS", "1")
-    from maverick import killswitch
-    killswitch.halt("manual stop", source="test")
+def test_killswitch_reason_never_enters_log_audit_or_alert(monkeypatch, caplog) -> None:
+    from maverick import audit, killswitch
+
+    reason = "DISTINCT CLIENT MATTER REASON"
+    expected = hashlib.sha256(reason.encode("utf-8")).hexdigest()
+    audits: list[tuple[str, dict]] = []
+    alerts: list[tuple[str, dict]] = []
+    monkeypatch.setattr(killswitch, "_in_process_halt", None)
+    monkeypatch.setattr(killswitch, "_authority_barrier", nullcontext)
+    monkeypatch.setattr(
+        audit,
+        "audit_event",
+        lambda kind, **payload: audits.append((kind, payload)) or True,
+    )
+    monkeypatch.setattr(
+        ops_alert,
+        "alert",
+        lambda event, **kwargs: alerts.append((event, kwargs)) or True,
+    )
+
     try:
-        assert any("killswitch_tripped" in kw.get("title", "")
-                   for _b, kw in _spy_notify)
+        with caplog.at_level(logging.WARNING, logger="maverick.killswitch"):
+            killswitch.halt(reason, source="operator")
     finally:
-        killswitch.clear()
+        monkeypatch.setattr(killswitch, "_in_process_halt", None)
+
+    assert reason not in caplog.text
+    assert reason not in repr(audits)
+    assert reason not in repr(alerts)
+    assert expected in caplog.text
+    assert audits[0][1] == {
+        "source": "operator",
+        "reason_bytes": len(reason.encode("utf-8")),
+        "reason_sha256": expected,
+    }
+    assert alerts[0] == (
+        "killswitch_tripped",
+        {
+            "severity": "critical",
+            "fields": {
+                "source": "operator",
+                "reason_bytes": len(reason.encode("utf-8")),
+                "reason_sha256": expected,
+            },
+        },
+    )
 
 
-def test_provider_cap_alerts_once_per_period(_spy_notify, monkeypatch, tmp_path):
-    monkeypatch.setenv("MAVERICK_ALERTS", "1")
+def test_provider_cap_alerts_once_per_period(monkeypatch) -> None:
     from maverick import provider_cost_cap as cap
+
+    alerts: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        ops_alert,
+        "alert",
+        lambda event, **kwargs: alerts.append((event, kwargs)) or True,
+    )
     cap._alerted.clear()
-    monkeypatch.setattr(cap, "check",
-                        lambda provider, **kw: cap.CapStatus(
-                            allowed=False, spent=10.0, cap=5.0, remaining=0.0))
+    monkeypatch.setattr(
+        cap,
+        "check",
+        lambda provider, **kw: cap.CapStatus(
+            allowed=False,
+            spent=10.0,
+            cap=5.0,
+            remaining=0.0,
+        ),
+    )
+
     with pytest.raises(cap.ProviderCapExceeded):
-        cap.enforce("anthropic")
+        cap.enforce("anthropic", now=0)
     with pytest.raises(cap.ProviderCapExceeded):
-        cap.enforce("anthropic")  # second blocked call must NOT re-alert
-    titles = [kw.get("title", "") for _b, kw in _spy_notify]
-    assert sum("provider_cost_cap_exhausted" in t for t in titles) == 1
+        cap.enforce("anthropic", now=0)
+
+    assert alerts == [
+        (
+            "provider_cost_cap_exhausted",
+            {
+                "severity": "critical",
+                "fields": {
+                    "provider": "anthropic",
+                    "spent_dollars": 10.0,
+                    "cap_dollars": 5.0,
+                    "period": "1970-01-01",
+                },
+            },
+        )
+    ]

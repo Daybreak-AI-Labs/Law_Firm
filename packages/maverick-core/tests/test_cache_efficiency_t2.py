@@ -88,7 +88,6 @@ class TestMessageTierTTL:
     def test_default_message_ttl_is_5m(self, monkeypatch):
         monkeypatch.delenv("MAVERICK_ANTHROPIC_CACHE_TTL", raising=False)
         monkeypatch.delenv("MAVERICK_ANTHROPIC_MSG_CACHE_TTL", raising=False)
-        monkeypatch.delenv("MAVERICK_CODING_MODE", raising=False)
         assert _msg_cache_ttl() == "5m"
         marked = _mark_user_message({"role": "user", "content": "hi"})
         assert marked["content"][-1]["cache_control"]["ttl"] == "5m"

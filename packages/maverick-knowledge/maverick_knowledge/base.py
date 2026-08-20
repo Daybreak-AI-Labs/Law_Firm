@@ -46,6 +46,27 @@ _INJECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COLLECTION_SOURCE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
+
+
+def _collection_source(source: str) -> str:
+    normalized = str(source or "").strip()
+    if not _COLLECTION_SOURCE_RE.fullmatch(normalized):
+        raise ValueError("knowledge collection source must be a safe non-empty key")
+    return normalized
+
+
+def matter_collection(matter_id: int, source: str) -> str:
+    """Opaque collection key for one exact client matter and knowledge source."""
+    if isinstance(matter_id, bool) or int(matter_id) <= 0:
+        raise ValueError("a positive matter_id is required for client knowledge")
+    return f"matter:{int(matter_id)}:{_collection_source(source)}"
+
+
+def public_collection(source: str) -> str:
+    """Collection key reserved for shipped/non-client public authorities."""
+    return f"public:{_collection_source(source)}"
+
 
 @dataclass
 class Hit:
@@ -110,11 +131,11 @@ def _dedup_hits(hits: list[Hit], *, max_overlap: int) -> list[Hit]:
 
 
 class KnowledgeBase:
-    """A per-domain document store.
+    """A matter-scoped document store.
 
-    ``collection`` is the domain's knowledge source, so a finance agent's
-    queries never surface legal's documents -- knowledge respects the same
-    bulkheads the compartments enforce.
+    File-backed collection identifiers are either ``matter:<id>:<source>`` or
+    ``public:<source>``. Domain compartments remain a second boundary, but a
+    domain name alone is never a client-data namespace.
     """
 
     def __init__(self, store=None, embedder=None, shield=None,
@@ -144,16 +165,21 @@ class KnowledgeBase:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def _safe(self, text: str) -> bool:
+    def _safe(self, text: str, *, required: bool = False) -> bool:
         """Screen a chunk on the way in. The built-in injection-marker tripwire
         ALWAYS runs (even with no Shield wired, the common default), so a poisoned
         document can't ride into prompts via search_formatted. A configured Shield
-        runs in addition. Fail-open ONLY on a Shield scanner error, mirroring the
-        kernel's shield contract -- the marker screen itself never errors."""
+        runs in addition. Ephemeral legacy stores retain their historical soft
+        behavior; persistent firm ingestion requires Shield and fails the whole
+        document on scanner absence/error/denial."""
         if _INJECTION_RE.search(text):
             log.warning("knowledge: dropping chunk with injection marker on ingest")
             return False
         if self.shield is None:
+            if required:
+                raise RuntimeError(
+                    "knowledge: Shield is required for persistent ingestion"
+                )
             return True
         try:
             # An ingested chunk is untrusted CONTENT (like tool output), so use
@@ -161,7 +187,11 @@ class KnowledgeBase:
             # scan_input.
             verdict = self.shield.scan_output(text)
             return getattr(verdict, "allowed", True)
-        except Exception:  # pragma: no cover -- never block ingest on a scan bug
+        except Exception as exc:
+            if required:
+                raise RuntimeError(
+                    "knowledge: Shield scan failed; document was not ingested"
+                ) from exc
             return True
 
     def ingest_text(self, collection: str, text: str, source: str = "", *,
@@ -185,17 +215,27 @@ class KnowledgeBase:
         * ``doc_sha256`` — content hash (dedup + tamper-evidence).
         """
         raw_chunks = list(chunk_text(text, self.chunk_size, self.chunk_overlap))
-        chunks = [c for c in raw_chunks if self._safe(c)]
+        strict_ingest = bool(
+            getattr(self.store, "_require_scoped_collections", False)
+        )
         # Boundary-split evasion guard: an attacker can straddle an injection
         # tripwire across a chunk edge (or pick a small chunk_size) so no single
         # chunk matches the marker even though the full document does. Screen the
         # FULL text unconditionally -- the old `len(chunks) == len(raw_chunks)`
         # guard skipped this whenever any one chunk was also independently
         # dropped, letting a straddled payload's remaining chunks through.
-        if not self._safe(text):
+        if not self._safe(text, required=strict_ingest):
             log.warning("knowledge: dropping document with boundary-split "
                         "injection marker on ingest")
             return 0
+        chunks: list[str] = []
+        for chunk in raw_chunks:
+            if self._safe(chunk, required=strict_ingest):
+                chunks.append(chunk)
+                continue
+            if strict_ingest:
+                log.warning("knowledge: refusing whole document after chunk scan")
+                return 0
         if not chunks:
             return 0
         vectors = self.embedder.embed(chunks)
@@ -293,6 +333,23 @@ class KnowledgeBase:
     def delete_collection(self, collection: str) -> None:
         """Delete an unapproved or retired collection from the backing store."""
         self.store.delete_collection(collection)
+
+    def require_matter_sources(self, matter_id: int, sources: list[str]) -> int:
+        """Authenticate every required exact-matter collection before a run."""
+        validate = getattr(self.store, "validate_collection", None)
+        if not callable(validate):
+            raise RuntimeError(
+                "knowledge: backing store cannot validate required collections"
+            )
+        total = 0
+        for source in sources:
+            total += int(
+                validate(
+                    matter_collection(matter_id, source),
+                    require_nonempty=True,
+                )
+            )
+        return total
 
     def _search_vec(self, collection: str, vector, k: int) -> list[Hit]:
         """Store lookup for an already-embedded query; one Hit-wrap site."""

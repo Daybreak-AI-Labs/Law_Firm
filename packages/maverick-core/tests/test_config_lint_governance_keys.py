@@ -12,7 +12,7 @@ headline governance features straight from the docs --
 you mean auth?") and capabilities.enforce as an unknown key, telling them
 their flagship signed-audit + capability-enforcement config looked like
 typos. Both are real keys the runtime reads (audit/writer.py:_resolve_signing,
-capability.py:capability_enforced). The deferred_tools knob was missing too.
+capability.py:capability_enforced).
 """
 from __future__ import annotations
 
@@ -32,12 +32,6 @@ def test_audit_sign_is_recognized():
 def test_capabilities_enforce_is_recognized():
     findings = lint_config({"capabilities": {"enforce": True}})
     assert not [f for f in findings if "enforce" in (f.key or "")], \
-        [f.message for f in findings]
-
-
-def test_capabilities_deferred_tools_is_recognized():
-    findings = lint_config({"capabilities": {"deferred_tools": False}})
-    assert not [f for f in findings if "deferred_tools" in (f.key or "")], \
         [f.message for f in findings]
 
 
@@ -79,4 +73,22 @@ def test_evidence_graph_is_closed_and_boolean():
         and finding.key == "enable"
         and finding.severity == "error"
         for finding in wrong_type
+    )
+
+
+def test_firm_egress_allowlists_are_closed_schema():
+    assert lint_config({
+        "firm": {
+            "approved_providers": ["openai"],
+            "approved_hosts": ["api.openai.com"],
+            "approved_local_hosts": ["model.firm.internal"],
+        }
+    }) == []
+
+    findings = lint_config({"firm": {"approved_host": ["api.openai.com"]}})
+    assert any(
+        finding.section == "firm"
+        and finding.key == "approved_host"
+        and "unknown" in finding.message.lower()
+        for finding in findings
     )

@@ -84,7 +84,6 @@ def agent_surface(name: str) -> dict[str, Any] | None:
         "max_risk": v.get("max_risk") or "low",
         "allow_paths": sorted(v.get("allow_paths") or []),
         "allow_hosts": sorted(v.get("allow_hosts") or []),
-        "mcp_servers": sorted(v.get("mcp_servers") or []),
         "knowledge_sources": sorted(v.get("knowledge_sources") or []),
         "declared_prompt_gate": declared,
         "enforced_gate": enforced,
@@ -496,7 +495,7 @@ def flow_surface(flow_id: str) -> dict[str, Any] | None:
         "deny_tools": [],
         "max_risk": max_risk,
         "tool_risks": dict(sorted(analysis.tool_risks.items())),
-        "allow_paths": [], "allow_hosts": [], "mcp_servers": [],
+        "allow_paths": [], "allow_hosts": [],
         "knowledge_sources": [],
         "declared_prompt_gate": declared_gate,
         "enforced_gate": enforced_gate,
@@ -525,7 +524,7 @@ def _hash_surface(surface: dict[str, Any]) -> str:
     tools / data / risk / gating is detectable as drift."""
     keyed = {k: surface.get(k) for k in (
         "allow_tools", "deny_tools", "max_risk", "allow_paths", "allow_hosts",
-        "mcp_servers", "knowledge_sources", "declared_prompt_gate",
+        "knowledge_sources", "declared_prompt_gate",
         "enforced_gate", "has_human_gate", "tool_risks", "analysis_complete",
         "approval_gaps", "unresolved_tools", "unresolved_subflows",
         "release_digest")}
@@ -597,9 +596,9 @@ def _security_findings(s: dict) -> list[dict]:
         out.append(_finding("security", "Write / filesystem access", "medium",
             "Can modify state via: " + ", ".join(writes + s["allow_paths"]) + ".",
             "Constrain writable paths; prefer review before irreversible writes."))
-    if creds or s["mcp_servers"]:
+    if creds:
         out.append(_finding("security", "Credential / connector reach", "medium",
-            "Uses connectors/servers: " + ", ".join(creds + s["mcp_servers"]) + ".",
+            "Uses credentialed connectors: " + ", ".join(creds) + ".",
             "Store secrets as sealed connections; scope tokens to least privilege."))
     if _SEVERITY_RANK.get(s["max_risk"], 0) >= _SEVERITY_RANK["high"]:
         out.append(_finding("security", "Risk ceiling", "high",

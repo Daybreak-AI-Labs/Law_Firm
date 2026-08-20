@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from maverick import promotion_effect as pe
 from maverick.self_improvement import Candidate, SelfImprovementController
-from maverick.si_producers import propose_with_effect
 from maverick.trajectory_store import TrajectoryStep
 
 
@@ -125,16 +124,6 @@ def test_gate_rejects_high_mean_but_unconfident_effect():
     verdict = ctrl.evaluate(cand)
     assert not verdict.promote
     assert "causal effect" in verdict.blocking_reason
-
-
-def test_propose_with_effect_fail_closed_on_untrustworthy():
-    bad = pe.EffectEstimate(
-        effect=0.3, ci_low=0.2, ci_high=0.4, n_used=3, n_total=50, strata_used=1,
-        overlap=0.06, naive_effect=0.5, placebo_effect=0.0, trustworthy=False,
-    )
-    verdict = propose_with_effect("prompt", "should not promote", bad, rollback="snap")
-    assert not verdict.promote
-    assert verdict.gates[0].gate == "effect_calibration"
 
 
 def test_enabled_respects_explicit_opt_out_and_opt_in(monkeypatch):

@@ -40,16 +40,3 @@ def test_trailing_space_subjects_stay_distinct_for_ownership_and_execution(
     assert auth.can_access_goal(alice, spaced_goal) is False
     assert auth.can_access_goal(alice_space, plain_goal) is False
     assert auth.can_access_goal(alice_space, spaced_goal) is True
-
-
-def test_tenant_pin_keeps_exact_verified_principal(monkeypatch):
-    pins: list[str] = []
-    monkeypatch.setattr("maverick.paths.tenant_by_user_enabled", lambda: True)
-    monkeypatch.setattr(
-        "maverick.paths.set_tenant", lambda tenant: pins.append(tenant) or object(),
-    )
-    request = _request_for("alice ")
-
-    auth._pin_tenant_from_principal(request, request.state.principal)
-
-    assert pins == ["api:user:alice "]

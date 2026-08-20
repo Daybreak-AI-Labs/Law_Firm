@@ -307,36 +307,6 @@ def test_verified_non_usd_rate_is_not_silently_counted_as_dollars(monkeypatch):
 
     with pytest.raises(UnpricedModelError, match="requires a verified USD"):
         Budget().record_tokens(100, 10, model="euro/model")
-
-
-def test_router_excludes_provisional_rates_unless_estimate_only(monkeypatch):
-    from maverick.cost import router
-
-    monkeypatch.setenv("MAVERICK_COST_ROUTING", "1")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
-    for key in (
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "MOONSHOT_API_KEY",
-        "XAI_API_KEY",
-        "GROK_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-    ):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setattr(router, "_allowed_providers", lambda: {"openrouter"})
-    signal = router.signal_for_role("summarizer")
-
-    assert router.pick(signal) is None
-    assert router.pick(signal, estimate_only=True).startswith("openrouter:")
-    assert router.price_for_model("minimax/minimax-m2.5") is None
-    assert router.price_for_model(
-        "minimax/minimax-m2.5",
-        estimate_only=True,
-    ) == (0.30, 1.20)
-
-
 def test_current_verified_rates_and_unverified_claim_boundaries():
     from maverick.llm import MODEL_PRICING_PROVIDER
 

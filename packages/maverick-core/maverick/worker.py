@@ -9,13 +9,11 @@ A handler is just a callable ``(job: Job) -> None``. Raise to fail;
 return cleanly to succeed. The worker handles retry / terminal
 failure / sleep-when-empty automatically.
 
-Built-in handlers:
-  - ``run_goal``  — payload {"goal_id": int} -> runs an EXISTING goal via
-    maverick.runner.run_goal_in_thread (with a sync wait).
-  - ``start_goal`` — payload {"text": str, "title"?: str} -> creates a FRESH
-    goal from the prompt on each run, then runs it. This is the kind to pair
-    with cron for a recurring autonomous task (armed from the dashboard's
-    schedule endpoints).
+Built-in handlers require ``matter_id``, ``domain``, and the authenticated
+``concurrency_principal`` in addition to their goal/prompt fields. ``run_goal``
+re-resolves that snapshot immediately before dispatch. ``start_goal`` creates
+the row atomically through ``create_matter_goal`` and then performs the same
+pre-dispatch check. Matterless legacy payloads fail closed.
 
 Custom handlers are registered via :meth:`Worker.register`.
 
@@ -74,13 +72,99 @@ def _run_identity_kwargs(payload: dict) -> dict[str, object]:
         run_kwargs["channel"] = channel
     if user_id:
         run_kwargs["user_id"] = user_id
-    concurrency_principal = str(payload.get("concurrency_principal") or "").strip()
-    if concurrency_principal:
+    concurrency_principal = payload.get("concurrency_principal")
+    if concurrency_principal is not None:
+        if (
+            not isinstance(concurrency_principal, str)
+            or not concurrency_principal
+            or concurrency_principal != concurrency_principal.strip()
+            or "\x00" in concurrency_principal
+        ):
+            raise ValueError(
+                "job concurrency_principal must be a non-empty canonical string"
+            )
         run_kwargs["concurrency_principal"] = concurrency_principal
     allowed_suites = payload.get("allowed_suites")
     if allowed_suites is not None:
         run_kwargs["allowed_suites"] = frozenset(str(s) for s in allowed_suites)
     return run_kwargs
+
+
+def _job_matter_snapshot(payload: dict) -> tuple[int, str, str]:
+    """Return the mandatory local-job matter snapshot in canonical form."""
+    matter_id = payload.get("matter_id")
+    if isinstance(matter_id, bool) or not isinstance(matter_id, int) or matter_id <= 0:
+        raise ValueError("job payload requires a positive matter_id")
+    principal = payload.get("concurrency_principal")
+    domain = payload.get("domain")
+    for field, value in (("concurrency_principal", principal), ("domain", domain)):
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or "\x00" in value
+        ):
+            raise ValueError(f"job payload requires a canonical {field}")
+    return matter_id, principal, domain
+
+
+def _verify_job_matter_context(payload: dict, goal_id: int):
+    """Re-resolve a local job's matter authority immediately before dispatch."""
+    from .matter_context import resolve_goal_matter_context, verify_context_snapshot
+    from .world_model import close_world_if_owned, open_world
+
+    matter_id, principal, domain = _job_matter_snapshot(payload)
+    world = open_world()
+    try:
+        context = resolve_goal_matter_context(
+            world,
+            goal_id,
+            principal=principal,
+            source="worker",
+        )
+        verify_context_snapshot(
+            context,
+            matter_id=matter_id,
+            principal=principal,
+            domain=domain,
+        )
+        return context
+    finally:
+        close_world_if_owned(world)
+
+
+def _create_scheduled_matter_goal(job: Job, title: str, text: str) -> int:
+    """Atomically create one scheduled goal under its durable matter ACL."""
+    from .matter_context import resolve_matter_context
+    from .world_model import close_world_if_owned, open_world
+
+    matter_id, principal, domain = _job_matter_snapshot(job.payload)
+    world = open_world()
+    try:
+        # Validate the enabled/gated legal pack before writing; create_matter_goal
+        # then rechecks the active membership in the INSERT statement itself.
+        resolve_matter_context(
+            world,
+            matter_id=matter_id,
+            principal=principal,
+            domain=domain,
+            source="worker",
+        )
+        goal_id = world.create_matter_goal(
+            title,
+            text,
+            principal=principal,
+            domain=domain,
+            project_id=matter_id,
+        )
+        if goal_id is None:
+            raise ValueError("scheduled matter goal authorization changed")
+        schedule_id = job.payload.get("schedule_id")
+        if schedule_id:
+            world.record_goal_origin(goal_id, "schedule", str(schedule_id))
+        return int(goal_id)
+    finally:
+        close_world_if_owned(world)
 
 
 @contextmanager
@@ -161,6 +245,7 @@ class Worker:
             goal_id = job.payload.get("goal_id")
             if not goal_id:
                 raise ValueError("run_goal payload requires goal_id")
+            _verify_job_matter_context(job.payload, int(goal_id))
             # Sync run so the queue waits before claiming the next job.
             from .runner import run_goal_in_thread
             status = run_goal_in_thread(int(goal_id), **_run_identity_kwargs(job.payload))
@@ -177,6 +262,16 @@ class Worker:
         self._handlers["run_goal"] = _run_goal
 
         def _start_goal(job: Job) -> None:
+            # Legacy schedules were armed without an exact matter context. Do
+            # not try to infer one at fire time: consume the occurrence without
+            # reading the prompt, creating a goal, or invoking the runner. The
+            # re-arm path separately refuses every start_goal cron successor.
+            if job.payload.get("__cron__"):
+                log.warning(
+                    "worker: retired legacy start_goal cron job %d without execution",
+                    job.id,
+                )
+                return
             # A recurring autonomous task creates a FRESH goal from the prompt
             # on every fire -- unlike run_goal, which re-runs one fixed goal_id
             # (re-executing the same world-model row). Pair with cron via
@@ -194,21 +289,10 @@ class Worker:
             goal_id = job.payload.get("goal_id")
             if not goal_id:
                 title = (job.payload.get("title") or text).strip()[:80]
-                from .world_model import close_world_if_owned, open_world
-                world = open_world()  # client/tenant-floored canonical world
-                try:
-                    owner = str(job.payload.get("owner") or "")
-                    goal_id = world.create_goal(title, text, owner=owner)
-                    # Provenance: link this run to its schedule so the dashboard
-                    # Automations page can show the schedule's run history. Only
-                    # on first creation (not retries, which reuse goal_id).
-                    schedule_id = job.payload.get("schedule_id")
-                    if schedule_id:
-                        world.record_goal_origin(goal_id, "schedule", str(schedule_id))
-                finally:
-                    close_world_if_owned(world)
+                goal_id = _create_scheduled_matter_goal(job, title, text)
                 job.payload["goal_id"] = goal_id
                 self.queue.set_payload(job.id, job.payload)
+            _verify_job_matter_context(job.payload, int(goal_id))
             # Same retry contract as run_goal: only transient outcomes requeue.
             from .runner import run_goal_in_thread
             status = run_goal_in_thread(int(goal_id), **_run_identity_kwargs(job.payload))
@@ -251,6 +335,11 @@ class Worker:
         """
         expr = job.payload.get("__cron__")
         if not expr:
+            return
+        if job.kind == "start_goal":
+            # The legacy schedule protocol cannot bind an exact matter,
+            # principal, and domain. Stop the chain at the claimed occurrence;
+            # the handler below is a matching no-op.
             return
         if job.payload.get(_REARMED_KEY):
             return  # this occurrence already armed its successor (durable)

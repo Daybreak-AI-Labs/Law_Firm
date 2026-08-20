@@ -109,7 +109,7 @@ def test_jailbreak_corpus_minimum_detection_rate():
     )
 
 
-# ---------- threat model + streaming docs exist ----------
+# ---------- threat model exists ----------
 
 def test_threat_model_doc_exists():
     repo_root = Path(__file__).resolve().parents[3]
@@ -121,18 +121,3 @@ def test_threat_model_doc_exists():
                 "Information disclosure", "Denial of service",
                 "Elevation of privilege"):
         assert cat in body, f"threat model missing STRIDE category: {cat}"
-
-
-def test_streaming_parity_doc_exists():
-    repo_root = Path(__file__).resolve().parents[3]
-    p = repo_root / "docs" / "performance" / "streaming-parity.md"
-    assert p.is_file()
-    body = p.read_text()
-    # Doc must list each known provider so it stays in sync.
-    for provider in (
-        "anthropic", "openai", "openrouter", "ollama", "moonshot",
-        "deepseek", "xai", "gemini",
-        "chatgpt-session", "claude-session", "kimi-session",
-        "grok-session", "gemini-session",
-    ):
-        assert provider in body, f"streaming-parity doc missing: {provider}"

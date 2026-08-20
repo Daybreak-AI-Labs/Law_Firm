@@ -16,8 +16,8 @@
 | Determinism (real loop) | same inputs → **byte-identical** learned store across 6 independent runs |
 | Standalone proof scoreboard (`proof/self_harness_proof.py`) | **11/11 guarantees PROVEN**, reproducible |
 
-Only skips in the whole run were two unrelated optional-dependency modules
-(`z3`, `duckdb`) — no self-harness test skipped.
+Only skips in the whole run were two unrelated optional-dependency modules;
+no self-harness test skipped.
 
 ## What the loop is
 
@@ -39,8 +39,8 @@ python3 -m pytest packages/maverick-core/tests/ -q \
   -k "self_harness or self_learning or self_improvement"
 ```
 
-Ran 5× consecutively → `360 passed, 2 skipped` each time (the 2 skips are
-`z3`/`duckdb`, not harness tests). Stable pass count = no order-dependence, no
+Ran 5× consecutively → `360 passed, 2 skipped` each time (the skips were outside
+the harness tests). Stable pass count = no order-dependence, no
 flakiness.
 
 ### 2. High-round soak (scale proof)
@@ -104,8 +104,8 @@ python3 proof/self_harness_proof.py
   [PASS]  reversible + auditable      rollback handle restores exactly; forget() clears guidance
   [PASS]  canary lifecycle            probation rides; 3 wins graduate, 2 failures pull it (audited forget)
   [PASS]  rollback durability         forget/reject beat auto re-entry; indeterminate verdicts stay retryable
-  [PASS]  fleet store parity          same content as files; 8/8 concurrent promotions; forget round-trips
-  [PASS]  fleet corpus store          stage/reject/accept as world rows; export-import keeps every field
+  [PASS]  durable store parity        same content as files; 8/8 concurrent promotions; forget round-trips
+  [PASS]  durable corpus store        stage/reject/accept as world rows; export-import keeps every field
   11 guarantees PROVEN, 0 failed
 ```
 

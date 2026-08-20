@@ -228,20 +228,3 @@ def test_known_action_missing_required_param_fails_with_diagnostic():
 
     assert flow.is_single_agent()
     assert any("missing required params: channel" in note for note in notes)
-
-
-def test_flow_drafter_receives_promoted_factory_guidance(monkeypatch):
-    from maverick import factory_learning
-    seen = {}
-
-    monkeypatch.setattr(
-        factory_learning, "augment_system_prompt",
-        lambda system, **kwargs: system + "\nPROMOTED FACTORY CORRECTION",
-    )
-
-    def capture(system, messages, budget=None, max_tokens=0, **kwargs):
-        seen["system"] = system
-        return _Resp('{"start":"a","nodes":[{"id":"a","kind":"agent","brief":"x"}]}')
-
-    draft_flow("do it", tools=(), complete=capture)
-    assert "PROMOTED FACTORY CORRECTION" in seen["system"]

@@ -1,4 +1,4 @@
-"""Tenant/principal isolation for LLM cache and browser credential vault."""
+"""Tenant/principal isolation for the retained LLM response cache."""
 from __future__ import annotations
 
 import sqlite3
@@ -8,7 +8,6 @@ import pytest
 
 pytest.importorskip("cryptography")
 
-from maverick import browser_auth_vault as browser_vault  # noqa: E402
 from maverick.cache import llm as llm_cache  # noqa: E402
 from maverick.connections import bind_principal  # noqa: E402
 from maverick.file_lock import (  # noqa: E402
@@ -109,51 +108,3 @@ def test_llm_legacy_unscoped_rows_are_not_adopted(tmp_path):
     assert cache.lookup("legacy-key") is None
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
-
-
-def test_browser_vault_tenant_switch_never_reuses_credentials(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_VAULT_KEY", raising=False)
-
-    with tenant_scope(tenant="tenant-a"), bind_principal("user:alice"):
-        assert "sealed entry" in browser_vault._run(
-            {"op": "store", "name": "reports", "data": {"cookie": "a"}}
-        )
-        key_a, data_a = browser_vault._default_paths()
-        assert browser_vault._run({"op": "list"}) == "reports"
-
-    with tenant_scope(tenant="tenant-b"), bind_principal("user:alice"):
-        key_b, data_b = browser_vault._default_paths()
-        assert browser_vault._run({"op": "list"}) == "(vault empty)"
-        assert "sealed entry" in browser_vault._run(
-            {"op": "store", "name": "reports", "data": {"cookie": "b"}}
-        )
-
-    assert key_a != key_b
-    assert data_a != data_b
-    with tenant_scope(tenant="tenant-a"), bind_principal("user:alice"):
-        assert browser_vault._run({"op": "list"}) == "reports"
-        assert "loaded 'reports'" in browser_vault._run(
-            {"op": "load", "name": "reports"}
-        )
-
-
-def test_browser_vault_exact_principals_are_isolated_and_private(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.delenv("MAVERICK_VAULT_KEY", raising=False)
-
-    with tenant_scope(tenant="tenant-a"), bind_principal("user:alice"):
-        browser_vault._run(
-            {"op": "store", "name": "reports", "data": {"cookie": "a"}}
-        )
-        key_a, data_a = browser_vault._default_paths()
-
-    with tenant_scope(tenant="tenant-a"), bind_principal("user:alice "):
-        key_b, data_b = browser_vault._default_paths()
-        assert browser_vault._run({"op": "list"}) == "(vault empty)"
-
-    assert key_a != key_b
-    assert data_a != data_b
-    assert private_path_is_restricted(data_a.parent, 0o700)
-    assert private_path_is_restricted(key_a)
-    assert private_path_is_restricted(data_a)

@@ -57,11 +57,10 @@ def _redact_provider_text(value: object) -> str | None:
 
 def _world_corpus_kind(path: str | Path) -> str | None:
     """Which world-corpus family a path denotes when the operator selected
-    the world learning store (``[self_harness] store = "world"`` -- phase 2 of
-    docs/proposals/fleet-learning-state.md): the configured ``eval_corpus``
-    path is ``"live"``, its harvest sidecars ``"pending"``/``"rejected"``.
-    ``None`` (file semantics, byte-identical) for any other path or when the
-    store is files -- so tests and ad-hoc paths are unchanged."""
+    the world learning store: the configured ``eval_corpus`` path is
+    ``"live"``, its review sidecars ``"pending"``/``"rejected"``. ``None``
+    (file semantics) for any other path or when the store is files, so tests
+    and ad-hoc paths are unchanged."""
     try:
         from .self_harness import settings
         st = settings()
@@ -93,22 +92,24 @@ def _corpus_rmw_lock(corpus_path: str | Path):
 
 
 def _read_json_text(path: str | Path) -> str:
-    """The file's JSON text, transparently unsealing an at-rest-encrypted
-    sidecar (a plaintext file is returned unchanged -- ``unseal`` is
-    plaintext-tolerant). A sealed blob that cannot be opened surfaces as
-    ``ValueError`` so the tolerant loaders' catch tuples apply. A
-    world-routed corpus path serves the same JSON from the world store."""
+    """Authenticate and open one corpus-family document.
+
+    Firm learning is stricter than the general at-rest migration seam: secure
+    mode withholds legacy plaintext, corrupt ciphertext, and wrong-key data.
+    Explicitly insecure legacy mode remains plaintext-compatible. A
+    world-routed corpus path serves the same authenticated JSON shape from the
+    world store.
+    """
     kind = _world_corpus_kind(path)
     if kind is not None:
         from . import learning_store
-        return json.dumps(learning_store.load_corpus_db(kind))
-    raw = Path(path).read_bytes()
-    try:
-        from .crypto_at_rest import unseal
-        raw = unseal(raw)
-    except Exception as e:
-        raise ValueError(f"unreadable sealed corpus file {path}: {e}") from e
-    return raw.decode("utf-8")
+        return json.dumps(learning_store.load_corpus_db(kind, strict=True))
+    from .learning_crypto import decode_text
+
+    decoded = decode_text(Path(path).read_text(encoding="utf-8"))
+    if decoded is None:
+        raise ValueError(f"unauthenticated or unreadable corpus file {path}")
+    return decoded
 
 
 def load_eval_corpus(path: str | Path) -> dict[str, list[dict]]:
@@ -899,42 +900,47 @@ _corpus_lock = threading.Lock()
 
 
 def _write_corpus_file(path: Path, data: dict, *, seal: bool = False) -> None:
-    """Serialize a corpus-family file. ``seal`` opts a MACHINE-OWNED sidecar
-    (pending/rejected) into at-rest encryption when the deployment seals its
-    stores -- goal text there is the same content the world DB seals. The LIVE
-    corpus is operator-authored/hand-editable by design and never sealed here.
-    A sealing failure propagates (fail closed, per crypto_at_rest.seal): the
-    caller must not silently write sensitive plaintext. A world-routed corpus
-    path writes rows to the world store instead (the world DB is its own
-    at-rest surface; goal text is already secret-redacted before staging)."""
+    """Serialize one authenticated corpus-family document.
+
+    Every corpus kind can contain client-derived goals or evaluation text, so
+    live, pending, and rejected files share the same strict learning codec.
+    ``seal`` remains only as a source-compatible caller hint; policy decides
+    whether secure ciphertext is required. A sealing failure propagates and no
+    plaintext fallback is written. World-routed corpora use the same rule per
+    database row.
+    """
+    del seal
     kind = _world_corpus_kind(path)
     if kind is not None:
         from . import learning_store
         learning_store.write_corpus_db(kind, data)
         return
-    text = json.dumps(data, indent=2, sort_keys=True)
-    if seal:
-        from .crypto_at_rest import at_rest_enabled
-        if at_rest_enabled():
-            from .crypto_at_rest import seal_text
-            from .file_lock import atomic_write_bytes
-            atomic_write_bytes(Path(path), seal_text(text), mode=0o600)
-            return
     from .file_lock import atomic_write_text
-    atomic_write_text(Path(path), text, mode=0o600)
+    from .learning_crypto import encode_text
+
+    text = json.dumps(data, indent=2, sort_keys=True)
+    atomic_write_text(Path(path), encode_text(text), mode=0o600)
 
 
-def _load_raw(path: str | Path) -> dict:
-    """The file's raw JSON dict (tolerant: ``{}`` on any error). Writers merge
-    into THIS, not the normalized :func:`load_eval_corpus` view -- rewriting the
-    normalized view would silently strip operator-authored per-case fields and
-    unknown keys from the live ground-truth file."""
+def _load_raw(path: str | Path, *, strict: bool = False) -> dict:
+    """Return the raw corpus mapping without normalizing away extra fields.
+
+    Public reads remain tolerant. Mutation paths pass ``strict=True`` so
+    corrupt, wrong-key, or unsealed secure state can never masquerade as an
+    empty corpus and be overwritten. A genuinely absent document is the only
+    empty baseline accepted by strict mode.
+    """
     try:
         data = json.loads(_read_json_text(path))
         if isinstance(data, dict):
             return data
-    except (FileNotFoundError, ValueError, OSError):
-        pass
+        if strict:
+            raise ValueError("corpus root must be a JSON object")
+    except FileNotFoundError:
+        return {}
+    except (ValueError, OSError):
+        if strict:
+            raise
     return {}
 
 
@@ -962,18 +968,25 @@ def _add_fresh(dest_path: Path, dest_raw: dict, key: str,
 
 def _stage_locked(corpus_path: str | Path, key: str,
                   candidates: list[dict]) -> int:
+    pending_path = pending_corpus_path(corpus_path)
+    # Validate every source that influences dedup before adding anything. A
+    # wrong-key live/rejected store must not silently permit a duplicate or
+    # re-stage an attorney-rejected case.
+    _load_raw(corpus_path, strict=True)
+    pending_raw = _load_raw(pending_path, strict=True)
+    _load_raw(rejected_corpus_path(corpus_path), strict=True)
     known = {c["goal"] for c in load_eval_corpus(corpus_path).get(str(key), [])}
     known |= {c["goal"] for c in load_pending(corpus_path).get(str(key), [])}
     known |= set(load_rejected(corpus_path).get(str(key), []))
-    return _add_fresh(pending_corpus_path(corpus_path),
-                      _load_raw(pending_corpus_path(corpus_path)),
-                      key, candidates, known, seal=True)
+    return _add_fresh(
+        pending_path, pending_raw, key, candidates, known, seal=True,
+    )
 
 
 def _merge_locked(corpus_path: str | Path, key: str,
                   candidates: list[dict]) -> int:
     known = {c["goal"] for c in load_eval_corpus(corpus_path).get(str(key), [])}
-    return _add_fresh(Path(corpus_path), _load_raw(corpus_path),
+    return _add_fresh(Path(corpus_path), _load_raw(corpus_path, strict=True),
                       key, candidates, known)
 
 
@@ -1016,6 +1029,7 @@ def resolve_pending(corpus_path: str | Path, key: str, *,
     from .file_lock import cross_process_lock
     with _corpus_lock, cross_process_lock(Path(corpus_path)), \
             _corpus_rmw_lock(corpus_path):
+        _load_raw(pending_corpus_path(corpus_path), strict=True)
         rows = load_pending(corpus_path).get(str(key), [])
         if accept_all:
             rej_idx = {int(i) for i in (reject or [])}
@@ -1033,7 +1047,9 @@ def resolve_pending(corpus_path: str | Path, key: str, *,
         kept = [c for i, c in enumerate(rows, 1)
                 if i not in acc_idx and i not in rej_idx]
         added = _merge_locked(corpus_path, key, accepted) if accepted else 0
-        pending_raw = _load_raw(pending_corpus_path(corpus_path))
+        pending_raw = _load_raw(
+            pending_corpus_path(corpus_path), strict=True,
+        )
         if kept:
             pending_raw[str(key)] = kept
         else:
@@ -1041,6 +1057,7 @@ def resolve_pending(corpus_path: str | Path, key: str, *,
         _write_corpus_file(pending_corpus_path(corpus_path), pending_raw,
                            seal=True)
         if rejected_rows:
+            _load_raw(rejected_corpus_path(corpus_path), strict=True)
             rej = load_rejected(corpus_path)
             seen = rej.get(str(key), [])
             seen.extend(c["goal"] for c in rejected_rows
@@ -1113,7 +1130,7 @@ def retire_corpus_cases(corpus_path: str | Path, key: str,
         return 0
     with _corpus_lock, cross_process_lock(Path(corpus_path)), \
             _corpus_rmw_lock(corpus_path):
-        raw = _load_raw(corpus_path)
+        raw = _load_raw(corpus_path, strict=True)
         rows = raw.get(str(key))
         if not isinstance(rows, list):
             return 0
@@ -1168,7 +1185,7 @@ def import_corpus(corpus_path: str | Path, data: dict, *,
         if replace:
             _write_corpus_file(Path(corpus_path), data)
             return sum(len(v) for v in data.values() if isinstance(v, list))
-        raw = _load_raw(corpus_path)
+        raw = _load_raw(corpus_path, strict=True)
         added = _merge_corpus_rows(raw, data)
         _write_corpus_file(Path(corpus_path), raw)
         return added
@@ -1201,12 +1218,15 @@ def migrate_corpus_files(corpus_path: str | Path) -> dict | None:
     counts = {"live": 0, "pending": 0, "rejected": 0}
     if live_f or pend_f or rej_f:
         with _corpus_lock, _corpus_rmw_lock(corpus_path):
-            live = _load_raw(corpus_path)              # routed -> world rows
+            live = _load_raw(
+                corpus_path, strict=True,
+            )  # routed -> world rows
             counts["live"] = _merge_corpus_rows(live, live_f)
             _write_corpus_file(lp, live)
-            pend = _load_raw(pp)
+            pend = _load_raw(pp, strict=True)
             counts["pending"] = _merge_corpus_rows(pend, pend_f)
             _write_corpus_file(pp, pend)
+            _load_raw(rp, strict=True)
             rej = load_rejected(corpus_path)
             for k, goals in rej_f.items():
                 if not isinstance(goals, list):

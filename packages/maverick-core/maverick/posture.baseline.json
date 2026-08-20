@@ -1,6 +1,6 @@
 {
   "_comment": "Tests that fail under the PRODUCTION security posture (MAVERICK_TEST_SECURE_DEFAULT=1). A debt register to shrink, not an exemption list. Regenerate with `python -m maverick.posture_gate --regen --report <f>`.",
-  "count": 77,
+  "count": 76,
   "failures": [
     "packages/maverick-core/tests/test_acl_max_risk.py::test_resolve_max_risk_unset_is_none",
     "packages/maverick-core/tests/test_audit_sealing.py::test_seal_is_idempotent_and_refuses_without_at_rest",
@@ -22,7 +22,6 @@
     "packages/maverick-core/tests/test_deployment.py::test_bare_deployment_fails_the_boundary_guarantees",
     "packages/maverick-core/tests/test_dogfood_fts_backfill.py::test_fts_index_is_rebuilt_on_upgrade",
     "packages/maverick-core/tests/test_durable_checkpoint.py::test_run_goal_resume_reuses_checkpoint_episode",
-    "packages/maverick-core/tests/test_earned_autonomy.py::test_agent_pins_rehearsal_prediction_as_card",
     "packages/maverick-core/tests/test_encryption_migrate.py::test_migrate_backup_true_writes_backup_before_resealing",
     "packages/maverick-core/tests/test_encryption_migrate.py::test_migrate_dry_run_writes_nothing",
     "packages/maverick-core/tests/test_encryption_migrate.py::test_migrate_leaves_no_plaintext_residue_in_the_db_file",

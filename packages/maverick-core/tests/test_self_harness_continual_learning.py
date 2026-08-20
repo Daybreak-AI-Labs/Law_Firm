@@ -33,6 +33,8 @@ import pytest
 from maverick import self_harness as sh
 from maverick import self_improvement as si
 
+from ._operator_harness import run_operator_harness
+
 CAP = sh._MAX_LINES_PER_MODEL
 BASE_P, GUIDED_P = 0.15, 0.90
 
@@ -52,7 +54,7 @@ def _learn(store, cls):
     recs = [{"model_id": "M", "failure_class": cls, "goal_text": f"{cls} variant {i}",
              "failure_msg": f"{cls} precondition missed", "channel": None, "user_id": None}
             for i in range(4)]
-    return sh.run_self_harness(
+    return run_operator_harness(
         recs, model_id="M", min_support=3,
         held_in=[f"{cls}::hi{i}" for i in range(10)], held_out=[f"{cls}::ho{i}" for i in range(20)],
         score_with=lambda t, c: 0.9, score_without=lambda t, c: 0.15,

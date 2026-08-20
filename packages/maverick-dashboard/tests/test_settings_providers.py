@@ -1,7 +1,4 @@
-"""Provider-key entry + capability/feature toggles via the dashboard config
-overlay (~/.maverick/dashboard-config.toml, deep-merged in config.load_config).
-Neither path touches config.toml. (Per-role models live in the separate runtime
-overlay shipped by #1319.)"""
+"""Minimal provider-key settings use the encrypted dashboard overlay."""
 from __future__ import annotations
 
 import pytest
@@ -20,28 +17,21 @@ def _no_provider_env(monkeypatch):
 
 def test_provider_key_overlay_unblocks(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     _no_provider_env(monkeypatch)
     from maverick import config
     from maverick_dashboard import settings_store
     assert config.any_provider_configured() is False
     settings_store.set_provider("anthropic", api_key="sk-test-123456")  # pragma: allowlist secret
     assert config.dashboard_overrides_path().exists()
+    raw = config.dashboard_overrides_path().read_text(encoding="utf-8")
+    assert "sk-test-123456" not in raw  # pragma: allowlist secret
+    assert "MVKAR1:" in raw
     assert not config.config_path().exists()            # config.toml untouched
     assert config.any_provider_configured() is True
     assert config.get_provider_config("anthropic")["api_key"] == "sk-test-123456"  # pragma: allowlist secret
     settings_store.clear_provider("anthropic")
     assert config.any_provider_configured() is False
-
-
-def test_toggle_overlay_reflected(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    from maverick import config
-    from maverick_dashboard import settings_store
-    assert config.get_capabilities()["web_search"] is False
-    settings_store.set_toggle("capabilities", "web_search", True)
-    assert config.get_capabilities()["web_search"] is True
-    settings_store.set_toggle("features", "skills", False)
-    assert config.get_features()["skills"] is False
 
 
 def _client(monkeypatch, tmp_path):
@@ -54,18 +44,19 @@ def _client(monkeypatch, tmp_path):
     return TestClient(dash_app.app, headers={"Origin": "http://testserver"})
 
 
-def test_settings_page_has_provider_entry_and_toggles(monkeypatch, tmp_path):
+def test_settings_page_has_provider_entry_without_capability_editor(monkeypatch, tmp_path):
     _no_provider_env(monkeypatch)
     c = _client(monkeypatch, tmp_path)
     r = c.get("/settings")
     assert r.status_code == 200
-    assert 'action="/settings/providers"' in r.text      # editable key entry
-    assert 'action="/settings/capabilities"' in r.text    # capability toggles
-    assert 'name="web_search"' in r.text
+    assert 'action="/settings/providers"' in r.text
+    assert 'action="/settings/capabilities"' not in r.text
+    assert 'name="web_search"' not in r.text
 
 
 def test_provider_post_redacts_and_persists(monkeypatch, tmp_path):
     _no_provider_env(monkeypatch)
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     c = _client(monkeypatch, tmp_path)
     from maverick import config
     assert c.post("/settings/providers",
@@ -76,37 +67,51 @@ def test_provider_post_redacts_and_persists(monkeypatch, tmp_path):
     assert "9999" in body                                # only the masked hint
 
 
-def test_toggle_endpoints(monkeypatch, tmp_path):
+def test_provider_secret_refuses_plaintext_store(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
+    from maverick import config
+    from maverick_dashboard import settings_store
+
+    with pytest.raises(
+        settings_store.SecuritySuiteConfigUnavailable,
+        match="at-rest encryption is disabled",
+    ):
+        settings_store.set_provider(
+            "anthropic", api_key="sk-must-not-land",  # pragma: allowlist secret
+        )
+    path = config.dashboard_overrides_path()
+    assert not path.exists() or "sk-must-not-land" not in path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_retired_capability_editor_is_not_mounted(monkeypatch, tmp_path):
     c = _client(monkeypatch, tmp_path)
     from maverick import config
-    assert c.post("/settings/capabilities", data={"browser": "on"}).status_code == 200
-    assert config.get_capabilities()["browser"] is True
-    # an unchecked box is omitted from the form -> deactivated on save
-    assert c.post("/settings/capabilities", data={}).status_code == 200
+    assert c.post("/settings/capabilities", data={"browser": "on"}).status_code == 404
     assert config.get_capabilities()["browser"] is False
 
 
-def test_concurrent_provider_and_toggle_both_apply(monkeypatch, tmp_path):
-    """A set_provider racing a set_toggle (different sections of one overlay
-    file) must not have either change clobbered by a stale re-read."""
+def test_concurrent_provider_updates_both_apply(monkeypatch, tmp_path):
     import threading
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     _no_provider_env(monkeypatch)
     from maverick_dashboard import settings_store
 
     barrier = threading.Barrier(2)
 
-    def do_provider():
+    def do_anthropic():
         barrier.wait()
         settings_store.set_provider("anthropic", api_key="sk-test-abc123")  # pragma: allowlist secret
 
-    def do_toggle():
+    def do_openai():
         barrier.wait()
-        name = next(iter(settings_store.FEATURE_DEFAULTS))
-        settings_store.set_toggle("features", name, True)
+        settings_store.set_provider("openai", api_key="sk-test-def456")  # pragma: allowlist secret
 
-    ts = [threading.Thread(target=do_provider), threading.Thread(target=do_toggle)]
+    ts = [threading.Thread(target=do_anthropic), threading.Thread(target=do_openai)]
     for t in ts:
         t.start()
     for t in ts:
@@ -114,5 +119,4 @@ def test_concurrent_provider_and_toggle_both_apply(monkeypatch, tmp_path):
 
     overlay = settings_store.load_overlay()
     assert overlay.get("providers", {}).get("anthropic", {}).get("api_key")
-    name = next(iter(settings_store.FEATURE_DEFAULTS))
-    assert overlay.get("features", {}).get(name) is True
+    assert overlay.get("providers", {}).get("openai", {}).get("api_key")

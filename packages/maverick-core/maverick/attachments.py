@@ -1,6 +1,6 @@
 """Attachment storage for goal inputs (files of all kinds).
 
-Stores bytes under ``~/.maverick/attachments/<goal_id>/<sha256>`` and
+Stores AES-GCM-sealed bytes under ``~/.maverick/attachments/<goal_id>/<sha256>`` and
 records the metadata in the world model. Enforces:
   - max per-file size (default 100 MiB, MAVERICK_ATTACH_MAX_FILE_BYTES)
   - max total per-goal size (default 500 MiB, env-configurable)
@@ -13,21 +13,16 @@ records the metadata in the world model. Enforces:
     no mime setting bypasses (document ZIP containers like docx/odt/epub
     are structurally sniffed and exempted; a plain .zip is not).
 
-The agent has a ``list_attachments`` tool that returns the on-disk paths
-so the existing ``read_file`` / ``transcribe_audio`` / OCR tools can pick
-them up. Images are also delivered to the orchestrator as Anthropic
+The agent has ``list_attachments`` and ``read_attachment`` tools. Ciphertext
+paths are never exposed as readable client documents. Images are also delivered
+to the orchestrator as Anthropic
 vision content blocks and PDFs as native document blocks (see
 ``content_blocks_for_goal``) so the agent can SEE them, not just read
 their bytes.
 
-**S3-backed attachments** (opt-in): with ``[attachments] s3_bucket`` (or
-``MAVERICK_ATTACH_S3_BUCKET``) set, every stored attachment is also mirrored
-to ``s3://<bucket>/<prefix><goal_id>/<name>`` — the durable/shared copy for
-multi-host deployments — and :func:`s3_fetch` pulls a missing attachment back
-down on a worker that doesn't have the local file. Local disk remains the
-source the tools read; the mirror is best-effort fail-open (an S3 outage
-must never reject an upload). Uses boto3 (the ``[s3]`` extra), imported
-lazily; works against any S3-compatible endpoint via ``AWS_ENDPOINT_URL``.
+The firm profile intentionally has no attachment mirroring path. Client files
+remain in the encrypted local data root and therefore cannot silently leave a
+matter through an independently configured object-store client.
 """
 from __future__ import annotations
 
@@ -35,8 +30,9 @@ import base64
 import hashlib
 import logging
 import os
-import re
 import stat
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
@@ -52,11 +48,8 @@ log = logging.getLogger(__name__)
 DEFAULT_ROOT: Path | None = None
 
 # Keep every generated on-disk component portable across supported Windows and
-# POSIX hosts. The stored name reserves 16 hex characters plus ``-`` for the
-# content-address prefix.
+# POSIX hosts.
 _MAX_COMPONENT_UNITS = 255
-_CONTENT_PREFIX_UNITS = 17
-_CONTENT_NAME_RE = re.compile(r"^(?P<digest>[0-9a-f]{16})-(?P<filename>.+)$")
 _WINDOWS_FORBIDDEN = frozenset('<>:"/\\|?*')
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$",
@@ -83,6 +76,10 @@ def _env_int(name: str, default: int) -> int:
 MAX_FILE_BYTES = _env_int("MAVERICK_ATTACH_MAX_FILE_BYTES", 100 * 1024 * 1024)
 MAX_GOAL_BYTES = _env_int("MAVERICK_ATTACH_MAX_GOAL_BYTES", 500 * 1024 * 1024)
 
+def _max_sealed_file_bytes() -> int:
+    """Bound ciphertext overhead while preserving test/runtime size overrides."""
+    return MAX_FILE_BYTES + 1024
+
 # Office / OpenDocument packages are ZIP containers, so they need BOTH a
 # mime allowlist entry AND a structural exemption from the archive deny
 # (see _is_document_package). epub is the same shape.
@@ -91,6 +88,8 @@ DOCUMENT_ZIP_MIME_PREFIXES = (
     "application/vnd.oasis.opendocument.",             # odt/ods/odp
     "application/epub+zip",
 )
+_DOCUMENT_MIMETYPE_MAX_BYTES = 128
+_DOCUMENT_MIMETYPE_MAX_COMPRESSED_BYTES = 256
 
 # Mime allowlist. Text, image, audio, and video families plus the common
 # document formats (PDF natively; Office/ODF as sniffed ZIP packages).
@@ -210,15 +209,45 @@ def _is_document_package(data: bytes) -> bool:
     import zipfile
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            names = set(zf.namelist()[:256])
+            entries = zf.infolist()[:256]
+            names = {info.filename for info in entries}
             if "[Content_Types].xml" in names:
                 return True
-            if "mimetype" in names:
-                declared = zf.read("mimetype")[:100].decode("ascii", "replace")
-                return declared.startswith(
-                    ("application/vnd.oasis.opendocument", "application/epub+zip")
-                )
-    except Exception:  # noqa: BLE001 -- malformed zip = not a document
+            mimetypes = [info for info in entries if info.filename == "mimetype"]
+            if len(mimetypes) != 1:
+                return False
+            info = mimetypes[0]
+            if (
+                info.is_dir()
+                or info.flag_bits & 0x1
+                or info.file_size <= 0
+                or info.file_size > _DOCUMENT_MIMETYPE_MAX_BYTES
+                or info.compress_size <= 0
+                or info.compress_size > _DOCUMENT_MIMETYPE_MAX_COMPRESSED_BYTES
+            ):
+                return False
+            # ZipFile.read() inflates the whole entry before a caller can
+            # slice it. Validate both central-directory sizes first, then ask
+            # ZipExtFile for exactly the already-bounded declared size.
+            with zf.open(info, "r") as stream:
+                raw = stream.read(info.file_size)
+            if len(raw) != info.file_size:
+                return False
+            declared = raw.decode("ascii", "replace")
+            return declared.startswith(
+                ("application/vnd.oasis.opendocument", "application/epub+zip")
+            )
+    except (
+        EOFError,
+        KeyError,
+        NotImplementedError,
+        OSError,
+        OverflowError,
+        RuntimeError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ):
         return False
     return False
 
@@ -271,64 +300,6 @@ def _root_for_goal(goal_id: int, root: Path | None = None) -> Path:
         raise AttachmentRejected("attachment storage directory is not private") from exc
 
 
-# ---- S3 mirror (opt-in) -----------------------------------------------------
-
-def _s3_settings() -> tuple[str, str]:
-    """(bucket, key_prefix); bucket == "" when the mirror is off."""
-    bucket = os.environ.get("MAVERICK_ATTACH_S3_BUCKET", "").strip()
-    prefix = os.environ.get("MAVERICK_ATTACH_S3_PREFIX", "").strip()
-    if not bucket:
-        try:
-            from .config import load_config
-            cfg = (load_config() or {}).get("attachments") or {}
-            bucket = str(cfg.get("s3_bucket") or "").strip()
-            prefix = prefix or str(cfg.get("s3_prefix") or "").strip()
-        except Exception:  # pragma: no cover -- config never blocks an upload
-            pass
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
-    return bucket, prefix
-
-
-def s3_mirror_enabled() -> bool:
-    return bool(_s3_settings()[0])
-
-
-def _s3_client():
-    import boto3  # the [s3] extra; lazy so the default path never imports it
-    kwargs = {}
-    endpoint = os.environ.get("AWS_ENDPOINT_URL", "").strip()
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    region = os.environ.get("AWS_REGION", "").strip()
-    if region:
-        kwargs["region_name"] = region
-    return boto3.client("s3", **kwargs)
-
-
-def _s3_key(goal_id: int, name: str) -> str:
-    bucket, prefix = _s3_settings()
-    assert bucket
-    return f"{prefix}{goal_id}/{name}"
-
-
-def _s3_mirror(goal_id: int, dest: Path, mime: str, data: bytes) -> None:
-    """Best-effort upload of a stored attachment. Never raises."""
-    try:
-        client = _s3_client()
-        bucket, _ = _s3_settings()
-        client.put_object(
-            Bucket=bucket,
-            Key=_s3_key(goal_id, dest.name),
-            # Mirror the bytes that were hashed and exclusively published,
-            # rather than reopening a path that could have changed.
-            Body=data,
-            ContentType=mime or "application/octet-stream",
-        )
-    except Exception as e:  # noqa: BLE001 -- mirror is fail-open by design
-        log.warning("attachment S3 mirror failed (local copy kept): %s", e)
-
-
 def _validate_portable_name(
     name: str,
     *,
@@ -378,24 +349,6 @@ def _validate_portable_name(
         )
 
 
-def _validate_attachment_name(name: str) -> str:
-    """Validate an on-disk content-addressed attachment name.
-
-    Returns the expected SHA-256 prefix so S3-fetched/local-cached bytes can be
-    bound to the key name before they are trusted.
-    """
-    _validate_portable_name(name, label="attachment name")
-    match = _CONTENT_NAME_RE.fullmatch(name)
-    if match is None:
-        raise AttachmentRejected(f"invalid attachment name: {name!r}")
-    _validate_portable_name(
-        match.group("filename"),
-        reserve_units=_CONTENT_PREFIX_UNITS,
-        label="filename",
-    )
-    return match.group("digest")
-
-
 def _path_is_alias(path: Path, info: os.stat_result) -> bool:
     is_junction = getattr(path, "is_junction", None)
     return (
@@ -409,8 +362,8 @@ def _attachment_identity(info: os.stat_result) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_mode, info.st_nlink
 
 
-def _verify_stored_attachment(path: Path, expected_digest: str) -> None:
-    """Bind a private regular path to its descriptor and content address."""
+def _read_stored_attachment(path: Path, expected_digest: str) -> bytes:
+    """Safely open, authenticate, decrypt, and content-bind one attachment."""
     try:
         before = path.lstat()
     except OSError as exc:
@@ -446,7 +399,7 @@ def _verify_stored_attachment(path: Path, expected_digest: str) -> None:
             raise AttachmentRejected("stored attachment identity changed")
         with os.fdopen(fd, "rb") as fh:
             fd = -1
-            payload = fh.read(MAX_FILE_BYTES + 1)
+            payload = fh.read(_max_sealed_file_bytes() + 1)
     except AttachmentRejected:
         raise
     except OSError as exc:
@@ -455,13 +408,65 @@ def _verify_stored_attachment(path: Path, expected_digest: str) -> None:
         if fd >= 0:
             os.close(fd)
 
-    if len(payload) > MAX_FILE_BYTES:
+    if len(payload) > _max_sealed_file_bytes():
+        raise AttachmentRejected("stored attachment ciphertext exceeds the file-size limit")
+    try:
+        from .crypto_at_rest import is_sealed, unseal
+
+        if not is_sealed(payload):
+            raise AttachmentRejected(
+                "stored attachment is plaintext; run the attachment encryption migration"
+            )
+        plaintext = unseal(payload)
+    except AttachmentRejected:
+        raise
+    except Exception as exc:
+        raise AttachmentRejected(
+            "stored attachment could not be authenticated or decrypted"
+        ) from exc
+    if len(plaintext) > MAX_FILE_BYTES:
         raise AttachmentRejected("stored attachment exceeds the file-size limit")
-    actual = hashlib.sha256(payload).hexdigest()
+    actual = hashlib.sha256(plaintext).hexdigest()
     if actual != expected_digest and not (
         len(expected_digest) == 16 and actual.startswith(expected_digest)
     ):
         raise AttachmentRejected("stored attachment content-address mismatch")
+    return plaintext
+
+
+def read_bytes(path: str | Path, expected_digest: str) -> bytes:
+    """Public bounded reader for ciphertext attachment paths."""
+    return _read_stored_attachment(Path(path), str(expected_digest))
+
+
+def goal_attachment_access_allowed(world, goal_id: int) -> bool:
+    """Revalidate live matter authority before an agent decrypts goal files.
+
+    Dashboard downloads have their own request-principal ACL.  This seam is
+    for a running agent: in firm mode a membership revoked after run admission
+    must stop attachment listing/decryption immediately, and a mismatched goal
+    id must not let a tool cross the bound matter.
+    """
+    try:
+        from .security_defaults import secure_by_default
+
+        if not secure_by_default():
+            return True
+        from .matter_context import refresh_matter_context
+
+        context = refresh_matter_context()
+        goal = world.get_goal(int(goal_id))
+        return bool(
+            goal is not None
+            and getattr(goal, "project_id", None) == context.matter_id
+            and getattr(goal, "owner", None) == context.principal
+        )
+    except Exception:
+        return False
+
+
+def _verify_stored_attachment(path: Path, expected_digest: str) -> None:
+    _read_stored_attachment(path, expected_digest)
 
 
 def _publish_attachment(path: Path, data: bytes, expected_digest: str) -> bool:
@@ -480,60 +485,6 @@ def _publish_attachment(path: Path, data: bytes, expected_digest: str) -> bool:
         raise AttachmentRejected("attachment could not be stored securely") from exc
     _verify_stored_attachment(path, expected_digest)
     return created
-
-
-def s3_fetch(goal_id: int, name: str, *, root: Path | None = None) -> Path | None:
-    """Pull one mirrored attachment down to the local store.
-
-    For a worker host that doesn't have the local file (the uploader ran
-    elsewhere). ``name`` is the on-disk name (``<sha16>-<filename>``). Returns
-    the local path, or None when the mirror is off / the object is missing.
-    """
-    if not s3_mirror_enabled():
-        return None
-    expected_prefix = _validate_attachment_name(name)
-    dest_dir = _root_for_goal(goal_id, root)
-    dest = dest_dir / name
-    if os.path.lexists(dest):
-        _verify_stored_attachment(dest, expected_prefix)
-        return dest
-    try:
-        client = _s3_client()
-        bucket, _ = _s3_settings()
-        obj = client.get_object(Bucket=bucket, Key=_s3_key(goal_id, name))
-        content_length = obj.get("ContentLength")
-        if content_length is not None and int(content_length) > MAX_FILE_BYTES:
-            raise AttachmentRejected(
-                f"file too large: {content_length} bytes (limit {MAX_FILE_BYTES})"
-            )
-        data = obj["Body"].read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
-            raise AttachmentRejected(
-                f"file too large: {len(data)} bytes (limit {MAX_FILE_BYTES})"
-            )
-        # S3-sourced bytes get the same magic-byte deny store() enforces on the
-        # upload path -- a shared/poisoned bucket must not be able to land an
-        # ELF/ZIP archive on local disk that store() would have rejected. If the
-        # object carries a ContentType, honour the mime allowlist too.
-        content_type = str(obj.get("ContentType") or "").split(";", 1)[0].strip()
-        if _content_denied(data, content_type):
-            raise AttachmentRejected(
-                "executable or archive content is not allowed"
-            )
-        if content_type and not mime_allowed(content_type):
-            raise AttachmentRejected(f"mime type not allowed: {content_type}")
-        actual_digest = hashlib.sha256(data).hexdigest()
-        if not actual_digest.startswith(expected_prefix):
-            raise AttachmentRejected(
-                "S3 attachment content-address mismatch"
-            )
-    except AttachmentRejected:
-        raise
-    except Exception as e:  # noqa: BLE001 -- absent object / S3 down -> None
-        log.warning("attachment S3 fetch failed: %s", e)
-        return None
-    _publish_attachment(dest, data, actual_digest)
-    return dest
 
 
 def store(
@@ -556,7 +507,6 @@ def store(
         raise AttachmentRejected("filename is required")
     _validate_portable_name(
         filename,
-        reserve_units=_CONTENT_PREFIX_UNITS,
         label="filename",
     )
     if not mime:
@@ -591,14 +541,20 @@ def store(
         )
 
     sha256 = hashlib.sha256(data).hexdigest()
+    try:
+        from .crypto_at_rest import seal
+
+        sealed_data = seal(data)
+    except Exception as exc:
+        raise AttachmentRejected(
+            "attachment encryption is unavailable; plaintext was not stored"
+        ) from exc
     dest_dir = _root_for_goal(goal_id, root)
-    # SHA-prefix the on-disk name so two attachments with the same
-    # filename don't collide and so a re-upload of the same bytes is a
-    # no-op (idempotent).
-    dest = dest_dir / f"{sha256[:16]}-{filename}"
-    created = _publish_attachment(dest, data, sha256)
-    if created and s3_mirror_enabled():
-        _s3_mirror(goal_id, dest, mime, data)
+    # The durable pathname contains no client-controlled name. The full digest
+    # is collision-resistant and makes an identical re-upload idempotent while
+    # keeping filenames solely in the encrypted metadata column.
+    dest = dest_dir / sha256
+    _publish_attachment(dest, sealed_data, sha256)
 
     return Stored(
         filename=filename,
@@ -690,9 +646,11 @@ def content_blocks_for_goal(
     Machine-generated text companions (audio/video transcripts, extracted
     Office-doc text — see ``generate_companions``) embed as plain text
     blocks under their own window-scaled budget. Everything else (raw
-    audio/video bytes, user text files) stays tool-reachable via
-    `list_attachments` + `read_file` / `transcribe_audio`.
+    audio/video bytes, user text files) stays tool-reachable via the
+    goal-bound `read_attachment` tool or explicit local media processing.
     """
+    if not goal_attachment_access_allowed(world, goal_id):
+        return []
     blocks: list[dict] = []
     doc_blocks: list[dict] = []
     text_blocks: list[dict] = []
@@ -708,8 +666,8 @@ def content_blocks_for_goal(
     for a in world.list_attachments(goal_id):
         if a.mime in ALLOWED_IMAGE_MIMES:
             try:
-                b = Path(a.path).read_bytes()
-            except OSError:
+                b = read_bytes(a.path, a.sha256)
+            except AttachmentRejected:
                 continue
             blocks.append({
                 "type": "image",
@@ -723,8 +681,8 @@ def content_blocks_for_goal(
             if a.size_bytes > doc_budget:
                 continue  # over budget: stays reachable via the tools
             try:
-                b = Path(a.path).read_bytes()
-            except OSError:
+                b = read_bytes(a.path, a.sha256)
+            except AttachmentRejected:
                 continue
             doc_budget -= len(b)
             doc_blocks.append({
@@ -736,16 +694,18 @@ def content_blocks_for_goal(
                 },
             })
         elif _is_companion(a.filename) and a.mime == "text/plain":
-            # Machine-generated companions (audio transcripts, extracted
-            # document text) speak for attachments the model can't ingest
+            # Machine-generated extracted document text represents attachments
+            # the model cannot ingest
             # natively. User-uploaded text files stay tool-reachable only
             # (unchanged behaviour) -- companions are ours, so embedding
             # them is safe and expected.
             if a.size_bytes > text_budget:
                 continue
             try:
-                body = Path(a.path).read_text(encoding="utf-8", errors="replace")
-            except OSError:
+                body = read_bytes(a.path, a.sha256).decode(
+                    "utf-8", errors="replace"
+                )
+            except AttachmentRejected:
                 continue
             if not _shield_allows_companion_text(shield, a.filename, body):
                 continue
@@ -766,13 +726,12 @@ def content_blocks_for_goal(
 # Suffixes marking a companion attachment generated BY the platform from a
 # sibling upload. Only these auto-embed as text blocks; a user's own .txt
 # upload never does (token spend on user files stays opt-in via the tools).
-COMPANION_SUFFIXES = (".transcript.txt", ".extracted.txt")
+COMPANION_SUFFIXES = (".extracted.txt",)
 
 # One companion never exceeds this many characters -- a bound on both the
 # stored file and the prompt injection surface of a hostile upload.
 _COMPANION_MAX_CHARS = 400_000
 
-_TRANSCRIBE_MIME_PREFIXES = ("audio/", "video/")
 _EXTRACT_MIMES_PREFIXES = DOCUMENT_ZIP_MIME_PREFIXES + (
     "application/msword",
     "application/rtf",
@@ -784,28 +743,59 @@ def _is_companion(filename: str) -> bool:
 
 
 def _companion_feature(key: str, env: str) -> bool:
-    """[attachments] <key> / env toggle; default ON, fail-soft to ON."""
+    """[attachments] <key> / env toggle; default OFF and fail-closed.
+
+    Attachments are attacker-controlled parser input and may contain privileged
+    client data. Uploading or parsing them is therefore an explicit deployment
+    decision, never an automatic side effect of upload.
+    """
     raw = (os.environ.get(env) or "").strip().lower()
     if raw:
         return raw not in {"0", "false", "no", "off"}
     try:
         from .config import load_config
         cfg = (load_config() or {}).get("attachments") or {}
-        return bool(cfg.get(key, True))
+        return cfg.get(key) is True
     except Exception:  # pragma: no cover
-        return True
+        return False
 
 
-def _transcribe_media(path: Path) -> str | None:
-    """Speech-to-text via the kernel STT backends. None when unavailable."""
+@contextmanager
+def materialized_attachment(attachment):
+    """Yield a short-lived private plaintext file, then remove it.
+
+    Some local parser/STT libraries require a pathname. The durable copy stays
+    encrypted; plaintext exists only for the bounded call and is never returned
+    to the model as a filesystem path.
+    """
+    payload = read_bytes(attachment.path, attachment.sha256)
+    temp_root = file_lock.ensure_private_directory(data_dir("attachment-tmp"))
+    suffix = Path(str(attachment.filename or "")).suffix[:20]
+    fd, raw_path = tempfile.mkstemp(
+        prefix="materialized-",
+        suffix=suffix,
+        dir=temp_root,
+    )
+    path = Path(raw_path)
     try:
-        from .tools.voice import _run_transcribe
-        out = _run_transcribe({"source": str(path)}, None)
-    except Exception:  # noqa: BLE001 -- companion generation never raises
-        return None
-    if not out or out.startswith("ERROR"):
-        return None
-    return out.strip() or None
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass
+        with os.fdopen(fd, "wb") as handle:
+            fd = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        file_lock.ensure_private_file(path)
+        yield path
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            log.error("could not remove materialized attachment %s", path)
 
 
 def _extract_document(path: Path) -> str | None:
@@ -824,19 +814,17 @@ def _extract_document(path: Path) -> str | None:
 def generate_companions(world, goal_id: int, *, root: Path | None = None) -> int:
     """Create text companions for a goal's media/document attachments.
 
-    For each audio/video attachment, a ``<name>.transcript.txt`` (kernel STT
-    backends: OpenAI/Groq Whisper or local faster-whisper); for each Office/
-    OpenDocument/RTF attachment, a ``<name>.extracted.txt`` (maverick-knowledge
-    parsers). Companions are stored as ordinary goal attachments -- the agent
-    reads them via ``list_attachments``/``read_file`` AND they auto-embed as
+    For each Office/OpenDocument/RTF attachment, a
+    ``<name>.extracted.txt`` (maverick-knowledge parsers). Companions are
+    stored as ordinary goal attachments -- the agent
+    reads them via ``list_attachments``/``read_attachment`` AND they auto-embed as
     text blocks on the first message (see ``content_blocks_for_goal``), so a
     voice memo or a .docx brief reaches the model without a tool call.
 
     Idempotent (skips attachments that already have a companion), quota-aware,
     entirely best-effort: no backend, no parser, or any error just means no
-    companion. Blocking (STT is a network call) -- run it off the hot path.
+    companion. Features are off by default and must be enabled explicitly.
     Returns the number of companions created. Off-switches:
-    ``[attachments] transcribe_media`` / ``MAVERICK_ATTACH_TRANSCRIBE`` and
     ``[attachments] extract_text`` / ``MAVERICK_ATTACH_EXTRACT``.
     """
     try:
@@ -845,16 +833,12 @@ def generate_companions(world, goal_id: int, *, root: Path | None = None) -> int
         return 0
     have = {a.filename for a in existing}
     total = sum(a.size_bytes for a in existing)
-    transcribe_on = _companion_feature("transcribe_media", "MAVERICK_ATTACH_TRANSCRIBE")
     extract_on = _companion_feature("extract_text", "MAVERICK_ATTACH_EXTRACT")
     created = 0
     for a in existing:
         if _is_companion(a.filename):
             continue
-        if a.mime.startswith(_TRANSCRIBE_MIME_PREFIXES) and transcribe_on:
-            suffix = ".transcript.txt"
-            produce = _transcribe_media
-        elif a.mime.startswith(_EXTRACT_MIMES_PREFIXES) and extract_on:
+        if a.mime.startswith(_EXTRACT_MIMES_PREFIXES) and extract_on:
             suffix = ".extracted.txt"
             produce = _extract_document
         else:
@@ -862,7 +846,12 @@ def generate_companions(world, goal_id: int, *, root: Path | None = None) -> int
         name = a.filename + suffix
         if name in have:
             continue
-        text = produce(Path(a.path))
+        try:
+            with materialized_attachment(a) as plaintext_path:
+                text = produce(plaintext_path)
+        except Exception:  # noqa: BLE001 -- corrupt/unreadable attachment
+            log.warning("attachment %s could not be materialized", name, exc_info=True)
+            continue
         if not text:
             continue
         data = text[:_COMPANION_MAX_CHARS].encode("utf-8")

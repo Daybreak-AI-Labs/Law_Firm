@@ -208,10 +208,11 @@ async def test_run_goal_resume_reuses_checkpoint_episode(tmp_path, monkeypatch):
     world_path = tmp_path / "w.db"
     world = WorldModel(world_path)
     gid = world.create_goal("durable run_goal", "")
+    (tmp_path / "prior.txt").write_text("prior work", encoding="utf-8")
 
     first_llm = _ScriptedLLM([
         _resp(
-            tool_calls=[ToolCall(id="t1", name="shell", input={"cmd": "echo prior"})],
+            tool_calls=[ToolCall(id="t1", name="read_file", input={"path": "prior.txt"})],
             stop_reason="tool_use",
         ),
     ])

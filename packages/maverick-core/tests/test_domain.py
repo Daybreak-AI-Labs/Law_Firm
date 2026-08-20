@@ -17,6 +17,7 @@ from maverick.domain import (
     overlay_profile,
     overridden_fields,
     render_workflow_prompt,
+    suite_for,
 )
 
 
@@ -134,17 +135,16 @@ class TestBuiltinPacks:
         # never writes to the matter file itself.
         assert legal.capability("agent:l1").permits("write_file") is False
 
-    def test_all_three_reference_packs_ship(self):
-        # The firm's fork drops the `finance` reference pack (it bound an
-        # Interactive Brokers trading connector); legal is the reference seat.
+    def test_firm_roster_is_law_only(self):
         domains = available_domains()
-        for name in ("legal", "privacy_compliance", "generic"):
-            assert name in domains, f"missing built-in pack: {name}"
-            assert domains[name].persona  # each carries specialist instructions
+        assert len(domains) == 31
+        assert all(name == "legal" or name.startswith("legal_") for name in domains)
+        assert {suite_for(name) for name in domains} == {"legal"}
+        assert not ({"generic", "privacy_compliance", "finance_ap"} & domains.keys())
 
     def test_builtin_knowledge_domains_permit_knowledge_search(self):
         domains = available_domains()
-        for name in ("legal", "privacy_compliance", "generic"):
+        for name in ("legal", "legal_research", "legal_contract_review"):
             prof = domains[name]
             assert prof.knowledge_sources, f"{name} should bind a knowledge collection"
             assert prof.capability(f"agent:{name}-0").permits("knowledge_search") is True
@@ -243,25 +243,6 @@ class TestOverlay:
         base = DomainProfile(name="x", allow_tools=["read_file"])
         merged = overlay_profile(base, {"workflow": [{"name": "step1"}]})
         assert [s.name for s in merged.workflow] == ["step1"]
-
-    def test_overlay_inherits_base_autonomy(self):
-        # An overlay that doesn't set [autonomy] must inherit the base pack's
-        # autonomy, not silently drop it to the default (None).
-        from maverick.agent_autonomy import AutonomyProfile
-        base = DomainProfile(name="x", allow_tools=["read_file"],
-                             autonomy=AutonomyProfile.from_toml({"default": "auto"}))
-        merged = overlay_profile(base, {"description": "d"})
-        assert merged.autonomy == base.autonomy
-        assert merged.autonomy is not None
-
-    def test_overlay_coerces_autonomy_patch(self):
-        # A patched [autonomy] table must be coerced to an AutonomyProfile the
-        # same way the load path does -- not stored as a raw dict.
-        from maverick.agent_autonomy import AutonomyProfile, parse_level
-        base = DomainProfile(name="x", allow_tools=["read_file"])
-        merged = overlay_profile(base, {"autonomy": {"default": "auto"}})
-        assert isinstance(merged.autonomy, AutonomyProfile)
-        assert merged.autonomy.default == parse_level("auto")
 
     def test_overridden_fields_reports_patched_keys(self):
         assert overridden_fields(

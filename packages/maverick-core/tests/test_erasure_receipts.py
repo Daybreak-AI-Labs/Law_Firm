@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -33,10 +34,54 @@ from maverick.world_model import SCHEMA_VERSION, WorldModel
 
 def _seed_complete_graph(world: WorldModel, attachment_path: Path) -> dict:
     conv = world.get_or_create_conversation("telegram", "alice")
-    root = world.create_goal("root subject goal")
-    child = world.create_goal("child subject goal", parent_id=root)
-    grandchild = world.create_goal("grandchild subject goal", parent_id=child)
+    principal = "user:alice"
+    project_id = world.create_client_matter(
+        "Subject matter",
+        principal=principal,
+        domain="legal",
+        matter_number="ERASURE-1",
+        jurisdiction="Test",
+        client_name="Subject client",
+    )
+    root = world.create_matter_goal(
+        "root subject goal",
+        principal=principal,
+        domain="legal",
+        project_id=project_id,
+    )
+    assert root is not None
+    child = world.create_matter_goal(
+        "child subject goal",
+        parent_id=root,
+        principal=principal,
+        domain="legal",
+        project_id=project_id,
+    )
+    assert child is not None
+    grandchild = world.create_matter_goal(
+        "grandchild subject goal",
+        parent_id=child,
+        principal=principal,
+        domain="legal",
+        project_id=project_id,
+    )
+    assert grandchild is not None
     world.append_turn(conv.id, "user", "private request", goal_id=root)
+    matter_conv = world.get_or_create_matter_conversation(
+        "dashboard",
+        "alice",
+        project_id=project_id,
+        principal=principal,
+    )
+    assert matter_conv is not None
+    assert world.append_matter_turn(
+        matter_conv.id,
+        project_id=project_id,
+        principal=principal,
+        role="user",
+        content="private matter request",
+        goal_id=root,
+    ) is not None
 
     episode = world.start_episode(grandchild)
     world._temporal_memory = True
@@ -64,13 +109,29 @@ def _seed_complete_graph(world: WorldModel, attachment_path: Path) -> dict:
         grandchild,
     )
     world.ask("private question", goal_id=child)
-    world.create_share_link(grandchild, created_by="reviewer")
     world.set_goal_status(grandchild, "done", result="private result")
     assert world.record_signoff(
         grandchild,
         "approved",
-        decided_by="reviewer",
+        decided_by=principal,
         note="private approval",
+    )
+    assert world.record_matter_feedback(
+        grandchild,
+        principal=principal,
+        rating="down",
+        value=0.25,
+        note="private feedback",
+    ) is not None
+    deliverable = world.get_goal(grandchild)
+    world.create_bound_share_link(
+        grandchild,
+        project_id=project_id,
+        actor=principal,
+        deliverable_updated_at=deliverable.updated_at,
+        deliverable_sha256=hashlib.sha256(
+            (deliverable.result or "").encode("utf-8")
+        ).hexdigest(),
     )
     return {
         "conversation_id": conv.id,
@@ -142,6 +203,44 @@ def test_receipt_is_subject_free_signed_durable_and_tenant_scoped(tmp_path):
             signed["receipt_id"],
             expected_tenant="other",
         )
+
+
+def test_signed_v2_receipt_remains_verifiable_after_scope_expands(tmp_path):
+    world = WorldModel(tmp_path / "world.db")
+    manifest = build_manifest(
+        tenant_id="shared",
+        conversation_ids=[1],
+        goal_ids=[2],
+        episode_ids=[3],
+    )
+    manifest["schema"] = "maverick.erasure-receipt.v2"
+    manifest["expected_stores"] = [
+        "conversations",
+        "goals",
+        "turns",
+        "episodes",
+        "episode_facts",
+        "episode_fact_history",
+        "artifacts",
+        "attachments",
+        "goal_events",
+        "goal_origins",
+        "messages",
+        "processed_messages",
+        "questions",
+        "share_links",
+        "signoffs",
+    ]
+
+    signed = persist_receipt(world, manifest)
+    recovered = load_verified_receipt(
+        world,
+        signed["receipt_id"],
+        expected_tenant="shared",
+    )
+
+    assert recovered == signed
+    assert recovered["schema"] == "maverick.erasure-receipt.v2"
 
 
 def test_manifest_cannot_shorten_the_governed_retention_period():

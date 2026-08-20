@@ -9,7 +9,7 @@ location:
   ``MAVERICK_CLIENT_ID``;
 * that id becomes the tenant **floor** (consumed by
   :func:`maverick.paths.current_tenant_id`), so every data path — world DB,
-  audit chain + keys, cross-session memory, fleet memory — resolves under
+  audit chain + keys and matter-scoped learned state — resolves under
   ``~/.maverick/tenants/<client>/...`` instead of a shared root. There is no
   un-scoped global location for client data to accumulate in;
 * in **enforced** mode (``[client] enforce = true``, ``MAVERICK_CLIENT_ENFORCE``,
@@ -202,7 +202,7 @@ def erase_client(*, keep_audit: bool = False) -> dict:
 
     Because one deployment serves exactly one client, the client's entire data
     set lives under one root (``data_dir()`` = ``tenants/<client>/``): world DB,
-    cross-session memory, fleet memory, the managed trust registry, caches, and
+    matter-scoped learned state, the managed trust registry, caches, and
     (unless ``keep_audit``) the audit chain. Wiping that tree is therefore a
     *provably complete* tenant erase — there is no other place the client's data
     resides on this node.

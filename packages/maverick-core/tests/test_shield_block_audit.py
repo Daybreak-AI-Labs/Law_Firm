@@ -8,6 +8,7 @@ the orchestrator input chokepoint now records it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import types
 from pathlib import Path
@@ -28,7 +29,7 @@ class _InputBlockingShield:
 
     def scan_input(self, text):
         if "BLOCKME" in (text or ""):
-            return _verdict(False, ["test-input-policy"])
+            return _verdict(False, ["test-input-policy: Client Falcon / merger.docx"])
         return _verdict(True, [])
 
     def scan_tool_call(self, *a, **k):
@@ -71,4 +72,16 @@ async def test_shield_input_block_records_audit_event(tmp_path, monkeypatch, fak
     blocks = [e for e in _audit_events(tmp_path) if e.get("kind") == "shield_block"]
     assert blocks, "shield input block left no shield_block audit event"
     assert blocks[0]["stage"] == "input"
-    assert "test-input-policy" in blocks[0]["reason"]
+    reason = "test-input-policy: Client Falcon / merger.docx"
+    assert "reason" not in blocks[0]
+    assert blocks[0]["reason_bytes"] == len(reason.encode("utf-8"))
+    assert blocks[0]["reason_sha256"] == hashlib.sha256(
+        reason.encode("utf-8")
+    ).hexdigest()
+    raw_day = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / "audit").glob("*.ndjson")
+    )
+    assert reason not in raw_day
+    assert "Client Falcon" not in raw_day
+    assert "merger.docx" not in raw_day

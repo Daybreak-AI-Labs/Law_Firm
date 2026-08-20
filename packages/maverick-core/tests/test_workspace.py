@@ -115,9 +115,10 @@ class TestPerTenantKnowledgeIsolation:
         fake_knowledge = types.ModuleType("maverick_knowledge")
 
         class FakeKnowledgeBase:
-            def __init__(self, *, store, embedder):
+            def __init__(self, *, store, embedder, shield=None):
                 self.store = store
                 self.embedder = embedder
+                self.shield = shield
 
         fake_knowledge.KnowledgeBase = FakeKnowledgeBase
         fake_knowledge.build_store = lambda cfg: cfg["path"]

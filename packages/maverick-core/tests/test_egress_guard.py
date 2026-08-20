@@ -150,21 +150,6 @@ def test_without_the_guard_the_same_call_escapes(monkeypatch) -> None:
         egress_guard.install()
 
 
-def test_a_real_previously_ungated_connector_is_blocked(guarded, monkeypatch) -> None:
-    """End-to-end on shipped code, not a synthetic httpx call.
-
-    ``asana_tool`` is one of the 60 connectors under ``tools/`` that reached
-    the network with a bare ``httpx.get`` and no gate. Nothing about the
-    connector changed; it is covered because the guard sits under it. This is
-    the assertion that generalises to the other 86.
-    """
-    monkeypatch.setenv("ASANA_TOKEN", "t-fake")
-    from maverick.tools import asana_tool
-
-    with pytest.raises(EgressBlocked):
-        asana_tool._get("/workspaces")
-
-
 # -- what must still be allowed --------------------------------------------
 
 def test_the_guard_is_a_noop_when_enterprise_mode_is_off(unguarded_mode) -> None:
@@ -508,7 +493,11 @@ async def test_one_hop_wrappers_forward_signature_extensions(
 
     request = type("Request", (), {"url": "https://allowed.example/x"})()
     monkeypatch.setattr(egress_guard, "_reaches_the_network", lambda *a: True)
-    monkeypatch.setattr(egress_guard, "_check", lambda url: checked.append(url))
+    monkeypatch.setattr(
+        egress_guard,
+        "_check",
+        lambda url, **_kwargs: checked.append(url),
+    )
 
     egress_guard._patch_httpx(FakeHttpx)
 

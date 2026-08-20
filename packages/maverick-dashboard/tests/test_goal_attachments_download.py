@@ -44,7 +44,7 @@ def test_upload_list_download_roundtrip(monkeypatch, tmp_path):
     assert dl.headers["x-content-type-options"] == "nosniff"
 
 
-def test_download_streams_file_without_reading_all_bytes(monkeypatch, tmp_path):
+def test_download_uses_bounded_decrypting_reader(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     c = _client()
     from maverick_dashboard import app as app_mod
@@ -57,16 +57,71 @@ def test_download_streams_file_without_reading_all_bytes(monkeypatch, tmp_path):
     assert r.status_code == 201, r.text
     aid = r.json()["id"]
 
-    def fail_read_bytes(self):
-        raise AssertionError("download endpoint must stream instead of read_bytes")
+    from maverick import attachments
 
-    monkeypatch.setattr("pathlib.Path.read_bytes", fail_read_bytes)
+    calls = []
+    real_read = attachments.read_bytes
+
+    def observed_read(path, digest):
+        calls.append((path, digest))
+        return real_read(path, digest)
+
+    monkeypatch.setattr(attachments, "read_bytes", observed_read)
 
     dl = c.get(f"/api/v1/goals/{gid}/attachments/{aid}/download")
     assert dl.status_code == 200
     assert dl.content == b"x" * 1024
     assert "attachment" in dl.headers["content-disposition"]
     assert dl.headers["x-content-type-options"] == "nosniff"
+    assert calls and calls[0][1] == r.json()["sha256"]
+
+
+def test_download_fails_closed_on_attachment_integrity_error(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    c = _client()
+    from maverick import attachments
+    from maverick_dashboard import app as app_mod
+
+    gid = app_mod._world().create_goal("tampered file", "")
+    uploaded = c.post(
+        f"/api/v1/goals/{gid}/attachments",
+        files={"file": ("evidence.txt", io.BytesIO(b"original"), "text/plain")},
+    )
+    aid = uploaded.json()["id"]
+
+    def reject(_path, _digest):
+        raise attachments.AttachmentRejected("content-address mismatch")
+
+    monkeypatch.setattr(attachments, "read_bytes", reject)
+
+    response = c.get(f"/api/v1/goals/{gid}/attachments/{aid}/download")
+
+    assert response.status_code == 410
+    assert "integrity" in response.json()["detail"]
+
+
+def test_download_does_not_fetch_missing_local_ciphertext_remotely(
+    monkeypatch, tmp_path,
+):
+    _isolate(monkeypatch, tmp_path)
+    c = _client()
+    from pathlib import Path
+
+    from maverick_dashboard import app as app_mod
+
+    world = app_mod._world()
+    gid = world.create_goal("local-only evidence", "")
+    uploaded = c.post(
+        f"/api/v1/goals/{gid}/attachments",
+        files={"file": ("evidence.txt", io.BytesIO(b"original"), "text/plain")},
+    )
+    aid = uploaded.json()["id"]
+    Path(world.list_attachments(gid)[0].path).unlink()
+
+    response = c.get(f"/api/v1/goals/{gid}/attachments/{aid}/download")
+
+    assert response.status_code == 410
+    assert response.json()["detail"] == "attachment bytes not on this host"
 
 
 def test_download_404_for_wrong_attachment(monkeypatch, tmp_path):

@@ -254,6 +254,73 @@ def test_oversized_upload_is_refused():
         dr.redline_docx(b"x" * (dr._MAX_DOCX_BYTES + 1), [], date=DATE)
 
 
+def test_zip_bomb_ratio_is_rejected_before_any_part_is_opened(monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", b"A" * 4096)
+    monkeypatch.setattr(dr, "_MAX_COMPRESSION_RATIO", 2)
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "open",
+        lambda *a, **k: pytest.fail("zip bomb reached decompression"),
+    )
+
+    with pytest.raises(dr.RedlineError, match="compression ratio"):
+        dr.redline_docx(buf.getvalue(), [], date=DATE)
+
+
+def test_aggregate_uncompressed_cap_is_checked_before_read(monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("word/document.xml", b"<w:document/>")
+        z.writestr("word/media/blob.bin", b"x" * 64)
+    monkeypatch.setattr(dr, "_MAX_TOTAL_UNCOMPRESSED", 32)
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "open",
+        lambda *a, **k: pytest.fail("oversized package reached decompression"),
+    )
+
+    with pytest.raises(dr.RedlineError, match="expands too large"):
+        dr.redline_docx(buf.getvalue(), [], date=DATE)
+
+
+def test_malformed_part_read_is_a_redline_error(monkeypatch):
+    original = _make_docx([CLAUSE])
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "open",
+        lambda *a, **k: (_ for _ in ()).throw(zipfile.BadZipFile("bad CRC")),
+    )
+
+    with pytest.raises(dr.RedlineError, match="unreadable part"):
+        dr.redline_docx(original, [], date=DATE)
+
+
+def test_redline_and_revision_count_never_use_unbounded_zipfile_read(monkeypatch):
+    original = _make_docx([CLAUSE])
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "read",
+        lambda *a, **k: pytest.fail("unbounded ZipFile.read was used"),
+    )
+
+    result = dr.redline_docx(original, [], date=DATE)
+
+    assert dr.revision_count(result.content) == (0, 0)
+
+
+def test_duplicate_docx_parts_are_rejected():
+    buf = io.BytesIO()
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("word/document.xml", b"<w:document/>")
+            z.writestr("word/document.xml", b"<w:document/>")
+
+    with pytest.raises(dr.RedlineError, match="duplicate part"):
+        dr.redline_docx(buf.getvalue(), [], date=DATE)
+
+
 def test_revision_ids_are_unique():
     original = _make_docx([CLAUSE, "2. Term.", "3. Fees."])
     res = dr.redline_docx(

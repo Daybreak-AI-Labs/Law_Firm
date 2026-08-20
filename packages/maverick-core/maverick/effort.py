@@ -43,10 +43,27 @@ _ROLE_DEFAULTS: dict[str, str] = {
 }
 
 
+def _capability_model_id(model_id: str) -> str:
+    """Return the Anthropic model ID used only for effort capability lookup.
+
+    Firm dispatch retains the exact ``provider:model`` pin.  This helper peels
+    the validated Anthropic provider prefix solely so the existing model
+    capability matrix can recognize the model. Unknown providers, malformed
+    specs, and model names containing another colon fail closed.
+    """
+    raw = str(model_id or "").strip()
+    if ":" not in raw:
+        return raw
+    provider, model = raw.split(":", 1)
+    if provider.strip().lower() != "anthropic" or not model.strip() or ":" in model:
+        return ""
+    return model.strip()
+
+
 def effort_supported(model_id: str) -> bool:
     """Whether ``model_id`` accepts ``output_config.effort`` at all (Opus 4.5+ and
     Sonnet 4.6; Sonnet 4.5 and Haiku 4.5 reject it with a 400)."""
-    m = model_id or ""
+    m = _capability_model_id(model_id)
     return (
         m.startswith(("claude-opus-4-5", "claude-opus-4-6",
                       "claude-opus-4-7", "claude-opus-4-8"))
@@ -56,7 +73,7 @@ def effort_supported(model_id: str) -> bool:
 
 def _clamp(level: str, model_id: str) -> str:
     """Lower a level the model can't take to one it can (never 400)."""
-    m = model_id or ""
+    m = _capability_model_id(model_id)
     is_opus_78 = m.startswith(("claude-opus-4-7", "claude-opus-4-8"))
     is_opus_tier = m.startswith(("claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"))
     if level == "xhigh" and not is_opus_78:
@@ -117,9 +134,9 @@ def _configured_level(role: str, pack_default: str | None = None) -> str | None:
 def effort_for_model(level: str | None, model_id: str) -> str | None:
     """Validate and clamp a preselected effort level for ``model_id``.
 
-    This is the provider/failover-side companion to :func:`effort_for_role`: an
-    agent may have resolved its configured effort against a primary model, but a
-    later failover attempt still has to respect the fallback model's ceiling.
+    This is the provider-side companion to :func:`effort_for_role`. It applies
+    defense in depth at dispatch so the selected run model's effort ceiling is
+    respected even when a caller supplies a pre-resolved level.
     """
     if not effort_supported(model_id) or not level:
         return None

@@ -310,35 +310,52 @@ def generate_profile(spec: IntakeSpec, propose=None) -> DomainProfile:
     return validate_profile(profile)
 
 
-def ingest_docs(spec: IntakeSpec, kb, collection: str | None = None,
-                *, ingested_by: str = "") -> int:
+def ingest_docs(
+    spec: IntakeSpec,
+    kb,
+    collection: str | None = None,
+    *,
+    matter_id: int,
+    ingested_by: str = "",
+) -> int:
     """Ingest the spec's uploaded documents into the pack's knowledge collection.
     Returns the number of chunks stored. Fail-soft per document.
 
     Each document is stamped with provenance (``ingested_by``, source, content
     hash) and the ingestion is recorded on the signed audit chain so a governed
     corpus has a tamper-evident record of what was loaded and by whom. The audit
-    write is best-effort: a missing audit backend never blocks onboarding.
+    A compliance refusal propagates instead of allowing corpus mutation to
+    silently outrun the audit guarantee.
     """
-    collection = collection or _slug(spec.name)
+    from maverick_knowledge import matter_collection
+    source_collection = collection or _slug(spec.name)
+    collection_key = matter_collection(matter_id, source_collection)
     total = 0
     docs = 0
     for path in spec.doc_paths:
         try:
-            n = kb.ingest_path(collection, path, ingested_by=ingested_by)
+            n = kb.ingest_path(collection_key, path, ingested_by=ingested_by)
             total += n
             if n:
                 docs += 1
         except Exception as e:  # one bad upload must not abort onboarding
             log.warning("intake: failed to ingest %s (%s)", path, e)
     if total:
-        try:
-            from .audit import record
-            record("evidence_capture", agent="intake",
-                   knowledge_collection=collection, documents=docs,
-                   chunks=total, ingested_by=ingested_by or "unknown")
-        except Exception:  # pragma: no cover -- audit is optional, never blocks
-            log.debug("intake: knowledge ingest audit event not recorded")
+        import hashlib
+
+        from .audit import EventKind, audit_event
+
+        audit_event(
+            EventKind.EVIDENCE_CAPTURE,
+            agent="intake",
+            knowledge_collection_sha256=hashlib.sha256(
+                collection_key.encode("utf-8")
+            ).hexdigest(),
+            matter_id=int(matter_id),
+            documents=docs,
+            chunks=total,
+            ingested_by=ingested_by or "unknown",
+        )
     return total
 
 
@@ -471,15 +488,8 @@ def build_llm_proposer(llm, *, model: str | None = None, budget=None):
     path ("describe the business, we synthesize the pack"). The result is still
     run through ``validate_profile``, so the model can't widen the envelope."""
     def propose(spec: IntakeSpec) -> dict:
-        system = _PROPOSER_SYSTEM
-        try:  # fold in promoted factory guidance (no-op while self-improvement off)
-            from .domain import suite_for
-            from .factory_learning import augment_system_prompt
-            system = augment_system_prompt(_PROPOSER_SYSTEM, suite=suite_for(_slug(spec.name)))
-        except Exception:  # pragma: no cover -- guidance must never break generation
-            pass
         resp = llm.complete(
-            system=system,
+            system=_PROPOSER_SYSTEM,
             messages=[{"role": "user", "content": _intake_prompt(spec)}],
             model=model, budget=budget, max_tokens=1500,
         )
@@ -488,7 +498,9 @@ def build_llm_proposer(llm, *, model: str | None = None, budget=None):
     return propose
 
 
-def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb) -> int:
+def attach_docs_to_profile(
+    spec: IntakeSpec, profile: DomainProfile, kb, *, matter_id: int,
+) -> int:
     """Ingest approved intake documents and bind the profile to their collection.
 
     The collection is isolated and non-predictable so newly onboarded documents
@@ -498,7 +510,7 @@ def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb) -> int:
     if not spec.doc_paths:
         return 0
     collection = _pending_collection(profile.name)
-    total = ingest_docs(spec, kb, collection=collection)
+    total = ingest_docs(spec, kb, collection=collection, matter_id=matter_id)
     if total:
         profile.knowledge_sources = [collection]
     return total

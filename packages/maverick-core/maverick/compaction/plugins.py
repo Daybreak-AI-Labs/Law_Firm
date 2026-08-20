@@ -227,7 +227,7 @@ class _StrategyAdapter:
 # from compaction_strategies so `[context] compaction_strategy` selects any of
 # them through this one dispatcher (still fail-safe to heuristic on a typo).
 register(_HeuristicStrategy())
-for _name in ("learned", "multimodal", "streaming", "graph"):
+for _name in ("learned", "multimodal", "graph"):
     register(_StrategyAdapter(_name))
 
 

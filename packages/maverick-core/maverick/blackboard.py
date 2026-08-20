@@ -41,8 +41,6 @@ class Blackboard:
         # by a sealed agent are withheld from render() so a poisoned finding
         # can't steer the rest of the swarm. None == disabled.
         self._quarantine = None
-        # Optional replayable-trace writer (opt-in; see attach_trace).
-        self._trace = None
         # Guards entries against a runner thread and the event loop touching
         # the same blackboard. (NOTE: this does not serialize same-thread
         # gather() coroutines against each other — the deeper swarm-shares-
@@ -53,11 +51,6 @@ class Blackboard:
         """Wire the blackboard to a WorldModel so posts are persisted as events."""
         self._world = world
         self._goal_id = goal_id
-
-    def attach_trace(self, writer) -> None:
-        """Mirror every post into a replayable JSONL trace (opt-in). ``writer``
-        is a ``replay_trace.TraceWriter``; None detaches."""
-        self._trace = writer
 
     def attach_quarantine(self, registry) -> None:
         """Wire a QuarantineRegistry so sealed agents' posts are withheld."""
@@ -88,8 +81,8 @@ class Blackboard:
         # `entries` above stay verbatim (the agents' shared working memory --
         # a value legitimately passed between siblings must survive), but the
         # mirror to world.goal_events (world.db on disk + the live dashboard
-        # stream), the offline replay trace, and the external observation
-        # channel must not leak a credential an agent reported -- a secret was
+        # stream) and the external observation channel must not leak a credential
+        # an agent reported -- a secret was
         # persisting in cleartext to disk and to any dashboard viewer even in a
         # fully local deployment (security finding). Mirrors how the audit log
         # already redacts its persisted record.
@@ -109,14 +102,6 @@ class Blackboard:
             try:
                 self._world.append_event(self._goal_id, agent, kind, mirror_content)
             except Exception:
-                pass
-        # Replayable trace (opt-in via MAVERICK_TRACE_DIR): one JSONL line per
-        # post so a run can be reconstructed/replayed offline. Best-effort.
-        tw = getattr(self, "_trace", None)
-        if tw is not None:
-            try:
-                tw.record(kind, agent=agent, content=mirror_content)
-            except Exception:  # pragma: no cover -- tracing never blocks the loop
                 pass
         # Live observation channel (push): tee to any external observer watching
         # the swarm. No-op (a lock-free subscriber check) when nobody is

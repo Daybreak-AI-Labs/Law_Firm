@@ -25,11 +25,12 @@ def _prep(monkeypatch, tmp_path):
 def test_catalog_spans_providers():
     from maverick.llm import catalog_specs
     specs = {s for s, _ in catalog_specs()}
-    # bare anthropic + provider-prefixed others
-    assert "claude-opus-4-8" in specs
+    assert "anthropic:claude-opus-4-8" in specs
     assert "openai:gpt-5.4" in specs
     assert "gemini:gemini-3.5-pro" in specs
     assert "xai:grok-4-latest" in specs
+    assert all(":" in spec for spec in specs)
+    assert "openrouter:auto" not in specs
 
 
 def test_settings_picker_is_multi_provider(monkeypatch, tmp_path):

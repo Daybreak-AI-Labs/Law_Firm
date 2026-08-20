@@ -1,7 +1,7 @@
 # Bjerken and Day
 
-The firm's internal practice platform: a governed AI workforce that drafts, researches,
-and keeps the file straight — VA disability claims and appeals, pleadings and motions,
+The firm's internal practice platform: governed legal assistants that draft, research,
+and keep the file straight — VA disability claims and appeals, pleadings and motions,
 wills and trusts, corporate redlines, discovery, research memos — with an attorney
 reviewing everything before it leaves the office. Nothing it produces is
 self-approving; every legal seat routes its work product to a human.
@@ -33,18 +33,20 @@ Jurisdiction is a required field on a matter, not an optional tag.
 
 **What it keeps from upstream**
 
-- The kernel — recursive orchestration, persistent world model, per-role model routing,
+- The kernel — recursive orchestration, persistent world model, one explicit run-wide model pin,
   hard budget caps, sandboxed execution.
 - The governance layer that matters for legal work: least-privilege tool envelopes per
   seat, a signed hash-chained audit log, human sign-off gates, and compartment isolation
   so one matter's context cannot bleed into another.
-- The self-improvement machinery, which is being retargeted at the work that actually
-  matters here — see [Roadmap](#roadmap).
+- The matter-scoped local improvement loop: reflexion, rehearsal, offline candidate
+  evaluation, and explicit operator promotion. Runtime agents cannot acquire tools or
+  promote code.
 
 **What was removed**
 
-- 1,895 specialist packs for industries the firm does not practice in (aerospace,
-  mining, semiconductors, healthcare, banking, …). 125 remain.
+- The inherited cross-industry specialist roster. Thirty-one law-firm profiles
+  remain; finance, tax, HR, insurance, foreign-regime, and generic business
+  profiles are not shipped as selectable matter workflows.
 - The enterprise sales surface: demo SKUs, the benchmark harness, the published
   governance benchmark, marketing pages, and the release pipeline that shipped them.
 - Agent-surveillance instrumentation. The **audit record stays** — conflicts checks,
@@ -54,33 +56,31 @@ Jurisdiction is a required field on a matter, not an optional tag.
 
 ## The roster
 
-125 specialist packs, each with a least-privilege tool envelope, a risk ceiling, a
+31 legal profiles, each with a least-privilege tool envelope, a risk ceiling, a
 workflow playbook, and a declared deliverable that names a human consumer.
 
-| Suite | Packs | What it covers |
+| Work | Profiles | What it covers |
 |---|---:|---|
-| Legal | 77 | Briefs, citation, conflicts, matter intake and management, contract drafting and review, NDA desk, e-discovery, litigation holds, subpoenas, settlement, IP docket, patent, trademark, privacy (GDPR/CCPA/state), entity management, board minutes, investigations |
-| Tax | 12 | Advisory and controversy work supporting estate, entity and client matters |
-| Finance | 8 | The firm's own books — AR, AP, payroll, close, unclaimed property |
-| Security | 5 | Breach-response support for the privacy and cyber practice |
-| Knowledge | 4 | The firm's clause bank, precedent library, and SOPs |
-| Employment | 4 | Employment-law advice for business clients, plus hiring staff |
-| Corporate | 5 | Minutes, meeting prep, data rooms, succession documents |
-| Real estate | 3 | Lease abstraction, transaction coordination, fair housing |
-| Insurance | 3 | Coverage disputes, subrogation, cyber cover |
+| Matter and client | 5 | Firm-wide legal drafting, conflicts, intake, and matter management |
+| Research and litigation | 10 | Research, citation checks, briefs, discovery, holds, investigations, case management, settlement, and subpoenas |
+| Transactional and corporate | 12 | Contract intake/drafting/review, DPA/MSA/NDA/SaaS work, entity and board work, obligations, negotiation, and vendor review |
+| Privacy, cyber, and employment | 3 | Breach response, privacy analysis, and employment-law analysis |
+| Knowledge management | 1 | Matter-scoped precedent and playbook upkeep |
 
-Every legal pack must declare a deliverable, name a human consumer, and carry a
-review or approval gate. Two internal-workflow seats (`legal_intake`, `legal_km`) are
-the only exceptions, and a test guards that exception list so it cannot quietly grow.
+Every legal pack declares a deliverable, names a human consumer, and ends in a
+review or approval gate. Intake routing and knowledge-management packages are
+also held for attorney review; neither is an ungated internal exception.
 
-**Gap worth naming:** none of the 77 legal packs cover veterans' benefits. VA disability
-is the firm's practice area with the least support from the inherited roster and the
-most to gain from purpose-built seats — see the [roadmap](#roadmap).
+**Gap worth naming:** the compact roster does not yet have dedicated VA-disability,
+family-law, estate/probate, or state-specific real-estate profiles. Those matters can
+use the gated firm-wide research/drafting profile during development, but the platform
+must not claim a specialized workflow until the attorney-reviewed packs and live legal
+evaluations exist — see the [roadmap](#roadmap).
 
 Prove the roster's safety properties:
 
 ```bash
-maverick domains-lint     # 0 errors across all 125 packs
+maverick domains-lint     # 0 errors across all 31 profiles
 ```
 
 ## Setup
@@ -92,7 +92,7 @@ python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts
 
 pip install -e ./packages/maverick-core                 # kernel, with deps
 for p in maverick-shield \
-         maverick-dashboard maverick-mcp maverick-knowledge; do
+         maverick-dashboard maverick-knowledge; do
   pip install --no-deps -e "./packages/$p"
 done
 pip install --no-deps -e ./apps/installer-cli
@@ -116,13 +116,12 @@ watched, and answered there. The CLI is the operational surface:
 | `maverick doctor` | Health check with remediation hints |
 | `maverick dashboard` | Local web UI and REST API — where goals are created and run |
 | `maverick worker` | Background job worker that executes queued goals |
-| `maverick mcp` | MCP server, for driving the platform from Claude Code or Cursor |
 | `maverick migrate` / `config-lint` / `domains-lint` | Setup and health checks |
 | `maverick audit verify` | Verify the hash-chained audit log |
 | `maverick erase` / `erase-verify` / `export-user` | The privacy record |
 | `maverick halt` / `unhalt` | Emergency stop |
 | `maverick dream` | Nightly learning consolidation |
-| `maverick knowledge` / `tax` | Knowledge base and tax tooling |
+| `maverick knowledge` | Matter-scoped document knowledge |
 
 The CLI is `maverick` and settings are `MAVERICK_*`. That is the internal package
 name, kept because renaming 394k lines of source buys nothing; the upstream product
@@ -133,64 +132,70 @@ name and its compatibility aliases are gone.
 ```
 packages/
   maverick-core/       Kernel: orchestration, world model (SQLite/Postgres),
-                       providers, sandboxes, the 125 domain packs, budget caps
+                       providers, sandboxes, 31 legal profiles, budget caps
   maverick-shield/     Prompt/tool/output screening
   maverick-dashboard/  FastAPI web UI + REST API at /api/v1
-  maverick-mcp/        MCP server
   maverick-knowledge/  Document parsing, chunking, embedding, retrieval
 apps/
-  desktop/             Tauri shell
   installer-cli/       Setup wizard
 docs/                  Architecture, configuration, deployment, safety, API
 ```
 
-## Driving it from an editor
+## Client matters and conflicts
 
-The wire surface is the Model Context Protocol, so any MCP client can drive the
-platform: run `maverick mcp` and point Claude Code, Cursor, Continue, or Zed at
-it. The five third-party language SDKs upstream shipped (TypeScript, Go, Rust,
-C#, Java) are gone — they existed so strangers could integrate, and they cost
-five CI jobs on every push to prove something nobody here was going to use.
+The dashboard calls these workspaces **matters**. A named attorney opens a
+matter with either a new client or a client already visible through that
+attorney's active matter memberships, plus a firm matter number, jurisdiction,
+and a legal workflow that ends in human review or approval. The client, matter,
+responsible-attorney membership, and client/adverse-party records commit as one
+transaction.
+
+Conflict clearance is deliberately conservative and opaque. It compares exact
+normalized names across encrypted client and party records; a possible match
+returns only “potential conflict” and no client, matter, party, or match count.
+Alias, affiliate, and fuzzy-name research remains a conflicts-counsel workflow,
+not an automated clearance claim.
 
 ## Confidentiality
 
-**Not yet fit for real client data.** The platform is provider-agnostic by design, but
-no confidentiality gate is in place: nothing currently stops matter content reaching
-whichever model provider is configured. Before a real client file goes in, the firm
-needs a decided posture — zero-retention terms with the provider, a local model for
-sensitive matters, or both — and a gate that enforces it. This is the first item on the
-roadmap for a reason; Rule 1.6 does not have a "we were still setting it up" exception.
+Every matter defaults to `local_only`. Public model or tool egress is denied unless the
+responsible attorney changes that exact matter to `approved_services` and the operator
+has separately placed the exact provider and HTTPS host on the firm's allowlists.
+Provider and HTTP dispatch re-check the durable matter authority before use, so a
+membership revocation or egress-policy change takes effect during a live run.
 
-The platform self-hosts and needs no outbound network access beyond the model provider
-you choose. All matter data stays on the machine or server you run it on.
+This is an enforcement boundary, not a representation that any cloud service is
+ethically or contractually suitable. The firm must still approve vendor terms,
+retention, privilege handling, and incident response before adding a service to an
+allowlist. Client data is sealed at rest when the operator provisions the encryption
+key; backups use a separate operator-custodied encryption key.
 
 ## Roadmap
 
-Not built yet, in rough priority order:
+Remaining product work, in rough priority order:
 
-1. **Confidentiality gate** — matter-sensitivity flags and a hard block on privileged
-   content reaching an unapproved provider.
-2. **VA disability packs** — the largest gap, and federal, so one build serves all three
+1. **VA disability packs** — the largest gap, and federal, so one build serves all three
    states. Intake and accreditation (VA Form 21-22a), the AMA lanes (supplemental claim,
    higher-level review, Board appeal), C-file review and evidence development, nexus
    letters and DBQs, rating analysis under 38 C.F.R. Part 4, TDIU, and fee-agreement
    compliance under 38 C.F.R. § 14.636 — where the fee rules are strict enough to be
    worth encoding as a hard gate rather than a checklist. Verify current form numbers
    and rule text when authoring; VA forms change.
-3. **State practice packs** — family law (custody, support, property division, marital
+2. **State practice packs** — family law (custody, support, property division, marital
    settlement agreements), estate planning (wills, RLTs, POAs, advance directives),
    probate, and residential closings — each parameterized by jurisdiction rather than
    written three times.
-4. **Matters and clients** — a matter model carrying practice area *and* jurisdiction,
-   with conflicts checking across all three states and deadline docketing.
-5. **Time, billing, and trust accounting** — three IOLTA regimes, not one. Florida's
+3. **Client-intake follow-ons** — alias/affiliate research, conflicts-counsel
+   resolution records, and jurisdiction-aware deadline docketing. Exact normalized
+   conflict checks and required client/matter metadata are already enforced at intake.
+4. **Time, billing, and trust accounting** — three IOLTA regimes, not one. Florida's
    trust-accounting rules are the strictest of the three and should set the floor the
    ledger is built to; Georgia and Tennessee then fit inside it.
-6. **Court e-filing and rules-based calendaring** — three systems: Florida's statewide
+5. **Court e-filing and rules-based calendaring** — three systems: Florida's statewide
    portal is the most uniform, Georgia is Tyler-based, and Tennessee varies by county.
    Sequence them in that order; the uniform one proves the design.
-6. **Retargeted self-improvement** — learning from the attorney's edits to drafts,
-   building a clause bank out of executed documents, and grounding it all in outcomes.
+6. **Attorney-feedback evaluations** — expand the governed offline evaluation corpus
+   from reviewed edits and executed documents without creating cross-matter recall.
 
 ## People
 
@@ -200,7 +205,7 @@ and paralegal roles. The invite flow works today.
 **Admission status matters for how this gets used.** Until we are admitted, the
 platform is for building and testing — not for producing work product a client
 relies on, which would be practicing law without a licence regardless of who or
-what drafted it. The confidentiality gate and the VA packs are the things worth
+what drafted it. The VA packs and live legal evaluations are the things worth
 building in the meantime, so the platform is ready the day the licences are.
 
 ## License

@@ -29,79 +29,16 @@ def _resp(status, body):
 
 # ---------- crash-on-success: null fields in valid 2xx bodies ----------
 
-def test_elasticsearch_handles_null_score(monkeypatch):
-    """Sorted ES queries return hits with _score=null — must not crash."""
-    monkeypatch.setenv("ES_URL", "http://es.local:9200")
-    body = {"took": 3, "hits": {"total": {"value": 1}, "hits": [
-        {"_id": "1", "_score": None, "_source": {"k": "v"}},
-    ]}}
-    _fake_httpx(monkeypatch, post=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.elasticsearch_tool import elasticsearch_tool
-    out = elasticsearch_tool().fn({"op": "search", "index": "logs"})
-    assert "ERROR" not in out
-    assert "1" in out  # the doc id rendered
 
 
-def test_vercel_handles_null_project_name(monkeypatch):
-    monkeypatch.setenv("VERCEL_TOKEN", "tok")
-    body = {"projects": [
-        {"id": "p1", "name": None, "framework": "nextjs",
-         "latestDeployments": [{"readyState": "READY"}]},
-    ]}
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.vercel_tool import vercel_tool
-    out = vercel_tool().fn({"op": "projects"})
-    assert "ERROR" not in out and "p1" in out
 
 
-def test_datadog_handles_null_monitor_id(monkeypatch):
-    monkeypatch.setenv("DATADOG_API_KEY", "k")
-    monkeypatch.setenv("DATADOG_APP_KEY", "a")
-    body = [{"id": None, "overall_state": "OK", "name": "cpu"}]
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.datadog_tool import datadog_tool
-    out = datadog_tool().fn({"op": "monitors"})
-    assert "ERROR" not in out and "cpu" in out
 
 
-def test_reddit_handles_null_score(monkeypatch):
-    body = {"data": {"children": [
-        {"data": {"subreddit": "x", "score": None, "num_comments": None,
-                  "title": "promoted"}},
-    ]}}
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
-    from maverick.tools.reddit_tool import reddit_tool
-    out = reddit_tool().fn({"op": "subreddit", "name": "x"})
-    assert "ERROR" not in out and "promoted" in out
 
 
-def test_ga4_guards_non_json(monkeypatch):
-    monkeypatch.setenv("GA4_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("GA4_PROPERTY_ID", "123")
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json = MagicMock(side_effect=ValueError("not json"))
-    resp.text = "<html>proxy error</html>"
-    _fake_httpx(monkeypatch, post=MagicMock(return_value=resp))
-    from maverick.tools.ga4_tool import ga4_tool
-    out = ga4_tool().fn({"op": "run_report"})
-    assert "non-JSON" in out  # graceful, not a raw TypeError/ValueError
 
 
-def test_ses_dry_run_interpolates_subject(monkeypatch):
-    # Build a fake boto3 so the tool imports cleanly; send is dry-run so
-    # the client is never used.
-    boto3 = types.ModuleType("boto3")
-    boto3.client = lambda *a, **k: MagicMock()
-    monkeypatch.setitem(sys.modules, "boto3", boto3)
-    from maverick.tools.ses_tool import ses_tool
-    out = ses_tool().fn({
-        "op": "send", "from_": "a@x", "to": ["b@x"],
-        "subject": "Q3 report", "body": "hi",
-    })
-    assert "DRY RUN" in out
-    assert "Q3 report" in out  # f-string actually interpolated
-    assert "{subject" not in out
 
 
 # ---------- workflow: callable from inside a running event loop ----------
@@ -237,28 +174,6 @@ def test_llm_cache_unbounded_when_max_rows_zero(tmp_path):
 
 
 # ---------- cost_router: tolerates partial health snapshot ----------
-
-def test_cost_router_tolerates_snapshot_without_error_rate(monkeypatch):
-    monkeypatch.setenv("MAVERICK_COST_ROUTING", "1")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-    import maverick.config as cfg
-    monkeypatch.setattr(cfg, "load_config", dict)
-    # Health snapshot rows missing 'error_rate' must not crash pick().
-    import maverick.provider_health as ph
-    monkeypatch.setattr(
-        ph, "get",
-        lambda: type("H", (), {"snapshot": staticmethod(
-            lambda: [
-                {"provider": "deepseek", "model": "deepseek-v4-flash"}
-            ])})(),
-    )
-    from maverick.cost.router import CostSignal, pick
-    spec = pick(CostSignal())
-    assert spec is None or ":" in spec  # no KeyError
-
-
-# ---------- observability: record_metric label handling ----------
-
 def test_record_metric_unlabeled_gauge_no_crash(monkeypatch):
     import maverick.observability as obs
 
@@ -481,29 +396,6 @@ def test_chaos_roll_is_thread_safe_smoke():
     assert not errors, f"concurrent roll() raised: {errors[:3]}"
 
 
-# ---------- sandbox: timeout cleanup never masks the TIMEOUT result ----
-
-def test_podman_timeout_cleanup_swallows_cleanup_error(monkeypatch, tmp_path):
-    import subprocess
-
-    from maverick.sandbox.podman import PodmanBackend
-
-    def _run(args, *a, **k):
-        if args[:2] == ["podman", "version"]:
-            return MagicMock(returncode=0, stdout=b"", stderr=b"")
-        if args[:2] == ["podman", "rm"]:
-            # Cleanup itself blows up — must be swallowed.
-            raise subprocess.TimeoutExpired(cmd="podman rm", timeout=10)
-        # The actual `podman run` times out.
-        raise subprocess.TimeoutExpired(cmd="podman run", timeout=5)
-
-    monkeypatch.setattr("subprocess.run", _run)
-    backend = PodmanBackend(workdir=tmp_path, image="alpine")
-    result = backend.exec("sleep 999")
-    assert result.exit_code == 124
-    assert "TIMEOUT" in result.stderr
-
-
 # ---------- audit signing: tampered rows flagged, not crashed ----------
 
 def _crypto_available() -> bool:
@@ -583,58 +475,14 @@ def test_audit_verify_rejects_path_traversal_key_id(tmp_path, monkeypatch):
 
 # ---------- hackernews: null points on comment hits ----------
 
-def test_hackernews_handles_null_points(monkeypatch):
-    body = {"hits": [
-        {"title": None, "comment_text": "a comment", "points": None,
-         "objectID": "42"},
-    ]}
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json = MagicMock(return_value=body)
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=resp))
-    from maverick.tools.hackernews import hackernews
-    out = hackernews().fn({"op": "search", "query": "x"})
-    assert "ERROR" not in out
 
 
 # ---------- calendar find_slot: latest_hour=23 must not crash ----------
 
-def test_calendar_find_slot_latest_hour_23(monkeypatch):
-    monkeypatch.setenv("CALDAV_URL", "https://cal.test")
-    monkeypatch.setenv("CALDAV_USER", "me@test")
-    monkeypatch.setenv("CALDAV_PASSWORD", "pw")
-    import sys as _sys
-    import types as _types
-    fake_caldav = _types.ModuleType("caldav")
-    fake_calendar = MagicMock()
-    fake_calendar.search = MagicMock(return_value=[])
-    fake_principal = MagicMock()
-    fake_principal.calendars = MagicMock(return_value=[fake_calendar])
-    fake_client = MagicMock()
-    fake_client.principal = MagicMock(return_value=fake_principal)
-    fake_caldav.DAVClient = MagicMock(return_value=fake_client)
-    monkeypatch.setitem(_sys.modules, "caldav", fake_caldav)
-    from maverick.tools.calendar_tool import calendar_tool
-    # earliest=23, latest=23 — previously max(24, min(23,23))=24 →
-    # cursor.replace(hour=24) ValueError. Must not crash now.
-    out = calendar_tool().fn({
-        "op": "find_slot", "earliest_hour": 23, "latest_hour": 23,
-    })
-    assert "hour must be in 0..23" not in out
-    assert "ValueError" not in out
 
 
 # ---------- compute fallback: power-tower CPU/memory DoS ----------
 
-def test_compute_fallback_blocks_power_tower(monkeypatch):
-    import sys as _sys
-    # Force the no-sympy fallback path.
-    monkeypatch.setitem(_sys.modules, "sympy", None)
-    from maverick.tools.compute import compute
-    out = compute().fn({"op": "evaluate", "expr": "9**9**9"})
-    assert "ERROR" in out  # blocked, not a 370M-digit hang
-    ok = compute().fn({"op": "evaluate", "expr": "2**8"})
-    assert "256" in ok
 
 
 # ---------- replay_export: non-numeric goal_id skips, not crashes ----
@@ -720,37 +568,3 @@ def test_verifier_propagates_budget_exceeded():
     except BudgetExceeded:
         return  # budget is a control signal, must propagate
     raise AssertionError("expected BudgetExceeded to propagate")
-
-
-# ---------- edit_format: fuzzy match safety ----------
-
-def test_edit_format_indent_match_slice_actually_matches():
-    """When step 3 returns an indent_norm match, the mapped-back slice
-    must really indent-match the needle (the recheck guard)."""
-    from maverick.edit_format import _find_with_fuzzy, _normalise_indent
-    content = (
-        "def a():\n"
-        "    x = 1\n"
-        "    return x\n"
-        "\n"
-        "class C:\n"
-        "    def a(self):\n"
-        "        y = 2\n"
-        "        return y\n"
-    )
-    needle = "x = 1\nreturn x\n"  # uniquely indent-matches the first block
-    start, end, strategy = _find_with_fuzzy(content, needle)
-    assert start is not None
-    needle_ni, _ = _normalise_indent(needle)
-    assert _normalise_indent(content[start:end])[0].startswith(needle_ni)
-
-
-def test_edit_format_refuses_two_identical_blocks():
-    """Two byte-identical blocks → fuzzy tiers must refuse (ambiguous),
-    never silently pick the first."""
-    from maverick.edit_format import _find_with_fuzzy
-    content = "    x = 1\n    return x\n\n    x = 1\n    return x\n"
-    needle = "x = 1\nreturn x\n"
-    start, end, strategy = _find_with_fuzzy(content, needle)
-    assert strategy == "ambiguous"
-    assert start is None and end is None

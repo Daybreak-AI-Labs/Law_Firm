@@ -3,8 +3,7 @@
 When ``MAVERICK_RISK_PROPORTIONAL_VERIFY`` is on, the orchestrator skips
 the LLM verifier on clearly low-risk answers (short, prose-only, no tools,
 no code) and records a distinct "skipped" confidence. Default off: nothing
-changes. Coding tasks, tool use, embedded code, and long answers always
-get full verification.
+changes. Tool use, embedded code, and long answers always get full verification.
 """
 from pathlib import Path
 
@@ -25,24 +24,20 @@ from maverick.world_model import WorldModel
 
 def test_short_prose_no_tools_is_low_risk():
     assert _final_is_low_risk("The capital of France is Paris.",
-                              coding=False, tool_calls=0) is True
-
-
-def test_coding_mode_is_never_low_risk():
-    assert _final_is_low_risk("looks fine", coding=True, tool_calls=0) is False
+                              tool_calls=0) is True
 
 
 def test_any_tool_use_is_not_low_risk():
-    assert _final_is_low_risk("done", coding=False, tool_calls=1) is False
+    assert _final_is_low_risk("done", tool_calls=1) is False
 
 
 def test_empty_final_is_not_low_risk():
-    assert _final_is_low_risk("", coding=False, tool_calls=0) is False
-    assert _final_is_low_risk(None, coding=False, tool_calls=0) is False
+    assert _final_is_low_risk("", tool_calls=0) is False
+    assert _final_is_low_risk(None, tool_calls=0) is False
 
 
 def test_long_answer_is_not_low_risk():
-    assert _final_is_low_risk("x " * 600, coding=False, tool_calls=0) is False
+    assert _final_is_low_risk("x " * 600, tool_calls=0) is False
 
 
 @pytest.mark.parametrize("body", [
@@ -52,7 +47,7 @@ def test_long_answer_is_not_low_risk():
     "--- a/file.py",
 ])
 def test_embedded_code_is_not_low_risk(body):
-    assert _final_is_low_risk(body, coding=False, tool_calls=0) is False
+    assert _final_is_low_risk(body, tool_calls=0) is False
 
 
 # --- enable flag -----------------------------------------------------------

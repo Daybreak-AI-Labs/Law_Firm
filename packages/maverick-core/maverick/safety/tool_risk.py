@@ -19,7 +19,6 @@ Config (``~/.maverick/config.toml``):
 
     [security.tool_risk]
     my_plugin_tool = "high"      # override / classify a tool
-    "mcp_*"        = "medium"    # glob -- relax MCP tools (they default to high)
 
 Default ceiling is *unset*, meaning no cap (all risk levels allowed), so
 behaviour is unchanged unless a ceiling is configured.
@@ -53,10 +52,8 @@ _DEFAULT_RISK: dict[str, str] = {
     "ast_edit": "high",
     "compute": "high",
     "code_exec": "high",
-    "memory": "high",
     "clipboard": "high",
     "container_build": "high",
-    "github_issues": "high",
     "gitlab_issues": "high",
     "anki": "high",
     "lsp_bridge": "high",
@@ -98,16 +95,6 @@ _DEFAULT_RISK: dict[str, str] = {
     "spawn_swarm": "high",
     "spawn_specialist": "high",
     "delegate_to_agent": "high",
-    # Network-reachable Maverick MCP actions.  These names are the server's
-    # own tools (not third-party ``mcp_*`` imports), so classify them explicitly:
-    # goal execution can fan out into arbitrary tools, and the remaining writes
-    # mutate durable code/state/memory or resume privileged execution.
-    "maverick_start": "high",
-    "maverick_resume": "high",
-    "maverick_answer": "high",
-    "maverick_skill_install": "high",
-    "maverick_fact_set": "high",
-    "maverick_fleet_ingest": "high",
     # high (finance): money movement, posting to a system of record, filing with
     # an authority, or master-data mutation. Classified high so a max_risk="medium"
     # finance pack drops them from the registry and governance gates them as the
@@ -195,7 +182,6 @@ _DEFAULT_RISK: dict[str, str] = {
     "gdrive": "high",
     "gitlab": "high",
     "github_search": "high",
-    "http_fetch": "high",
     "web_archive": "high",
     "hubspot": "high",
     "jira": "high",
@@ -241,12 +227,6 @@ _DEFAULT_RISK: dict[str, str] = {
     "currency": "low",
     "preview_diff": "low",
     "erp_read": "low",  # read-only (GET) ERP access; no writes / host mutation
-    # Read-only Maverick MCP queries.  Agent Trust max_risk ceilings use this
-    # same table, so a low-risk remote principal sees queries but not mutations.
-    "maverick_status": "low",
-    "maverick_skills_list": "low",
-    "maverick_fleet_recall": "low",
-    "maverick_facts_get": "low",
 }
 
 _DEFAULT_RISK_LEVEL = "medium"
@@ -339,12 +319,10 @@ def tool_risk(name: str, overrides: dict[str, str] | None = None) -> str:
     """Risk level for a tool: config override (exact then glob), then the
     built-in default.
 
-    Two classes of tool fail safe to ``high`` when otherwise unclassified: an
-    MCP tool (``mcp_*``), which runs arbitrary code through a third-party
-    server; and an enterprise connector (the long-tail REST/GraphQL connectors
-    from ``enterprise_connectors.py``), which is write-capable by construction.
-    A config override is checked first, so either can be relaxed deliberately,
-    e.g. ``[security.tool_risk]`` ``"mcp_*" = "medium"`` or ``okta = "medium"``.
+    Enterprise connectors fail safe to ``high`` when otherwise unclassified
+    because the long-tail REST/GraphQL connectors are write-capable by
+    construction. A config override is checked first, so a connector can be
+    relaxed deliberately, e.g. ``[security.tool_risk]`` ``okta = "medium"``.
     Any other unclassified tool falls back to ``medium``.
     """
     overrides = _load_overrides() if overrides is None else overrides
@@ -358,18 +336,15 @@ def tool_risk(name: str, overrides: dict[str, str] | None = None) -> str:
             # broad wildcard (e.g. "s*"="low") would otherwise declassify
             # shell / wire_transfer and defeat the max_risk ceiling + risk gate.
             # Dropping a built-in below its floor requires an explicit exact
-            # override (handled above). mcp_*/connector fail-safes are not in
-            # the built-in table, so they stay glob-relaxable as documented.
+            # override (handled above). Connector fail-safes are not in the
+            # built-in table, so they stay glob-relaxable as documented.
             if builtin is not None and risk_rank(level) < risk_rank(builtin):
                 return builtin
             return level
     if builtin is not None:
         return builtin
-    # Unclassified. An MCP tool is externally-defined arbitrary code reached
-    # through a third-party server, and an enterprise connector is write-capable
-    # by construction -> both fail safe to high. Anything else -> medium.
-    if name.startswith("mcp_"):
-        return "high"
+    # Unclassified enterprise connectors are write-capable by construction and
+    # therefore fail safe to high. Anything else falls back to medium.
     if name in _read_connector_names():
         return _read_connector_risks().get(name, "high")
     if name in _enterprise_connector_names():
@@ -409,11 +384,7 @@ def tool_risk_is_classified(
         for pattern in overrides
     ):
         return True
-    return bool(
-        name.startswith("mcp_")
-        or name in _read_connector_names()
-        or name in _enterprise_connector_names()
-    )
+    return bool(name in _read_connector_names() or name in _enterprise_connector_names())
 
 
 def tools_exceeding(

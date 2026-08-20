@@ -12,6 +12,9 @@ from dataclasses import dataclass
 
 from maverick import dreaming, reflexion
 
+MATTER_ID = 101
+OWNER = "user:alice"
+
 # ---------- fakes ----------
 
 @dataclass
@@ -168,7 +171,8 @@ def _seed_failures(path):
                  "reconcile the quarterly partner ledger"):
         reflexion.record(goal_text=goal, failure_class="agent_error",
                          failure_msg="feed lagged", reflection="wait for close",
-                         domain="finance_gl_close", path=path)
+                         domain="finance_gl_close", matter_id=MATTER_ID,
+                         owner=OWNER, path=path)
 
 
 def _run(tmp_path, **kw):

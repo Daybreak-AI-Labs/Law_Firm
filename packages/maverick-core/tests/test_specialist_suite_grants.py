@@ -12,7 +12,7 @@ from maverick.tools.spawn import list_specialists_tool, spawn_specialist_tool
 from maverick.world_model import WorldModel
 
 
-def _ctx(tmp_path, allowed_suites=frozenset({"finance"})):
+def _ctx(tmp_path, allowed_suites=frozenset({"legal"})):
     world = WorldModel(tmp_path / "world.db")
     goal_id = world.create_goal("g", "")
     return SwarmContext(
@@ -41,12 +41,17 @@ def test_list_specialists_honors_run_suite_grant(tmp_path):
 
     listing = asyncio.run(tool.fn({}))
 
-    assert "- finance:" in listing
-    assert "- legal:" not in listing
+    assert "- legal:" in listing
+    assert "- finance:" not in listing
 
 
 def test_spawn_specialist_blocks_domain_outside_run_suite_grant(tmp_path):
-    parent = Agent(ctx=_ctx(tmp_path), role="orchestrator", brief="g", depth=0)
+    parent = Agent(
+        ctx=_ctx(tmp_path, allowed_suites=frozenset()),
+        role="orchestrator",
+        brief="g",
+        depth=0,
+    )
     tool = spawn_specialist_tool(parent)
     legal_domain = _domain_for_suite("legal")
 

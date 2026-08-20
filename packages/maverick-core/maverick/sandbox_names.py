@@ -6,16 +6,6 @@ building Click options, so keeping the registry lightweight preserves fast
 drifting apart.
 """
 
-BUILTIN_SANDBOX_BACKENDS = (
-    "local",
-    "docker",
-    "podman",
-    "gvisor",
-    "devcontainer",
-    "kubernetes",
-    "ssh",
-    "firecracker",
-    "modal",
-)
+BUILTIN_SANDBOX_BACKENDS = ("local", "docker")
 
 __all__ = ["BUILTIN_SANDBOX_BACKENDS"]

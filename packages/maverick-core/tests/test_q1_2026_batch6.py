@@ -44,7 +44,7 @@ def test_docs_index_landing_exists():
     # The landing page orients someone opening the docs: what this is, and how
     # to start it. "Pricing" and "Roadmap" were product-pitch sections and are
     # deliberately gone -- this is one firm's internal platform, not a product.
-    for keyword in ("Maverick", "Quick start"):
+    for keyword in ("Bjerken and Day", "Quick start"):
         assert keyword in body, f"index.md missing section: {keyword}"
 
 

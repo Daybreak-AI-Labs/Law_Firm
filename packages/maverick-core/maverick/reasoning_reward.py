@@ -39,6 +39,7 @@ No new dependency: standard library only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -197,16 +198,21 @@ class ReasoningReward:
     def to_audit_summary(self) -> dict:
         """A compact, chain-friendly view for the signed audit row.
 
-        Like :meth:`to_audit_dict` but drops the (potentially long) reasoning
-        trace, truncates the critique, and reduces each dimension to
-        name/score/vetoes -- so a VERIFICATION_REWARD row stays small and stable
-        while still recording WHAT the judge scored and WHERE it vetoed."""
+        Like :meth:`to_audit_dict` but replaces the model-authored critique and
+        reasoning trace with a byte count and SHA-256 commitment. A verifier can
+        quote privileged matter text in its critique, while the active audit day
+        is intentionally plaintext. The rubric names/scores remain inspectable so
+        the row records what the judge scored and where it vetoed without copying
+        client-derived prose into the audit chain.
+        """
+        critique = (self.critique or "").encode("utf-8")
         return {
             "score": round(self.score, 4),
             "confidence": round(self.confidence, 4),
             "accepts": self.accepts(),
             "vetoed": self.vetoed,
-            "critique": (self.critique or "")[:280],
+            "critique_bytes": len(critique),
+            "critique_sha256": hashlib.sha256(critique).hexdigest(),
             "dimensions": [
                 {"name": d.name, "score": round(d.score, 4), "vetoes": d.vetoes}
                 for d in self.dimensions

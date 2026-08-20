@@ -84,6 +84,28 @@ def _declared_windows() -> dict[str, int]:
         return {}
 
 
+def _lookup_model_id(model: str) -> str:
+    """Return the model component of one canonical ``provider:model`` pin.
+
+    Dispatch continues to use the exact qualified pin.  Only static capability
+    lookup needs the provider-free id used by the built-in context table.
+    Malformed or bare values are left untouched and retain the safe fallback.
+    """
+    value = str(model)
+    if value.count(":") != 1:
+        return value
+    provider, model_id = value.split(":", 1)
+    if (
+        not provider
+        or not model_id
+        or provider != provider.strip()
+        or model_id != model_id.strip()
+        or "\x00" in value
+    ):
+        return value
+    return model_id
+
+
 def context_limit(model: str) -> int:
     """Return the (conservative) context limit for ``model``.
 
@@ -94,11 +116,14 @@ def context_limit(model: str) -> int:
     declared = _declared_windows()
     if model in declared:
         return declared[model]
-    if model in _MODEL_CONTEXT_LIMITS:
-        return _MODEL_CONTEXT_LIMITS[model]
+    lookup_model = _lookup_model_id(model)
+    if lookup_model in declared:
+        return declared[lookup_model]
+    if lookup_model in _MODEL_CONTEXT_LIMITS:
+        return _MODEL_CONTEXT_LIMITS[lookup_model]
     # Family-prefix fallback.
     for prefix, limit in _MODEL_CONTEXT_LIMITS.items():
-        if model.startswith(prefix.split("-")[0]):
+        if lookup_model.startswith(prefix.split("-")[0]):
             return limit
     return 32_000
 

@@ -28,16 +28,17 @@ written, and re-checks every followed redirect hop.
 *transport*, which sits below the one-hop client method; the guard runs first
 and the pinned transport still runs after. They compose.
 
-**Default posture is unchanged.** ``egress_permitted`` returns True whenever
-enterprise mode is off, so on a default install this is one predicate per
-request and nothing else. It is not a general firewall: it is defense in depth
-for supported Python HTTP paths. A hard no-egress boundary additionally
-requires sandbox network isolation and host/OS/VPC firewall policy.
+**Client-matter posture is closed.** Outside a bound matter the historical
+enterprise-mode behavior remains. Inside a matter, public HTTP is denied unless
+the responsible attorney selected ``approved_services`` and the destination is
+on the deployment's exact firm allow-list. It is not a general firewall: it is
+defense in depth for supported Python HTTP paths. A hard no-egress boundary
+additionally requires sandbox network isolation and host/OS/VPC firewall policy.
 
 **What it still does not cover**, stated because an overclaim here is the
-original defect: a tool that shells out to ``curl``, opens a raw socket, or
-uses an HTTP library the guard does not wrap. ``sandbox/network_policy`` says
-the same about itself -- there is no packet-level backend. The
+original defect: a process that shells out to ``curl``, opens a raw socket, or
+uses an HTTP library the guard does not wrap. Docker's network-disabled mode
+and deployment firewall policy provide the packet-level boundary. The
 ``egress_contract`` CI gate enumerates every module that makes direct outbound
 HTTP and fails when one uses a library outside the wrapped set, so that gap is
 a recorded number rather than a discovery.
@@ -45,7 +46,9 @@ a recorded number rather than a discovery.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import ssl
 import sys
 from typing import Any
 
@@ -65,7 +68,44 @@ _compatibility: dict[str, dict[str, Any]] = {}
 _SENTINEL = object()
 
 
-def _denied(url: str) -> str | None:
+def _audit_url_metadata(url: Any) -> dict[str, int | str]:
+    """Bind an unparseable outbound URL without recording its path/query text."""
+    encoded = str(url or "").encode("utf-8")
+    return {
+        "url_bytes": len(encoded),
+        "url_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _tls_verification_disabled(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, ssl.SSLContext):
+        return value.verify_mode == ssl.CERT_NONE or not value.check_hostname
+    return False
+
+
+def _firm_unverified_https(url: str, *, verification_disabled: bool) -> bool:
+    if not verification_disabled:
+        return False
+    try:
+        from urllib.parse import urlparse
+
+        from .enterprise import _is_firm_loopback_endpoint
+        from .matter_context import current_matter_context
+
+        return (
+            current_matter_context() is not None
+            and urlparse(url).scheme.lower() == "https"
+            and not _is_firm_loopback_endpoint(url)
+        )
+    except Exception:
+        # An unverified transport plus unavailable matter policy cannot be
+        # proven safe at the socket boundary.
+        return True
+
+
+def _denied(url: str, *, verification_disabled: bool = False) -> str | None:
     """Denial reason for an outbound URL, or None to allow.
 
     Resolved at request time rather than at install time: enterprise mode, the
@@ -74,7 +114,12 @@ def _denied(url: str) -> str | None:
     """
     try:
         from .enterprise import egress_permitted
-        if egress_permitted(url):
+        permitted = egress_permitted(url)
+        unverified = _firm_unverified_https(
+            url,
+            verification_disabled=verification_disabled,
+        )
+        if permitted and not unverified:
             return None
     # failure-policy: fail_closed
     except Exception:
@@ -105,13 +150,44 @@ def _denied(url: str) -> str | None:
     from .audit.errors import AuditRefused
     from .audit.writer import audit_event
     try:
-        audit_event(EventKind.EGRESS_BLOCKED, provider="http-client",
-                    host=host or (url or "?"))
+        payload = {
+            "provider": "http-client",
+            "host": host or "invalid",
+        }
+        if not host:
+            payload.update(_audit_url_metadata(url))
+        if verification_disabled:
+            payload["status"] = "tls_verification_disabled"
+        matter_context = None
+        try:
+            from .matter_context import current_matter_context
+
+            matter_context = current_matter_context()
+        except Exception:  # failure-policy: fail_closed; request stays denied
+            log.exception("egress guard: matter context unavailable")
+        if matter_context is not None:
+            payload.update(
+                matter_id=matter_context.matter_id,
+                purpose=matter_context.purpose,
+                egress_mode=matter_context.egress_mode,
+            )
+        audit_event(EventKind.EGRESS_BLOCKED, **payload)
     except AuditRefused:
         log.error(
             "egress guard: blocked egress to %r but the audit subsystem "
             "refused to record it; the request is still refused",
             host or url)
+    if matter_context is not None:
+        if verification_disabled:
+            return (
+                "matter egress policy: refusing HTTPS with certificate "
+                f"verification disabled for {host or url!r}."
+            )
+        return (
+            f"matter egress policy: refusing egress to {host or url!r} for "
+            f"matter {matter_context.matter_id}. Public HTTP requires mode "
+            "'approved_services' and an exact [firm] approved_hosts entry."
+        )
     return (
         f"enterprise mode: refusing egress to {host or url!r} -- not a local "
         "endpoint and not in [enterprise] allowed_hosts. The application "
@@ -119,12 +195,12 @@ def _denied(url: str) -> str | None:
     )
 
 
-def _check(url: str) -> None:
-    reason = _denied(url)
+def _check(url: str, *, verification_disabled: bool = False) -> None:
+    reason = _denied(url, verification_disabled=verification_disabled)
     if reason is None:
         return
     from .enterprise import EgressBlocked
-    raise EgressBlocked(reason)
+    raise EgressBlocked("http-client", message=reason)
 
 
 def _is_network_transport(transport: Any) -> bool:
@@ -184,7 +260,18 @@ def _reaches_the_network(client: Any, request: Any) -> bool:
     return _is_network_transport(transport)
 
 
-def _httpx_degraded_check(request: Any) -> None:
+def _httpx_client_verification_disabled(client: Any) -> bool:
+    explicit = getattr(client, "_maverick_tls_verification_disabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    try:
+        context = client._transport._pool._ssl_context
+    except Exception:
+        return False
+    return _tls_verification_disabled(context)
+
+
+def _httpx_degraded_check(_client: Any, request: Any) -> None:
     """Deny every HTTPX send when the per-hop guard cannot be installed.
 
     A public ``send`` wrapper cannot observe a redirect chain's later hops.
@@ -195,20 +282,20 @@ def _httpx_degraded_check(request: Any) -> None:
     platform-wide outage outside the asserted data boundary.
     """
     try:
-        from .enterprise import enterprise_enabled
+        from .enterprise import enterprise_enabled, matter_egress_boundary_active
 
-        boundary_required = enterprise_enabled()
+        boundary_required = enterprise_enabled() or matter_egress_boundary_active()
     except Exception:  # pragma: no cover - enterprise_enabled is fail-closed
         boundary_required = True
     if not boundary_required:
         return
 
     url = str(getattr(request, "url", "") or "")
-    host = url
+    host = ""
     try:
         from .enterprise import _host_of
 
-        host = _host_of(url) or url
+        host = _host_of(url)
     except Exception:  # pragma: no cover - diagnostic only
         pass
 
@@ -218,10 +305,15 @@ def _httpx_degraded_check(request: Any) -> None:
         from .audit import EventKind
         from .audit.writer import audit_event
 
+        payload = {
+            "provider": "httpx-compatibility-fallback",
+            "host": host or "invalid",
+        }
+        if not host:
+            payload.update(_audit_url_metadata(url))
         audit_event(
             EventKind.EGRESS_BLOCKED,
-            provider="httpx-compatibility-fallback",
-            host=host or "?",
+            **payload,
         )
     except Exception:  # failure-policy: best_effort
         log.exception(
@@ -232,9 +324,12 @@ def _httpx_degraded_check(request: Any) -> None:
     from .enterprise import EgressBlocked
 
     raise EgressBlocked(
-        "enterprise/compliance mode: installed HTTPX cannot be guarded at "
-        "every redirect hop, so all HTTPX sends are refused until a compatible "
-        "version is installed."
+        "httpx-compatibility-fallback",
+        message=(
+            "enterprise/matter egress policy: installed HTTPX cannot be guarded "
+            "at every redirect hop, so all HTTPX sends are refused until a "
+            "compatible version is installed."
+        ),
     )
 
 
@@ -257,11 +352,11 @@ def _patch_httpx_fail_closed(mod: Any, reason: str) -> bool:
     _originals[async_key] = async_method
 
     def _sync_send(self, request, *args, **kwargs):
-        _httpx_degraded_check(request)
+        _httpx_degraded_check(self, request)
         return sync_method(self, request, *args, **kwargs)
 
     async def _async_send(self, request, *args, **kwargs):
-        _httpx_degraded_check(request)
+        _httpx_degraded_check(self, request)
         return await async_method(self, request, *args, **kwargs)
 
     mod.Client.send = _sync_send
@@ -302,19 +397,43 @@ def _patch_httpx(mod: Any) -> None:
 
     async_key = "httpx.AsyncClient._send_single_request"
     sync_key = "httpx.Client._send_single_request"
+    sync_init_key = "httpx.Client.__init__"
+    async_init_key = "httpx.AsyncClient.__init__"
     _originals[sync_key] = sync_method
     _originals[async_key] = async_method
+    sync_init = mod.Client.__init__
+    async_init = mod.AsyncClient.__init__
+    _originals[sync_init_key] = sync_init
+    _originals[async_init_key] = async_init
+
+    def _sync_init(self, *args, **kwargs):
+        disabled = _tls_verification_disabled(kwargs.get("verify", True))
+        sync_init(self, *args, **kwargs)
+        self._maverick_tls_verification_disabled = disabled
+
+    def _async_init(self, *args, **kwargs):
+        disabled = _tls_verification_disabled(kwargs.get("verify", True))
+        async_init(self, *args, **kwargs)
+        self._maverick_tls_verification_disabled = disabled
 
     def _sync_send_single_request(self, request, *args, **kwargs):
         if _reaches_the_network(self, request):
-            _check(str(request.url))
+            _check(
+                str(request.url),
+                verification_disabled=_httpx_client_verification_disabled(self),
+            )
         return sync_method(self, request, *args, **kwargs)
 
     async def _async_send_single_request(self, request, *args, **kwargs):
         if _reaches_the_network(self, request):
-            _check(str(request.url))
+            _check(
+                str(request.url),
+                verification_disabled=_httpx_client_verification_disabled(self),
+            )
         return await async_method(self, request, *args, **kwargs)
 
+    mod.Client.__init__ = _sync_init
+    mod.AsyncClient.__init__ = _async_init
     mod.Client._send_single_request = _sync_send_single_request
     mod.AsyncClient._send_single_request = _async_send_single_request
     _compatibility["httpx"] = {
@@ -329,7 +448,11 @@ def _patch_requests(mod: Any) -> None:
     _originals["requests.Session.send"] = original_send
 
     def _send(self, request, **kwargs):
-        _check(str(getattr(request, "url", "")))
+        verify = kwargs.get("verify", getattr(self, "verify", True))
+        _check(
+            str(getattr(request, "url", "")),
+            verification_disabled=_tls_verification_disabled(verify),
+        )
         return original_send(self, request, **kwargs)
 
     mod.Session.send = _send
@@ -348,7 +471,11 @@ def _patch_urllib(mod: Any) -> None:
         # `fullurl` is a str or a Request; Request.full_url holds the target.
         url = getattr(fullurl, "full_url", None) or (
             fullurl if isinstance(fullurl, str) else "")
-        _check(str(url))
+        verification_disabled = any(
+            _tls_verification_disabled(getattr(handler, "_context", None))
+            for handler in getattr(self, "handlers", ())
+        )
+        _check(str(url), verification_disabled=verification_disabled)
         if timeout is _SENTINEL:
             return original_open(self, fullurl, data)
         return original_open(self, fullurl, data, timeout)
@@ -363,6 +490,12 @@ def _unpatch(name: str, mod: Any) -> None:
         if sync_key in _originals:
             mod.Client._send_single_request = _originals.pop(sync_key)
             mod.AsyncClient._send_single_request = _originals.pop(async_key)
+            mod.Client.__init__ = _originals.pop(
+                "httpx.Client.__init__", mod.Client.__init__
+            )
+            mod.AsyncClient.__init__ = _originals.pop(
+                "httpx.AsyncClient.__init__", mod.AsyncClient.__init__
+            )
         fallback_sync_key = "httpx.Client.send"
         fallback_async_key = "httpx.AsyncClient.send"
         if fallback_sync_key in _originals:

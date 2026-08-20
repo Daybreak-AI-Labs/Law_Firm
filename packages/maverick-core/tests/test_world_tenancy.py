@@ -1,7 +1,7 @@
 """P1 multi-tenancy: per-tenant ``world.db`` isolation.
 
-Completes the world-model leg of per-user tenancy. Cross-session memory and the
-audit log already resolve their dirs via :func:`maverick.paths.data_dir`; this
+Completes the world-model leg of per-user tenancy. The audit log already
+resolves its directory via :func:`maverick.paths.data_dir`; this
 gives each tenant its OWN world.db the same way. Default off -> single-tenant
 behaviour (one shared ``~/.maverick/world.db``) is unchanged.
 

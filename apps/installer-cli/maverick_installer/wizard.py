@@ -1,8 +1,7 @@
 """Maverick interactive installer.
 
 Configures Maverick for a fresh install. Sets up:
-  - AI providers and per-role models
-    Matrix, iMessage)
+  - one explicitly pinned AI provider and model
   - safety profile
   - sandbox backend
   - budget caps
@@ -17,6 +16,7 @@ v0.1.1 additions (council UX feedback):
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -53,35 +53,24 @@ console = Console()
 STEPS: list[tuple[str, str]] = [
     ("deployment", "Deployment"),
     ("providers", "Providers"),
-    ("role_models", "Models"),
+    ("run_model", "Model"),
     ("safety", "Safety"),
     ("signed_skills", "Signed skills"),
     ("budget", "Budget"),
     ("sandbox", "Sandbox"),
-    ("capabilities", "Capabilities"),
     ("self_learning", "Self-learning"),
-    ("automation_import", "Automation import"),
-    ("event_triggers", "Event triggers"),
     ("flows", "Flow engine"),
     ("knowledge", "Knowledge RAG"),
     ("oauth_vault", "OAuth token vault"),
-    ("governed_connectors", "Governed connectors"),
     ("durable", "Durable execution"),
-    ("finance", "Finance suite"),
-    ("value", "Savings assumptions"),
     ("assessments", "Assessment assists"),
     ("security_suite", "Security & GRC"),
     ("advanced", "Advanced reasoning"),
     ("web_search", "Web search"),
-    ("mcp_servers", "MCP servers"),
-    ("plugins", "Plugins"),
     ("tool_acl", "Tool ACL"),
     ("rate_limits", "Rate limits"),
     ("retention", "Retention"),
-    ("analytics", "Analytics"),
     ("persona", "Persona"),
-    ("notifications", "Notifications"),
-    ("webhooks", "Webhooks"),
 ]
 
 
@@ -477,8 +466,8 @@ def welcome() -> None:
     console.print(Panel.fit(
         "[bold]Maverick installer[/bold]\n\n"
         "Next you'll pick a setup mode: a quick consumer flow (a few\n"
-        "questions, safe defaults) or advanced (configure every model,\n"
-        "channel, safety level, and budget). Re-run any time with\n"
+        "questions, firm-safe defaults) or advanced (configure models,\n"
+        "matter safeguards, safety, and budget). Re-run any time with\n"
         "[bold]maverick init[/bold].",
         border_style="cyan",
     ))
@@ -486,10 +475,9 @@ def welcome() -> None:
 
 def pick_deployment() -> str:
     choices = [
-        "desktop  - This computer (recommended for first-time users)",
-        "docker   - Local Docker container (isolated, easy to remove)",
-        "vps      - Remote server you own (always-on)",
-        "phone    - Phone companion (Maverick runs on desktop/VPS; phone is a frontend)",
+        "local  - Reviewed virtual environment on this host",
+        "docker - Operator-built local image (immutable digest required in secure mode)",
+        "vps    - Firm-controlled server with authenticated HTTPS",
     ]
     # Default to the previously recorded target on a re-run of `maverick init`
     # (what [deployment] type was written for).
@@ -501,7 +489,14 @@ def pick_deployment() -> str:
     except Exception:  # pragma: no cover -- never block the wizard
         default = None
     pick = _q_select("Where will Maverick run?", choices, default=default)
-    return pick.split()[0]
+    deployment = pick.split()[0]
+    if deployment == "docker":
+        console.print(
+            "[dim]No public Maverick image is published or trusted. Build from "
+            "the reviewed commit with a digest-pinned base image; secure mode "
+            "also requires [sandbox] image to be an immutable sha256 reference.[/dim]"
+        )
+    return deployment
 
 
 def pick_providers() -> list[str]:
@@ -510,69 +505,65 @@ def pick_providers() -> list[str]:
         tag = "[ready]" if info["status"] == "ready" else "[v0.2]"
         choices.append(f"{prov_id:10} {tag} - {info['label']}")
 
-    picks = _q_checkbox(
-        "Which AI providers do you want to use?",
+    pick = _q_select(
+        "Which AI provider may receive this firm's model requests?",
         choices,
-        default=[choices[0]],
+        default=None,
     )
-    return [p.split()[0] for p in picks]
+    return [pick.split()[0]]
 
 
-_LOCAL_FIRST_PROVIDERS = frozenset({"ollama", "tgi"})
+def _model_choices(providers: list[str]) -> list[str]:
+    """Return exact ``provider:model`` choices for one selected provider."""
+    if len(providers) != 1 or providers[0] not in catalog.PROVIDERS:
+        return []
+    provider = providers[0]
+    info = catalog.PROVIDERS[provider]
+    tag = "" if info["status"] == "ready" else " [v0.2]"
+    return [
+        f"{provider}:{model['id']}{tag}  - {model['notes']}"
+        for model in info["models"]
+    ]
 
 
-def _local_first_model(providers: list[str]) -> str | None:
-    """Return the default local model spec for the selected providers."""
-    for prov in providers:
-        if prov not in _LOCAL_FIRST_PROVIDERS:
-            continue
-        info = catalog.PROVIDERS.get(prov)
-        models = (info or {}).get("models") or []
-        if models:
-            return f"{prov}:{models[0]['id']}"
-    return None
+def _validate_run_model(run_model: str, providers: list[str]) -> str:
+    """Validate the single run-wide model pin emitted by the installer.
+
+    Secure firm execution has no implicit provider or role-specific routing.
+    The installer therefore accepts exactly one selected provider and one
+    catalogued ``provider:model`` value for every setup path.
+    """
+    spec = str(run_model or "").strip()
+    if len(providers) != 1:
+        raise ValueError("exactly one AI provider must be selected")
+    if ":" not in spec or any(char.isspace() for char in spec):
+        raise ValueError("models.default must be an exact provider:model value")
+    provider, model = spec.split(":", 1)
+    if provider != providers[0] or not model:
+        raise ValueError("models.default must use the selected provider")
+    configured = catalog.PROVIDERS.get(provider)
+    if configured is None:
+        raise ValueError(f"unknown AI provider: {provider}")
+    valid_models = {str(item["id"]) for item in configured.get("models", [])}
+    if model not in valid_models:
+        raise ValueError(f"unknown model for {provider}: {model}")
+    return spec
 
 
-def pick_models_per_role(providers: list[str]) -> dict[str, str]:
-    console.print()
-    if _q_confirm(
-        "Use the default model for each role?",
-        default=True,
-    ):
-        return {}
-
+def pick_run_model(providers: list[str]) -> str:
+    """Require one explicit run-wide model pin, with no vendor default."""
+    choices = _model_choices(providers)
+    if not choices:
+        raise ValueError("select exactly one supported AI provider first")
     console.print()
     console.print(
-        "[bold]Pick a model for each agent role.[/bold] "
-        "Large models (orchestrator, revisor) suit big roles; "
-        "cheap roles (summarizer) can use smaller ones.\n"
+        "[bold]Pick the one model this installation may use.[/bold] "
+        "Secure firm runs do not silently reroute to another provider.\n"
     )
-
-    role_models: dict[str, str] = {}
-    for role, hint in catalog.ROLES:
-        choices: list[str] = []
-        for prov in providers:
-            info = catalog.PROVIDERS.get(prov)
-            if not info:
-                continue
-            tag = "" if info["status"] == "ready" else " [v0.2]"
-            for m in info["models"]:
-                choices.append(f"{prov}:{m['id']}{tag}  - {m['notes']}")
-        choices.append("[skip - use default]")
-
-        default_spec = catalog.default_for_role(role)
-        default_choice = next((c for c in choices if c.startswith(default_spec)), choices[0])
-
-        pick = _q_select(f"  {role}: {hint}", choices, default=default_choice)
-        if pick.startswith("[skip"):
-            continue
-        role_models[role] = pick.split()[0]
-    return role_models
+    pick = _q_select("Run-wide model (provider:model):", choices, default=None)
+    return _validate_run_model(pick.split()[0], providers)
 
 
-# Inbound channels enforce a sender allowlist (fail-closed): only these
-# IDs can drive the agent and spend budget. The wizard must collect it or
-# the channel refuses to start.
 def pick_safety() -> dict[str, Any]:
     pick = _q_select(
         "Safety profile:",
@@ -628,15 +619,9 @@ def pick_signed_skills() -> dict[str, Any]:
         "  Reject unsigned skills (only install signed + trusted ones)?",
         default=False,
     )
-    require_catalog = _q_confirm(
-        "  Require a verified signature for catalog installs (even with no "
-        "trusted keys above)?",
-        default=False,
-    )
     return {
         "trusted_pubkeys": trusted,
         "require_signed": require,
-        "require_signed_catalog": require_catalog,
     }
 
 
@@ -665,99 +650,20 @@ def pick_budget() -> dict[str, Any]:
     return budget
 
 
-def pick_capabilities() -> dict[str, bool]:
-    """Opt-in to high-impact tools that ship disabled.
-
-    Computer-use, browser, ROS robotics, and code-exec tools have real safety
-    side effects (mouse/keyboard control, arbitrary navigation, robot/simulator
-    commands, or sandboxed tool orchestration), so they default to off until you
-    explicitly enable them.
-    """
-    console.print()
-    use_computer = _q_confirm(
-        "Enable computer-use? Lets the agent see your screen and drive the mouse/keyboard.",
-        default=False,
-    )
-    use_browser = _q_confirm(
-        "Enable browser? Lets the agent navigate the web via Playwright.",
-        default=False,
-    )
-    use_code_exec = _q_confirm(
-        "Enable code_exec? Lets the agent run a sandboxed Python script that "
-        "orchestrates several tool calls in one turn (keeps large intermediate "
-        "outputs out of context). Runs code in the sandbox, like the shell tool.",
-        default=False,
-    )
-    deferred_tools = _q_confirm(
-        "Use deferred tool loading? The model sees the core toolset and "
-        "discovers the 400+ SaaS connectors on demand via find_tools -- "
-        "cuts per-call token cost ~60%. Disable only if you want every "
-        "connector schema offered on every turn.",
-        default=True,
-    )
-    jd_hiring = _q_confirm(
-        "Enable JD hiring in the Agent Factory? HR can upload a job "
-        "description to match it against the specialist roster or draft a "
-        "new specialist from it (drafts stay envelope-clamped and require "
-        "human approval to save).",
-        default=True,
-    )
-    return {
-        "computer_use": use_computer,
-        "browser": use_browser,
-        "code_exec": use_code_exec,
-        "deferred_tools": deferred_tools,
-        "jd_hiring": jd_hiring,
-    }
-
-
 def pick_self_learning() -> dict[str, Any]:
-    """Configure default-on governed capability learning.
-
-    Catalog skills, API discovery, pack provisioning and local distillation are
-    on by default. Generating executable tools remains a separate trust choice.
-    Returns a dict written under ``[self_learning]``.
-
-    MCP-server acquisition (#422) is a separate, even-higher-trust knob: it
-    re-enables the capability #392 disabled, but only for curated, hash-pinned
-    catalog servers AND only after explicit operator approval. It ships OFF
-    independently of the self-learning master switch.
-    """
+    """Configure the retained governed local-improvement policy."""
     console.print()
     console.print(
-        "[dim]Self-learning lets the agent close capability gaps on its own: "
-        "install skills, discover REST APIs, even write & run new tools. "
-        "Governed learning is ON by default; executable tool generation and "
-        "external MCP processes remain separate opt-ins.[/dim]"
+        "[dim]Local learning retains governed reflexion, rehearsal, and "
+        "distillation. It never installs remote skills or executable tools. "
+        "Extra provider calls remain a separate opt-in.[/dim]"
     )
     enable = _q_confirm("Enable governed self-learning?", default=True)
     if not enable:
         return {"enable": False}
-    create_tools = _q_confirm(
-        "  Allow the agent to GENERATE and run new tools (full autonomy)?",
-        default=False,
-    )
-    preflight = _q_confirm(
-        "  Pre-acquire likely skills before each run (local catalog pass)?",
-        default=True,
-    )
     allow_provider_egress = _q_confirm(
         "  Allow learning helpers to make EXTRA model calls with redacted task "
         "or result text (may use another configured provider)?",
-        default=False,
-    )
-    provision_packs = _q_confirm(
-        "  Equip newly onboarded packs: install the catalog skills and "
-        "synthesize the tools a pack's workflow needs, at approval time?",
-        default=True,
-    )
-    console.print(
-        "[dim]  MCP acquisition: the agent may PROPOSE adding a curated, "
-        "hash-pinned catalog MCP server (never a free-text command). Each one "
-        "still needs your explicit approval before it starts.[/dim]"
-    )
-    allow_mcp = _q_confirm(
-        "  Allow agent to propose catalog MCP servers (operator-approved)?",
         default=False,
     )
     distill_local = _q_confirm(
@@ -767,76 +673,9 @@ def pick_self_learning() -> dict[str, Any]:
     )
     return {
         "enable": True,
-        "preflight": preflight,
-        "create_tools": create_tools,
-        "provision_packs": provision_packs,
-        "allow_mcp_acquisition": allow_mcp,
         "allow_provider_egress": allow_provider_egress,
         "distill_local": distill_local,
-        "max_acquisitions": 5,
     }
-
-
-_EKKO_BLOCKED_APPS = [
-    "email",
-    "outlook",
-    "gmail",
-    "chat",
-    "teams",
-    "slack",
-    "crm",
-    "salesforce",
-    "erp",
-    "sap",
-    "database",
-]
-
-
-def pick_automation_import() -> dict[str, Any]:
-    """Opt-in to importing clients' existing automations into Maverick.
-
-    Off by default. When on, ``maverick import`` can pull workflow definitions
-    from platforms that expose them (n8n/Make/Workato/Power Automate/UiPath) and
-    turn each into a Maverick template, plus connect-and-trigger for Zapier/
-    Notion. It reaches out to third-party platforms and writes user templates,
-    so it ships disabled. Returns a dict written under ``[automation_import]``.
-    """
-    console.print()
-    console.print(
-        "[dim]Automation import pulls workflows your clients already built "
-        "(n8n/Make/Workato/Power Automate/UiPath) into Maverick templates, and "
-        "lets Zapier/Notion trigger Maverick. It calls third-party APIs and "
-        "writes templates, so it's OFF by default.[/dim]"
-    )
-    enable = _q_confirm("Enable automation import?", default=False)
-    if not enable:
-        return {"enable": False}
-    create_schedules = _q_confirm(
-        "  Auto-create Maverick schedules for imported cron triggers? "
-        "(off = import the template, you activate the schedule yourself)",
-        default=False,
-    )
-    return {"enable": True, "create_schedules": create_schedules}
-
-
-def pick_event_triggers() -> dict[str, Any]:
-    """Opt-in to polled event triggers ("when X appears, run this workflow").
-
-    Off by default. When on, the dashboard can bind a workflow to an event
-    source (e.g. a JSON REST feed or an RSS feed) and the app polls it on a
-    background tick, firing the workflow per new item. It reaches out to
-    third-party endpoints on a schedule, so it ships disabled. Returns a dict
-    written under ``[event_triggers]``.
-    """
-    console.print()
-    console.print(
-        "[dim]Event triggers poll a source (a JSON API or RSS feed) and run a "
-        "workflow for each new item -- the 'when a new lead/row/post appears' "
-        "half of automation. The app polls on a background tick. It calls "
-        "third-party endpoints on a schedule, so it's OFF by default.[/dim]"
-    )
-    enable = _q_confirm("Enable event triggers?", default=False)
-    return {"enable": bool(enable)}
 
 
 def pick_flows() -> dict[str, Any]:
@@ -870,9 +709,9 @@ def pick_flows() -> dict[str, Any]:
     except ValueError:
         out["max_node_retries"] = 5
     console.print(
-        "[dim]For actionable channel approvals (clickable Approve/Reject links), "
-        "the dashboard needs its externally-reachable base URL. Leave blank to "
-        "skip -- approvals then happen from the dashboard.[/dim]"
+        "[dim]For signed browser approval links, the dashboard needs its "
+        "externally-reachable base URL. Leave blank to keep approvals inside "
+        "the dashboard.[/dim]"
     )
     url = _q_text("Public base URL for approval links (e.g. https://ops.acme.com)",
                   default="").strip()
@@ -900,8 +739,8 @@ def pick_knowledge() -> dict[str, Any]:
     """Opt-in to per-domain vector RAG (the maverick-knowledge package).
 
     Off by default; the kernel never requires maverick-knowledge. When on,
-    ``embedder`` selects the embedding provider (hosted Voyage / local /
-    deterministic); the vector store is the embedded SQLite one.
+    ``embedder`` selects an on-box provider (local or deterministic); the
+    vector store is the embedded SQLite one.
     Returns a dict written under ``[knowledge]``.
     """
     console.print()
@@ -916,26 +755,12 @@ def pick_knowledge() -> dict[str, Any]:
     embedder = _q_select(
         "  Embedder:",
         [
-            "hosted        - Voyage AI (needs VOYAGE_API_KEY)",
             "local         - on-box sentence-transformers (no API key)",
             "deterministic - hashing stub (offline; low quality, for testing)",
         ],
-        default="hosted        - Voyage AI (needs VOYAGE_API_KEY)",
+        default="local         - on-box sentence-transformers (no API key)",
     ).split()[0]
     out["embedder"] = embedder
-    if embedder in ("hosted", "cohere"):
-        console.print(
-            "[dim]  Indexing sends the DOCUMENTS themselves to that vendor, in "
-            "full — not a prompt about them. For privileged client material "
-            "that is a decision to make on purpose, so it is off until you say "
-            "yes here. Every batch that leaves is written to the audit record "
-            "(vendor, model, chunk count, content hash — never the text). "
-            "Answer no and pick 'local' instead to embed on-box with no "
-            "egress.[/dim]"
-        )
-        out["allow_external_embedding"] = _q_confirm(
-            "  Send document text to the embedding vendor?", default=False,
-        )
     return out
 
 
@@ -958,53 +783,6 @@ def pick_oauth_vault() -> dict[str, Any]:
                                 default=False)}
 
 
-def pick_governed_connectors() -> dict[str, Any]:
-    """Opt-in to routing live system-of-record writes through governed Actions.
-
-    Off by default. When on, a selected enterprise connector (Salesforce,
-    ServiceNow) is registered as a typed governed Action: a write previews its
-    effect, hits the approval floor (``[actions] require_approval_at``), and
-    records a tamper-evident lineage link -- instead of a bare confirm-gated
-    tool call. Returns a dict written under ``[governed_connectors]``.
-    """
-    try:
-        from maverick.governed_rest import available_rest_connectors
-        choices = available_rest_connectors()
-    except Exception:  # pragma: no cover -- never block the wizard
-        choices = ["salesforce", "servicenow"]
-    console.print()
-    console.print(
-        "[dim]Governed connectors route a live system-of-record write "
-        f"({', '.join(choices)}) through simulate -> approve -> commit -> "
-        "lineage: the write hits the approval floor and is recorded in a "
-        "tamper-evident chain. OFF by default.[/dim]"
-    )
-    if not _q_confirm("Enable governed system-of-record connectors?", default=False):
-        return {"enable": False}
-    selected = [c for c in choices
-                if _q_confirm(f"  Register {c} as a governed connector?", default=False)]
-    # Standing approver of record: when these connectors are wrapped in the live
-    # tool path, a write is approval-gated against this identity (the agent can't
-    # self-approve). Blank = writes are previewed but refused until an operator
-    # commits them out of band.
-    approver = _q_text(
-        "  Approver of record for governed writes (blank = refuse agent writes "
-        "without out-of-band approval):", default="").strip()
-    # Restore points: one read-only GET before an in-place update, so the write
-    # carries a real undo instead of an asserted one. Without it every update is
-    # irreversible and routes to a human -- safe, but nothing ever earns
-    # autonomy. Off is the right answer for a write-only service account.
-    console.print(
-        "[dim]  Restore points read a record's prior values before changing "
-        "them (one read-only GET), so the write ships a genuine undo. Off = "
-        "every update is treated as irreversible.[/dim]"
-    )
-    restore_points = _q_confirm(
-        "  Capture restore points before in-place updates?", default=True)
-    return {"enable": True, "connectors": selected, "approver": approver,
-            "restore_points": restore_points}
-
-
 def pick_durable() -> dict[str, Any]:
     """Opt-in to durable execution (crash-resume via checkpoints).
 
@@ -1025,23 +803,12 @@ def pick_durable() -> dict[str, Any]:
 
 
 def pick_assessments() -> dict[str, Any]:
-    """Assessment-flow assists (doc discovery + learning), both default ON.
-
-    Doc discovery searches connected sources (Microsoft Graph / Slack /
-    Google Drive) for the SOW/contract/DPA related to an assessment subject;
-    it only activates when a source has credentials. Learning suggests
-    answers from the org's OWN past assessments -- advisory only. Returns a
-    dict written under ``[assessments]`` only on divergence from defaults.
-    """
+    """Configure retained assessment, privacy, and vendor-paper helpers."""
     console.print()
     console.print(
-        "[dim]Assessment assists: doc discovery finds the SOW/contract/DPA in "
-        "your connected Microsoft 365 / Slack / Google Drive when someone "
-        "fills an assessment; learning suggests answers from your own past "
-        "assessments (a human still reviews everything). Both ON by default; "
-        "discovery stays inert until a source is connected.[/dim]"
+        "[dim]Assessment learning may suggest answers from the firm's own "
+        "reviewed past assessments. A human still reviews every answer.[/dim]"
     )
-    discovery = _q_confirm("Enable assessment doc discovery?", default=True)
     learn = _q_confirm("Enable assessment learning (suggest from past "
                        "assessments)?", default=True)
     ops = _q_confirm("Enable the privacy ops record types (DPA review, AI "
@@ -1081,8 +848,6 @@ def pick_assessments() -> dict[str, Any]:
     graph = _q_confirm("Enable the entity graph (lineage & dossier queries)?",
                        default=True)
     out: dict[str, Any] = {}
-    if not discovery:
-        out["doc_discovery"] = False
     if not learn:
         out["learn"] = False
     if not ops:
@@ -1121,127 +886,6 @@ def pick_security_suite() -> dict[str, Any]:
         "evidence_graph": evidence_graph,
         "threat_hunt": threat_hunt,
     }
-
-def pick_value() -> dict[str, Any]:
-    """The savings (ROI) report's cost/value assumptions -- the CLIENT's own
-    numbers, editable later on the dashboard Savings page.
-
-    The Savings dashboard compares real completed work against the typical
-    human cost: ``(tasks x hours per task x hourly rate) - agent spend``.
-    Defaults are deliberately conservative ($75/h, 2h/task). Returns a dict
-    written under ``[value]``.
-    """
-    console.print()
-    console.print(
-        "[dim]Savings report: the dashboard's Savings page compares real "
-        "completed work against what the same work would cost a human -- "
-        "using YOUR numbers. Set them now or tune them later on the page "
-        "itself. Conservative defaults keep the claim defensible.[/dim]"
-    )
-    if not _q_confirm("Set your human-cost assumptions now?", default=True):
-        return {}
-    rate = _safe_float(
-        _q_text("  Fully-loaded human hourly rate ($/hour)", default="75"),
-        default=75.0)
-    hours = _safe_float(
-        _q_text("  Human hours one comparable task takes", default="2"),
-        default=2.0)
-    return {"hourly_rate": max(0.0, rate), "hours_per_task": max(0.0, hours)}
-
-
-def pick_finance() -> dict[str, Any]:
-    """Opt-in to the finance suite governance (finance-agent-suite §5/§8).
-
-    Off by default. When enabled, governance pauses money movement for a human,
-    you pick the compliance regimes to enforce (strictest-wins), set the
-    delegation-of-authority dollar tiers, and point at an OFAC SDN list. The
-    optional finance-operations module adds deterministic regulatory feeds,
-    anomaly rules, governed screening cases, and scheduled GRC evidence work.
-    Returns a dict written under ``[governance]`` / ``[finance]`` /
-    ``[screening]`` / ``[finance_operations]``.
-    """
-    console.print()
-    console.print(
-        "[dim]Finance suite: the CFO-office governance wrapper -- segregation of "
-        "duties, maker-checker, dollar-threshold approvals, and a signed book of "
-        "record. Enabling pauses every money movement for a human and lets you "
-        "enforce compliance regimes. OFF by default.[/dim]"
-    )
-    if not _q_confirm("Enable the finance suite governance?", default=False):
-        return {"enable": False}
-    regimes = _q_checkbox(
-        "Compliance regimes to enforce (strictest-wins union):",
-        [
-            "sox", "coso", "gaap", "pci", "glba", "aml", "sec", "irs",
-            "dora", "basel_iii", "ifrs_17",
-        ],
-        default=["sox", "gaap"],
-    )
-    require_human_above = _safe_float(
-        _q_text("  Pause money movement above $ (DoA threshold; 0 = pause all)",
-                default="5000"),
-        default=5000.0,
-    )
-    deny_above = _safe_float(
-        _q_text("  Hard-deny money movement above $ (0 = no hard ceiling)",
-                default="0"),
-        default=0.0,
-    )
-    require_fresh = _q_confirm(
-        "  Require a FRESH human approval each time a paused action runs "
-        "(ignore any prior 'remember this' grant)?",
-        default=False,
-    )
-    sdn_path = _q_text(
-        "  OFAC SDN list path for sanctions screening (blank to set later)",
-        default="",
-    ).strip()
-    operations_enable = _q_confirm(
-        "  Enable deterministic regulatory monitoring, anomaly cases, governed "
-        "AML screening, and scheduled GRC control tests?",
-        default=True,
-    )
-    operations: dict[str, Any] = {"operations_enable": operations_enable}
-    if operations_enable:
-        operations["federal_register_enable"] = _q_confirm(
-            "  Poll the official Federal Register API?", default=True,
-        )
-        operations["texas_register_enable"] = _q_confirm(
-            "  Poll the official Texas Register RSS and queue each issue for review?",
-            default=False,
-        )
-        operations["regulatory_domains"] = _q_checkbox(
-            "  Regulatory domains to route into the review queue:",
-            ["finance", "money_transmitter", "insurance_producer", "lending"],
-            default=["finance", "money_transmitter", "insurance_producer"],
-        )
-        regulatory_minutes = max(5, min(10_080, _safe_int(
-            _q_text("  Regulatory feed poll interval (minutes)", default="60"),
-            default=60,
-        )))
-        control_hours = max(1, min(744, _safe_int(
-            _q_text("  Finance-to-GRC control test interval (hours)", default="24"),
-            default=24,
-        )))
-        operations.update({
-            "regulatory_poll_seconds": regulatory_minutes * 60,
-            "control_test_interval_seconds": control_hours * 3600,
-            "anomaly_enable": True,
-            "sanctions_max_age_hours": 72,
-            "control_owner": _q_text(
-                "  Finance control/evidence owner", default="Finance Control Owner",
-            ).strip() or "Finance Control Owner",
-        })
-    return {
-        "enable": True,
-        "regimes": regimes,
-        "require_human_above": require_human_above,
-        "deny_above": deny_above,
-        "require_fresh_human_approval": require_fresh,
-        "sdn_path": sdn_path,
-        **operations,
-    }
-
 
 def pick_oidc() -> dict[str, Any]:
     """Opt-in to OIDC ID-token verification for `maverick serve` (SSO).
@@ -1316,39 +960,6 @@ def pick_oidc() -> dict[str, Any]:
     return result
 
 
-def _ask_governed_execution_followups(advanced: dict[str, Any]) -> None:
-    """Follow-ups for the two default-off governed-execution planes.
-
-    The session kernel's containment IS the sandbox backend, which was already
-    chosen several steps back, so the note points back at that answer and
-    names the backends that can host a session at all: the kernel writes its
-    driver, statement and result file into the sandbox workdir, which ssh and
-    kubernetes do not share with the host.
-
-    Self-refinement's approval gate is asked separately because it is the
-    whole reason an agent may write its own instructions at all; declining it
-    is a real choice, so it is written explicitly rather than defaulted.
-    """
-    if advanced.get("repl"):
-        console.print(
-            "[dim]  The kernel runs model-written Python through "
-            "sandbox.exec, so the sandbox backend you picked earlier is its "
-            "containment boundary: it should be docker/gvisor/podman -- "
-            "'local' runs that code on this machine. ssh and kubernetes "
-            "cannot host a session (the kernel needs a workdir shared with "
-            "the host); edit [sandbox] backend if you chose one of those."
-            "[/dim]"
-        )
-    if advanced.get("harness_refine") and not _q_confirm(
-        "  Require a human approval before a refinement is applied? Each "
-        "proposal parks a dual-control approval bound to that one target and "
-        "name, spent once. Declining lets an applied refinement rewrite the "
-        "agent's own instructions with no human decision. ON by default.",
-        default=True,
-    ):
-        advanced["harness_refine_require_approval"] = False
-
-
 def pick_advanced() -> dict[str, Any]:
     """Configure advanced reasoning, learning, and governance features.
 
@@ -1358,10 +969,6 @@ def pick_advanced() -> dict[str, Any]:
     """
     console.print()
     advanced: dict[str, Any] = {
-        "cost_aware": _q_confirm(
-            "Cost-aware routing? Use the cheapest capable model per role to cut spend.",
-            default=False,
-        ),
         "tree_of_thought": _q_confirm(
             "Tree-of-thought planning? Draft a few plans and let a critic pick the "
             "best before working (more tokens up front, fewer dead ends).",
@@ -1379,20 +986,6 @@ def pick_advanced() -> dict[str, Any]:
             "Recommended; ON by default.",
             default=True,
         ),
-        "voice_commands": _q_confirm(
-            "Dashboard voice commands? A mic button on the chat composer records "
-            "a spoken goal and transcribes it (OpenAI/Groq Whisper key or the "
-            "built-in local Whisper; falls back to browser speech recognition). "
-            "ON by default.",
-            default=True,
-        ),
-        "voice_local_stt": _q_confirm(
-            "  Built-in local speech-to-text? Auto-fetch a checksum-verified "
-            "Whisper model (~148 MB, at dashboard startup) so the mic works "
-            "offline with no provider key — the engine ships with the "
-            "dashboard. ON by default (egress-locked deployments stay off).",
-            default=True,
-        ),
         "attach_any_mime": _q_confirm(
             "Accept attachments of ANY declared type? Text, images, audio, video, "
             "and document formats are always accepted; this also admits anything "
@@ -1401,10 +994,8 @@ def pick_advanced() -> dict[str, Any]:
             default=False,
         ),
         "attachment_understanding": _q_confirm(
-            "Attachment understanding? Auto-transcribe incoming audio/video and "
-            "extract text from Office documents into the goal context (audio "
-            "needs an STT key: OPENAI_API_KEY/GROQ_API_KEY or local "
-            "faster-whisper). ON by default.",
+            "Attachment understanding? Extract text from supported Office and "
+            "PDF documents into the goal context. ON by default.",
             default=True,
         ),
         "compaction_strategy": _q_select(
@@ -1429,30 +1020,6 @@ def pick_advanced() -> dict[str, Any]:
             "back any time from the dashboard. ON by default.",
             default=True,
         ),
-        "repl": _q_confirm(
-            "Governed session kernel? Let an agent write PYTHON against a live "
-            "namespace instead of composing fixed tool calls -- every "
-            "statement is hashed, injection-screened, receipted on the "
-            "tamper-evident chain and audited. It admits ARBITRARY CODE "
-            "EXECUTION, so run it on a container sandbox backend "
-            "(docker/gvisor/podman), never on 'local'. OFF by default.",
-            default=False,
-        ),
-        "harness_refine": _q_confirm(
-            "Governed self-refinement? Let an agent PROPOSE a change to its "
-            "own operating instructions (prompt / skill / memory) from a "
-            "failure it observed. Nothing self-applies: a proposal parks a "
-            "human approval, applying is snapshotted and reversible, and both "
-            "ends land in the signed learning audit. OFF by default.",
-            default=False,
-        ),
-        "session_tree": _q_confirm(
-            "Run forking? Branch a run at a decision point so Oversight can "
-            "read what the agent chose beside the alternative, under one root "
-            "on the Run Tree page. Lineage only -- forking re-executes "
-            "nothing and spends no tokens. ON by default.",
-            default=True,
-        ),
         "memory_guard": _q_confirm(
             "Memory Guard (OWASP ASI06)? Screen every stored fact for prompt-"
             "injection/poisoning, stamp it with provenance + a trust tier, and "
@@ -1474,9 +1041,9 @@ def pick_advanced() -> dict[str, Any]:
             default=False,
         ),
         "specialist_discipline": _q_confirm(
-            "Specialist operating discipline? Append each business suite's "
-            "professional guardrails (finance maker-checker, legal privilege, "
-            "HR PII-minimization, ...) to every domain pack's persona at "
+            "Specialist operating discipline? Append the firm's legal "
+            "privilege, confidentiality, citation, and counsel-review guardrails "
+            "to every domain pack's persona at "
             "spawn. Recommended; prompts only, hard limits stay enforced by "
             "capabilities/governance.",
             default=True,
@@ -1491,12 +1058,12 @@ def pick_advanced() -> dict[str, Any]:
         "allow_role_editing": _q_confirm(
             "Allow editing the core roles (orchestrator, coder, ...) from the "
             "dashboard? Operators can add a per-client system-prompt addendum "
-            "to a role. Turn off to lock role behavior. (Model/effort routing "
-            "is configured separately.)",
+            "to a role. Turn off to lock role behavior. Per-role reasoning "
+            "effort remains a separate control; the run model is global.",
             default=True,
         ),
         "dreaming_llm_consolidation": _q_confirm(
-            "  └ LLM-enriched consolidation? Have the cheap summarizer model "
+            "  └ LLM-enriched consolidation? Have the selected run model "
             "rewrite each consolidated failure into a transferable lesson "
             "(instead of the deterministic template). Inputs+output are "
             "shield-scanned and the spend is budgeted; fails open to the "
@@ -1512,20 +1079,15 @@ def pick_advanced() -> dict[str, Any]:
             "(opt-in LLM enrichment + rehearsal runs are separate and budgeted).",
             default=True,
         ),
-        "verify_ensemble": _q_confirm(
-            "Ensemble verification? Cross-check final answers with a panel of models "
-            "(slower, stronger).",
-            default=False,
-        ),
         "risk_proportional_verify": _q_confirm(
             "Risk-proportional verification? Skip the verifier on trivial, low-risk "
             "answers (short, prose-only, no tools or code) to save tokens and latency.",
             default=False,
         ),
         "autonomy_gate": _q_confirm(
-            "Autonomy gate? When sub-agents disagree, cross-check the answer with a "
-            "model panel AND hold irreversible (high-risk) actions until the "
-            "disagreement is resolved or a human approves.",
+            "Autonomy gate? When sub-agents disagree, tighten the risk ceiling "
+            "and hold irreversible actions until the disagreement is resolved "
+            "or a human approves.",
             default=False,
         ),
         "headless_assume": _q_confirm(
@@ -1538,22 +1100,6 @@ def pick_advanced() -> dict[str, Any]:
             "Governed actions? Record a tamper-evident lineage of every consequential "
             "agent action (writes, shell) so a run's actions are auditable end-to-end.",
             default=False,
-        ),
-        "workforce_levels": _q_confirm(
-            "Per-agent autonomy levels? Treat each agent like a hire with a level of "
-            "authority you set -- observe / suggest / request-approval / autonomous, "
-            "per action risk -- starting supervised (onboarding) and graduating on a "
-            "clean record. Off by default, every agent stages actions for human "
-            "execution. Per-agent overrides go under [workforce.agents].",
-            default=False,
-        ),
-        "workforce_data_grounding": _q_confirm(
-            "Primary-source data grounding? Give each analyst pack its suite's "
-            "public/government data connectors (SEC EDGAR, FRED, openFDA, "
-            "USAspending, weather, ...) so it grounds work in primary sources. "
-            "GET-only, low-risk, deferred (no context cost), and inert without "
-            "each source's API key. On by default; turn off to withhold them.",
-            default=True,
         ),
         "calibration_enforce": _q_confirm(
             "Calibration interlock? Freeze self-improvement "
@@ -1610,11 +1156,6 @@ def pick_advanced() -> dict[str, Any]:
             "provide approver public keys (fails closed until you do).",
             default=False,
         ),
-        "skill_synthesis": _q_confirm(
-            "Test-time skill synthesis? Write a short task-specific cheat-sheet for "
-            "each goal before working on it.",
-            default=True,
-        ),
         "experience_guidance": _q_confirm(
             "Experience-guided orchestration? Steer planning with how similar past "
             "goals turned out (what worked, what failed).",
@@ -1632,14 +1173,6 @@ def pick_advanced() -> dict[str, Any]:
             "effect on outcomes clears the bar -- not just a correlation that co-occurred "
             "with success. Each promotion records the effect, its confidence interval, and "
             "what it adjusted for. Requires self-improvement enabled.",
-            default=True,
-        ),
-        "factory_learning": _q_confirm(
-            "Self-improving agent factory? Mine recurring pack-generation gaps (a tool a "
-            "draft kept omitting, a skill its workflow kept needing) into proposer "
-            "corrections and promote them through the self-improvement gate, so future "
-            "packs are drafted better. Guidance text only -- never widens an envelope. "
-            "Requires self-improvement enabled.",
             default=True,
         ),
         "evaluator_evolution": _q_confirm(
@@ -1664,7 +1197,7 @@ def pick_advanced() -> dict[str, Any]:
             "Cognitive Data Engine? The Tesla-style improvement flywheel: production "
             "failures are triaged by CAUSAL impact on real outcomes (fix what moves "
             "reality most, not what's merely frequent), then mined, validated in the "
-            "world-model, and promoted through the safety ladder. The workforce compounds "
+            "world-model, and promoted through the safety ladder. The firm improves "
             "from its own experience; on by default.",
             default=True,
         ),
@@ -1676,21 +1209,11 @@ def pick_advanced() -> dict[str, Any]:
             default=True,
         ),
         "consequence": _q_confirm(
-            "Consequence Engine? Ground the workforce's learning in REAL outcomes instead "
+            "Consequence Engine? Ground the firm's learning in REAL outcomes instead "
             "of a model's self-graded proxy: when a downstream result lands (an invoice "
             "paid, a ticket reopened), it overrides the proxy reward so the data engine "
             "learns from reality. Reality is the reward signal; on by default.",
             default=True,
-        ),
-        "earned_autonomy": _q_confirm(
-            "Earned autonomy? Agents earn the right to act, action type by action type, "
-            "by proving they predict consequences correctly: each rehearsed high-stakes "
-            "action pins a consequence card, reality grades it, and a proven streak "
-            "graduates the action from 'a human approves' to 'policy auto-approves' -- "
-            "with instant demotion on one miss and a guaranteed undo until it's earned. "
-            "Enabling only records evidence; graduation stays off until you also arm "
-            "auto_graduate. Off by default.",
-            default=False,
         ),
         "flows": _q_confirm(
             "Flow engine? A deterministic skeleton -- branch, switch, loop, parallel, "
@@ -1748,7 +1271,7 @@ def pick_advanced() -> dict[str, Any]:
         ),
         "client_id": _q_text(
             "Client/tenant id for THIS deployment (one Maverick per enterprise "
-            "client). All data (world DB, audit, memory, fleet) is isolated under "
+            "client). All data (world DB, audit, memory, queue) is isolated under "
             "this id — leave blank only for a personal/single-user install. "
             "Letters/digits/._- e.g. \"acme-corp\".",
             default="",
@@ -1796,14 +1319,6 @@ def pick_advanced() -> dict[str, Any]:
             "cron). Defaults to a local mirror; edit [audit.worm] for S3.",
             default=False,
         ),
-        "saml": _q_confirm(
-            "Enable SAML 2.0 SSO (alongside or instead of OIDC)? For enterprises "
-            "whose IdP (Okta, Entra/Azure AD, ADFS) mandates SAML over OIDC. "
-            "Writes a [auth.saml] template you fill in with your SP/IdP details, "
-            "then hand /saml/metadata to the IdP. Needs the [saml] extra (pysaml2) "
-            "and the browser-login session secret. Off by default.",
-            default=False,
-        ),
         "security_autofix": _q_confirm(
             "Let the security assessor auto-fix low-risk gaps? With enterprise mode "
             "on, the assessor may auto-apply reversible, in-boundary "
@@ -1820,18 +1335,6 @@ def pick_advanced() -> dict[str, Any]:
             "Writes [security] approvals_required = 2. Off by default.",
             default=False,
         ),
-        "deferred_tools": _q_confirm(
-            "Deferred tool loading? Show the model a small core toolset plus a "
-            "find_tools search tool, loading the long tail (80+ integrations, MCP) "
-            "on demand. Big context savings when many tools are enabled.",
-            default=False,
-        ),
-        "ebpf_monitor": _q_confirm(
-            "Enable the eBPF syscall monitor? An operator-run bpftrace "
-            "supervisor tracing execve/connect/openat for the agent's PID tree "
-            "(needs root + bpftrace at runtime). Off by default.",
-            default=False,
-        ),
         "local_runtime": _q_confirm(
             "Manage a local model server (vLLM / TGI / llama.cpp)? Writes "
             "[local_runtime] so the local-runtime planner composes the "
@@ -1843,17 +1346,6 @@ def pick_advanced() -> dict[str, Any]:
         "output_cache": _q_confirm(
             "Cache tool outputs? Memoize side-effect-free (read-only) tool calls "
             "within a run so a repeated read isn't re-done. Off by default.",
-            default=False,
-        ),
-        "local_first": _q_confirm(
-            "Local-first models? When a configured local model's server is "
-            "reachable, prefer it over a remote provider (privacy + cost). Only "
-            "applies when you haven't pinned a model. Off by default.",
-            default=False,
-        ),
-        "energy_aware": _q_confirm(
-            "Energy-aware routing? On a laptop, downgrade to a cheaper/faster "
-            "model when the battery is low. Off by default.",
             default=False,
         ),
         "effort": _q_confirm(
@@ -1868,13 +1360,6 @@ def pick_advanced() -> dict[str, Any]:
             "latency (best for interactive use). Off by default.",
             default=False,
         ),
-        "hedge_requests": _q_confirm(
-            "Hedge slow LLM requests? If a call hasn't returned within ~1.5s, fire "
-            "a backup request and take whichever finishes first (tightens p99 on a "
-            "provider with variable latency). Costs extra on slow calls. Off by "
-            "default.",
-            default=False,
-        ),
     }
     # Autonomous self-correction only makes sense once flows are on. Human apply
     # + surfaced proposals work without it; this governs whether the loop may
@@ -1886,17 +1371,14 @@ def pick_advanced() -> dict[str, Any]:
         default=False,
     ):
         advanced["flows_auto_evolve"] = True
-    # Signed channel Approve/Reject links need the dashboard's externally-
-    # reachable base URL; blank keeps approvals on the dashboard itself.
+    # Signed browser approval links need the dashboard's externally reachable
+    # base URL; blank keeps approvals on the dashboard itself.
     if advanced.get("flows"):
         flows_url = _q_text(
             "  Public base URL for flow approval links (e.g. https://ops.acme.com; "
             "blank = approve from the dashboard)", default="").strip()
         if flows_url:
             advanced["flows_public_url"] = flows_url
-    # Both governed-execution planes are off by default, so the helper guards
-    # each of its own questions rather than gating the call.
-    _ask_governed_execution_followups(advanced)
     # Self-harness has a handful of optional paths beyond the validation floors
     # written by default. Only worth asking once the loop itself is on; each
     # stays at its historical default unless the operator opts in here.
@@ -1928,7 +1410,7 @@ def pick_advanced() -> dict[str, Any]:
             "    Canary rollout? Stage each newly learned line on probation and "
             "graduate or pull it from real run outcomes.", default=False)
         advanced["self_harness_auto_run"] = _q_confirm(
-            "    Auto-run? Run the governed learning cycle for every role model "
+            "    Auto-run? Run the governed learning cycle for the pinned run model "
             "as part of `maverick dream` (no second cron entry).", default=True)
         advanced["self_harness_metamorphic"] = _q_confirm(
             "    Metamorphic validation? Paraphrase held-out cases and require a "
@@ -1941,10 +1423,6 @@ def pick_advanced() -> dict[str, Any]:
             "    Judge calibration? Feed the evaluation judge's verdicts into "
             "the verifier-drift freeze so a drifting judge pauses learning.",
             default=False)
-        advanced["self_harness_transfer_auto"] = _q_confirm(
-            "    Nightly cross-model transfer? Try each model's proven guidance "
-            "on the rest of the fleet (gated, on probation, one-shot per pair).",
-            default=False)
         harvest_mode = _q_select(
             "    Corpus bootstrapping from run history?",
             ["off     - don't harvest",
@@ -1953,14 +1431,13 @@ def pick_advanced() -> dict[str, Any]:
             default="off     - don't harvest").split()[0]
         if harvest_mode in ("propose", "auto"):
             advanced["self_harness_corpus_harvest"] = harvest_mode
-        # Both nightly paths ride the dream beat: without auto_run (or, for
-        # harvesting, a corpus) they are configured but never executed --
-        # say so NOW, not silently at 3am.
-        if not advanced.get("self_harness_auto_run") and (
-                advanced.get("self_harness_transfer_auto")
-                or harvest_mode in ("propose", "auto")):
+        # Harvesting rides the dream beat; without auto_run it is configured
+        # but never executed, so say so now rather than silently at 3am.
+        if not advanced.get("self_harness_auto_run") and harvest_mode in (
+            "propose", "auto"
+        ):
             console.print(
-                "    [yellow]Note: nightly transfer/harvesting only run when "
+                "    [yellow]Note: nightly harvesting only runs when "
                 "auto-run is on -- enable it above.[/yellow]")
         if harvest_mode in ("propose", "auto") and not corpus:
             console.print(
@@ -1968,9 +1445,9 @@ def pick_advanced() -> dict[str, Any]:
                 "path above; without one the harvest is a no-op.[/yellow]")
         store_pick = _q_select(
             "    Learning-store backend?",
-            ["files - per-host JSON under ~/.maverick (default)",
-             "world - shared world database (a multi-host fleet learns as one)"],
-            default="files - per-host JSON under ~/.maverick (default)",
+            ["files - local JSON under ~/.maverick (default)",
+             "world - durable world database"],
+            default="files - local JSON under ~/.maverick (default)",
         ).split()[0]
         if store_pick == "world":
             advanced["self_harness_store"] = "world"
@@ -1980,22 +1457,6 @@ def pick_advanced() -> dict[str, Any]:
         advanced["self_harness_retire_days"] = max(0, _safe_int(_q_text(
             "    Auto-retire lines unused this many days (0 = never)",
             default="0"), default=0))
-    # Tax-constants content channel: law changes ship as SIGNED bundles
-    # (fail-closed against the publisher keys), auto-applied by
-    # `maverick tax prepare` / `maverick tax update`.
-    if _q_confirm(
-        "  Auto-update tax computation constants from a signed publisher "
-        "channel? (new tax law as a content release, not a code release)",
-        default=False,
-    ):
-        advanced["tax_update_url"] = _q_text(
-            "  Constants update URL", default="").strip()
-        raw = _q_text(
-            "  Trusted publisher pubkeys (comma-separated hex Ed25519)",
-            default="",
-        )
-        advanced["tax_pubkeys"] = [k.strip() for k in raw.split(",")
-                                   if k.strip()]
     # Regulated-deployment posture: a compliance disclosure line. Maps to the
     # independent [compliance] scalar table; previously only hand-editable.
     if _q_confirm(
@@ -2011,8 +1472,7 @@ def pick_advanced() -> dict[str, Any]:
     # its own prompt; the result is nested under the "oidc" key and the writer
     # emits a single [auth.oidc] table for it.
     advanced["oidc"] = pick_oidc()
-    # Department (job-function) scoping only bites once sign-in is on, so it is
-    # offered right after — writes under [dashboard]. Returns {} when declined.
+    # Department scoping only applies to a named signed-in principal.
     advanced["department_access"] = pick_department_access(
         bool(advanced["oidc"].get("enabled")))
     return advanced
@@ -2022,65 +1482,31 @@ def _split_csv(text: str) -> list[str]:
     return [t.strip() for t in (text or "").split(",") if t.strip()]
 
 
-def _collect_group_pairs(prompt: str, *, csv_value: bool) -> dict[str, Any]:
-    """Collect ``Group Name = value`` lines until a blank entry. ``csv_value``
-    parses the right side as a comma-separated list (departments) instead of a
-    single token (role)."""
-    out: dict[str, Any] = {}
-    while True:
-        line = _q_text(prompt, default="").strip()
-        if not line or "=" not in line:
-            break
-        name, _, rhs = line.partition("=")
-        name, rhs = name.strip(), rhs.strip()
-        if not name or not rhs:
-            continue
-        out[name] = _split_csv(rhs) if csv_value else rhs
-    return out
-
-
 def pick_department_access(sso_enabled: bool) -> dict[str, Any]:
     """Opt-in department (job-function) scoping for authenticated users.
 
     Only meaningful once sign-in is on (it keys on the authenticated
     principal), so it is skipped entirely when SSO is off. Collects the
-    deny-by-default department set and optional SCIM-group -> role / department
-    mappings, written under ``[dashboard]``. Returns ``{}`` when declined, so a
-    default install is unchanged.
+    deny-by-default department set under ``[dashboard]``. Returns ``{}`` when
+    declined, so a default install is unchanged.
     """
     if not sso_enabled:
         return {}
     console.print(
         "[dim]Department scoping limits which specialist teams each signed-in "
-        "user can see and run — a finance analyst gets the Finance department, "
-        "not Legal. OFF by default (everyone sees every department); you can "
+        "user can see and run — a member of one practice group does not "
+        "automatically gain access to another. OFF by default (everyone sees "
+        "every enabled legal group); you can "
         "always assign per-user access later on the dashboard Users page.[/dim]"
     )
     if not _q_confirm("Restrict users to specific departments by default?",
                       default=False):
         return {}
-    result: dict[str, Any] = {
+    return {
         "default_suites": _split_csv(_q_text(
             "  Departments a new user may use until granted more (comma-separated "
-            "suite keys, e.g. finance,tax; blank = none)", default="")),
+            "suite keys; blank = none)", default="")),
     }
-    console.print(
-        "[dim]Optional: if your IdP pushes groups via SCIM, map a group to a "
-        "role and/or departments so access follows team membership. Enter one "
-        "'Group Name = value' per line; blank line to finish.[/dim]"
-    )
-    if _q_confirm("  Map IdP (SCIM) groups to roles/departments now?",
-                  default=False):
-        roles = _collect_group_pairs(
-            "    Group -> role (e.g. Finance Team=operator)", csv_value=False)
-        suites = _collect_group_pairs(
-            "    Group -> departments (e.g. Finance Team=finance,tax)",
-            csv_value=True)
-        if roles:
-            result["group_roles"] = roles
-        if suites:
-            result["group_suites"] = suites
-    return result
 
 
 def _docker_available() -> bool:
@@ -2099,11 +1525,28 @@ def _docker_available() -> bool:
         return False
 
 
-# Container backends pick their image from the coding language (see
-# sandbox._IMAGE_BY_LANGUAGE). local/ssh run model shell on the host toolchain
-# and devcontainer reuses the user's own image, so the language hint only
-# changes anything for these three.
-_LANGUAGE_BACKENDS = {"docker", "gvisor", "podman", "kubernetes"}
+# Docker picks its image from the operator-selected toolchain language (see
+# ``sandbox._IMAGE_BY_LANGUAGE``). The local backend uses the host toolchain.
+_LANGUAGE_BACKENDS = {"docker"}
+_IMMUTABLE_DOCKER_IMAGE_RE = re.compile(
+    r"^(?:[^\s@]+@)?sha256:[0-9a-fA-F]{64}$"
+)
+
+
+def _pick_immutable_docker_image() -> str:
+    """Require the immutable Docker reference enforced by the firm runtime."""
+    while True:
+        image = _q_text(
+            "  Immutable Docker sandbox image "
+            "(repository@sha256:<64-hex> or local sha256:<64-hex>)",
+            default="",
+        ).strip()
+        if _IMMUTABLE_DOCKER_IMAGE_RE.fullmatch(image):
+            return image
+        console.print(
+            "[red]A full immutable sha256 Docker reference is required; mutable "
+            "tags and the empty default are refused in secure mode.[/red]"
+        )
 
 
 def pick_sandbox() -> dict[str, Any]:
@@ -2112,21 +1555,18 @@ def pick_sandbox() -> dict[str, Any]:
     # the least isolated local backend.
     docker_default = "docker - Throwaway Docker container (recommended)"
     pick = _q_select(
-        "Sandbox backend (where the agent runs shell commands):",
+        "Sandbox backend (for retained local subprocess helpers):",
         [
             "local  - Subprocess on this machine (fastest, least isolated)",
             "docker - Throwaway Docker container (recommended)",
-            "gvisor - Docker + gVisor runsc kernel (strongest isolation)",
-            "podman - Throwaway Podman container (rootless)",
-            "devcontainer - Reuse a .devcontainer config",
-            "kubernetes - Pod-per-command in a cluster (kubectl)",
-            "ssh    - Remote machine",
         ],
         default=docker_default,
     )
     backend = pick.split()[0]
     workdir = _q_text("  Workspace directory", default=str(Path.home() / "maverick-workspace"))
     cfg: dict[str, Any] = {"backend": backend, "workdir": workdir, "timeout": 60}
+    if backend == "docker":
+        cfg["image"] = _pick_immutable_docker_image()
     # Non-Python coders get a toolchain image that can actually run their tests
     # (cargo/go test, the JS runner, ...). Python is the default image, so we
     # only write [sandbox] language when it's something else -- existing and
@@ -2180,114 +1620,15 @@ def pick_web_search() -> tuple[bool, list[str]]:
     return True, envs
 
 
-def pick_mcp_servers() -> dict[str, dict[str, Any]]:
-    """Configure MCP servers the agent will consume as tools.
-
-    MCP servers expose their own tools (filesystem, GitHub, etc.) via a
-    JSON-RPC protocol. The agent calls them as ``mcp_<name>__<tool>``.
-    Skip if you don't know what MCP is.
-    """
-    if not _q_confirm(
-        "Add MCP servers? (extensibility hook; skip if unsure)",
-        default=False,
-    ):
-        return {}
-    servers: dict[str, dict[str, Any]] = {}
-    console.print(
-        "[dim]Example: name 'filesystem', command 'npx', "
-        "args '-y @modelcontextprotocol/server-filesystem /tmp'.[/dim]"
-    )
-    while True:
-        name = _q_text("  Name (blank to finish)", default="").strip()
-        if not name:
-            break
-        cmd = _q_text(f"  {name}: command", default="").strip()
-        if not cmd:
-            console.print("  [yellow]skipped (no command)[/yellow]")
-            continue
-        args_raw = _q_text(f"  {name}: args (space-separated)", default="").strip()
-        args = args_raw.split() if args_raw else []
-        servers[name] = {"command": cmd, "args": args}
-        if not _q_confirm("  Add another?", default=False):
-            break
-    return servers
-
-
-def pick_plugins() -> list[str]:
-    """Allowlist for pip-installed plugin packages.
-
-    Plugins are loaded only when listed in ``[plugins].enabled``. We
-    scan installed entry-points and offer a checkbox; if nothing is
-    installed, the step is a no-op.
-    """
-    discovered: set[str] = set()
-    try:
-        from maverick.plugins import _entry_points  # type: ignore[attr-defined]
-        for group in (
-            "maverick.tools",
-            "maverick.skills",
-            "maverick.personas",
-        ):
-            for ep in _entry_points(group):
-                discovered.add(ep.name)
-    except Exception as e:
-        console.print(
-            f"[yellow]Plugin discovery skipped: {e}[/yellow] "
-            "(no plugins will be offered; re-run the wizard to retry)"
-        )
-        return []
-    if not discovered:
-        return []
-    console.print()
-    console.print(
-        "[bold]Plugins discovered via entry_points:[/bold] "
-        + ", ".join(sorted(discovered))
-    )
-    if not _q_confirm(
-        "Enable any of these? (allow-listed for security; skip is safe)",
-        default=False,
-    ):
-        return []
-    return _q_checkbox("Enable plugins:", sorted(discovered))
-
-
-def pick_plugin_permissions() -> tuple[list[str], bool]:
-    """Grants + enforcement for enabled plugins (writes ``[plugins].grant`` /
-    ``enforce_permissions``).
-
-    A plugin declares the permissions it needs (network / fs_write / subprocess)
-    in its manifest. By default an ungranted request is loaded with a warning;
-    granting here silences it, and enforcing *skips* a plugin that requests
-    something ungranted. Returns ``(grant, enforce)``; only asked when at least
-    one plugin is enabled.
-    """
-    grant = _q_checkbox(
-        "Permissions enabled plugins may use "
-        "(ungranted requests warn, or are skipped if you enforce next):",
-        ["network", "fs_write", "subprocess"],
-        default=[],
-    )
-    enforce = _q_confirm(
-        "Skip plugins that request a permission you didn't grant? "
-        "(recommended; off = load with a warning)",
-        default=False,
-    )
-    return grant, enforce
-
-
-def pick_tool_acl(channels: dict[str, Any]) -> dict[str, Any]:
-    """Optional per-tool / per-channel allow/deny lists.
-
-    Common pattern: a Telegram channel may chat but shouldn't run
-    shell. Power users only; defaults to no restriction.
-    """
+def pick_tool_acl() -> dict[str, Any]:
+    """Optional global tool deny list."""
     if not _q_confirm(
         "Restrict tools the agent may run? (skip for full access)",
         default=False,
     ):
         return {}
     acl: dict[str, Any] = {}
-    common = ["shell", "write_file", "computer", "browser", "http_fetch", "apply_patch"]
+    common = ["write_file", "web_search"]
     denied = _q_checkbox(
         "Deny these tools globally (rare; usually empty):",
         common,
@@ -2295,32 +1636,20 @@ def pick_tool_acl(channels: dict[str, Any]) -> dict[str, Any]:
     )
     if denied:
         acl["denied_tools"] = denied
-    for ch_id in channels:
-        if not _q_confirm(f"  Restrict tools available over {ch_id}?", default=False):
-            continue
-        ch_denied = _q_checkbox(
-            f"    Deny over {ch_id}:",
-            common,
-            default=["shell", "computer"],
-        )
-        acl.setdefault("channels", {})[ch_id] = {"denied_tools": ch_denied}
     return acl
 
 
-def pick_rate_limits(channels: dict[str, Any]) -> dict[str, str]:
+def pick_rate_limits() -> dict[str, str]:
     """Per-tool sliding-window rate caps."""
-    default = bool(channels)  # default ON when exposing via channels
     if not _q_confirm(
-        "Cap call rate per tool? (recommended when exposing via channels)",
-        default=default,
+        "Cap call rate per tool?",
+        default=False,
     ):
         return {}
     limits: dict[str, str] = {}
     proposed = [
         ("web_search", "10/60"),
-        ("http_fetch", "30/60"),
-        ("shell",      "30/60"),
-        ("mcp_*",      "60/60"),
+        ("knowledge_search", "30/60"),
     ]
     for name, spec_default in proposed:
         spec = _q_text(
@@ -2346,31 +1675,8 @@ def pick_retention() -> dict[str, int]:
     }
 
 
-def pick_analytics() -> dict[str, Any]:
-    """Consent step for MCP-client language analytics. OFF by default.
-
-    When granted, the MCP server tallies a coarse language bucket from each
-    client's User-Agent (typescript / go / rust / c# / java / python) into a
-    local counts file — no request content, no identifiers, nothing leaves
-    the machine. The tally feeds the Q1-2027 language-bindings gate
-    (``maverick.mcp_analytics.non_python_share()``). Returns a dict written
-    under ``[analytics]``.
-    """
-    console.print()
-    console.print(
-        "[dim]Optional: count which languages drive this agent over MCP "
-        "(a coarse bucket from each client's User-Agent). Counts stay in a "
-        "local file — no request content, no identifiers, nothing is "
-        "uploaded. The tally feeds the decision on funding native client "
-        "libraries; OFF by default.[/dim]"
-    )
-    if not _q_confirm("Count MCP client languages locally?", default=False):
-        return {}
-    return {"mcp_client_language": True}
-
-
 def pick_persona() -> dict[str, str]:
-    """Agent identity: name + voice."""
+    """Agent identity: name + writing style."""
     if not _q_confirm(
         "Customise the agent's name and style? (skip for defaults)",
         default=False,
@@ -2387,97 +1693,6 @@ def pick_persona() -> dict[str, str]:
         default="balanced  - default",
     )
     return {"name": name, "style": style_pick.split()[0]}
-
-
-def pick_notifications() -> tuple[dict[str, Any], list[str]]:
-    """Run-end notification webhook. Returns (config, env_vars_needed)."""
-    if not _q_confirm(
-        "Get pinged when long runs finish? (ntfy / Pushover / Slack / Discord)",
-        default=False,
-    ):
-        return {}, []
-    pick = _q_select(
-        "  Backend:",
-        [
-            "ntfy      - free, no signup, push to phone via ntfy.sh",
-            "pushover  - one-time $5, phone push",
-            "slack     - incoming webhook",
-            "discord   - webhook URL",
-        ],
-        default="ntfy      - free, no signup, push to phone via ntfy.sh",
-    )
-    backend = pick.split()[0]
-    if backend == "ntfy":
-        topic = _q_text(
-            "  ntfy topic (any unique string; treat as a password)",
-            default="",
-        ).strip()
-        return ({"backend": "ntfy", "topic": topic}, []) if topic else ({}, [])
-    if backend == "pushover":
-        return (
-            {"backend": "pushover",
-             "user_key": "${PUSHOVER_USER_KEY}",
-             "app_token": "${PUSHOVER_APP_TOKEN}"},
-            ["PUSHOVER_USER_KEY", "PUSHOVER_APP_TOKEN"],
-        )
-    if backend == "slack":
-        return (
-            {"backend": "slack", "webhook_url": "${SLACK_NOTIFY_WEBHOOK}"},
-            ["SLACK_NOTIFY_WEBHOOK"],
-        )
-    if backend == "discord":
-        return (
-            {"backend": "discord", "webhook_url": "${DISCORD_NOTIFY_WEBHOOK}"},
-            ["DISCORD_NOTIFY_WEBHOOK"],
-        )
-    return {}, []
-
-
-def pick_webhooks() -> tuple[dict[str, Any], list[str]]:
-    """Outbound run-lifecycle webhooks. Returns (config, env_vars_needed).
-
-    Distinct from pick_notifications (a single run-end ping): these are
-    signed POSTs fired on every lifecycle event (goal_created,
-    goal_finished, episode_finished, final_emitted) to one or more
-    endpoints, for integrations (Zapier, custom receivers, dashboards).
-    """
-    if not _q_confirm(
-        "POST run events to your own endpoint(s)? (signed lifecycle webhooks)",
-        default=False,
-    ):
-        return {}, []
-    raw = _q_text(
-        "  Endpoint URL(s), comma-separated",
-        default="",
-    ).strip()
-    urls = _csv_list(raw)
-    if not urls:
-        return {}, []
-    cfg: dict[str, Any] = {"outbound": urls}
-    envs: list[str] = []
-    if _q_confirm("  Sign payloads with an HMAC secret?", default=True):
-        cfg["secret"] = "${MAVERICK_WEBHOOK_SECRET}"
-        envs.append("MAVERICK_WEBHOOK_SECRET")
-    return cfg, envs
-
-
-def pick_deliverable_handoff() -> tuple[dict[str, Any], list[str]]:
-    """System-of-record hand-off for APPROVED deliverables. Returns
-    (config, env_vars_needed).
-
-    Distinct from lifecycle webhooks: this fires only when a human signs off a
-    gated deliverable (a forecast, a CECL memo), POSTing it to a downstream
-    system (treasury / GL / Jira) so an approved result lands there instead of
-    being re-keyed by hand. Signed with the same [webhooks] HMAC secret."""
-    if not _q_confirm(
-        "POST approved deliverables to a system-of-record endpoint?",
-        default=False,
-    ):
-        return {}, []
-    url = _q_text("  System-of-record endpoint URL", default="").strip()
-    if not url:
-        return {}, []
-    return {"handoff_webhook": url}, []
 
 
 def pick_persona_roles() -> dict[str, Any]:
@@ -2501,8 +1716,7 @@ def pick_persona_roles() -> dict[str, Any]:
 
 
 def pick_connectors() -> dict[str, str]:
-    """Collect credentials for enterprise connectors (ServiceNow, Salesforce,
-    Snowflake, SAP, ...).
+    """Collect credentials for the retained GET-only legal-system connectors.
 
     Connectors are always registered in the kernel; they only need their
     BASE_URL/TOKEN env vars set to work. Returns ``{ENV_NAME: value}`` for the
@@ -2521,16 +1735,16 @@ def pick_connectors() -> dict[str, str]:
         return {}
     console.print()
     console.print(
-        f"[dim]Maverick ships {len(entries)} enterprise connectors "
-        "(ServiceNow, Salesforce, Snowflake, SAP, Workday, Datadog, ...). "
-        "Full list: docs/connectors.md. Connect any now, or add them later in "
+        f"[dim]The firm build ships {len(entries)} reviewed, GET-only legal-system "
+        "connectors. Full list: docs/connectors.md. Add credentials now, or "
+        "add them later in "
         "~/.maverick/.env.[/dim]"
     )
-    if not _q_confirm("Connect any enterprise systems now?", default=False):
+    if not _q_confirm("Configure any legal-system connectors now?", default=False):
         return {}
     by_name = {e["name"]: e for e in entries}
     raw = _q_text(
-        "  Which systems? (comma-separated names, e.g. servicenow, snowflake)",
+        "  Which tools? (comma-separated names, e.g. clio_read, docusign_read)",
         default="",
     )
     picked = _csv_list(raw, lower=True)
@@ -2560,7 +1774,7 @@ def pick_connectors() -> dict[str, str]:
     return keys
 
 
-def collect_api_keys(providers: list[str], channel_envs: set[str]) -> dict[str, str]:
+def collect_api_keys(providers: list[str], extra_envs: set[str]) -> dict[str, str]:
     keys: dict[str, str] = {}
     needed: list[str] = []
 
@@ -2571,7 +1785,7 @@ def collect_api_keys(providers: list[str], channel_envs: set[str]) -> dict[str, 
             needed.append(env_name)
         needed.extend(info.get("env_vars", []))
 
-    needed.extend(sorted(channel_envs))
+    needed.extend(sorted(extra_envs))
 
     if not needed:
         return keys
@@ -2641,18 +1855,8 @@ AGENT_SUITES: list[tuple[str, str]] = [
     # packages/maverick-core/maverick/domains/: upstream offered 53 industry
     # suites, of which 42 (healthcare, banking, aerospace, mining, maritime,
     # oil & gas, semiconductors, ...) toggle nothing here after the prune to
-    # 125 packs. A prompt that configures nothing is worse than no prompt.
-    ("legal", "Legal — the practice (77 packs)"),
-    ("tax", "Tax — advisory and controversy (12)"),
-    ("finance", "Finance — the firm's own books (8)"),
-    ("security_ops", "Security operations — breach response (5)"),
-    ("executive_office", "Corporate housekeeping — minutes, meetings (5)"),
-    ("knowledge_management", "Knowledge — clause bank, precedents, SOPs (4)"),
-    ("hr", "Employment — advising clients, hiring staff (4)"),
-    ("real_estate", "Real estate (3)"),
-    ("insurance", "Insurance — coverage, subrogation (3)"),
-    ("public_sector", "Public records requests (1)"),
-    ("government_contracting", "FOIA support (1)"),
+    # 31 legal packs. A prompt that configures nothing is worse than no prompt.
+    ("legal", "Legal — the practice (31 packs)"),
 ]
 
 
@@ -2662,8 +1866,8 @@ def pick_suites() -> dict[str, bool]:
     Returns a ``suite -> bool`` map for the ``[suites]`` config table (empty when
     the operator keeps the default, so the kernel enables every suite)."""
     console.print()
-    console.print("[bold]Agent suites[/bold] — the business functions the agent "
-                  "factory can spawn (finance, operations, legal, ...).")
+    console.print("[bold]Practice suites[/bold] — the legal specialists the "
+                  "firm runtime may use.")
     console.print("[dim]All enabled by default. A disabled suite's agents can't be "
                   "spawned. Editable later in ~/.maverick/config.toml under "
                   "[suites].[/dim]")
@@ -2719,27 +1923,9 @@ def _cfg_providers(providers: list[str]) -> list[str]:
     return lines
 
 
-def _cfg_role_models(role_models: dict[str, str]) -> list[str]:
-    if not role_models:
-        return []
-    lines = ["[models]"]
-    for role, spec in role_models.items():
-        lines.append(f'{role} = "{spec}"')
-    lines.append("")
-    return lines
-
-
-def _cfg_channels(channels: dict[str, dict[str, Any]]) -> list[str]:
-    lines: list[str] = []
-    for ch_id, cfg in channels.items():
-        lines.append(f"[channels.{ch_id}]")
-        for k, v in cfg.items():
-            # _emit_kv handles lists (e.g. the allowed_user_ids array) and
-            # escapes string values; the old inline branch emitted a list as
-            # a quoted string and didn't escape backslash paths.
-            _emit_kv(lines, k, v)
-        lines.append("")
-    return lines
+def _cfg_run_model(run_model: str, providers: list[str]) -> list[str]:
+    spec = _validate_run_model(run_model, providers)
+    return ["[models]", f"default = {_toml_str(spec)}", ""]
 
 
 def _cfg_core(
@@ -2776,31 +1962,9 @@ def _cfg_self_learning(self_learning: dict[str, Any] | None) -> list[str]:
     if not self_learning:
         return []
     # Self-learning. enable gates the whole feature; sub-toggles let the
-    # agent install skills, add MCP servers, and generate+run new tools.
+    # agent install skills and generate local reusable guidance.
     lines = ["", "[self_learning]"]
     for k, v in self_learning.items():
-        _emit_kv(lines, k, v)
-    return lines
-
-
-def _cfg_automation_import(automation_import: dict[str, Any] | None) -> list[str]:
-    if not automation_import:
-        return []
-    # Automation import. enable gates the whole feature; create_schedules lets a
-    # recovered cron trigger auto-create a Maverick schedule on import.
-    lines = ["", "[automation_import]"]
-    for k, v in automation_import.items():
-        _emit_kv(lines, k, v)
-    return lines
-
-
-def _cfg_event_triggers(event_triggers: dict[str, Any] | None) -> list[str]:
-    if not event_triggers:
-        return []
-    # Event triggers. enable gates the whole feature; the app polls bound
-    # sources on a background tick and fires the workflow per new item.
-    lines = ["", "[event_triggers]"]
-    for k, v in event_triggers.items():
         _emit_kv(lines, k, v)
     return lines
 
@@ -2809,7 +1973,7 @@ def _cfg_flows(flows: dict[str, Any] | None) -> list[str]:
     if not flows:
         return []
     # Flow engine. enable gates the visual multi-step workflow designer/runner;
-    # public_url (optional) is the base URL for signed channel-approval links.
+    # public_url (optional) is the base URL for signed browser approval links.
     lines = ["", "[flows]"]
     for k, v in flows.items():
         _emit_kv(lines, k, v)
@@ -2832,17 +1996,6 @@ def _cfg_oauth(oauth: dict[str, Any] | None) -> list[str]:
         return []
     # Seal captured OAuth tokens in the per-tenant vault (encrypted at rest).
     return ["", "[oauth]", "vault = true"]
-
-
-def _cfg_governed_connectors(governed_connectors: dict[str, Any] | None) -> list[str]:
-    if not (governed_connectors and governed_connectors.get("enable")):
-        return []
-    # Governed system-of-record connectors. enable turns on the governed write
-    # path; connectors selects which reference REST connectors to register.
-    lines = ["", "[governed_connectors]"]
-    for k, v in governed_connectors.items():
-        _emit_kv(lines, k, v)
-    return lines
 
 
 def _cfg_durable(durable: dict[str, Any] | None) -> list[str]:
@@ -2897,72 +2050,6 @@ def _cfg_security_suite(security_suite: dict[str, Any] | None) -> list[str]:
         f"enable = {'true' if security_suite.get('threat_hunt', False) else 'false'}",
     ]
 
-def _cfg_value(value: dict[str, Any] | None) -> list[str]:
-    if not value:
-        return []
-    # The client's cost/value assumptions behind the dashboard Savings page
-    # (read by config.get_value; per-department overrides are added later from
-    # the page itself).
-    lines = ["", "[value]"]
-    for k, v in value.items():
-        _emit_kv(lines, k, v)
-    return lines
-
-
-def _cfg_finance(finance: dict[str, Any] | None) -> list[str]:
-    if not finance:
-        return []
-    # Finance suite governance (finance-agent-suite): pause money movement for
-    # a human, enforce compliance regimes (strictest-wins), and screen
-    # sanctions. The [governance] scalar key precedes its sub-tables (TOML).
-    lines = ["", "[governance]", 'require_human_min_risk = "high"']
-    if finance.get("require_fresh_human_approval"):
-        # A prior persistent consent grant won't satisfy the Art-14 gate --
-        # each paused action needs a fresh human decision.
-        lines.append("require_fresh_human_approval = true")
-    rha = finance.get("require_human_above") or 0
-    if rha and rha > 0:
-        lines.append("")
-        lines.append("[governance.require_human_above]")
-        lines.append(f'"*" = {rha}')
-    da = finance.get("deny_above") or 0
-    if da and da > 0:
-        lines.append("")
-        lines.append("[governance.deny_above]")
-        lines.append(f'"*" = {da}')
-    regimes = finance.get("regimes") or []
-    if regimes:
-        lines.append("")
-        lines.append("[finance]")
-        _emit_kv(lines, "regimes", regimes)
-    sdn = (finance.get("sdn_path") or "").strip()
-    if sdn:
-        lines.append("")
-        lines.append("[screening]")
-        _emit_kv(lines, "sdn_path", sdn)
-    if "operations_enable" in finance:
-        lines.append("")
-        lines.append("[finance_operations]")
-        _emit_kv(lines, "enable", finance.get("operations_enable") is True)
-        if finance.get("operations_enable") is True:
-            for key in (
-                "federal_register_enable",
-                "texas_register_enable",
-                "regulatory_domains",
-                "regulatory_poll_seconds",
-                "control_test_interval_seconds",
-                "anomaly_enable",
-                "sanctions_max_age_hours",
-                "control_owner",
-            ):
-                if key in finance:
-                    _emit_kv(lines, key, finance[key])
-            # State register sources are explicit arrays of tables added after
-            # onboarding; an empty list is a clear, safe starting posture.
-            lines.append("state_feeds = []")
-    return lines
-
-
 def _cfg_capabilities(
     capability_config: dict[str, Any],
 ) -> list[str]:
@@ -2975,15 +2062,6 @@ def _cfg_capabilities(
     return lines
 
 
-def _cfg_agent_factory(jd_hiring: bool) -> list[str]:
-    # JD hiring is default-on in the kernel (maverick.jd_hiring); only write
-    # the table when the operator opted OUT, matching the
-    # write-only-on-divergence convention.
-    if jd_hiring:
-        return []
-    return ["", "[agent_factory]", "jd_hiring = false"]
-
-
 def _cfg_suites(suites: dict[str, bool] | None) -> list[str]:
     if not suites:
         return []
@@ -2994,19 +2072,8 @@ def _cfg_suites(suites: dict[str, bool] | None) -> list[str]:
     return lines
 
 
-def _cfg_license(license_cfg: dict[str, Any] | None) -> list[str]:
-    if not license_cfg:
-        return []
-    # Entitlement enforcement; maverick.entitlements reads this [license] table.
-    lines = ["", "[license]"]
-    for k, v in license_cfg.items():
-        _emit_kv(lines, k, v)
-    return lines
-
-
 def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
     advanced: dict[str, Any] | None,
-    providers: list[str],
 ) -> list[str]:
     if not advanced:
         return []
@@ -3019,7 +2086,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         "reflexion": "reflexion",
         "self_harness": "self_harness",
         "dreaming": "dreaming",
-        "skill_synthesis": "skill_synthesis",
         "experience_guidance": "experience",
         "credit_assignment": "credit",
         "rehearsal": "rehearsal",
@@ -3030,24 +2096,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
     for choice, section in _learning_sections.items():
         if choice in advanced and advanced[choice] is False:
             lines.extend(["", f"[{section}]", "enable = false"])
-    # Advanced reasoning toggles -> the kernel's config sections. Each is
-    # off unless the wizard wrote it, matching the modules' own defaults.
-    if (advanced.get("cost_aware") or advanced.get("verify_ensemble")
-            or advanced.get("energy_aware")
-            or advanced.get("autonomy_gate")):
-        lines.append("")
-        lines.append("[routing]")
-        # Constrain routing features enabled by the wizard to the providers
-        # the user selected in this run. Some router/verifier fallbacks also
-        # know about API keys from the shell environment; the allowlist keeps
-        # advanced opt-ins from sending prompts to those unselected providers.
-        _emit_kv(lines, "allowed_providers", providers)
-        if advanced.get("cost_aware"):
-            lines.append("cost_aware = true")
-        if advanced.get("verify_ensemble"):
-            lines.append("verify_ensemble = true")
-        if advanced.get("energy_aware"):
-            lines.append("energy_aware = true")
     if advanced.get("risk_proportional_verify"):
         lines.append("")
         lines.append("[verification]")
@@ -3064,16 +2112,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("")
         lines.append("[actions]")
         lines.append("enable = true")
-    # data_grounding defaults ON, so emit the knob only to DISABLE it. Both keys
-    # share one [workforce] section.
-    _wf_disable_grounding = advanced.get("workforce_data_grounding") is False
-    if advanced.get("workforce_levels") or _wf_disable_grounding:
-        lines.append("")
-        lines.append("[workforce]")
-        if advanced.get("workforce_levels"):
-            lines.append("levels = true")
-        if _wf_disable_grounding:
-            lines.append("data_grounding = false")
     if advanced.get("calibration_enforce") or advanced.get("reward_laundering"):
         lines.append("")
         lines.append("[calibration]")
@@ -3111,10 +2149,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("# JitRL test-time adaptation is ON by default (a no-op until it has")
         lines.append("# learned something); disable it entirely here (maverick.jit_rl).")
         lines.append("enable = false")
-    if advanced.get("skill_synthesis"):
-        lines.append("")
-        lines.append("[skill_synthesis]")
-        lines.append("enable = true")
     if advanced.get("experience_guidance"):
         lines.append("")
         lines.append("[experience]")
@@ -3124,12 +2158,10 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("[credit]")
         lines.append("enable = true")
     # The [self_improvement] block carries several default-on sub-toggles; emit
-    # explicit values when the wizard records a choice, and write
-    # factory_learning=false when the user opts out.
-    declined_factory = "factory_learning" in advanced and not advanced.get("factory_learning")
+    # explicit values when the wizard records a choice.
     has_learning_policy = any(
         key in advanced
-        for key in ("causal_promotion", "factory_learning", "evaluator_evolution")
+        for key in ("causal_promotion", "evaluator_evolution")
     )
     if has_learning_policy or advanced.get("signed_approval"):
         lines.append("")
@@ -3144,10 +2176,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             lines.append(
                 f"causal_promotion = {str(bool(advanced.get('causal_promotion'))).lower()}"
             )
-        if declined_factory:
-            lines.append("# Keep the agent factory's generator static (do not mine")
-            lines.append("# pack-generation gaps into proposer corrections).")
-            lines.append("factory_learning = false")
         if "evaluator_evolution" in advanced:
             lines.append("# Promote a better judge instead of only freezing when the")
             lines.append("# evaluator drifts: a challenger replaces the incumbent only when")
@@ -3176,7 +2204,7 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("[data_engine]")
         lines.append("# Triage production failures by causal impact on real outcomes, then")
         lines.append("# mine + validate + promote fixes (maverick.data_engine). The Tesla")
-        lines.append("# data-engine flywheel for the workforce; reads the trajectory store.")
+        lines.append("# governed firm-improvement loop; reads the trajectory store.")
         lines.append("enable = true")
     if advanced.get("operations_scientist"):
         lines.append("")
@@ -3192,18 +2220,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("# (invoice paid, ticket reopened) overrides the model's self-graded")
         lines.append("# proxy reward, so the data engine learns from reality (maverick.consequence).")
         lines.append("enable = true")
-    if advanced.get("earned_autonomy"):
-        lines.append("")
-        lines.append("[earned_autonomy]")
-        lines.append("# Consequence-proven trust (maverick.earned_autonomy): pin a consequence")
-        lines.append("# card per rehearsed high-stakes action, score it against reality, and")
-        lines.append("# graduate a proven action type to policy-auto-approval -- demoted on")
-        lines.append("# one miss. Enabling records evidence only; arming graduation is the")
-        lines.append("# separate auto_graduate switch below.")
-        lines.append("enable = true")
-        lines.append("# auto_graduate = true      # arm the dial (authority-widening)")
-        lines.append('# max_auto_risk = "medium"  # raise to "high" only deliberately')
-        lines.append("# min_streak = 10           # consecutive accurate predictions required")
     if advanced.get("flows"):
         lines.append("")
         lines.append("[flows]")
@@ -3327,25 +2343,11 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("")
         lines.append("[context]")
         lines.extend(_context_lines)
-    _voice_lines = []
-    if advanced.get("voice_commands") is False:
-        # Default-on; only a decline needs a line.
-        _voice_lines.append("dashboard_commands = false")
-    if advanced.get("voice_local_stt") is False:
-        # Built-in local STT model auto-fetch is default-on (egress-locked
-        # deployments already default off); only a decline needs a line.
-        _voice_lines.append("auto_fetch_model = false")
-    if _voice_lines:
-        # ONE [voice] table -- two would be a duplicate-key TOML error.
-        lines.append("")
-        lines.append("[voice]")
-        lines.extend(_voice_lines)
     _attach_lines = []
     if advanced.get("attach_any_mime"):
         _attach_lines.append("allow_any_mime = true")
     if advanced.get("attachment_understanding") is False:
-        # Default-on; only a decline needs lines.
-        _attach_lines.append("transcribe_media = false")
+        # Default-on; only a decline needs a line.
         _attach_lines.append("extract_text = false")
     if _attach_lines:
         lines.append("")
@@ -3394,8 +2396,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             lines.append("relapse_failure_share = 0.5")
         if advanced.get("self_harness_calibrate_judge"):
             lines.append("calibrate_judge = true")
-        if advanced.get("self_harness_transfer_auto"):
-            lines.append("transfer_auto = true")
         if advanced.get("self_harness_corpus_harvest"):
             _emit_kv(lines, "corpus_harvest", advanced["self_harness_corpus_harvest"])
         if advanced.get("self_harness_store"):
@@ -3406,23 +2406,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         retire_days = advanced.get("self_harness_retire_days")
         if retire_days and retire_days > 0:
             lines.append(f"retire_after_days = {int(retire_days)}")
-    if advanced.get("repl"):
-        lines.append("")
-        lines.append("[repl]")
-        lines.append("enable = true")
-    if advanced.get("harness_refine"):
-        lines.append("")
-        lines.append("[harness_refine]")
-        lines.append("enable = true")
-        # require_approval defaults ON (a proposal must never self-apply), so
-        # only an explicit decline is written.
-        if advanced.get("harness_refine_require_approval") is False:
-            lines.append("require_approval = false")
-    # Forking defaults ON (lineage only, no execution); only a decline writes.
-    if advanced.get("session_tree") is False:
-        lines.append("")
-        lines.append("[session_tree]")
-        lines.append("enable = false")
     if advanced.get("memory_guard"):
         lines.append("")
         lines.append("[memory_guard]")
@@ -3446,19 +2429,6 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("enable = true")
         if advanced.get("dreaming_llm_consolidation"):
             lines.append("llm_consolidation = true")
-    if advanced.get("tax_update_url") or advanced.get("tax_pubkeys"):
-        lines.append("")
-        lines.append("[tax]")
-        lines.append("auto_update = true")
-        if advanced.get("tax_update_url"):
-            # User-entered free text: escape via _toml_str so a URL with a
-            # backslash or quote can't corrupt the config the wizard writes.
-            _emit_kv(lines, "update_url", advanced["tax_update_url"])
-        tax_keys = advanced.get("tax_pubkeys") or []
-        if tax_keys:
-            # Free-text user input: escape via _emit_kv/_toml_str so a key
-            # with a quote/backslash cannot corrupt the written config.
-            _emit_kv(lines, "trusted_constants_pubkeys", tax_keys)
     if advanced.get("effort"):
         lines.append("")
         lines.append("[effort]")
@@ -3467,38 +2437,19 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
         lines.append("")
         lines.append("[cache]")
         lines.append("prewarm = true")
-    if advanced.get("hedge_requests"):
-        lines.append("")
-        lines.append("[latency]")
-        lines.append("hedge_ms = 1500")
     tool_lines: list[str] = []
-    if advanced.get("deferred_tools"):
-        tool_lines.append("deferred_loading = true")
     if advanced.get("output_cache"):
         tool_lines.append("output_cache = true")
     if tool_lines:
         lines.append("")
         lines.append("[tools]")
         lines.extend(tool_lines)
-    if advanced.get("ebpf_monitor"):
-        lines.append("")
-        lines.append("[ebpf_monitor]")
-        lines.append("enable = true")
     if advanced.get("local_runtime"):
         lines.append("")
         lines.append("[local_runtime]")
         lines.append("enabled = true")
         lines.append('# engine = "vllm"  # vllm | tgi | llamacpp')
         lines.append('# model  = "..."   # REQUIRED for the local-runtime planner')
-    if advanced.get("local_first"):
-        lines.append("")
-        lines.append("[system]")
-        lines.append("local_first = true")
-        local_model = _local_first_model(providers)
-        if local_model:
-            lines.append("")
-            lines.append("[local_first]")
-            _emit_kv(lines, "model", local_model)
     oidc = advanced.get("oidc") or {}
     if isinstance(oidc, dict) and oidc.get("enabled"):
         # SSO ID-token verification for `maverick serve`. Its own table
@@ -3520,84 +2471,14 @@ def _cfg_advanced(  # noqa: C901 - flat sequence of independent feature toggles
             if val:
                 _emit_kv(lines, key, val)
     dept = advanced.get("department_access") or {}
-    if isinstance(dept, dict) and (dept.get("default_suites")
-                                   or dept.get("group_roles")
-                                   or dept.get("group_suites")):
-        # Department (job-function) scoping for signed-in users. default_suites
-        # is deny-by-default for users with no explicit grant; the group tables
-        # turn IdP (SCIM) team membership into a role / department grant.
+    if isinstance(dept, dict) and dept.get("default_suites"):
+        # Department scoping for signed-in users. default_suites is
+        # deny-by-default for users with no explicit grant.
         lines.append("")
         lines.append("[dashboard]")
-        if dept.get("default_suites"):
-            lines.append("# Departments a signed-in user may use until an admin "
-                         "grants more.")
-            _emit_kv(lines, "default_suites", list(dept["default_suites"]))
-        # Group names contain spaces, so the TOML key must be a quoted string
-        # ("Finance Team" = ...), not the bare key _emit_kv would render.
-        if dept.get("group_roles"):
-            lines.append("")
-            lines.append("[dashboard.group_roles]")
-            for group, role in dept["group_roles"].items():
-                lines.append(f"{_toml_str(group)} = {_toml_str(role)}")
-        if dept.get("group_suites"):
-            lines.append("")
-            lines.append("[dashboard.group_suites]")
-            for group, suites in dept["group_suites"].items():
-                rendered = ", ".join(_toml_str(s) for s in suites)
-                lines.append(f"{_toml_str(group)} = [{rendered}]")
-    if advanced.get("saml"):
-        lines.append("")
-        # SAML 2.0 SP browser SSO (alongside OIDC). Fill in the SP/IdP details
-        # then hand /saml/metadata to the IdP. Needs the [saml] extra (pysaml2)
-        # and the [auth.oidc] session_secret above. See docs/security-hardening.md.
-        lines.append("[auth.saml]")
-        lines.append('sp_entity_id = "https://YOUR-HOST/saml/metadata"')
-        lines.append('acs_url = "https://YOUR-HOST/saml/acs"')
-        lines.append('idp_metadata_url = "https://IDP/app/metadata"   # or idp_metadata_file')
-        lines.append("# want_assertions_signed = true")
-        lines.append('# sp_cert_file = ""   # to sign AuthnRequests / decrypt')
-        lines.append('# sp_key_file = ""')
-    return lines
-
-
-def _cfg_mcp_servers(mcp_servers: dict[str, dict[str, Any]] | None) -> list[str]:
-    if not mcp_servers:
-        return []
-    lines: list[str] = []
-    for name, cfg in mcp_servers.items():
-        lines.append("")
-        # The server name is free text: a bare identifier goes in as-is, but a
-        # name with dots/spaces/quotes must be a quoted+escaped TOML key or it
-        # corrupts the table header (e.g. `foo"bar` or `a.b`).
-        key = name if name.replace("_", "").replace("-", "").isalnum() else _toml_str(name)
-        lines.append(f"[mcp_servers.{key}]")
-        for k, v in cfg.items():
-            _emit_kv(lines, k, v)
-    return lines
-
-
-def _cfg_registries(header: str, indexes: list[str] | None) -> list[str]:
-    if not indexes:
-        return []
-    lines = ["", f"[{header}]"]
-    _emit_kv(lines, "indexes", indexes)
-    return lines
-
-
-def _cfg_plugins(
-    plugins: list[str] | None,
-    plugin_grant: list[str] | None,
-    plugin_enforce: bool,
-) -> list[str]:
-    if not plugins:
-        return []
-    lines = ["", "[plugins]"]
-    if plugins:
-        _emit_kv(lines, "enabled", plugins)
-    if plugin_grant:
-        _emit_kv(lines, "grant", plugin_grant)
-    if plugin_enforce:
-        _emit_kv(lines, "enforce_permissions", plugin_enforce)
+        lines.append("# Departments a signed-in user may use until an admin "
+                     "grants more.")
+        _emit_kv(lines, "default_suites", list(dept["default_suites"]))
     return lines
 
 
@@ -3616,14 +2497,7 @@ def _cfg_security(tool_acl: dict[str, Any] | None, autofix: bool,
         lines.append("approvals_required = 2")
         lines.append("allow_self_approval = false")
     for k, v in (tool_acl or {}).items():
-        if k == "channels":
-            continue
         _emit_kv(lines, k, v)
-    for ch_id, ch_cfg in ((tool_acl or {}).get("channels") or {}).items():
-        lines.append("")
-        lines.append(f"[security.channels.{ch_id}]")
-        for k, v in ch_cfg.items():
-            _emit_kv(lines, k, v)
     return lines
 
 
@@ -3632,7 +2506,7 @@ def _cfg_rate_limits(rate_limits: dict[str, str] | None) -> list[str]:
         return []
     lines = ["", "[rate_limits]"]
     for name, spec in rate_limits.items():
-        # Quote names that aren't bare identifiers (e.g. "mcp_*").
+        # Quote names that aren't bare identifiers (e.g. "http_*").
         key = name if name.replace("_", "").isalnum() else f'"{name}"'
         # spec is free-text ("N/seconds"); escape via _toml_str so a stray
         # quote/backslash can't corrupt the config the wizard writes.
@@ -3741,8 +2615,7 @@ def _write_wizard_file(path: Path, body: str) -> None:
 
 def write_config(
     providers: list[str],
-    role_models: dict[str, str],
-    channels: dict[str, dict[str, Any]],
+    run_model: str,
     safety: dict[str, Any],
     budget: dict[str, Any],
     sandbox: dict[str, Any],
@@ -3750,40 +2623,28 @@ def write_config(
     capabilities: dict[str, bool] | None = None,
     *,
     advanced: dict[str, Any] | None = None,
-    mcp_servers: dict[str, dict[str, Any]] | None = None,
-    mcp_registries: list[str] | None = None,
-    template_registries: list[str] | None = None,
-    plugins: list[str] | None = None,
-    plugin_grant: list[str] | None = None,
-    plugin_enforce: bool = False,
     tool_acl: dict[str, Any] | None = None,
     rate_limits: dict[str, str] | None = None,
     retention: dict[str, int] | None = None,
-    analytics: dict[str, Any] | None = None,
     persona: dict[str, str] | None = None,
-    notifications: dict[str, Any] | None = None,
-    webhooks: dict[str, Any] | None = None,
-    deliverables: dict[str, Any] | None = None,
     personas: dict[str, Any] | None = None,
     web_search_enabled: bool = False,
     skills: dict[str, Any] | None = None,
     self_learning: dict[str, Any] | None = None,
-    automation_import: dict[str, Any] | None = None,
-    event_triggers: dict[str, Any] | None = None,
     flows: dict[str, Any] | None = None,
     knowledge: dict[str, Any] | None = None,
     oauth: dict[str, Any] | None = None,
-    governed_connectors: dict[str, Any] | None = None,
     durable: dict[str, Any] | None = None,
-    finance: dict[str, Any] | None = None,
-    value: dict[str, Any] | None = None,
     assessments: dict[str, Any] | None = None,
     security_suite: dict[str, Any] | None = None,
     deployment: str | None = None,
     suites: dict[str, bool] | None = None,
-    license_cfg: dict[str, Any] | None = None,
     governance_profile: str | None = None,
 ) -> None:
+    # Validate the confidentiality-bearing provider/model authority before any
+    # directory, config, or credential write. A malformed pin must not leave a
+    # partial installation behind.
+    run_model = _validate_run_model(run_model, providers)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Re-running the wizard truncates config.toml / .env. The loader explicitly
@@ -3823,24 +2684,25 @@ def write_config(
     lines += _cfg_deployment(deployment)
     lines += _cfg_governance(governance_profile)
     lines += _cfg_providers(providers)
-    lines += _cfg_role_models(role_models)
-    lines += _cfg_channels(channels)
+    lines += _cfg_run_model(run_model, providers)
     lines += _cfg_core(budget, safety, sandbox)
     lines += _cfg_skills(skills)
     lines += _cfg_self_learning(self_learning)
-    lines += _cfg_automation_import(automation_import)
-    lines += _cfg_event_triggers(event_triggers)
     lines += _cfg_flows(flows)
     lines += _cfg_knowledge(knowledge)
     lines += _cfg_oauth(oauth)
-    lines += _cfg_governed_connectors(governed_connectors)
     lines += _cfg_durable(durable)
-    lines += _cfg_finance(finance)
-    lines += _cfg_value(value)
     lines += _cfg_assessments(assessments)
     lines += _cfg_security_suite(security_suite)
 
-    capability_config = dict(capabilities or {})
+    # The firm build has no browser/computer/code-exec/deferred-tool switches.
+    # Preserve only the retained policy flags if an older caller passes a
+    # legacy capability mapping.
+    capability_config = {
+        key: value
+        for key, value in dict(capabilities or {}).items()
+        if key in {"enforce", "per_call_tokens", "web_search"}
+    }
     if web_search_enabled and not capability_config.get("web_search"):
         # web_search is wired through enable_web_search at kernel
         # boot; reflect the wizard's pick under [capabilities].
@@ -3854,29 +2716,14 @@ def write_config(
         capability_config["enforce"] = True
         capability_config["per_call_tokens"] = True
 
-    # The embedded-device flash gate lives under [embedded], not
-    # [capabilities] -- pull it out before emitting the capabilities block.
-    # JD hiring lives under [agent_factory] (kernel: maverick.jd_hiring).
-    jd_hiring = bool(capability_config.pop("jd_hiring", True))
-
     lines += _cfg_capabilities(capability_config)
-    lines += _cfg_agent_factory(jd_hiring)
     lines += _cfg_suites(suites)
-    lines += _cfg_license(license_cfg)
-    lines += _cfg_advanced(advanced, providers)
-    lines += _cfg_mcp_servers(mcp_servers)
-    lines += _cfg_registries("mcp_registries", mcp_registries)
-    lines += _cfg_registries("template_registries", template_registries)
-    lines += _cfg_plugins(plugins, plugin_grant, plugin_enforce)
+    lines += _cfg_advanced(advanced)
     lines += _cfg_security(tool_acl, bool((advanced or {}).get("security_autofix")),
                            dual_approval=bool((advanced or {}).get("dual_approval")))
     lines += _cfg_rate_limits(rate_limits)
     lines += _cfg_table("retention", retention)
-    lines += _cfg_table("analytics", analytics)
     lines += _cfg_table("persona", persona)
-    lines += _cfg_table("notifications", notifications)
-    lines += _cfg_table("webhooks", webhooks)
-    lines += _cfg_table("deliverables", deliverables)
     lines += _cfg_table("personas", personas)
 
     # SECURITY: config.toml is NOT secret-free. Unlike API keys (which live in
@@ -3951,12 +2798,11 @@ def _clear_partial() -> None:
 
 
 def run_fast() -> int:
-    """``maverick init --fast``: zero-question setup with sensible defaults.
+    """``maverick init --fast``: zero-question setup with safe defaults.
 
-    Skips every prompt. Writes a minimal config that runs on Anthropic
-    Claude (BYOK via ANTHROPIC_API_KEY env), the Docker sandbox when its
-    daemon is up (else local), balanced safety, $5/run cap. Users can
-    `maverick init` later to customize.
+    Fast mode cannot ask which provider may receive client material, so the
+    operator must explicitly set ``MAVERICK_MODEL_OVERRIDE=provider:model``.
+    The provider is derived from that pin; no vendor is guessed.
     """
     welcome()
     if not preflight():
@@ -3965,12 +2811,22 @@ def run_fast() -> int:
         )
         return 1
     console.print(
-        "[bold]Fast setup:[/bold] using safe defaults. "
+        "[bold]Fast setup:[/bold] using the explicitly pinned run model and "
+        "safe defaults. "
         "Run `maverick init` (no --fast) anytime to customize.\n"
     )
-    providers = ["anthropic"]
-    role_models: dict[str, str] = {}  # use ROLE_MODELS defaults
-    channels: dict[str, Any] = {}
+    run_model = os.environ.get("MAVERICK_MODEL_OVERRIDE", "").strip()
+    provider = run_model.partition(":")[0]
+    providers = [provider] if provider else []
+    try:
+        run_model = _validate_run_model(run_model, providers)
+    except ValueError as exc:
+        console.print(
+            "[red]Fast setup requires an explicit model pin.[/red] Set "
+            "MAVERICK_MODEL_OVERRIDE to a supported provider:model value "
+            f"before retrying ({exc})."
+        )
+        return 1
     safety = {
         "profile": "balanced",
         "block_threshold": "high",
@@ -3984,34 +2840,32 @@ def run_fast() -> int:
         "max_wall_seconds": 3600.0,
         "max_tool_calls": 500,
     }
-    # Prefer the isolated Docker sandbox, but fall back to local when the
-    # daemon isn't up -- otherwise fast-setup writes a docker config that the
-    # very next `maverick start` can't run (the user never chose docker, yet
-    # hits "Docker not available"). Mirrors write_consumer_config.
-    backend = "docker" if _docker_available() else "local"
+    # Non-interactive setup cannot obtain and verify the operator's immutable
+    # Docker image digest, so it never guesses a mutable image tag. Advanced
+    # setup is the explicit path for Docker.
+    backend = "local"
     sandbox = {
         "backend": backend,
         "workdir": str(Path.home() / "maverick-workspace"),
         "timeout": 60,
     }
-    denied_tools = ["computer", "browser"]
-    if backend == "local":
-        denied_tools.extend(["shell", "write_file", "apply_patch", "str_replace_editor"])
-        console.print(
-            "[yellow]![/yellow] Docker daemon not detected — using the "
-            "[bold]local[/bold] sandbox with host-mutating tools disabled. "
-            "Run [bold]maverick init[/bold] to switch to docker once it's up."
-        )
-    capabilities = {"computer_use": False, "browser": False}
-    # Pick up the API key from the env if it's already there;
-    # otherwise the wizard's later run can populate ~/.maverick/.env.
+    console.print(
+        "[yellow]![/yellow] Fast setup uses the [bold]local[/bold] backend. "
+        "The firm registry does not expose host-mutating model tools. Run "
+        "[bold]maverick init[/bold] interactively to configure Docker with an "
+        "immutable image digest."
+    )
+    # Copy only credentials and endpoint settings for the explicitly selected
+    # provider. Fast mode never prompts or configures a standby provider.
     keys: dict[str, str] = {}
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        keys["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+    provider_info = catalog.PROVIDERS[provider]
+    env_names = [provider_info.get("env"), *provider_info.get("env_vars", [])]
+    for env_name in env_names:
+        if env_name and os.environ.get(env_name):
+            keys[env_name] = os.environ[env_name]
     write_config(
-        providers, role_models, channels, safety, budget,
-        sandbox, keys, capabilities,
-        tool_acl={"denied_tools": denied_tools},
+        providers, run_model, safety, budget,
+        sandbox, keys, deployment="local",
     )
     # smoke_test() returns a bool and it was discarded, so `maverick init
     # --fast` printed "Fast setup finished" and exited 0 over a broken install
@@ -4033,14 +2887,15 @@ def run_fast() -> int:
     console.print(Panel.fit(
         "[bold green]Fast setup finished.[/bold green]\n\n"
         "Try: [bold]maverick dashboard[/bold]  # then compose your first goal in the web UI\n"
-        "(If ANTHROPIC_API_KEY wasn't set, edit ~/.maverick/.env first.)\n",
+        "(If the selected provider needs credentials, add them to ~/.maverick/.env.)\n",
         border_style="green",
     ))
     return 0
 
 
-CONSUMER_DEMO_GOAL = "Write me a haiku about Tuesday."
-CONSUMER_DEMO_MODEL = "anthropic:claude-haiku-4-5"
+CONSUMER_DEMO_GOAL = (
+    "Draft a source-cited research memo for qualified-attorney review."
+)
 
 
 def pick_mode() -> str:
@@ -4055,7 +2910,7 @@ def pick_mode() -> str:
         "[bold]How do you want to set this up?[/bold]\n\n"
         "  consumer  Four questions, safe defaults. About a minute.\n"
         "  express   A few questions, then turn ON all safe features.\n"
-        "  advanced  Pick every model, channel, safety level, budget.",
+        "  advanced  Pick models, controls, safety level, and budget.",
         border_style="cyan",
     ))
     pick = _q_select(
@@ -4088,47 +2943,11 @@ def _consumer_budget() -> dict[str, float]:
     }
 
 
-def _consumer_api_key() -> dict[str, str]:
-    """Single-screen Anthropic key collection for consumer mode.
-
-    No DevTools paste, no jargon. Three escape hatches:
-      1. Paste the key (the default).
-      2. Skip for now (write config without keys; user can re-run later).
-      3. Open the console in a browser to make a key.
-    """
-    console.print()
-    console.print(
-        "Maverick needs an account with Claude (Anthropic). "
-        "Get a key at: [cyan]https://console.anthropic.com/settings/keys[/cyan]\n"
-        "[dim]It looks like 'sk-ant-...' and is about 100 characters long.[/dim]",
-    )
-    val = _q_secret("  Paste your Anthropic API key (leave blank to skip):")
-    if not val.strip():
-        console.print(
-            "[yellow]Skipped.[/yellow] You can add one later by running "
-            "[bold]maverick init[/bold] again."
-        )
-        return {}
-    # Validate with the 7-day cache.
-    cached = _cached_validation("ANTHROPIC_API_KEY", val)
-    if cached is not None:
-        ok, msg = cached
-    else:
-        ok, msg = _validate_anthropic_key(val)
-        _remember_validation("ANTHROPIC_API_KEY", val, ok, msg)
-    if ok:
-        console.print(f"  {_validation_marker(ok, msg)} {msg}")
-        return {"ANTHROPIC_API_KEY": val}
-    # On failure, surface the branded error and let the user decide.
-    show_bad_key_error("ANTHROPIC_API_KEY", msg)
-    if _q_confirm("Save the key anyway and continue?", default=False):
-        return {"ANTHROPIC_API_KEY": val}
-    return {}
-
-
 def write_consumer_config(
     *,
     user_name: str,
+    providers: list[str],
+    run_model: str,
     keys: dict[str, str],
     workdir: str,
     budget: dict[str, float],
@@ -4136,9 +2955,7 @@ def write_consumer_config(
 ) -> None:
     """Write a consumer-mode config with the safety-seat safe defaults.
 
-    Single source of truth shared by the CLI consumer flow
-    (``run_consumer``) and the desktop installer sidecar
-    (``maverick_installer.bridge``) so the two front ends can't drift.
+    Single source of truth for the CLI consumer flow.
     ``profile`` is the governance level from :data:`GOVERNANCE_PROFILES`
     (unknown values fall back to the default) -- it layers the learning
     lifecycle + governance posture on top of the safety-seat base, which
@@ -4152,19 +2969,9 @@ def write_consumer_config(
             GOVERNANCE_PROFILES[DEFAULT_GOVERNANCE_PROFILE],
         )
     Path(workdir).expanduser().mkdir(parents=True, exist_ok=True)
-    backend = "docker" if _docker_available() else "local"
-    # Computer + browser always require explicit opt-in (consumer is
-    # never asked). When there's no Docker sandbox to contain it, also
-    # deny the host-mutating tools — fail closed on the host. With
-    # Docker present, shell/write_file/apply_patch stay enabled because
-    # the container is the blast radius, not the user's machine.
-    denied_tools = ["computer", "browser"]
-    if backend == "local":
-        denied_tools.extend(["shell", "write_file", "apply_patch", "str_replace_editor"])
     write_config(
-        ["anthropic"],             # providers
-        {},                        # role_models -> kernel defaults
-        {},                        # channels -> none in consumer mode
+        providers,
+        run_model,
         {
             "profile": "strict",          # strictest shield
             "block_threshold": "medium",  # block medium+ threats
@@ -4174,35 +2981,31 @@ def write_consumer_config(
         },
         budget,
         {
-            "backend": backend,
+            "backend": "local",
             "workdir": str(Path(workdir).expanduser()),
             "timeout": 60,
         },
         keys,
-        {"computer_use": False, "browser": False},  # capabilities
         advanced=dict(preset["advanced"]),
         self_learning=dict(preset["self_learning"]),
-        tool_acl={"denied_tools": denied_tools},
         rate_limits={
             "web_search": "5/60",
-            "http_fetch": "10/60",
-            "shell": "5/60",
-            "mcp_*": "20/60",
         },
         retention=dict(preset["retention"]),
         persona={"name": "Maverick", "style": "balanced", "user_name": user_name},
         web_search_enabled=True,
         governance_profile=profile,
+        deployment="local",
     )
 
 
 def run_consumer() -> int:
-    """Four-question consumer flow. Writes a minimal config with
+    """Consumer flow. Writes a minimal config with
     consumer-grade safe defaults, then prints a one-line demo command."""
     console.print()
     console.print(Panel.fit(
         "[bold]Maverick setup[/bold]\n\n"
-        "Five quick questions. About a minute. You can change anything later\n"
+        "A few required questions. About a minute. You can change anything later\n"
         "by running [bold]maverick init[/bold] again.",
         border_style="cyan",
     ))
@@ -4220,7 +3023,9 @@ def run_consumer() -> int:
 
     profile = pick_governance_profile()
 
-    keys = _consumer_api_key()
+    providers = pick_providers()
+    run_model = pick_run_model(providers)
+    keys = collect_api_keys(providers, set())
 
     workdir = _q_text(
         "Where can Maverick work?",
@@ -4231,8 +3036,8 @@ def run_consumer() -> int:
 
     try:
         write_consumer_config(
-            user_name=user_name, keys=keys, workdir=workdir, budget=budget,
-            profile=profile,
+            user_name=user_name, providers=providers, run_model=run_model,
+            keys=keys, workdir=workdir, budget=budget, profile=profile,
         )
     except Exception as e:
         show_install_failure(e)
@@ -4240,11 +3045,10 @@ def run_consumer() -> int:
 
     # First-goal nudge. Don't run the goal here (the kernel doesn't
     # stream into a wizard window today, and shelling out from inside
-    # the installer is ugly); print the one-liner instead. The Haiku
-    # model keeps the demo under $0.01 and finishes in a couple of
-    # seconds even on cold connections.
+    # the installer is ugly); print a legal, matter-bound nudge instead.
     console.print()
-    if keys:
+    required_key = catalog.PROVIDERS[providers[0]].get("env")
+    if keys or not required_key:
         console.print(Panel.fit(
             f"[bold green]Setup complete, {user_name}.[/bold green]\n\n"
             "Try your first goal in the web UI:\n"
@@ -4255,7 +3059,7 @@ def run_consumer() -> int:
     else:
         console.print(Panel.fit(
             f"[bold yellow]Setup saved without an API key, {user_name}.[/bold yellow]\n\n"
-            "Add one later by exporting ANTHROPIC_API_KEY or by running\n"
+            f"Add one later by exporting {required_key} or by running\n"
             "[bold]maverick init[/bold] again.",
             border_style="yellow",
         ))
@@ -4263,20 +3067,17 @@ def run_consumer() -> int:
     return 0
 
 
-# Express mode turns on the safe, single-user PRODUCT + self-improvement
-# features with sane defaults -- everything that makes Maverick "fully lit up"
-# WITHOUT the host-dangerous or infra-shaped toggles that must stay explicit
-# opt-in (computer/browser control, code execution, autonomous self-
-# modification, at-rest encryption + multi-tenancy, channel tokens, license
-# enforcement). Kept as data so a test can assert exactly what express enables
+# Express mode turns on the reviewed firm + self-improvement features with
+# sane defaults -- everything that makes the retained runtime fully configured
+# WITHOUT the deployment-specific controls that must stay explicit opt-in
+# (operator key custody and public provider/host allow-lists).
+# Kept as data so a test can assert exactly what express enables
 # without driving the prompts. Every key here is one `_cfg_advanced` recognises.
 _EXPRESS_ADVANCED: dict[str, Any] = {
-    # cheaper + faster + stronger reasoning
-    "cost_aware": True,
+    # stronger reasoning on the single operator-selected model
     "compact_history": True,
     "adaptive_compute": True,
     "risk_proportional_verify": True,
-    "verify_ensemble": True,
     "autonomy_gate": True,
     "effort": True,
     "cache_prewarm": True,
@@ -4285,7 +3086,6 @@ _EXPRESS_ADVANCED: dict[str, Any] = {
     "reflexion": True,
     "dreaming": True,
     "experience_guidance": True,
-    "skill_synthesis": True,
     "credit_assignment": True,
     "self_harness": True,
     "data_engine": True,
@@ -4305,40 +3105,32 @@ _EXPRESS_ADVANCED: dict[str, Any] = {
     "connections": True,
 }
 
-# Self-learning ON, but WITHOUT the generate-and-run-new-code autonomy
-# (create_tools) and WITHOUT MCP-server acquisition (allow_mcp) -- those two are
-# higher-trust and stay an explicit opt-in even in express.
+# Self-learning ON, but without generate-and-run-new-code autonomy.
 _EXPRESS_SELF_LEARNING: dict[str, Any] = {
     "enable": True,
-    "preflight": True,
-    "create_tools": False,
-    "provision_packs": True,
-    "allow_mcp_acquisition": False,
     "allow_provider_egress": False,
     "distill_local": True,
 }
 
 
-# --- Governance profiles: business-shaped onboarding levels --------------------
+# --- Governance profiles: firm onboarding levels -------------------------------
 #
-# One early question -- "what kind of business is this?" -- maps to a preset
+# One early question maps to a preset
 # bundle of ALREADY-EXISTING knobs. Every level gets the self-learning /
 # self-improvement lifecycle (that's the product); what escalates is the
-# governance posture around it. A gymnastics studio wants the learning without
-# the signing ceremony; a manufacturer wants budgets + an audit trail; a bank
-# wants everything signed, immutable, and quota-enforced. Kept as data (same
+# governance posture around it: signed audit, enforced budgets, immutable
+# retention, and signed approvals. Kept as data (same
 # convention as _EXPRESS_ADVANCED) so tests can assert exactly what each level
 # enables without driving prompts. Budget caps are NOT part of a profile: they
 # are collected separately and are never optional at any level.
 
 # The closed learning lifecycle every level turns on. Safe-by-construction
 # subset: in-process learning + consolidation only -- no generate-and-run-code
-# autonomy, no MCP acquisition (those stay explicit opt-ins at every level).
+# autonomy.
 _LEARNING_LIFECYCLE: dict[str, Any] = {
     "reflexion": True,
     "dreaming": True,
     "experience_guidance": True,
-    "skill_synthesis": True,
     "credit_assignment": True,
     "self_harness": True,
     "data_engine": True,
@@ -4387,15 +3179,11 @@ GOVERNANCE_PROFILES: dict[str, dict[str, Any]] = {
 DEFAULT_GOVERNANCE_PROFILE = "essentials"
 
 # Menu strings start with the profile name so the picker can split()[0] them,
-# same convention as pick_mode(). Public: the desktop sidecar (bridge.py)
-# imports these so the two front ends show the SAME menu and cannot drift.
+# same convention as pick_mode().
 GOVERNANCE_CHOICES: list[str] = [
-    "essentials - small business: learn + improve, stay out of my way "
-    "(a gym, a studio, a shop)",
-    "standard   - growing company: + budgets enforced, signed audit trail "
-    "(a manufacturer, an agency)",
-    "regulated  - bank / clinic / government: + human sign-off, immutable "
-    "audit, long retention",
+    "essentials - firm baseline: exact-matter work and counsel review",
+    "standard   - signed audit and enforced firm budgets",
+    "regulated  - signed approvals, immutable audit, and long retention",
 ]
 
 
@@ -4438,7 +3226,7 @@ def pick_governance_profile() -> str:
         GOVERNANCE_CHOICES[0],
     )
     pick = _q_select(
-        "What kind of business is this for?",
+        "What governance posture does this firm require?",
         list(GOVERNANCE_CHOICES),
         default=default,
     )
@@ -4457,11 +3245,10 @@ def run_express() -> int:
         "A few questions, then every safe single-user feature is turned on:\n"
         "the flow engine, named connections, the self-improvement lifecycle\n"
         "(reflexion, dreaming, experience, self-harness, data engine),\n"
-        "governed memory, web search, durable execution, and all 53 suites.\n\n"
-        "[dim]Left off (enable later via `maverick init` advanced): computer/\n"
-        "browser control, code execution, autonomous self-modification, at-rest\n"
-        "encryption + multi-tenancy, messaging channels, and license enforcement\n"
-        "(leaving enforcement off is what keeps every paid feature unlocked).[/dim]",
+        "governed memory, web search, durable execution, and 31 legal profiles.\n\n"
+        "[dim]Left off: operator-custodied key configuration and public\n"
+        "provider/host allow-lists. Configure those deliberately for the firm's\n"
+        "deployment after reviewing its confidentiality policy.[/dim]",
         border_style="cyan",
     ))
 
@@ -4476,7 +3263,9 @@ def run_express() -> int:
         default=os.environ.get("USER") or os.environ.get("USERNAME") or "",
     ).strip() or "you"
     profile = pick_governance_profile()
-    keys = _consumer_api_key()
+    providers = pick_providers()
+    run_model = pick_run_model(providers)
+    keys = collect_api_keys(providers, set())
     workdir = _q_text(
         "Where can Maverick work?",
         default=str(Path.home() / "Documents" / "Maverick"),
@@ -4484,42 +3273,29 @@ def run_express() -> int:
     budget = _consumer_budget()
 
     Path(workdir).expanduser().mkdir(parents=True, exist_ok=True)
-    backend = "docker" if _docker_available() else "local"
     # Express turns on every safe single-user feature; the governance level
     # layers its posture (signed audit, quotas, WORM, signed approvals) on
     # top. Union of two all-True dicts, so profile keys can only ADD.
     preset = GOVERNANCE_PROFILES.get(
         profile, GOVERNANCE_PROFILES[DEFAULT_GOVERNANCE_PROFILE])
-    # Computer + browser are never enabled by express. If Docker is
-    # unavailable, fail closed on host-mutating tools too: the local backend
-    # runs against the user's host filesystem, not a container blast radius.
-    denied_tools = ["computer", "browser"]
-    if backend == "local":
-        denied_tools.extend(["shell", "write_file", "apply_patch", "str_replace_editor"])
     try:
         write_config(
-            providers=["anthropic"],
-            role_models={},
-            channels={},
+            providers=providers,
+            run_model=run_model,
             safety={"profile": "balanced", "scan_input": True,
                     "scan_tool_calls": True, "scan_output": True},
             budget=budget,
-            sandbox={"backend": backend,
+            sandbox={"backend": "local",
                      "workdir": str(Path(workdir).expanduser()), "timeout": 60},
             keys=keys,
-            # Host-mutating capabilities require explicit opt-in even in express.
-            capabilities={"computer_use": False, "browser": False,
-                          "code_exec": False},
             advanced={**_EXPRESS_ADVANCED, **preset["advanced"]},
             persona={"name": "Maverick", "style": "balanced", "user_name": user_name},
             web_search_enabled=True,
             self_learning=dict(_EXPRESS_SELF_LEARNING),
-            automation_import={"enable": True},
-            event_triggers={"enable": True},
             flows={"enable": True},
             oauth={"vault": True},
             durable={"enabled": True},
-            deployment="desktop",
+            deployment="local",
             # Express historically wrote NO [retention] table, and absent
             # means keep-forever (retention is opt-in pruning). Preserve that
             # at the default level; only an explicitly-picked governance
@@ -4527,14 +3303,14 @@ def run_express() -> int:
             retention=(dict(preset["retention"])
                        if profile != DEFAULT_GOVERNANCE_PROFILE else None),
             governance_profile=profile,
-            tool_acl={"denied_tools": denied_tools},
         )
     except Exception as e:
         show_install_failure(e)
         return 1
 
     console.print()
-    if keys:
+    required_key = catalog.PROVIDERS[providers[0]].get("env")
+    if keys or not required_key:
         console.print(Panel.fit(
             f"[bold green]Everything's on, {user_name}.[/bold green]\n\n"
             "Open the dashboard:\n"
@@ -4546,7 +3322,7 @@ def run_express() -> int:
     else:
         console.print(Panel.fit(
             f"[bold yellow]Everything's on, but no API key yet, {user_name}.[/bold yellow]\n\n"
-            "Add one by exporting ANTHROPIC_API_KEY or re-running "
+            f"Add one by exporting {required_key} or re-running "
             "[bold]maverick init[/bold].",
             border_style="yellow",
         ))
@@ -4578,7 +3354,6 @@ def _regulated_deployment(advanced: dict[str, Any]) -> bool:
         or advanced.get("audit_sign")
         or advanced.get("audit_worm")
         or advanced.get("dual_approval")
-        or advanced.get("saml")
         or advanced.get("security_autofix")
     )
 
@@ -4629,24 +3404,14 @@ def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     state["sandbox"] = sandbox
     _save_partial(state)
 
-    _announce()
-    capabilities = state.get("capabilities") or pick_capabilities()
-    state["capabilities"] = capabilities
-    _save_partial(state)
+    # Retired high-impact capability prompts are deliberately ignored even
+    # when resuming a partial file written by an older installer.
+    state.pop("capabilities", None)
+    capabilities: dict[str, bool] = {}
 
     _announce()
     self_learning = state.get("self_learning") or pick_self_learning()
     state["self_learning"] = self_learning
-    _save_partial(state)
-
-    _announce()
-    automation_import = state.get("automation_import") or pick_automation_import()
-    state["automation_import"] = automation_import
-    _save_partial(state)
-
-    _announce()
-    event_triggers = state.get("event_triggers") or pick_event_triggers()
-    state["event_triggers"] = event_triggers
     _save_partial(state)
 
     _announce()
@@ -4665,27 +3430,9 @@ def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     _save_partial(state)
 
     _announce()
-    governed_connectors = state.get("governed_connectors") or pick_governed_connectors()
-    state["governed_connectors"] = governed_connectors
-    _save_partial(state)
-
-    _announce()
     durable = state.get("durable") or pick_durable()
     state["durable"] = durable
     _save_partial(state)
-
-    _announce()
-    finance = state.get("finance") or pick_finance()
-    state["finance"] = finance
-    _save_partial(state)
-
-    # `is None` sentinel: declining the savings step legitimately returns {}.
-    _announce()
-    value = state.get("value")
-    if value is None:
-        value = pick_value()
-        state["value"] = value
-        _save_partial(state)
 
     # `is None` sentinel: keeping both defaults legitimately returns {}.
     _announce()
@@ -4714,25 +3461,18 @@ def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
         "sandbox": sandbox,
         "capabilities": capabilities,
         "self_learning": self_learning,
-        "automation_import": automation_import,
-        "event_triggers": event_triggers,
         "flows": flows,
         "knowledge": knowledge,
         "oauth": oauth,
-        "governed_connectors": governed_connectors,
         "durable": durable,
-        "finance": finance,
-        "value": value,
         "assessments": assessments,
         "security_suite": security_suite,
         "advanced": advanced,
     }
 
 
-def _run_plugin_picks(
-    state: dict[str, Any], _announce, channels: dict[str, Any]
-) -> dict[str, Any]:
-    """Run the plugin/ACL/policy block (mcp_servers through analytics).
+def _run_policy_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
+    """Run the ACL and local policy block.
 
     Uses the ``is None`` sentinel for steps whose legitimate answer is falsy.
     Returns the answers needed downstream by ``write_config``.
@@ -4741,40 +3481,16 @@ def _run_plugin_picks(
     # legitimately-declined answer is falsy ({}/[]); the `or` pattern treated
     # "I chose nothing" as "unanswered" and re-prompted it on --resume.
     _announce()
-    mcp_servers = state.get("mcp_servers")
-    if mcp_servers is None:
-        mcp_servers = pick_mcp_servers()
-        state["mcp_servers"] = mcp_servers
-        _save_partial(state)
-
-    _announce()
-    plugins = state.get("plugins")
-    if plugins is None:
-        plugins = pick_plugins()
-        state["plugins"] = plugins
-        _save_partial(state)
-
-    # Only ask about plugin permissions when at least one plugin is enabled --
-    # most setups have none, so the step is skipped entirely.
-    plugin_grant = state.get("plugin_grant")
-    plugin_enforce = state.get("plugin_enforce", False)
-    if plugins and plugin_grant is None:
-        plugin_grant, plugin_enforce = pick_plugin_permissions()
-        state["plugin_grant"] = plugin_grant
-        state["plugin_enforce"] = plugin_enforce
-        _save_partial(state)
-
-    _announce()
     tool_acl = state.get("tool_acl")
     if tool_acl is None:
-        tool_acl = pick_tool_acl(channels)
+        tool_acl = pick_tool_acl()
         state["tool_acl"] = tool_acl
         _save_partial(state)
 
     _announce()
     rate_limits = state.get("rate_limits")
     if rate_limits is None:
-        rate_limits = pick_rate_limits(channels)
+        rate_limits = pick_rate_limits()
         state["rate_limits"] = rate_limits
         _save_partial(state)
 
@@ -4785,22 +3501,10 @@ def _run_plugin_picks(
         state["retention"] = retention
         _save_partial(state)
 
-    _announce()
-    analytics = state.get("analytics")
-    if analytics is None:
-        analytics = pick_analytics()
-        state["analytics"] = analytics
-        _save_partial(state)
-
     return {
-        "mcp_servers": mcp_servers,
-        "plugins": plugins,
-        "plugin_grant": plugin_grant,
-        "plugin_enforce": plugin_enforce,
         "tool_acl": tool_acl,
         "rate_limits": rate_limits,
         "retention": retention,
-        "analytics": analytics,
     }
 
 
@@ -4880,16 +3584,11 @@ def run(fast: bool = False, resume: bool = False) -> int:
     _save_partial(state)
 
     _announce()
-    role_models = state.get("role_models")
-    if role_models is None:
-        role_models = pick_models_per_role(providers)
-        state["role_models"] = role_models
+    run_model = state.get("run_model")
+    if run_model is None:
+        run_model = pick_run_model(providers)
+        state["run_model"] = run_model
         _save_partial(state)
-
-    # Channel adapters were removed (app-only ingress): no step, no prompt —
-    # write_config still takes the dict, permanently empty.
-    channels: dict[str, dict] = {}
-    channel_envs: set[str] = set()
 
     _simple = _run_simple_picks(state, _announce)
     safety = _simple["safety"]
@@ -4898,15 +3597,10 @@ def run(fast: bool = False, resume: bool = False) -> int:
     sandbox = _simple["sandbox"]
     capabilities = _simple["capabilities"]
     self_learning = _simple["self_learning"]
-    automation_import = _simple["automation_import"]
-    event_triggers = _simple["event_triggers"]
     flows = _simple["flows"]
     knowledge = _simple["knowledge"]
     oauth = _simple["oauth"]
-    governed_connectors = _simple["governed_connectors"]
     durable = _simple["durable"]
-    finance = _simple["finance"]
-    value = _simple["value"]
     assessments = _simple["assessments"]
     security_suite = _simple["security_suite"]
     advanced = _simple["advanced"]
@@ -4918,15 +3612,10 @@ def run(fast: bool = False, resume: bool = False) -> int:
     state["_web_search_pair"] = [web_search_enabled, web_search_envs]
     _save_partial(state)
 
-    _plugins_block = _run_plugin_picks(state, _announce, channels)
-    mcp_servers = _plugins_block["mcp_servers"]
-    plugins = _plugins_block["plugins"]
-    plugin_grant = _plugins_block["plugin_grant"]
-    plugin_enforce = _plugins_block["plugin_enforce"]
-    tool_acl = _plugins_block["tool_acl"]
-    rate_limits = _plugins_block["rate_limits"]
-    retention = _plugins_block["retention"]
-    analytics = _plugins_block["analytics"]
+    _policy_block = _run_policy_picks(state, _announce)
+    tool_acl = _policy_block["tool_acl"]
+    rate_limits = _policy_block["rate_limits"]
+    retention = _policy_block["retention"]
 
     _announce()
     persona = state.get("persona")
@@ -4935,43 +3624,20 @@ def run(fast: bool = False, resume: bool = False) -> int:
         state["persona"] = persona
         _save_partial(state)
 
-    _announce()
-    notifications, notify_envs = state.get("_notifications_pair") or pick_notifications()
-    state["_notifications_pair"] = [notifications, notify_envs]
-    _save_partial(state)
-
-    _announce()
-    webhooks, webhook_envs = state.get("_webhooks_pair") or pick_webhooks()
-    state["_webhooks_pair"] = [webhooks, webhook_envs]
-    _save_partial(state)
-
-    deliverables, deliverable_envs = (
-        state.get("_deliverables_pair") or pick_deliverable_handoff())
-    state["_deliverables_pair"] = [deliverables, deliverable_envs]
-    _save_partial(state)
-
     personas = state.get("_personas") or pick_persona_roles()
     state["_personas"] = personas
     _save_partial(state)
 
     # Keys/sessions are never persisted to disk in the partial state
     # (they're secrets; the only safe place is ~/.maverick/.env).
-    extra_envs = (
-        set(web_search_envs) | set(notify_envs) | set(webhook_envs)
-        | set(deliverable_envs)
-    )
-    keys = collect_api_keys(providers, channel_envs | extra_envs)
+    extra_envs = set(web_search_envs)
+    keys = collect_api_keys(providers, extra_envs)
     # Enterprise connectors are always registered; collect any credentials the
     # user wants to wire up now (merged into ~/.maverick/.env, never persisted
     # to partial state). Editable later in the .env file.
     keys.update(pick_connectors())
 
     suites = pick_suites()
-
-    # No licensing step: nothing in this fork is tier-gated (see
-    # maverick.entitlements.GATED_FEATURES), so there is no entitlement to
-    # enforce and no vendor console to point at.
-    license_cfg: dict[str, Any] = {}
 
     console.print()
     if not _q_confirm("Write config and finish?", default=True):
@@ -4983,40 +3649,25 @@ def run(fast: bool = False, resume: bool = False) -> int:
         return 0
 
     write_config(
-        providers, role_models, channels, safety, budget, sandbox,
+        providers, run_model, safety, budget, sandbox,
         keys, capabilities,
         advanced=advanced,
-        mcp_servers=mcp_servers,
-        plugins=plugins,
-        plugin_grant=plugin_grant,
-        plugin_enforce=plugin_enforce,
         tool_acl=tool_acl,
         rate_limits=rate_limits,
         retention=retention,
-        analytics=analytics,
         persona=persona,
-        notifications=notifications,
-        webhooks=webhooks,
-        deliverables=deliverables,
         personas=personas,
         web_search_enabled=web_search_enabled,
-        skills=signed_skills if (signed_skills.get("trusted_pubkeys") or signed_skills.get("require_signed") or signed_skills.get("require_signed_catalog")) else None,
+        skills=signed_skills if (signed_skills.get("trusted_pubkeys") or signed_skills.get("require_signed")) else None,
         self_learning=self_learning if self_learning.get("enable") else None,
-        # Persist the explicit default-off decision. Unlike default-on governed
-        # learning, Ekko never inherits authority from another feature.
-        automation_import=automation_import if automation_import.get("enable") else None,
-        event_triggers=event_triggers if event_triggers.get("enable") else None,
         flows=flows if flows.get("enable") else None,
         knowledge=knowledge if knowledge.get("enable") else None,
         oauth=oauth if oauth.get("vault") else None,
-        governed_connectors=governed_connectors if governed_connectors.get("enable") else None,
         durable=durable if durable.get("enabled") else None,
-        finance=finance if finance.get("enable") else None,
-        value=value or None,
         assessments=assessments or None,
         security_suite=security_suite,
+        deployment=deployment,
         suites=suites,
-        license_cfg=license_cfg or None,
         # The advanced flow applies no preset -- the operator hand-picked
         # every knob -- so record "custom" rather than omitting the label
         # (dashboards keyed on [governance].profile would otherwise read

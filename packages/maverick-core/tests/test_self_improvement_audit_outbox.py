@@ -221,6 +221,16 @@ def test_self_harness_apply_audit_uses_the_committed_outbox(
         rationale="prevents the recurring timeout",
         hypothesis="unbounded exports exhaust the deadline",
     )
+    receipt_evidence: dict[str, int | str] = {}
+    for label, value in (
+        ("addendum", proposal.addendum_line),
+        ("signature", proposal.signature),
+        ("rationale", proposal.rationale),
+        ("hypothesis", proposal.hypothesis),
+    ):
+        raw = value.encode("utf-8")
+        receipt_evidence[f"{label}_bytes"] = len(raw)
+        receipt_evidence[f"{label}_sha256"] = hashlib.sha256(raw).hexdigest()
     validation = sh.ValidationResult(
         accepted=True,
         held_in_delta=0.4,
@@ -239,14 +249,37 @@ def test_self_harness_apply_audit_uses_the_committed_outbox(
         validation,
         controller=controller,
         path=store,
+        matter_id=101,
+        owner_scope=hashlib.sha256(
+            b"user:test-attorney"
+        ).hexdigest()[:16],
+        promotion_authorize=lambda: True,
     ) == (True, "promoted")
     assert "Bound the export window" in sh.recall_addendum("model-a", store)
     assert controller.ledger is not None
     assert controller.ledger.pending_audit_count() == 1
     assert len(refused) == 1
     assert refused[0]["phase"] == "apply"
-    assert refused[0]["signature"] == proposal.signature
-    assert refused[0]["rationale"] == proposal.rationale
+    assert refused[0]["matter_id"] == 101
+    assert refused[0]["owner_scope"] == hashlib.sha256(
+        b"user:test-attorney"
+    ).hexdigest()[:16]
+    for key, value in receipt_evidence.items():
+        assert refused[0][key] == value
+
+    sensitive = (
+        proposal.addendum_line,
+        proposal.signature,
+        proposal.rationale,
+        proposal.hypothesis,
+    )
+    refused_text = json.dumps(refused, sort_keys=True, ensure_ascii=False)
+    ledger_text = ledger_path.read_text(encoding="utf-8")
+    journal_text = Path(f"{ledger_path}.journal").read_text(encoding="utf-8")
+    for raw in sensitive:
+        assert raw not in refused_text
+        assert raw not in ledger_text
+        assert raw not in journal_text
 
     delivered: list[dict] = []
     monkeypatch.setattr(
@@ -257,7 +290,11 @@ def test_self_harness_apply_audit_uses_the_committed_outbox(
     restarted = si.PromotionLedger(path=ledger_path)
     assert restarted.flush_audit_outbox(si._default_audit_fn) == 1
     assert delivered[0]["event_id"] == refused[0]["event_id"]
-    assert delivered[0]["hypothesis"] == proposal.hypothesis
+    for key, value in receipt_evidence.items():
+        assert delivered[0][key] == value
+    delivered_text = json.dumps(delivered, sort_keys=True, ensure_ascii=False)
+    for raw in sensitive:
+        assert raw not in delivered_text
     assert restarted.pending_audit_count() == 0
 
 

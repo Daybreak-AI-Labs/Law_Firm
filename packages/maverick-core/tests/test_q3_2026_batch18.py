@@ -1,7 +1,7 @@
 """Q3 2026 batch 18.
 
-  - sql_query tool: read-only-by-default SQLite querying, write rejection
-    (keyword guard + engine mode=ro + authorizer), opt-in writes, params, row caps.
+  - sql_query tool: permanently read-only SQLite querying and write rejection
+    (keyword guard + engine mode=ro + authorizer), params, and row caps.
     Tested against a real stdlib sqlite3 db (no mocks).
 """
 from __future__ import annotations
@@ -74,16 +74,16 @@ def test_readonly_authorizer_blocks_commented_vacuum_into(tmp_path):
     assert not outside.exists()
 
 
-def test_write_allowed_when_read_only_false(tmp_path):
+def test_model_cannot_enable_write_mode_with_read_only_false(tmp_path):
     db = _mkdb(tmp_path)
     out = sql_query().fn({
         "database": str(db),
         "query": "DELETE FROM users WHERE id = 1",
         "read_only": False,
     })
-    assert "affected" in out.lower()
+    assert out.startswith("ERROR") and "permanently read-only" in out
     c = sqlite3.connect(db)
-    assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
+    assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 3
     c.close()
 
 
@@ -117,31 +117,29 @@ def test_write_mode_authorizer_blocks_vacuum_into_outside_workspace(tmp_path):
     assert not outside.exists()
 
 
-def test_write_with_returning_is_committed(tmp_path):
-    # A write with a RETURNING clause produces a cursor description, so it takes
-    # the row-formatting path -- it must still be committed, or sqlite rolls the
-    # mutation back on connection close and the "success" is silently lost.
+def test_write_with_returning_is_refused(tmp_path):
     db = _mkdb(tmp_path)
     out = sql_query().fn({
         "database": str(db),
         "query": "INSERT INTO users(id, name) VALUES(4, 'dave') RETURNING id",
         "read_only": False,
     })
-    assert "4" in out  # the RETURNING row is echoed
+    assert out.startswith("ERROR")
     c = sqlite3.connect(db)
-    assert c.execute("SELECT name FROM users WHERE id = 4").fetchone() == ("dave",)
+    assert c.execute("SELECT name FROM users WHERE id = 4").fetchone() is None
     c.close()
 
 
-def test_delete_with_returning_is_committed(tmp_path):
+def test_delete_with_returning_is_refused(tmp_path):
     db = _mkdb(tmp_path)
-    sql_query().fn({
+    out = sql_query().fn({
         "database": str(db),
         "query": "DELETE FROM users WHERE id = 1 RETURNING name",
         "read_only": False,
     })
     c = sqlite3.connect(db)
-    assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
+    assert out.startswith("ERROR")
+    assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 3
     c.close()
 
 
@@ -212,3 +210,4 @@ def test_registered_by_default():
 def test_schema_requires_database_and_query():
     schema = sql_query().input_schema
     assert schema["required"] == ["database", "query"]
+    assert "read_only" not in schema["properties"]

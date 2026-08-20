@@ -1,11 +1,12 @@
-"""World-DB learning store (fleet-shared state, phase 1) -- the store seam,
-routing rule, lifecycle round-trips, and the migrate-store CLI."""
+"""Matter-scoped world-DB learning-store routing and lifecycle round-trips."""
 from __future__ import annotations
 
 import pytest
 from maverick import learning_store as ls
 from maverick import self_harness as sh
 from maverick import self_improvement as si
+
+from ._operator_harness import run_operator_harness
 
 
 @pytest.fixture()
@@ -28,7 +29,7 @@ def _ctrl(monkeypatch, ledger_path):
 
 
 def _promote(model, line, ctrl, path=None):
-    return sh.run_self_harness(
+    return run_operator_harness(
         [{"model_id": model, "failure_class": "timeout",
           "goal_text": f"task {i}", "failure_msg": "x"} for i in range(3)],
         model_id=model, controller=ctrl, min_support=3, path=path,
@@ -77,24 +78,6 @@ def test_full_lifecycle_through_the_world_store(world_home, monkeypatch):
     res = sh.review_canaries("M", demote_after=2)
     assert res["demoted"] == ["verify the export first"]
     assert sh.recall_addendum("M") == ""
-    # The demotion recorded the transfer tried-memory in the DB (rollback
-    # durability spans stores).
-    assert ls.load_transfer_tried_db()
-
-
-def test_transfer_one_shot_via_world_store(world_home, monkeypatch):
-    ctrl = _ctrl(monkeypatch, world_home / "promotion-ledger.json")
-    _promote("SRC", "solid line", ctrl)
-    quad = (["a", "b"], ["c", "d", "e", "f", "g"],
-            lambda a, c: 0.95, lambda a, c: 0.4)
-    rep = sh.run_transfer("SRC", ["TGT"], eval_for_target=lambda m: quad,
-                          controller=ctrl)
-    assert rep["TGT"]["promoted"] == ["solid line"]
-    assert sh.list_canaries("TGT") == ["solid line"]
-    rep2 = sh.run_transfer("SRC", ["TGT"], eval_for_target=lambda m: quad,
-                           controller=ctrl)
-    assert rep2["TGT"]["attempted"] == []
-    assert any("already present" in s for s in rep2["TGT"]["skipped"])
 
 
 def test_world_store_concurrency_keeps_every_promotion(world_home, monkeypatch):

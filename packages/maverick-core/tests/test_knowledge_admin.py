@@ -27,6 +27,7 @@ def test_admin_fail_open_when_knowledge_disabled(tmp_path, monkeypatch):
 
 
 def test_admin_erase_and_count_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
@@ -36,12 +37,12 @@ def test_admin_erase_and_count_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     kb = knowledge_admin.open_knowledge_base()
     assert kb is not None
-    kb.ingest_text("itgrc", "Dana's private document.", source="dana.txt",
+    kb.ingest_text("matter:1:itgrc", "Dana's private document.", source="dana.txt",
                    subject=knowledge_admin.subject_key("slack", "UDANA"))
     kb.close()
     assert knowledge_admin.count_subject("slack", "UDANA") == 1
     removed = knowledge_admin.erase_subject("slack", "UDANA")
-    assert removed == {"itgrc": 1}
+    assert removed == {"matter:1:itgrc": 1}
     assert knowledge_admin.count_subject("slack", "UDANA") == 0
 
 
@@ -60,9 +61,9 @@ def test_seed_is_idempotent(tmp_path):
     from maverick_knowledge.store import SqliteVectorStore
     kb = KnowledgeBase(store=SqliteVectorStore(":memory:"))
     r1 = seed_corpora(kb)
-    n1 = kb.store.count("itgrc")
+    n1 = kb.store.count("public:itgrc")
     r2 = seed_corpora(kb)          # re-seed same content
-    n2 = kb.store.count("itgrc")
+    n2 = kb.store.count("public:itgrc")
     assert r1 == r2
     assert n1 == n2, "re-seeding identical content must not duplicate chunks"
     # seeded material is public reference (no subject) -> untouched by erasure
@@ -83,6 +84,7 @@ def test_erase_verify_includes_knowledge_residual(tmp_path, monkeypatch):
     """verify_erasure must count a subject's residual knowledge chunks so a
     right-to-erasure verdict covers the vector store, not just the world model."""
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
@@ -96,7 +98,7 @@ def test_erase_verify_includes_knowledge_residual(tmp_path, monkeypatch):
     # A subject with a residual knowledge chunk but no world-model rows: the
     # verdict must be NOT clean because knowledge still holds their document.
     kb = knowledge_admin.open_knowledge_base()
-    kb.ingest_text("itgrc", "Erin's uploaded contract.", source="erin.txt",
+    kb.ingest_text("matter:1:itgrc", "Erin's uploaded contract.", source="erin.txt",
                    subject=knowledge_admin.subject_key("slack", "UERIN"))
     kb.close()
 

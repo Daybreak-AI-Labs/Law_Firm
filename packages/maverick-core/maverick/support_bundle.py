@@ -49,7 +49,7 @@ def _versions() -> dict:
         "maverick-agent": ("maverick-agent", "maverick"),
         "maverick-shield": ("maverick-shield",),
         "maverick-dashboard": ("maverick-dashboard",),
-        "maverick-mcp-server": ("maverick-mcp-server",),
+        "maverick-knowledge": ("maverick-knowledge",),
         "maverick-installer": ("maverick-installer",),
     }
     out: dict[str, str] = {}

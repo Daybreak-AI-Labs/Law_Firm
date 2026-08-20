@@ -15,9 +15,20 @@ sealed in the per-tenant vault. Additive and extensible via :func:`register`.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
+
+
+def generate_pkce() -> tuple[str, str]:
+    """Return a PKCE S256 verifier and challenge (RFC 7636)."""
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return verifier, challenge
 
 
 @dataclass(frozen=True)
@@ -126,7 +137,6 @@ def build_authorize_url(name: str, *, redirect_uri: str, client_id: str = "",
         return None
     from urllib.parse import urlencode
 
-    from .mcp_oauth import generate_pkce
     verifier, challenge = generate_pkce()
     params = {
         "response_type": "code",

@@ -43,7 +43,6 @@ _DEFAULTS = {
     "enable": False,
     "min_confidence": 0.5,
     "disagreement_high": 0.5,
-    "escalate_verification": True,
     "tighten_on_low_trust": True,
     "headless_assume": False,
 }
@@ -107,18 +106,6 @@ class AutonomyVerdict:
     reason: str = ""
     effective_max_risk: str | None = None
     tightened: bool = False
-
-
-def should_escalate_verification(disagreement: float) -> bool:
-    """Loop 1: escalate FINAL verification to the ensemble on high disagreement.
-
-    Returns False when the gate is off or escalation is disabled, so callers
-    can branch on this unconditionally.
-    """
-    s = _resolve()
-    if not s["enable"] or not s["escalate_verification"]:
-        return False
-    return float(disagreement or 0.0) >= float(s["disagreement_high"])
 
 
 def tighten_ceiling(
@@ -202,7 +189,6 @@ __all__ = [
     "autonomy_enabled",
     "assume_when_headless",
     "AutonomyVerdict",
-    "should_escalate_verification",
     "tighten_ceiling",
     "gate_tool",
 ]

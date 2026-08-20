@@ -69,8 +69,7 @@ CONFIG_OVERLAY_ENV = "MAVERICK_CONFIG_OVERLAY"
 
 # Governed, in-process learning is the product baseline. High-authority
 # actuation remains independently gated: code self-modification, live workflow
-# auto-apply, generated-code execution, external MCP acquisition and model
-# weight adoption do not inherit this default.
+# auto-apply, and model-weight adoption do not inherit this default.
 GOVERNED_LEARNING_DEFAULT = True
 
 # Dashboard Settings overlay for config-read settings (provider keys,
@@ -225,8 +224,9 @@ def _read_toml_raw(path: Path) -> dict:
     except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as e:
         # The kernel must tolerate a missing config (returns {} above); a
         # corrupt/unreadable one is the adjacent case. Fail soft to defaults
-        # with a warning instead of crashing the agent loop / every
-        # get_role_model / get_safety caller on a hand-edited TOML typo.
+        # with a warning instead of crashing non-secure compatibility callers
+        # or every get_safety caller on a hand-edited TOML typo. Secure model
+        # selection separately fails closed when its exact pin is unavailable.
         logging.getLogger(__name__).warning(
             "ignoring unreadable %s (%s: %s); using defaults",
             path, type(e).__name__, e,
@@ -317,8 +317,6 @@ def _source_errors(paths: list[Path]) -> dict[str, str]:
         for path in paths
         if str(path) in _toml_errors
     }
-
-
 def config_source_errors(*, include_tenant: bool = True) -> dict[str, str]:
     """Unreadable/corrupt files among the active config sources.
 
@@ -474,21 +472,13 @@ def get_role_model(
 ) -> str | None:
     """Return the model spec ("provider:model-id") for a role, or None.
 
-    A per-tenant override (the dashboard roles editor, persisted to roles.toml)
-    wins over the global [models] config; absent one, the config value is used.
+    This is a legacy/development compatibility reader for role-keyed config.
+    Secure firm execution ignores it and requires one exact ``[models] default``
+    through :func:`maverick.llm.model_for_role`.
 
-    ``config`` lets deterministic callers reuse an already-admitted snapshot
-    instead of loading configuration twice.  The role override is still read
-    through the same authority path, so offline preflight and live execution
-    cannot disagree about a tenant's ``roles.toml`` selection.
+    ``config`` lets legacy callers reuse an already-admitted snapshot instead
+    of loading configuration twice.
     """
-    try:
-        from .role_edit import override_model
-        ov = override_model(role)
-        if ov:
-            return ov
-    except Exception:  # role layer is optional; never block model resolution
-        pass
     cfg = load_config() if config is None else config
     spec = cfg.get("models", {}).get(role)
     return spec if isinstance(spec, str) and spec else None
@@ -496,7 +486,16 @@ def get_role_model(
 
 def get_provider_config(provider: str) -> dict:
     cfg = load_config()
-    return cfg.get("providers", {}).get(provider, {})
+    raw = cfg.get("providers", {}).get(provider, {})
+    if not isinstance(raw, dict):
+        return {}
+    out = dict(raw)
+    key = out.get("api_key")
+    if isinstance(key, str):
+        from .crypto_at_rest import unseal_from_str
+
+        out["api_key"] = unseal_from_str(key)
+    return out
 
 
 # Canonical provider -> API-key env var(s). These values are safe to pass as
@@ -684,17 +683,12 @@ def get_capabilities() -> dict:
         "code_exec": bool(cfg.get("code_exec", False)),
     }
 
-
 def get_features() -> dict:
     """Return the [features] section. These toggle agent-facing behaviors that
     are otherwise always on:
 
     - ``skills``      inject distilled/installed skills into agent prompts.
                       The MAVERICK_USE_SKILLS env var, when set, overrides this.
-    - ``world_model`` inject persisted world-model facts (cross-run memory)
-                      into the orchestrator brief. Off = run without prior
-                      stored facts; the per-run goal/event/checkpoint store
-                      (world.db) still functions regardless.
     - ``streaming``   stream live progress to the terminal during `maverick
                       start`. The MAVERICK_NO_PROGRESS env var / non-TTY output
                       still suppress it.
@@ -708,28 +702,14 @@ def get_features() -> dict:
                       addendum plus model/effort overrides per role (which win
                       over the global [models]/[effort] config). Off = the roles
                       editor is read-only and its mutating endpoints 403.
-    - ``scheduling`` allow arming recurring schedules (cron) from the dashboard
-                      workflow builder -- each fire enqueues a ``start_goal`` job
-                      run by ``maverick worker``. Off = the schedule endpoints
-                      return 403 and the UI hides.
-    - ``triggers`` allow binding a saved template to an inbound webhook (POST
-                      /webhook/run) so an external event runs it as a goal. The
-                      inbound route is HMAC-signed exactly like /webhook/start
-                      and fails closed without a [webhooks] secret. Off = the
-                      /api/v1/triggers editor and the /webhook/run route 404/403
-                      and the builder panel hides.
-
     All default on.
     """
     cfg = load_config().get("features", {}) or {}
     return {
         "skills": bool(cfg.get("skills", True)),
-        "world_model": bool(cfg.get("world_model", True)),
         "streaming": bool(cfg.get("streaming", True)),
         "pack_editing": bool(cfg.get("pack_editing", True)),
         "role_editing": bool(cfg.get("role_editing", True)),
-        "scheduling": bool(cfg.get("scheduling", True)),
-        "triggers": bool(cfg.get("triggers", True)),
     }
 
 
@@ -758,26 +738,14 @@ def get_skills() -> dict:
 
     ``trusted_pubkeys`` is a list of hex-encoded Ed25519 publisher keys; a
     signed skill is only accepted if its ``pubkey`` is in this list (when
-    the list is non-empty). ``require_signed`` rejects unsigned skills.
-    ``require_signed_catalog`` forces a verified Ed25519 signature from a
-    trusted publisher for ANY catalog install, even when ``trusted_pubkeys``
-    is empty (in which case the install fails for lack of a trust anchor) --
-    it hardens the catalog path without flipping the global ``require_signed``
-    default. The ``MAVERICK_REQUIRE_SIGNED_CATALOG`` env var overrides it.
-    All default off so the kernel keeps current behavior out of the box.
+    the list is non-empty). ``require_signed`` rejects unsigned local skills.
+    Remote catalog installation is not part of the law-firm runtime.
     """
     cfg = load_config().get("skills", {})
     pubkeys = cfg.get("trusted_pubkeys", [])
-    env_catalog = os.environ.get("MAVERICK_REQUIRE_SIGNED_CATALOG")
-    require_catalog = (
-        env_catalog.strip().lower() in ("1", "true", "yes", "on")
-        if env_catalog is not None
-        else bool(cfg.get("require_signed_catalog", False))
-    )
     return {
         "trusted_pubkeys": [str(k) for k in pubkeys] if isinstance(pubkeys, list) else [],
         "require_signed": bool(cfg.get("require_signed", False)),
-        "require_signed_catalog": require_catalog,
         # Recall the shipped first-party skills library at runtime (opt-out).
         "builtin": bool(cfg.get("builtin", True)),
         # Relevance GATES on skill recall. Precision >> recall for agent memory:
@@ -806,9 +774,10 @@ def get_sandbox() -> dict:
 #: a dim mismatch rather than returning garbage, so a wrong default here reads
 #: as a broken knowledge base.
 _EMBEDDER_DEFAULTS: dict[str, tuple[str, int]] = {
-    "hosted": ("voyage-3", 1024),
-    "cohere": ("embed-v4.0", 1024),
-    "local": ("all-MiniLM-L6-v2", 384),
+    # Firm deployments must name and pin an operator-provisioned local model
+    # directory.  A repository id here would let sentence-transformers fetch
+    # code or weights at runtime.
+    "local": ("", 384),
     "deterministic": ("", 256),
 }
 
@@ -816,149 +785,48 @@ _EMBEDDER_DEFAULTS: dict[str, tuple[str, int]] = {
 def get_knowledge() -> dict:
     """Return the ``[knowledge]`` section (per-domain vector RAG).
 
-    Off by default; the agent kernel never requires the maverick-knowledge
-    package. ``embedder`` selects hosted/cohere/local/deterministic; the
-    vector store is the embedded SQLite one. Provider details
-    (model/base_url/dim/path) are read by maverick_knowledge.build_embedder /
-    build_store.
+    ``embedder`` selects local/deterministic; the vector store is the embedded
+    SQLite one. Client-matter chunks have no hosted embedding path. Retained
+    legal profiles may require exact-matter knowledge and then fail closed when
+    this package or its configured collection is unavailable.
 
-    ``allow_external_embedding`` is the acknowledgement that the hosted
-    providers send document text itself to a third-party vendor -- a different
-    exposure from the LLM chokepoint, which sends prompts and has its own
-    redaction knob. Off by default; build_embedder refuses hosted/cohere
-    without it.
-
-    ``model`` and ``dim`` default PER EMBEDDER. They used to default to
-    ``voyage-3``/1024 whichever embedder was chosen, so ``embedder = "local"``
-    with no explicit model resolved to ``SentenceTransformer("voyage-3")`` --
-    not a model id that exists -- and advertised 1024 dimensions for a 384-dim
-    MiniLM. build_embedder's own ``all-MiniLM-L6-v2`` fallback could never fire
-    because this function had already filled the key in. An explicit
-    ``[knowledge] model``/``dim`` still wins.
+    The local model intentionally has no default. Operators must configure an
+    absolute, already-provisioned model directory and its canonical
+    ``model_digest``. This prevents a repository id from triggering a runtime
+    Hugging Face download. ``dim`` remains per-embedder and must match the
+    pinned model/corpus.
     """
     cfg = load_config().get("knowledge", {}) or {}
-    embedder = cfg.get("embedder", "hosted")
+    embedder = cfg.get("embedder", "local")
     model_default, dim_default = _EMBEDDER_DEFAULTS.get(
-        str(embedder).lower(), _EMBEDDER_DEFAULTS["hosted"])
+        str(embedder).lower(), _EMBEDDER_DEFAULTS["local"])
     return {
         "enable": bool(cfg.get("enable", False)),
         "embedder": embedder,
-        "allow_external_embedding": _strict_config_bool(
-            cfg, "allow_external_embedding", False),
         "store": cfg.get("store", "sqlite"),
         "model": cfg.get("model", model_default),
-        "base_url": cfg.get("base_url", "https://api.voyageai.com/v1"),
+        "model_digest": cfg.get("model_digest", ""),
         "dim": int(cfg.get("dim", dim_default)),
         "path": cfg.get("path", ""),
-    }
-
-
-def get_automation_import() -> dict:
-    """Return the ``[automation_import]`` section with defaults filled in.
-
-    Importing clients' existing automations (n8n/Make/Workato/Power Automate/
-    UiPath definitions, plus connect-and-trigger for Zapier/Notion) is OFF by
-    default: it reaches out to third-party platforms and writes user templates,
-    so the operator opts in. ``create_schedules`` lets a recovered cron trigger
-    auto-create a Maverick schedule; off by default so an import never starts
-    spending on a recurring run without an explicit second step.
-    Env override: ``MAVERICK_AUTOMATION_IMPORT``.
-    """
-    cfg = load_config().get("automation_import", {})
-    return {
-        "enable": _strict_config_bool(cfg, "enable", False),
-        "create_schedules": _strict_config_bool(cfg, "create_schedules", False),
-    }
-
-
-
-
-def get_governed_connectors() -> dict:
-    """Return the ``[governed_connectors]`` section with defaults filled in.
-
-    Routing a live system-of-record write through a governed Action
-    (simulate -> approve -> commit -> lineage) instead of a bare confirm-gated
-    tool call is OFF by default in the standard profile: it changes how writes
-    are authorized and records tamper-evident transaction receipts, so a
-    standard operator opts in. Enterprise mode treats governance as a mandatory
-    runtime floor even when this stored default is false. ``connectors`` selects
-    reference REST connectors to register (see
-    :data:`maverick.governed_rest.GOVERNED_REST_FACTORIES`). Env override:
-    ``MAVERICK_GOVERNED_CONNECTORS`` (standard mode only).
-    """
-    cfg = load_config().get("governed_connectors", {}) or {}
-    raw = cfg.get("connectors", [])
-    if isinstance(raw, str):
-        names = [s.strip() for s in raw.split(",") if s.strip()]
-    elif isinstance(raw, (list, tuple)):
-        names = [str(s).strip() for s in raw if str(s).strip()]
-    else:
-        names = []
-    env_restore = os.environ.get("MAVERICK_GOVERNED_RESTORE_POINTS")
-    restore_points = (
-        env_restore.strip().lower() in ("1", "true", "yes", "on")
-        if env_restore is not None
-        else bool(cfg.get("restore_points", True))
-    )
-    return {
-        "enable": bool(cfg.get("enable", False)),
-        "connectors": names,
-        # Standing approver of record for governed connector writes in the live
-        # tool path (the agent can't self-approve). Env: MAVERICK_GOVERNED_APPROVER.
-        "approver": str(cfg.get("approver", "")).strip(),
-        # Let maverick.connector_previews.plan_write issue ONE read-only GET to
-        # capture prior state before an in-place update, so the write earns a
-        # real undo. Without it every update is irreversible and routes to a
-        # human -- correct, but the autonomy dial never earns anything. Turn it
-        # off for a write-only service account. Env:
-        # MAVERICK_GOVERNED_RESTORE_POINTS.
-        "restore_points": restore_points,
     }
 
 
 def get_self_learning() -> dict:
     """Return the ``[self_learning]`` section with defaults filled in.
 
-    Governed capability learning is on by default. Catalog-skill preflight,
-    pack provisioning and local lexical distillation are safe defaults;
-    generating executable tools and starting third-party MCP processes remain
-    separate, explicit authority decisions.
-
-    Back-compat: a config that still carries the retired ``add_mcp_servers``
-    key is tolerated (it is simply ignored) — agent-driven MCP acquisition
-    was removed in #392, so the knob no longer does anything.
+    Governed local learning and distillation are on by default. Extra
+    task/result-bearing provider calls remain a separate authority decision.
     """
     cfg = load_config().get("self_learning", {})
-    try:
-        max_acq = int(cfg.get("max_acquisitions", 5))
-    except (TypeError, ValueError):
-        max_acq = 5
     return {
         "enable": _strict_config_bool(
             cfg, "enable", governed_learning_default()),
-        "preflight": _strict_config_bool(cfg, "preflight", True),
-        # High-authority booleans are intentionally strict: a string such as
-        # ``"false"`` is truthy in Python and must never arm executable-code
-        # generation through a malformed overlay.
-        "create_tools": cfg.get("create_tools") is True,
-        # The agent factory equips a freshly approved pack with the catalog
-        # skills + synthesized tools its workflow needs (maverick.provision).
-        # On by default once self-learning is accepted; still bounded by
-        # ``max_acquisitions`` and the per-tool consent gate.
-        "provision_packs": bool(cfg.get("provision_packs", True)),
-        # Agent-proposed MCP-server acquisition is the highest-trust knob:
-        # even gated behind catalog-pinning + operator consent it can start
-        # a third-party subprocess, so it ships OFF independently of the
-        # self-learning master switch (#422). Env override:
-        # MAVERICK_ALLOW_MCP_ACQUISITION.
-        "allow_mcp_acquisition": cfg.get("allow_mcp_acquisition") is True,
         # Extra learning-only model calls may select a different configured
         # provider/role and can expose task or child-result text. Keep that
         # egress a separate explicit authority even though the local learning
         # engines themselves default on.
         "allow_provider_egress": cfg.get("allow_provider_egress") is True,
         "distill_local": _strict_config_bool(cfg, "distill_local", True),
-        "max_acquisitions": max(1, max_acq),
     }
 
 
@@ -1109,7 +977,7 @@ def get_self_harness() -> dict:
         "enable": _strict_config_bool(
             cfg, "enable", governed_learning_default()),
         "risk_limited": risk_limited,
-        # Run the governed cycle for every configured role model as part of
+        # Run the governed cycle for the selected run model as part of
         # `maverick dream` (the nightly learning beat), so the harness operates
         # itself without a second cron entry. A pristine deployment defaults on;
         # an existing partial section retains its historical off default.
@@ -1180,16 +1048,9 @@ def get_self_harness() -> dict:
         # A conservative run requires a recent adequate calibration receipt;
         # collecting judge telemetry alone is not an interlock.
         "calibration_max_age_hours": calibration_max_age,
-        # Nightly cross-model transfer: after the dream-beat cycles, try each
-        # fleet model's graduated lines on the rest of the fleet (gated,
-        # canaried, budget-capped; the tried-memory keeps steady-state spend
-        # near zero). Default off -- transfer runs only via the CLI.
-        "transfer_auto": _strict_config_bool(cfg, "transfer_auto", False),
-        # Where the learning stores (addenda, provenance, transfer memory)
-        # live: "files" = per-host JSON under ~/.maverick (default); "world" =
-        # tables in the shared world database, so a fleet spanning hosts
-        # learns as one (docs/proposals/fleet-learning-state.md, phase 1).
-        # Unknown values mean "files".
+        # Where the learning stores (addenda and provenance) live: "files" =
+        # local JSON under ~/.maverick (default); "world" = durable world DB
+        # tables. Unknown values mean "files".
         "store": (lambda v: v if v in ("files", "world") else "files")(
             str(cfg.get("store", "files")).strip().lower()),
         # Corpus bootstrapping from hindsight pairs (a failed goal whose wording
@@ -1206,7 +1067,8 @@ def get_self_harness() -> dict:
             _factor("relapse_failure_share")),
         "relapse_min_outcomes": max(1, _num("relapse_min_outcomes", 5, int)),
         # Metamorphic validation on the auto path: paraphrase the held-out cases
-        # (summarizer-role model) and require the candidate's lift to survive
+        # (the selected run model acting as summarizer) and require the
+        # candidate's lift to survive
         # the rewording -- rejects lines overfit to exact phrasing. Default off;
         # tolerance allows a small slip on the paraphrases.
         "metamorphic": (
@@ -1245,13 +1107,9 @@ def get_autonomy() -> dict:
     """Return the ``[autonomy]`` section with defaults filled in.
 
     The autonomy gate (``maverick.autonomy``) is OFF by default so the kernel
-    runs unchanged out of the box. When enabled, the sub-toggles default ON:
-    ``escalate_verification`` runs the cross-family ensemble verifier on FINAL
-    answers when the swarm disagreed (Loop 1); ``tighten_on_low_trust`` drops
-    the effective risk ceiling for high-risk tools when run trust is low (Loop
-    2). ``disagreement_high`` is the swarm-entropy threshold above which both
-    fire; ``min_confidence`` is the verifier-confidence floor below which the
-    ceiling tightens. Both are clamped to [0, 1].
+    runs unchanged out of the box. When enabled, ``tighten_on_low_trust`` drops
+    the effective risk ceiling for high-risk tools when run trust is low.
+    ``disagreement_high`` and ``min_confidence`` are clamped to [0, 1].
     """
     cfg = load_config().get("autonomy", {})
 
@@ -1266,74 +1124,11 @@ def get_autonomy() -> dict:
         "enable": bool(cfg.get("enable", False)),
         "min_confidence": _clamp01("min_confidence", 0.5),
         "disagreement_high": _clamp01("disagreement_high", 0.5),
-        "escalate_verification": bool(cfg.get("escalate_verification", True)),
         "tighten_on_low_trust": bool(cfg.get("tighten_on_low_trust", True)),
         # Independent axis (resolved without ``enable``): assume-and-proceed
         # instead of blocking on ``ask_user`` when no human can answer
         # (headless / batch / benchmark runs). Default off.
         "headless_assume": bool(cfg.get("headless_assume", False)),
-    }
-
-
-def get_workforce() -> dict:
-    """Return the ``[workforce]`` section: per-agent autonomy levels.
-
-    This is the client's control over how much rope each hired agent gets (see
-    :mod:`maverick.agent_autonomy`). OFF by default (kernel rule 1): when
-    ``levels`` is not enabled, every agent resolves to ``suggest`` (draft, a
-    human commits) -- the platform's historical behavior.
-
-    ``[workforce]
-       levels = true
-       [[workforce.agents]]
-       name = "fin_ap_clerk"
-       default = "auto"          # this hire acts autonomously by default
-       high = "human"            # ...but high-risk actions stay human-in-loop
-       onboarding = false        # graduated past the supervised phase``
-
-    Returns ``{"levels": bool, "data_grounding": bool,
-    "auto_graduate": bool, "agents": {name: {default, low, medium, high,
-    onboarding}}}``. Agent overrides contain only keys an operator set (the
-    resolver layers them over each pack's declared ``[autonomy]`` default).
-    Authority-widening booleans are strict: a present non-boolean value never
-    enables autonomy, connector grants, automatic graduation, or removal of the
-    onboarding clamp. Never raises.
-    """
-    cfg = load_config().get("workforce", {})
-    if not isinstance(cfg, dict):
-        return {
-            "levels": False,
-            "data_grounding": False,
-            "auto_graduate": False,
-            "agents": {},
-        }
-    agents: dict[str, dict] = {}
-    raw = cfg.get("agents")
-    if isinstance(raw, list):
-        for entry in raw:
-            if not isinstance(entry, dict):
-                continue
-            name = str(entry.get("name") or "").strip()
-            if not name:
-                continue
-            override = {
-                k: entry[k] for k in ("default", "low", "medium", "high", "onboarding")
-                if k in entry
-            }
-            if "onboarding" in override and not isinstance(
-                override["onboarding"], bool
-            ):
-                # Malformed supervision policy tightens to onboarding. In
-                # particular, ``0`` must not silently graduate an agent.
-                override["onboarding"] = True
-            agents[name] = override
-    return {
-        "levels": _strict_config_bool(cfg, "levels", False),
-        "data_grounding": _strict_config_bool(
-            cfg, "data_grounding", True, invalid=False),
-        "auto_graduate": _strict_config_bool(
-            cfg, "auto_graduate", False, invalid=False),
-        "agents": agents,
     }
 
 
@@ -1430,77 +1225,6 @@ def get_search() -> dict:
     return {"enable": bool(cfg.get("enable", False)), "n": n}
 
 
-def get_skill_synthesis() -> dict:
-    """Return the ``[skill_synthesis]`` section (test-time task-specific skills).
-    ON by default; spend remains metered by the run budget."""
-    cfg = load_config().get("skill_synthesis", {})
-    return {"enable": _strict_config_bool(
-        cfg, "enable", governed_learning_default())}
-
-
-def get_repl() -> dict:
-    """Return the ``[repl]`` section (governed code execution).
-
-    A session kernel lets an agent write Python instead of composing fixed
-    tool schemas — the Prime-Agent-style substrate — but every statement runs
-    through ``sandbox.exec`` and lands a tamper-evident receipt, so the code
-    IS the audited artifact. OFF by default: this is arbitrary code execution
-    and admitting it is an explicit operator decision. Also honored via
-    ``MAVERICK_REPL=1``."""
-    import os
-    cfg = load_config().get("repl", {})
-    enable = _strict_config_bool(cfg, "enable", False, invalid=False)
-    if str(os.environ.get("MAVERICK_REPL", "")).strip() == "1":
-        enable = True
-    return {
-        "enable": enable,
-        # Per-statement wall ceiling, output cap, and the size of the carried
-        # namespace. All bounded: an unbounded kernel is a denial-of-service
-        # surface and an unbounded transcript is an audit liability.
-        "max_seconds": max(1.0, float(cfg.get("max_seconds", 30.0) or 30.0)),
-        "max_output_chars": max(
-            256, int(cfg.get("max_output_chars", 8000) or 8000)),
-        "max_state_bytes": max(
-            1024, int(cfg.get("max_state_bytes", 262_144) or 262_144)),
-        "max_statements": max(1, int(cfg.get("max_statements", 200) or 200)),
-    }
-
-
-def get_harness_refine() -> dict:
-    """Return the ``[harness_refine]`` section (governed self-refinement).
-
-    The agent may PROPOSE changes to its own operating instructions from an
-    observed failure; applying one is snapshotted, audited, and reversible.
-    OFF by default, and ``require_approval`` defaults ON so a proposal never
-    self-applies — ungoverned self-modification is precisely what an audited
-    deployment cannot run. Also honored via ``MAVERICK_HARNESS_REFINE=1``."""
-    import os
-    cfg = load_config().get("harness_refine", {})
-    enable = _strict_config_bool(cfg, "enable", False, invalid=False)
-    if str(os.environ.get("MAVERICK_HARNESS_REFINE", "")).strip() == "1":
-        enable = True
-    return {
-        "enable": enable,
-        # Fail CLOSED on a malformed value: a typo must never disarm the gate.
-        "require_approval": _strict_config_bool(
-            cfg, "require_approval", True, invalid=True),
-        "max_pending": max(1, int(cfg.get("max_pending", 20) or 20)),
-    }
-
-
-def get_session_tree() -> dict:
-    """Return the ``[session_tree]`` section (run forking + provenance).
-
-    Forking a run at a decision point lets Oversight hold the counterfactual
-    beside what actually happened. ON by default — it only records lineage
-    between runs that already exist and never changes execution."""
-    cfg = load_config().get("session_tree", {})
-    return {
-        "enable": _strict_config_bool(cfg, "enable", True, invalid=True),
-        "max_depth": max(1, int(cfg.get("max_depth", 10) or 10)),
-    }
-
-
 def get_memory() -> dict:
     """Return the ``[memory]`` section. ``temporal`` keeps a bitemporal history
     of every fact value (validity windows) instead of overwriting, so the
@@ -1570,31 +1294,6 @@ def get_experience() -> dict:
     cfg = load_config().get("experience", {})
     return {"enable": _strict_config_bool(
         cfg, "enable", governed_learning_default())}
-
-
-def get_tax() -> dict:
-    """Return the ``[tax]`` section (signed tax-constants content channel).
-
-    ``auto_update`` is ON by default but a no-op until the operator
-    configures both ``update_url`` and ``trusted_constants_pubkeys`` —
-    updates are fail-closed against those anchors (see
-    :mod:`maverick.tax_constants`). ``check_hours`` throttles the network
-    check."""
-    cfg = load_config().get("tax", {})
-    try:
-        check_hours = max(1.0, float(cfg.get("check_hours", 20.0)))
-    except (TypeError, ValueError):
-        check_hours = 20.0
-    keys = cfg.get("trusted_constants_pubkeys", [])
-    if not isinstance(keys, list):
-        keys = []
-    return {
-        "auto_update": bool(cfg.get("auto_update", True)),
-        "update_url": str(cfg.get("update_url", "") or "").strip(),
-        "check_hours": check_hours,
-        "trusted_constants_pubkeys": [str(k).strip() for k in keys
-                                      if str(k).strip()],
-    }
 
 
 def get_dreaming() -> dict:
@@ -1755,12 +1454,6 @@ def get_self_improvement() -> dict:
         # baseline/candidate evidence path.
         "causal_promotion": _strict_config_bool(
             cfg, "causal_promotion", True, invalid=True),
-        # Self-improving agent factory (maverick.factory_learning): mine recurring
-        # pack-generation gaps into proposer corrections and promote them through
-        # this same gate. Sub-toggle of the master switch -- on once
-        # self-improvement is accepted; set false to keep the generator static.
-        "factory_learning": _strict_config_bool(
-            cfg, "factory_learning", True),
         # Evaluator co-evolution (maverick.evaluator_evolution): instead of only
         # FREEZING learning when the judge drifts, promote a better judge --
         # a challenger evaluator replaces the incumbent only when its agreement
@@ -1877,7 +1570,7 @@ def get_rehearsal() -> dict:
 def get_data_engine() -> dict:
     """Return the ``[data_engine]`` section (the Cognitive Data Engine).
 
-    The Tesla-style improvement flywheel for the agent workforce: production
+    The governed improvement flywheel for the firm: production
     failures are causally triaged, a fix is mined + validated in the world-model,
     promoted through the safety ladder, and measured against real outcomes. ON
     by default; empty or insufficient evidence produces no candidate.
@@ -1917,55 +1610,11 @@ def get_consequence() -> dict:
         cfg, "enable", governed_learning_default())}
 
 
-def get_earned_autonomy() -> dict:
-    """Return the ``[earned_autonomy]`` section (Bet 5: consequence-proven trust).
-
-    Agents earn policy-auto-approval per action type by proving they predict
-    consequences correctly (maverick.earned_autonomy). OFF by default: enabling
-    it only records evidence; ``auto_graduate`` is the separate authority-
-    widening arming switch and is strict-parsed -- a truthy string never arms
-    it. ``max_auto_risk`` defaults to ``medium`` so graduating irreversible
-    high-risk action types is an explicit operator decision; an unknown value
-    fails closed (nothing graduates). Never raises.
-    """
-    cfg = load_config().get("earned_autonomy", {})
-
-    def _num(key: str, default: float, cast=float, lo: float = 0.0, hi: float | None = None):
-        raw = cfg.get(key, default)
-        if isinstance(raw, bool):
-            # bool is an int subclass; `min_streak = true` must not collapse
-            # the graduation bar to 1 -- numeric policy keys demand numbers.
-            return default
-        try:
-            value = cast(raw)
-        except (TypeError, ValueError):
-            return default
-        if not math.isfinite(float(value)) or value < lo:
-            return default
-        if hi is not None and value > hi:
-            return default
-        return value
-
-    return {
-        "enable": _strict_config_bool(cfg, "enable", False),
-        # Authority-widening: only a real TOML `true` arms graduation.
-        "auto_graduate": cfg.get("auto_graduate") is True,
-        "min_streak": _num("min_streak", 10, int, lo=1),
-        "min_samples": _num("min_samples", 10, int, lo=1),
-        "min_accuracy": _num("min_accuracy", 0.9, float, lo=0.0, hi=1.0),
-        "tolerance": _num("tolerance", 0.25, float, lo=0.0, hi=1.0),
-        "max_auto_risk": str(cfg.get("max_auto_risk", "medium")).strip().lower() or "medium",
-        # Malformed value restores the guarantee (invalid=True tightens).
-        "require_reversible": _strict_config_bool(
-            cfg, "require_reversible", True, invalid=True),
-    }
-
-
 def get_deployment() -> dict:
     """Return the ``[deployment]`` section (install provenance).
 
     Written by the installer wizard to record where Maverick runs
-    (desktop/docker/vps/phone). Read back so a re-run of ``maverick init``
+    (local/docker/vps). Read back so a re-run of ``maverick init``
     can default to the prior choice. ``type`` is empty when never recorded.
     """
     cfg = load_config().get("deployment", {}) or {}
@@ -2066,89 +1715,16 @@ def get_durable() -> dict:
 
 
 def get_assessments() -> dict:
-    """Return the ``[assessments]`` section (assessment flow assists).
+    """Return the retained local assessment-memory setting.
 
-    ``doc_discovery`` lets the assessment flow search CONNECTED document
-    sources (Microsoft Graph, Slack, Google Drive) for the SOW/contract/DPA
-    related to the subject and attach them as evidence -- default on, but it
-    only activates when a source actually has credentials (env or a named
-    connection), so a default deployment reaches nothing. ``sources`` orders
-    which sources to try. ``learn`` turns on assessment memory: suggestions
-    and precedents distilled from the org's OWN past assessments (and the
-    knowledge plane when enabled) -- advisory only, the human review gate is
-    untouched. Env overrides: ``MAVERICK_ASSESS_DISCOVERY`` /
-    ``MAVERICK_ASSESS_LEARN`` (0 disables either).
+    ``learn`` enables advisory suggestions distilled from the firm's own past
+    assessments. It never bypasses the human review gate. The removed connected
+    document-discovery plane has no configuration fallback.
     """
     import os
     cfg = load_config().get("assessments", {}) or {}
-    raw = cfg.get("sources", ["msgraph", "slack", "gdrive"])
-    if isinstance(raw, str):
-        sources = [s.strip() for s in raw.split(",") if s.strip()]
-    elif isinstance(raw, (list, tuple)):
-        sources = [str(s).strip() for s in raw if str(s).strip()]
-    else:
-        sources = ["msgraph", "slack", "gdrive"]
+    disabled = os.environ.get("MAVERICK_ASSESS_LEARN", "").strip().lower()
+    return {"learn": bool(cfg.get("learn", True))
+            and disabled not in ("0", "false", "no")}
 
-    def _env_off(var: str) -> bool:
-        return os.environ.get(var, "").strip().lower() in ("0", "false", "no")
-
-    return {
-        "doc_discovery": (bool(cfg.get("doc_discovery", True))
-                          and not _env_off("MAVERICK_ASSESS_DISCOVERY")),
-        "sources": sources,
-        "learn": (bool(cfg.get("learn", True))
-                  and not _env_off("MAVERICK_ASSESS_LEARN")),
-    }
-
-
-def get_value() -> dict:
-    """Return the ``[value]`` section: the client's own cost/value assumptions
-    for the savings (ROI) report.
-
-    This is what makes the savings dashboard the CLIENT's number, not ours: the
-    fully-loaded human hourly rate and the human hours one comparable
-    deliverable would take by hand. The report reads REAL completed work from
-    the world model and computes, per department,
-    ``(human_hours x hourly_rate) - actual agent spend`` -- money saved vs the
-    typical human cost.
-
-    ``departments`` holds optional per-department overrides
-    (``[value.departments.<name>]`` tables with ``hourly_rate`` /
-    ``hours_per_task``) so legal work can be priced differently from support.
-    ``enable`` only shows/hides the dashboard page; the numbers are always safe
-    (read-only, they never tune anything -- the council's warning that cost
-    pressure must not defund safety). Defaults are deliberately conservative so
-    an out-of-box ROI claim is defensible, not inflated.
-    Env override: ``MAVERICK_VALUE_HOURLY_RATE`` / ``MAVERICK_VALUE_HOURS``.
-    """
-    cfg = load_config().get("value", {}) or {}
-
-    def _pos(v: object, default: float) -> float:
-        try:
-            f = float(v)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return default
-        return f if f >= 0 else default
-
-    import os
-    rate = _pos(os.environ.get("MAVERICK_VALUE_HOURLY_RATE")
-                or cfg.get("hourly_rate"), 75.0)
-    hours = _pos(os.environ.get("MAVERICK_VALUE_HOURS")
-                 or cfg.get("hours_per_task"), 2.0)
-    departments: dict[str, dict] = {}
-    raw = cfg.get("departments", {}) or {}
-    if isinstance(raw, dict):
-        for name, ov in raw.items():
-            if not isinstance(ov, dict):
-                continue
-            departments[str(name)] = {
-                "hourly_rate": _pos(ov.get("hourly_rate"), rate),
-                "hours_per_task": _pos(ov.get("hours_per_task"), hours),
-            }
-    return {
-        "enable": bool(cfg.get("enable", True)),
-        "hourly_rate": rate,
-        "hours_per_task": hours,
-        "currency": str(cfg.get("currency", "USD") or "USD").upper()[:8],
-        "departments": departments,
-    }
+# End retained assessment settings.

@@ -13,9 +13,9 @@ when its evidence beats baseline:
 improvement = cand.candidate_score - cand.baseline_score   # the evidence gate
 ```
 
-Those scores were **correlational aggregates** — a synthesized tool's raw
-success rate (`ToolOutcomeTracker`), a before/after eval mean. In a system that
-rewrites **itself**, correlational credit is a *superstition pump*: a change that
+Those scores were **correlational aggregates**, such as a before/after eval
+mean. In a system that rewrites **itself**, correlational credit is a
+*superstition pump*: a change that
 merely co-occurs with success — because it was tried on easier sub-goals, or ran
 alongside the decision that actually mattered — gets promoted, reinforced, and
 compounded. The audit log faithfully signs each ritual as "beat baseline."
@@ -44,10 +44,10 @@ the **naive** (confounded) difference for contrast, a **placebo** effect, and a
   confident the change *caused* the win). Every other gate (capability
   non-escalation, human approval, reversibility, calibration freeze) is
   untouched.
-- `si_producers.propose_with_effect(...)` — builds the candidate from an
-  `EffectEstimate`, stamps provenance `{effect, ci, naive, adjusted_for, n,
-  overlap, placebo}` into the signed `LEARNING_UPDATE`, and **fails closed** on
-  an untrustworthy estimate.
+- The firm runtime has no generic effect-to-promotion producer. Effect estimates
+  remain offline evaluation evidence; only the exact-matter self-harness can
+  prepare a prompt candidate, and applying it requires explicit operator
+  authorization through the durable promotion transaction.
 - `trajectory_store.TrajectoryStep` gained `parent_step` (decision-DAG edge) and
   `outcome` (terminal task label) so episodes reduce to causal units via
   `promotion_effect.units_from_trajectories`.
@@ -89,8 +89,9 @@ agent's own environment — and runs **g-computation**: re-simulate each startin
 context with the decision's action forced to `treated` vs `control`, roll
 forward under the learned dynamics + observed behaviour policy to a terminal
 outcome, and difference the two. It returns the **same**
-`EffectEstimate(effect, ci, trustworthy)`, so `propose_with_effect` and the gate
-are unchanged — only the estimator behind them got stronger.
+`EffectEstimate(effect, ci, trustworthy)`, so offline evaluators can compare the
+two estimators behind the same evidence shape without creating a runtime
+promotion path.
 
 **Why it earns its place:** g-computation identifies an effect that
 stratification *structurally cannot*. When the behaviour policy confounds the
@@ -140,7 +141,7 @@ a deliberate follow-up seam; the engine + gate policy ship here, fully tested.
 |---|---|
 | `promotion_effect` estimator + placebo refutation | ✅ |
 | `Candidate.effect_ci_low` + evidence-gate branch | ✅ |
-| `propose_with_effect` producer (fail-closed) | ✅ |
+| generic effect-to-promotion producer | retired from firm runtime |
 | trajectory DAG fields (`parent_step`, `outcome`) | ✅ |
 | config knob + wizard step | ✅ |
 | model-based counterfactual rollouts — tabular g-computation (Phase B) | ✅ |

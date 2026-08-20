@@ -78,7 +78,48 @@ def _install_shared_claim_store(monkeypatch):
     return backend
 
 
+def _ensure_matter_goal(goal_id: int, principal: str) -> None:
+    """Create the durable law-firm context used by envelope-mechanics tests."""
+    from maverick.world_model import close_world_if_owned, open_world
+
+    world = open_world()
+    try:
+        goal = world.get_goal(goal_id)
+        if goal is None:
+            matter_id = world.create_client_matter(
+                "Queue test matter",
+                principal=principal,
+                domain="legal",
+                matter_number=f"QUEUE-{goal_id}",
+                jurisdiction="Tennessee",
+                client_name=f"Queue Test Client {goal_id}",
+            )
+            while goal is None:
+                created = world.create_matter_goal(
+                    "Queue test goal",
+                    principal=principal,
+                    domain="legal",
+                    project_id=matter_id,
+                )
+                assert created is not None and created <= goal_id
+                goal = world.get_goal(goal_id)
+        else:
+            matter_id = goal.project_id
+            assert matter_id is not None
+            if world.project_member_role(matter_id, principal) is None:
+                world.add_project_member(
+                    matter_id,
+                    principal,
+                    "attorney",
+                    added_by="queue-test",
+                )
+    finally:
+        close_world_if_owned(world)
+
+
 def _local_envelope(goal_id: int = 9, **kwargs):
+    principal = kwargs.setdefault("concurrency_principal", "user:queue-test")
+    _ensure_matter_goal(goal_id, principal)
     jobs = []
     qd.QueueDispatcher(lambda _name, payload: jobs.append(payload)).submit(
         goal_id, **kwargs
@@ -92,8 +133,10 @@ def _network_envelope(monkeypatch, tenant: str, goal_id: int = 9, **kwargs):
 
     monkeypatch.setattr(qd, "_queue_signing_key", lambda: "k" * 32)
     monkeypatch.setattr(backends, "is_postgres_configured", lambda: True)
+    principal = kwargs.setdefault("concurrency_principal", "user:queue-test")
     jobs = []
     with tenant_scope(tenant=tenant):
+        _ensure_matter_goal(goal_id, principal)
         qd.QueueDispatcher(
             lambda _name, payload: jobs.append(payload), transport="network"
         ).submit(goal_id, **kwargs)
@@ -102,6 +145,7 @@ def _network_envelope(monkeypatch, tenant: str, goal_id: int = 9, **kwargs):
 
 
 def test_submit_authenticates_complete_envelope_and_returns_none():
+    _ensure_matter_goal(42, "principal:u1")
     jobs = []
     disp = qd.QueueDispatcher(
         enqueue=lambda name, payload: jobs.append((name, payload))
@@ -124,6 +168,9 @@ def test_submit_authenticates_complete_envelope_and_returns_none():
     assert payload["job_name"] == qd.JOB_NAME
     assert payload["auth_mode"] == qd._AUTH_LOCAL
     assert payload["goal_id"] == 42
+    assert payload["matter_id"] > 0
+    assert payload["principal"] == "principal:u1"
+    assert payload["domain"] == "legal"
     assert payload["conversation_id"] is None
     assert payload["max_dollars"] == 2.0
     assert payload["max_wall_seconds"] == 30
@@ -176,13 +223,18 @@ def test_allowed_suites_tri_state_is_signed_and_restored_exactly(
 
 
 def test_unknown_allowed_suite_is_rejected_before_enqueue():
+    _ensure_matter_goal(9, "user:queue-test")
     jobs = []
     dispatcher = qd.QueueDispatcher(
         lambda _name, payload: jobs.append(payload)
     )
 
     with pytest.raises(qd.QueueSecurityError, match="unknown suite"):
-        dispatcher.submit(9, allowed_suites=frozenset({"finance", "root"}))
+        dispatcher.submit(
+            9,
+            concurrency_principal="user:queue-test",
+            allowed_suites=frozenset({"finance", "root"}),
+        )
 
     assert jobs == []
 
@@ -380,6 +432,113 @@ def test_local_envelope_is_claimed_once_in_tenant_job_store(monkeypatch):
     assert calls == 1
 
 
+def test_queue_v3_signs_matter_identity_and_restores_exact_principal(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        runner,
+        "run_goal_in_thread",
+        lambda **kwargs: seen.update(kwargs) or "done",
+    )
+
+    payload = _local_envelope(concurrency_principal="user:alice")
+
+    assert payload["version"] == 3
+    assert payload["matter_id"] > 0
+    assert payload["principal"] == "user:alice"
+    assert payload["domain"] == "legal"
+    assert qd.run_queued_goal(payload) == "done"
+    assert seen["concurrency_principal"] == "user:alice"
+
+
+def test_queue_producer_rejects_missing_or_viewer_principal_before_enqueue():
+    from maverick.world_model import close_world_if_owned, open_world
+
+    _ensure_matter_goal(5, "user:alice")
+    world = open_world()
+    try:
+        goal = world.get_goal(5)
+        world.add_project_member(
+            goal.project_id,
+            "user:viewer",
+            "viewer",
+            added_by="user:alice",
+        )
+    finally:
+        close_world_if_owned(world)
+    jobs = []
+    dispatcher = qd.QueueDispatcher(lambda _name, payload: jobs.append(payload))
+
+    with pytest.raises(qd.QueueSecurityError, match="matter execution context"):
+        dispatcher.submit(5)
+    with pytest.raises(qd.QueueSecurityError, match="matter execution context"):
+        dispatcher.submit(5, concurrency_principal="user:viewer")
+    assert jobs == []
+
+
+@pytest.mark.parametrize("mutation", ["revoked", "moved", "domain"])
+def test_queue_worker_rejects_context_change_immediately_before_dispatch(
+    monkeypatch, mutation,
+):
+    from maverick.world_model import close_world_if_owned, open_world
+
+    payload = _local_envelope(concurrency_principal="user:alice")
+    world = open_world()
+    try:
+        goal = world.get_goal(payload["goal_id"])
+        if mutation == "revoked":
+            world.add_project_member(
+                payload["matter_id"],
+                "user:backup",
+                "responsible_attorney",
+                added_by="user:alice",
+            )
+            assert world.deactivate_project_member(
+                payload["matter_id"], "user:alice",
+            ) is True
+        elif mutation == "moved":
+            other = world.create_client_matter(
+                "Other client matter",
+                principal="user:alice",
+                domain="legal",
+                matter_number="QUEUE-MOVED",
+                jurisdiction="Tennessee",
+                client_name="Other Queue Test Client",
+            )
+            assert world.set_goal_project(
+                goal.id, other, principal="user:alice",
+            ) is True
+        else:
+            world.set_goal_domain(goal.id, "legal_contract_review")
+    finally:
+        close_world_if_owned(world)
+    monkeypatch.setattr(
+        runner,
+        "run_goal_in_thread",
+        lambda **_kwargs: pytest.fail("changed matter context reached dispatch"),
+    )
+
+    with pytest.raises(qd.QueueSecurityError, match="unauthorized, or changed"):
+        qd.run_queued_goal(payload)
+
+
+def test_resigned_envelope_missing_matter_context_fails_before_claim(monkeypatch):
+    payload = _local_envelope()
+    payload.pop("matter_id")
+    payload = qd._sign_envelope(payload, qd._LOCAL_SIGNING_KEY)
+    monkeypatch.setattr(
+        "maverick.job_queue.JobQueue.claim_dispatch_envelope",
+        lambda *_args, **_kwargs: pytest.fail("contextless envelope was claimed"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_goal_in_thread",
+        lambda **_kwargs: pytest.fail("contextless envelope reached dispatch"),
+    )
+
+    with pytest.raises(qd.QueueSecurityError, match="fields.*version 3"):
+        qd.run_queued_goal(payload)
+
+
 def test_shared_root_local_envelope_cannot_drift_into_tenant(monkeypatch):
     import maverick.paths as paths
 
@@ -409,6 +568,9 @@ def test_shared_root_local_envelope_cannot_drift_into_tenant(monkeypatch):
         ("expires_at", 9_999_999_999),
         ("tenant", "attacker"),
         ("goal_id", 999),
+        ("matter_id", 999),
+        ("principal", "user:attacker"),
+        ("domain", "legal_attacker"),
         ("conversation_id", 999),
         ("max_dollars", 999_999.0),
         ("max_wall_seconds", 999_999.0),
@@ -446,7 +608,7 @@ def test_every_dispatch_field_is_authenticated_before_execution(
     ("mutation", "error"),
     [
         ("v1", "unsupported.*version"),
-        ("missing", "fields.*version 2"),
+        ("missing", "fields.*version 3"),
         ("wrong-type", "null or a bounded list"),
         ("duplicates", "not canonical"),
         ("unknown", "unknown suite"),
@@ -838,11 +1000,16 @@ def test_arq_producer_explicitly_installs_safe_codec(monkeypatch):
 
 
 def test_queue_dispatcher_plugs_into_runner_seam():
+    _ensure_matter_goal(3, "user:z")
     jobs = []
     original = runner.get_dispatcher()
     try:
         runner.set_dispatcher(qd.QueueDispatcher(lambda _name, payload: jobs.append(payload)))
-        assert runner.run_goal_in_background(3, user_id="z") == qd.QUEUED_STATUS
+        assert runner.run_goal_in_background(
+            3,
+            user_id="z",
+            concurrency_principal="user:z",
+        ) == qd.QUEUED_STATUS
         assert jobs and jobs[0]["goal_id"] == 3
         assert jobs[0]["sig"]
     finally:

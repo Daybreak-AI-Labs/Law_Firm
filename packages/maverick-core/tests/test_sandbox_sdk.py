@@ -1,22 +1,14 @@
-"""Sandbox SDK v2: contract conformance + entry-point loading."""
+"""Structural contract for the two retained sandbox backends."""
 from __future__ import annotations
 
 import pytest
 from maverick.sandbox import sdk
-from maverick.sandbox.devcontainer import DevcontainerBackend
 from maverick.sandbox.docker import DockerBackend
-from maverick.sandbox.firecracker import FirecrackerBackend
-from maverick.sandbox.kubernetes import KubernetesBackend
 from maverick.sandbox.local import ExecResult, LocalBackend
-from maverick.sandbox.podman import PodmanBackend
-from maverick.sandbox.ssh import SSHBackend
-
-_IN_TREE = [LocalBackend, DockerBackend, PodmanBackend, DevcontainerBackend,
-            KubernetesBackend, FirecrackerBackend, SSHBackend]
 
 
-@pytest.mark.parametrize("backend_cls", _IN_TREE)
-def test_every_in_tree_backend_conforms(backend_cls):
+@pytest.mark.parametrize("backend_cls", [LocalBackend, DockerBackend])
+def test_every_retained_backend_conforms(backend_cls):
     assert sdk.conformance(backend_cls) == []
 
 
@@ -31,8 +23,7 @@ def test_conformance_flags_missing_exec():
     class Bad:
         workdir = "."
 
-    problems = sdk.conformance(Bad)
-    assert any("missing exec" in p for p in problems)
+    assert any("missing exec" in problem for problem in sdk.conformance(Bad))
 
 
 def test_conformance_flags_missing_timeout_kwarg():
@@ -42,8 +33,7 @@ def test_conformance_flags_missing_timeout_kwarg():
         def exec(self, cmd):
             return ExecResult(stdout="", stderr="", exit_code=0)
 
-    problems = sdk.conformance(NoTimeout)
-    assert any("timeout" in p for p in problems)
+    assert any("timeout" in problem for problem in sdk.conformance(NoTimeout))
 
 
 def test_conformance_accepts_var_keyword():
@@ -57,14 +47,14 @@ def test_conformance_accepts_var_keyword():
 
 
 def test_conformance_flags_missing_workdir():
-    class NoWd:
+    class NoWorkdir:
         def exec(self, cmd, timeout=None):
             return ExecResult(stdout="", stderr="", exit_code=0)
 
-    assert any("workdir" in p for p in sdk.conformance(NoWd))
+    assert any("workdir" in problem for problem in sdk.conformance(NoWorkdir))
 
 
-def test_capabilities_reports_optional_methods(tmp_path):
+def test_capabilities_reports_optional_methods():
     class WithFiles:
         workdir = "."
 
@@ -72,81 +62,25 @@ def test_capabilities_reports_optional_methods(tmp_path):
             return ExecResult(stdout="", stderr="", exit_code=0)
 
         def put_file(self, src, dst):
-            pass
+            return None
 
         def exec_authenticated_tests(self, request, timeout=None):
-            pass
+            return None
 
     assert sdk.capabilities(WithFiles()) == {
-        "exec", "put_file", "exec_authenticated_tests",
+        "exec",
+        "put_file",
+        "exec_authenticated_tests",
     }
 
 
-class _GoodExternal:
-    def __init__(self, workdir, timeout, **options):
-        self.workdir = workdir
-        self.timeout = timeout
-        self.options = options
-
-    def exec(self, cmd, timeout=None):
-        return ExecResult(stdout="ok", stderr="", exit_code=0)
-
-
-class _BadExternal:
-    def __init__(self, workdir, timeout, **options):
-        self.workdir = workdir
-
-    def exec(self, cmd):  # no timeout kwarg -> non-conformant
-        return ExecResult(stdout="", stderr="", exit_code=0)
-
-
-class _FakeEP:
-    def __init__(self, name, obj):
-        self.name = name
-        self._obj = obj
-
-    def load(self):
-        return self._obj
-
-
-def _install_eps(monkeypatch, *eps):
-    class _EPs:
-        def select(self, group):
-            return list(eps) if group == "maverick.sandboxes" else []
-
-    import importlib.metadata as md
-    monkeypatch.setattr(md, "entry_points", lambda: _EPs())
-
-
-def test_entry_point_backend_loads_and_conforms(monkeypatch, tmp_path):
-    _install_eps(monkeypatch, _FakeEP("warm", _GoodExternal))
-    assert sdk.installed_entry_point_names() == ("warm",)
-    sb = sdk.load_entry_point_backend("warm", workdir=tmp_path, timeout=30,
-                                      options={"region": "eu"})
-    assert isinstance(sb, _GoodExternal)
-    assert sb.options == {"region": "eu"}
-
-
-def test_entry_point_missing_raises_with_available(monkeypatch, tmp_path):
-    _install_eps(monkeypatch, _FakeEP("warm", _GoodExternal))
-    with pytest.raises(RuntimeError, match="not found.*warm"):
-        sdk.load_entry_point_backend("nope", workdir=tmp_path, timeout=30)
-
-
-def test_entry_point_nonconformant_refused(monkeypatch, tmp_path):
-    _install_eps(monkeypatch, _FakeEP("bad", _BadExternal))
-    with pytest.raises(RuntimeError, match="does not conform"):
-        sdk.load_entry_point_backend("bad", workdir=tmp_path, timeout=30)
-
-
-def test_build_sandbox_ep_prefix_routes_to_loader(monkeypatch, tmp_path):
-    _install_eps(monkeypatch, _FakeEP("warm", _GoodExternal))
-    from maverick.sandbox import build_sandbox
-    sb = build_sandbox(workdir=tmp_path, backend="ep:warm")
-    assert isinstance(sb, _GoodExternal)
+def test_sdk_has_no_external_loader_surface():
+    assert not hasattr(sdk, "installed_entry_point_names")
+    assert not hasattr(sdk, "load_entry_point_backend")
 
 
 def test_sdk_exports():
-    import maverick.sandbox as s
-    assert s.SDK_VERSION == 2
-    assert s.SandboxV2 is sdk.SandboxV2
+    import maverick.sandbox as sandbox
+
+    assert sandbox.SDK_VERSION == 2
+    assert sandbox.SandboxV2 is sdk.SandboxV2

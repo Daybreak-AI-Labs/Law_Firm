@@ -17,7 +17,9 @@ Alembic governs a revision graph:
 * **Additive-only for new versions.** A version added since the lock may not
   carry a destructive statement (``DROP TABLE``/``DROP COLUMN``/``RENAME``):
   those break a rolling deploy where old replicas still read the old schema.
-  Released versions are grandfathered (governed by the checksum, not re-judged).
+  An exact, code-reviewed data-retirement allowlist is the sole exception and
+  remains an offline maintenance step. Released versions are grandfathered
+  (governed by the checksum, not re-judged).
 
 Pure and offline (no DB). Surfaced as ``python -m maverick.migration_governance
 --ci`` (CI gate) and ``--regen`` (rewrite the lock after an intentional add).
@@ -48,6 +50,14 @@ _DESTRUCTIVE = (
     re.compile(r"\bALTER\s+TABLE\b[^;]*\bRENAME\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\bRENAME\s+COLUMN\b", re.IGNORECASE),
 )
+
+# Deliberately tiny exception set for reviewed data retirement.  Matching is
+# exact after whitespace normalization: an extra statement, another backend,
+# another version, or another object remains blocked.  schema_migrations still
+# classifies these statements as offline and requires a maintenance window.
+_APPROVED_DESTRUCTIVE_RETIREMENTS = {
+    ("sqlite", 39): ("DROP TABLE IF EXISTS harness_transfer_tried",),
+}
 
 
 def lock_path() -> Path:
@@ -128,6 +138,17 @@ def _destructive_statements(statements: list[str]) -> list[str]:
     return hits
 
 
+def _approved_destructive_retirement(
+    backend: str, version: int, statements: list[str],
+) -> bool:
+    expected = _APPROVED_DESTRUCTIVE_RETIREMENTS.get((backend, version))
+    if expected is None:
+        return False
+    return tuple(_normalize(stmt) for stmt in statements) == tuple(
+        _normalize(stmt) for stmt in expected
+    )
+
+
 def lock_problems(
     lock: dict | None, lads: dict[str, dict[int, list[str]]] | None = None,
 ) -> list[str]:
@@ -159,7 +180,9 @@ def lock_problems(
             else:
                 pending_regen = True
                 destructive = _destructive_statements(lads[backend][int(version)])
-                if destructive:
+                if destructive and not _approved_destructive_retirement(
+                    backend, int(version), lads[backend][int(version)],
+                ):
                     problems.append(
                         f"{backend}: new migration v{version} has destructive "
                         f"statement(s) {destructive}; new migrations must be "
@@ -208,7 +231,9 @@ def regen_blockers(
         for version in current:
             if version not in prior:
                 dead = _destructive_statements(lads[backend][int(version)])
-                if dead:
+                if dead and not _approved_destructive_retirement(
+                    backend, int(version), lads[backend][int(version)],
+                ):
                     blockers.append(
                         f"{backend}: new migration v{version} has destructive "
                         f"statement(s) {dead}")

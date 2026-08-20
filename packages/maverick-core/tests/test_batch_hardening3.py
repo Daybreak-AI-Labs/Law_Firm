@@ -24,11 +24,3 @@ def test_half_open_clears_flag_on_failure():
     with pytest.raises(RuntimeError):
         cb.call(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert cb._probe_in_flight is False
-
-
-def test_home_assistant_safe_seg():
-    from maverick.tools.home_assistant_tool import _safe_seg
-    assert _safe_seg("light.living_room")
-    assert not _safe_seg("../config")
-    assert not _safe_seg("a/b")
-    assert not _safe_seg("")

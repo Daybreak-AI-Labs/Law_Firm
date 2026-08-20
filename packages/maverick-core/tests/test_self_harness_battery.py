@@ -16,6 +16,13 @@ from maverick import self_harness as sh
 from maverick import self_improvement as si
 from maverick.file_lock import private_path_is_restricted
 
+from ._operator_harness import (
+    TEST_MATTER_ID,
+    TEST_OWNER,
+    run_operator_harness,
+    scoped_records,
+)
+
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
@@ -181,7 +188,7 @@ def test_unscoped_secret_in_failure_msg_not_recalled(monkeypatch, tmp_path):
     store = tmp_path / "s.json"
     ctrl = _enable_si(monkeypatch)
     recs = _recs(3, msg="boom key sk-ant-abcdefghij1234567890XYZ")
-    sh.run_self_harness(recs, model_id="M", min_support=3, controller=ctrl,
+    run_operator_harness(recs, model_id="M", min_support=3, controller=ctrl,
                         path=store, **ENOUGH, **GOOD_AB)
     assert "sk-ant-abcdefghij" not in sh.recall_addendum("M", store)
 
@@ -190,7 +197,7 @@ def test_unscoped_secret_in_failure_msg_not_recalled(monkeypatch, tmp_path):
 def test_model_isolation_under_naming(monkeypatch, tmp_path, a, b):
     store = tmp_path / "s.json"
     ctrl = _enable_si(monkeypatch)
-    sh.run_self_harness(_recs(3, model=a), model_id=a, min_support=3,
+    run_operator_harness(_recs(3, model=a), model_id=a, min_support=3,
                         controller=ctrl, path=store, **ENOUGH, **GOOD_AB)
     # b never targeted -> b's recall is empty even if a was learned.
     assert sh.recall_addendum(b, store) == "" or b == a
@@ -259,7 +266,7 @@ def test_gate_matrix(monkeypatch, tmp_path, si_on, frozen, n, dry, promote):
     held_in = [f"i{i}" for i in range(min(n, 2))]
     held_out = [f"o{i}" for i in range(n - len(held_in))]
     ab = {} if dry else GOOD_AB
-    rep = sh.run_self_harness(_recs(3), model_id="M", min_support=3,
+    rep = run_operator_harness(_recs(3), model_id="M", min_support=3,
                               held_in=held_in, held_out=held_out, controller=ctrl,
                               path=store, **ab)
     assert (rep.promoted > 0) is promote
@@ -288,7 +295,7 @@ def test_corrupt_store_loads_empty(monkeypatch, tmp_path, content):
 def test_store_is_private_after_write(monkeypatch, tmp_path):
     store = tmp_path / "s.json"
     ctrl = _enable_si(monkeypatch)
-    sh.run_self_harness(_recs(3), model_id="M", min_support=3, controller=ctrl,
+    run_operator_harness(_recs(3), model_id="M", min_support=3, controller=ctrl,
                         path=store, **ENOUGH, **GOOD_AB)
     assert store.exists() and private_path_is_restricted(store)
 
@@ -314,7 +321,7 @@ def test_concurrent_passes_keep_store_valid(monkeypatch, tmp_path):
                                             ledger=si.PromotionLedger())
         recs = [{"model_id": "M", "failure_class": f"c{k}",
                  "goal_text": f"task run {i}", "failure_msg": f"e{k}"} for i in range(3)]
-        sh.run_self_harness(recs, model_id="M", min_support=3,
+        run_operator_harness(recs, model_id="M", min_support=3,
                             held_in=["task run 0", "task run 1"],
                             held_out=["u0", "u1", "u2", "u3", "u4"], controller=ctrl,
                             path=store, **GOOD_AB)
@@ -343,7 +350,7 @@ def test_fifty_models_stay_isolated(monkeypatch, tmp_path):
     for k in range(50):
         ctrl = si.SelfImprovementController(frozen_fn=lambda: False,
                                             ledger=si.PromotionLedger())
-        sh.run_self_harness(_recs(3, model=f"m{k}", fclass=f"c{k}"),
+        run_operator_harness(_recs(3, model=f"m{k}", fclass=f"c{k}"),
                             model_id=f"m{k}", min_support=3, controller=ctrl,
                             path=store, **ENOUGH, **GOOD_AB)
     addenda = sh.load_addenda(store)
@@ -373,7 +380,7 @@ def test_recall_appends_only_when_enabled(monkeypatch, tmp_path):
     assert sh.recall_addendum("UNKNOWN") == ""         # unknown model -> empty
 
 
-def test_runner_pass_end_to_end(monkeypatch, tmp_path):
+def test_runner_pass_evaluates_offline_without_runtime_apply(monkeypatch, tmp_path):
     from maverick import config
     from maverick import self_improvement_runner as runner
 
@@ -385,9 +392,11 @@ def test_runner_pass_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setattr(sh, "_store_path", lambda: store)
     ctrl = _enable_si(monkeypatch)
     rep = runner.run_self_harness_pass(
-        _recs(3), model_id="M", controller=ctrl, **ENOUGH, **GOOD_AB)
-    assert rep.mined == 1 and rep.promoted == 1
-    assert "timeout" in sh.recall_addendum("M", store).lower()
+        scoped_records(_recs(3)), model_id="M", controller=ctrl,
+        project_id=TEST_MATTER_ID, owner=TEST_OWNER, **ENOUGH, **GOOD_AB,
+    )
+    assert rep.mined == 1 and rep.validated == 1 and rep.promoted == 0
+    assert not store.exists()
 
 
 # ==========================================================================
@@ -507,7 +516,7 @@ def test_self_harness_fuzz(monkeypatch, tmp_path):
         before = sh.load_addenda(store)
 
         try:
-            rep = sh.run_self_harness(
+            rep = run_operator_harness(
                 recs, model_id=target, min_support=min_support,
                 held_in=held_in or None, held_out=held_out or None,
                 score_with=sw, score_without=wo, controller=ctrl, path=store)
@@ -642,7 +651,7 @@ def test_self_harness_model_based(monkeypatch, tmp_path):
         def wo(a, c):
             return 0.4
 
-        rep = sh.run_self_harness(
+        rep = run_operator_harness(
             recs, model_id=target, min_support=3,
             held_in=["a", "b"], held_out=["c", "d", "e", "f", "g"],
             score_with=sw, score_without=wo,

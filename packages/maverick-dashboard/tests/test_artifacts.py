@@ -16,24 +16,23 @@ def _world(tmp_path, monkeypatch):
 
 def test_goal_page_renders_artifacts(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("Refresh forecast", "", domain="finance_cashflow")
-    w.add_artifact(gid, "table", "Cash forecast", "| Week | Net |\n| --- | --- |\n| W1 | 300 |")
-    w.add_artifact(gid, "markdown", "Variance memo", "# Memo\n\nNet up 50.")
+    gid = w.create_goal("Review obligations", "", domain="legal_obligations")
+    w.add_artifact(gid, "table", "Deadline tracker", "| Date | Duty |\n| --- | --- |\n| May 1 | Notice |")
+    w.add_artifact(gid, "markdown", "Counsel memo", "# Memo\n\nNotice review needed.")
     t = client.get(f"/chat/goal/{gid}").text
-    assert 'class="artifacts"' in t
-    assert "Cash forecast" in t and "Variance memo" in t
+    assert "<h2>Artifacts</h2>" in t
+    assert "Deadline tracker" in t and "Counsel memo" in t
     assert '<table class="deliverable__table">' in t   # table artifact -> grid
-    assert "<td>300</td>" in t
-    assert "Net up 50." in t                            # markdown artifact -> text body
+    assert "<td>Notice</td>" in t
+    assert "Notice review needed." in t                  # markdown artifact -> text body
 
 
 def test_artifact_versions_shown(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("g", "", domain="finance_cashflow")
+    gid = w.create_goal("g", "", domain="legal_obligations")
     w.add_artifact(gid, "text", "Note", "ZZZ_BODY_ONE")
     w.add_artifact(gid, "text", "Note", "ZZZ_BODY_TWO")
     t = client.get(f"/chat/goal/{gid}").text
-    assert "v2" in t and "2 versions" in t
     assert "ZZZ_BODY_TWO" in t          # latest version rendered
     assert "ZZZ_BODY_ONE" not in t      # older version not rendered (latest only)
 
@@ -53,7 +52,7 @@ def test_goal_without_artifacts_has_no_panel(tmp_path, monkeypatch):
     gid = w.create_goal("plain", "")
     w.set_goal_status(gid, "done", result="just text")
     t = client.get(f"/chat/goal/{gid}").text
-    assert 'class="artifacts"' not in t
+    assert "<h2>Artifacts</h2>" not in t
 
 
 def test_artifact_history_endpoint_diffs(tmp_path, monkeypatch):
@@ -69,10 +68,12 @@ def test_artifact_history_endpoint_diffs(tmp_path, monkeypatch):
     assert "-beta" in vs[1]["diff"] and "+gamma" in vs[1]["diff"]
 
 
-def test_goal_page_shows_version_history_disclosure(tmp_path, monkeypatch):
+def test_goal_page_autoescapes_hostile_artifact_content(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    gid = w.create_goal("g", "", domain="finance_cashflow")
-    w.add_artifact(gid, "text", "Note", "v one")
-    w.add_artifact(gid, "text", "Note", "v two")     # 2 versions -> disclosure shows
+    gid = w.create_goal("g", "", domain="legal_obligations")
+    hostile = '<img src=x onerror="alert(1)"><script>alert(2)</script>'
+    w.add_artifact(gid, "text", hostile, hostile)
     t = client.get(f"/chat/goal/{gid}").text
-    assert "artifact__history" in t and "Version history" in t
+    assert hostile not in t
+    assert "&lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in t
+    assert "&lt;script&gt;alert(2)&lt;/script&gt;" in t

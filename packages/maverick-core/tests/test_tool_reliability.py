@@ -75,7 +75,6 @@ class TestRunWithRetry:
         assert tool_reliability.is_retry_safe("unknown_plugin_mutation") is False
         assert tool_reliability.is_retry_safe("shell") is False       # high
         assert tool_reliability.is_retry_safe("email") is False       # high
-        assert tool_reliability.is_retry_safe("github_issues") is False
         assert tool_reliability.is_retry_safe("gitlab_issues") is False
         assert tool_reliability.is_retry_safe("anki") is False
 

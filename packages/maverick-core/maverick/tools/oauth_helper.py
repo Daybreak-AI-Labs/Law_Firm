@@ -131,7 +131,7 @@ def _authorize_url(args: dict[str, Any]) -> str:
             return f"ERROR: {req} is required"
     from urllib.parse import urlencode
 
-    from ..mcp_oauth import generate_pkce
+    from ..oauth_providers import generate_pkce
     verifier, challenge = generate_pkce()
     params = {
         "response_type": "code",

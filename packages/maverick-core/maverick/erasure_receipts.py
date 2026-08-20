@@ -27,7 +27,8 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-RECEIPT_SCHEMA = "maverick.erasure-receipt.v2"
+RECEIPT_SCHEMA = "maverick.erasure-receipt.v3"
+_LEGACY_RECEIPT_SCHEMA = "maverick.erasure-receipt.v2"
 ERASURE_CLOSURE_SCHEMA = "maverick.erasure-closure.v1"
 RECEIPT_RETENTION_DAYS = 365 * 7
 MAX_RECEIPT_IDS = 100_000
@@ -37,6 +38,27 @@ SOURCE_EPISODE_STORES = {
     "episode_fact_history": "fact_history",
 }
 GOAL_LINKED_STORES = (
+    "goals",
+    "turns",
+    "matter_turns",
+    "episodes",
+    *SOURCE_EPISODE_STORES,
+    "artifacts",
+    "attachments",
+    "goal_events",
+    "goal_origins",
+    "messages",
+    "processed_messages",
+    "questions",
+    "goal_feedback",
+    "share_links",
+    "release_audit_outbox",
+    "signoffs",
+    "signoff_audit_outbox",
+)
+RECEIPT_STORES = ("conversations", *GOAL_LINKED_STORES)
+_LEGACY_RECEIPT_STORES = (
+    "conversations",
     "goals",
     "turns",
     "episodes",
@@ -51,7 +73,10 @@ GOAL_LINKED_STORES = (
     "share_links",
     "signoffs",
 )
-RECEIPT_STORES = ("conversations", *GOAL_LINKED_STORES)
+_RECEIPT_STORES_BY_SCHEMA = {
+    _LEGACY_RECEIPT_SCHEMA: _LEGACY_RECEIPT_STORES,
+    RECEIPT_SCHEMA: RECEIPT_STORES,
+}
 AUXILIARY_ERASURE_STORES = (
     "attachment_files",
     "user_notes",
@@ -177,7 +202,9 @@ def validate_manifest(
         raise ErasureReceiptError("erasure receipt tenant is invalid")
     if expected_tenant is not None and tenant_id != expected_tenant:
         raise ErasureReceiptError("erasure receipt belongs to another tenant")
-    if value.get("schema") != RECEIPT_SCHEMA:
+    schema = value.get("schema")
+    schema_stores = _RECEIPT_STORES_BY_SCHEMA.get(schema)
+    if schema_stores is None:
         raise ErasureReceiptError("erasure receipt schema is unsupported")
 
     issued_at = _parse_utc(value.get("issued_at"), "issued_at")
@@ -202,13 +229,13 @@ def validate_manifest(
         require_nonempty=False,
     )
     expected_stores = value.get("expected_stores")
-    if expected_stores != list(RECEIPT_STORES):
+    if expected_stores != list(schema_stores):
         raise ErasureReceiptError(
             "erasure receipt does not cover the complete store scope"
         )
 
     normalized = {
-        "schema": RECEIPT_SCHEMA,
+        "schema": schema,
         "receipt_id": receipt_id,
         "tenant_id": tenant_id,
         "issued_at": _utc(issued_at),
@@ -216,7 +243,7 @@ def validate_manifest(
         "conversation_ids": conversation_ids,
         "goal_ids": goal_ids,
         "episode_ids": episode_ids,
-        "expected_stores": list(RECEIPT_STORES),
+        "expected_stores": list(schema_stores),
     }
     if require_signature:
         payload_sha256 = value.get("payload_sha256")

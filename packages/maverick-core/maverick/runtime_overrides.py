@@ -33,8 +33,8 @@ log = logging.getLogger(__name__)
 OVERRIDES_PATH = data_dir("runtime-overrides.toml")
 _VALID_TOOL_NAME = re.compile(r"^[a-z0-9_-]+$")
 
-# One overlay file holds every surface (denied_tools, models, budget, plugins,
-# allowed_models, mcp, style); each mutator re-reads the whole overlay and
+# One overlay file holds every retained surface (denied_tools, model, budget,
+# allowed_models, style); each mutator re-reads the whole overlay and
 # rewrites it. Two dashboard requests racing would otherwise lose one change --
 # e.g. a set_budget that read a stale denied_tools drops a just-applied
 # disable_tool, silently re-enabling a tool the operator just denied. Serialize
@@ -44,23 +44,7 @@ _mutation_context = threading.local()
 _LKG_LIMIT = 8
 _LOAD_FAILURE_LIMIT = 32
 _MAX_OVERRIDE_BYTES = 1024 * 1024
-_KNOWN_TOP_LEVEL = frozenset(
-    {"security", "models", "budget", "plugins", "access", "styles", "mcp_servers"}
-)
-_MCP_SPEC_KEYS = frozenset(
-    {
-        "command",
-        "args",
-        "env",
-        "inherit_env",
-        "pin_sha256",
-        "url",
-        "headers",
-        "auth_token",
-        "oauth",
-        "enabled",
-    }
-)
+_KNOWN_TOP_LEVEL = frozenset({"security", "models", "budget", "access", "styles"})
 _last_known_good: OrderedDict[str, dict] = OrderedDict()
 _announced_load_failures: OrderedDict[tuple[str, str], None] = OrderedDict()
 
@@ -140,28 +124,6 @@ def _reject_unknown_keys(table: dict, allowed: set[str] | frozenset[str], label:
         raise ValueError(f"{label} contains unknown key(s): {', '.join(unknown)}")
 
 
-def _require_optional_type(
-    table: dict,
-    key: str,
-    expected_type: type,
-    *,
-    label: str,
-) -> None:
-    if key in table and not isinstance(table[key], expected_type):
-        raise ValueError(f"{label} must be a {expected_type.__name__}")
-
-
-def _require_string_map(table: dict, key: str, *, label: str) -> None:
-    if key not in table:
-        return
-    value = table[key]
-    if not isinstance(value, dict) or any(
-        not isinstance(map_key, str) or not isinstance(map_value, str)
-        for map_key, map_value in value.items()
-    ):
-        raise ValueError(f"{label} must be a string-to-string table")
-
-
 def _require_string_list(
     table: dict,
     key: str,
@@ -202,14 +164,16 @@ def _validate_loaded_state(state: object) -> dict:
     )
 
     models = _require_table(state, "models")
-    for role, model in models.items():
+    _reject_unknown_keys(models, {"default"}, "models")
+    if "default" in models:
+        model = models["default"]
         if (
-            not isinstance(role, str)
-            or not _VALID_ROLE.fullmatch(role)
-            or not isinstance(model, str)
+            not isinstance(model, str)
             or not _VALID_MODEL.fullmatch(model.strip())
+            or ":" not in model
+            or not all(part.strip() for part in model.split(":", 1))
         ):
-            raise ValueError("models contains an invalid role or model id")
+            raise ValueError("models.default must be an exact provider:model")
 
     budget = _require_table(state, "budget")
     _reject_unknown_keys(budget, {"max_dollars"}, "budget")
@@ -224,21 +188,6 @@ def _validate_loaded_state(state: object) -> dict:
         if not math.isfinite(amount) or amount <= 0:
             raise ValueError("budget.max_dollars must be a positive number")
 
-    plugins = _require_table(state, "plugins")
-    _reject_unknown_keys(plugins, {"enabled", "disabled"}, "plugins")
-    _require_string_list(
-        plugins,
-        "enabled",
-        _VALID_PLUGIN,
-        label="plugins.enabled",
-    )
-    _require_string_list(
-        plugins,
-        "disabled",
-        _VALID_PLUGIN,
-        label="plugins.disabled",
-    )
-
     access = _require_table(state, "access")
     _reject_unknown_keys(access, {"allowed_models"}, "access")
     _require_string_list(
@@ -247,6 +196,13 @@ def _validate_loaded_state(state: object) -> dict:
         _VALID_MODEL,
         label="access.allowed_models",
     )
+    for model in access.get("allowed_models", []):
+        if ":" not in model or not all(
+            part.strip() for part in model.split(":", 1)
+        ):
+            raise ValueError(
+                "access.allowed_models entries must be exact provider:model specs"
+            )
 
     styles = _require_table(state, "styles")
     _reject_unknown_keys(styles, {"active"}, "styles")
@@ -254,73 +210,6 @@ def _validate_loaded_state(state: object) -> dict:
         not isinstance(styles["active"], str) or not styles["active"].strip()
     ):
         raise ValueError("styles.active must be a non-empty string")
-
-    servers = _require_table(state, "mcp_servers")
-    for name, spec in servers.items():
-        if (
-            not isinstance(name, str)
-            or not _VALID_SERVER_NAME.fullmatch(name)
-            or not isinstance(spec, dict)
-        ):
-            raise ValueError("mcp_servers contains an invalid server definition")
-        _reject_unknown_keys(spec, _MCP_SPEC_KEYS, f"mcp_servers.{name}")
-
-        label = f"mcp_servers.{name}"
-        _require_optional_type(spec, "command", str, label=f"{label}.command")
-        _require_optional_type(spec, "url", str, label=f"{label}.url")
-        has_command = "command" in spec
-        has_url = "url" in spec
-        if has_command == has_url:
-            raise ValueError(
-                f"{label} must define exactly one non-empty command or url"
-            )
-        selected = spec["command"] if has_command else spec["url"]
-        if not selected.strip():
-            raise ValueError(
-                f"{label} must define exactly one non-empty command or url"
-            )
-
-        _require_string_list(
-            spec,
-            "args",
-            re.compile(r"^[^\0\r\n]*$"),
-            label=f"{label}.args",
-        )
-        _require_string_map(spec, "env", label=f"{label}.env")
-        _require_string_map(spec, "headers", label=f"{label}.headers")
-        _require_optional_type(
-            spec,
-            "inherit_env",
-            bool,
-            label=f"{label}.inherit_env",
-        )
-        _require_optional_type(
-            spec,
-            "auth_token",
-            str,
-            label=f"{label}.auth_token",
-        )
-        _require_optional_type(
-            spec,
-            "pin_sha256",
-            str,
-            label=f"{label}.pin_sha256",
-        )
-        _require_optional_type(spec, "oauth", dict, label=f"{label}.oauth")
-        if "enabled" in spec and not isinstance(spec["enabled"], bool):
-            raise ValueError(f"{label}.enabled must be a boolean")
-        from .mcp_client import MCPServerSpec
-
-        try:
-            MCPServerSpec.from_config(
-                name,
-                {key: value for key, value in spec.items() if key != "enabled"},
-            )
-        except Exception as exc:
-            # MCPServerSpec is a second validation layer. Normalize all of its
-            # failures so callers never mistake a schema/delegation bug for an
-            # absent runtime policy and fall back to unrestricted defaults.
-            raise ValueError(f"{label} is invalid") from exc
 
     return state
 
@@ -350,8 +239,8 @@ def _load() -> dict:
     try:
         state = _validate_loaded_state(_read_overlay(OVERRIDES_PATH))
     except Exception as exc:
-        # Every read, schema, and delegated MCP validation failure has the same
-        # fail-closed contract. Critical consumers special-case
+        # Every read and schema-validation failure has the same fail-closed
+        # contract. Critical consumers special-case
         # RuntimeOverridesSecurityError; leaking a KeyError/TypeError here lets
         # their generic resilience catches silently discard the entire policy.
         return _recover_or_raise(key, exc)
@@ -424,39 +313,21 @@ def denied_tools() -> set[str]:
     return valid
 
 
-# A model spec is a bare id ("claude-sonnet-4-6") or "provider:model-id"
-# ("anthropic:claude-opus-4-8"). Keep the charset tight so a hand-edited /
-# corrupt override can't push junk into model resolution.
+# Firm model authority is one exact ``provider:model-id``. Keep the charset
+# tight so a hand-edited / corrupt override can't push junk into resolution.
 _VALID_MODEL = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
-# Override keys under [models]: a role name (orchestrator, coder, ...) or the
-# special "default" that applies to every role. Tight charset so a hand-edited
-# file can't inject junk keys.
-_VALID_ROLE = re.compile(r"^[a-z_]{1,40}$")
 
 
 def _models_overlay() -> dict[str, str]:
-    """The dashboard's ``[models]`` table: ``{"default": spec, "<role>": spec}``.
-    Re-validated on read; junk keys/values are dropped."""
+    """Return the dashboard's one run-wide model pin, if configured."""
     raw = _load().get("models") or {}
-    out: dict[str, str] = {}
-    for k, v in raw.items():
-        if (isinstance(k, str) and _VALID_ROLE.fullmatch(k)
-                and isinstance(v, str) and _VALID_MODEL.fullmatch(v.strip())):
-            out[k] = v.strip()
-    return out
+    value = raw.get("default")
+    return {"default": value.strip()} if isinstance(value, str) else {}
 
 
 def default_model_override() -> str | None:
-    """The dashboard's global default model pin, or None. Consulted by
-    ``llm.model_for_role`` below the user's ``config.toml`` ``[models]`` and
-    above the built-in ``ROLE_MODELS`` defaults."""
+    """The dashboard's one run-wide exact model pin, or ``None``."""
     return _models_overlay().get("default")
-
-
-def role_model_override(role: str) -> str | None:
-    """The dashboard's per-role model pin for ``role``, or None. Wins over the
-    global default; consulted by ``llm.model_for_role`` at the same precedence."""
-    return _models_overlay().get(role) if role != "default" else None
 
 
 def budget_override() -> float | None:
@@ -471,24 +342,6 @@ def budget_override() -> float | None:
     return v if math.isfinite(v) and v > 0 else None
 
 
-# Plugin / entry-point name: alnum plus _.@- (covers "weather", "weather@dist").
-_VALID_PLUGIN = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
-
-
-def plugin_overlay() -> tuple[set[str], set[str]]:
-    """The dashboard's ``[plugins]`` overlay as ``(force_enabled, force_disabled)``
-    name sets. Consulted by ``plugins._allowed_plugin_names`` -- ``enabled`` adds
-    to the config allowlist, ``disabled`` removes from it (disable wins).
-    Re-validated on read; junk entries dropped."""
-    p = _load().get("plugins") or {}
-
-    def _clean(key: str) -> set[str]:
-        return {n.strip() for n in (p.get(key) or [])
-                if isinstance(n, str) and _VALID_PLUGIN.fullmatch(n.strip())}
-    on, off = _clean("enabled"), _clean("disabled")
-    return on - off, off  # disable wins if a name appears in both
-
-
 def allowed_models() -> set[str]:
     """The admin allow-list of model specs (dashboard ``[access] allowed_models``).
     When non-empty, ``llm.model_for_role`` caps every role to this set and the
@@ -499,72 +352,16 @@ def allowed_models() -> set[str]:
             if isinstance(s, str) and _VALID_MODEL.fullmatch(s.strip())}
 
 
-# MCP server name: bare TOML key charset (no dots, so the ``[mcp_servers.<name>]``
-# header is unambiguous). The kernel revalidates the whole spec at load time.
-_VALID_SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-def mcp_overlay() -> dict[str, dict]:
-    """Dashboard-added MCP servers as ``{name: spec_dict}`` (overlay
-    ``[mcp_servers.<name>]``). Unioned into ``mcp_client.load_mcp_specs_from_config``
-    so a server added from the dashboard runs on the next goal with no config.toml
-    edit -- config wins on a name clash. Re-validated on read: a name must be a
-    bare key and the spec a dict carrying ``command`` (stdio) or ``url`` (http)."""
-    raw = _load().get("mcp_servers") or {}
-    out: dict[str, dict] = {}
-    for name, spec in raw.items():
-        if (isinstance(name, str) and _VALID_SERVER_NAME.fullmatch(name)
-                and isinstance(spec, dict)
-                and ("command" in spec or "url" in spec)):
-            out[name] = spec
-    return out
-
-
-def _toml_inline(value) -> str:
-    """Render a scalar / list / string-map as a TOML inline value. Used for the
-    ``[mcp_servers.<name>]`` blocks (args list, env/headers/oauth inline tables)
-    -- the rest of the overlay is plain string lists handled inline above."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, str):
-        return _toml_string(value)
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ", ".join(
-            f"{_toml_string(str(k))} = {_toml_inline(v)}" for k, v in value.items()) + "}"
-    raise ValueError(f"cannot serialise {type(value).__name__} to TOML")
-
-
-def _render_mcp(servers: dict[str, dict]) -> str:
-    """Render ``[mcp_servers.<name>]`` tables. Names are bare keys (validated by
-    add_mcp_server) so the header is unambiguous; these tables come LAST in the
-    file so no top-level key is captured by a subtable."""
-    body = ""
-    for name in sorted(servers):
-        body += f"\n[mcp_servers.{name}]\n"
-        for key, val in servers[name].items():
-            if key == "name":  # the table key already carries the name
-                continue
-            body += f"{_toml_string(str(key))} = {_toml_inline(val)}\n"
-    return body
-
-
 def _write_state(denied: set[str], models: dict[str, str] | None,
                  budget: float | None,
-                 plugins: tuple[set[str], set[str]] | None = None,
                  allowed: set[str] | None = None,
-                 mcp: dict[str, dict] | None = None,
                  style: str | None = None) -> None:
     """Serialise the whole overlay: [security] denied_tools + optional [models]
-    (default + per-role) + [budget] max_dollars + [plugins] enabled/disabled +
-    [access] allowed_models + [mcp_servers.<name>] tables. One file holds every
+    (one run-wide default) + [budget] max_dollars + [access] allowed_models +
+    [styles] active. One file holds every retained
     surface, so each write renders the full state -- changing one must not drop
-    the others. Optional params default to the on-disk overlay so the existing
-    callers preserve what they don't touch. Atomic write at 0o600; no tomli-w
-    dependency.
+    the others. Optional params default to the on-disk overlay so existing
+    callers preserve what they don't touch. Atomic write at 0o600.
     """
     OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
     rendered = ", ".join(_toml_string(n) for n in sorted(denied))
@@ -577,20 +374,9 @@ def _write_state(denied: set[str], models: dict[str, str] | None,
     )
     if models:
         body += "\n[models]\n"
-        # "default" first (if present), then roles sorted -- deterministic.
-        ordered = (["default"] if "default" in models else []) \
-            + sorted(k for k in models if k != "default")
-        for k in ordered:
-            body += f"{k} = {_toml_string(models[k])}\n"
+        body += f"default = {_toml_string(models['default'])}\n"
     if budget is not None:
         body += f"\n[budget]\nmax_dollars = {float(budget)}\n"
-    on, off = plugin_overlay() if plugins is None else plugins
-    if on or off:
-        body += "\n[plugins]\n"
-        if on:
-            body += f"enabled = [{', '.join(_toml_string(n) for n in sorted(on))}]\n"
-        if off:
-            body += f"disabled = [{', '.join(_toml_string(n) for n in sorted(off))}]\n"
     allow = allowed_models() if allowed is None else allowed
     if allow:
         body += ("\n[access]\nallowed_models = ["
@@ -598,11 +384,6 @@ def _write_state(denied: set[str], models: dict[str, str] | None,
     active_style = style_override() if style is None else style
     if active_style:
         body += f"\n[styles]\nactive = {_toml_string(active_style)}\n"
-    # MCP server tables come last: once a subtable header is emitted every
-    # following key belongs to it, so no top-level section may follow.
-    servers = mcp_overlay() if mcp is None else mcp
-    if servers:
-        body += _render_mcp(servers)
     # Unique temp + os.replace (0600): a fixed ".toml.tmp" collides under two
     # concurrent writers -- one os.replace moves it out from under the other.
     from .file_lock import atomic_write_text
@@ -629,17 +410,14 @@ def _validate_tool_name(name: str) -> str:
 
 def _validate_model(model: str) -> str:
     m = (model or "").strip()
-    if not _VALID_MODEL.fullmatch(m):
-        raise ValueError("invalid model id")
+    if (
+        not _VALID_MODEL.fullmatch(m)
+        or ":" not in m
+        or not all(part.strip() for part in m.split(":", 1))
+        or m.casefold() == "openrouter:auto"
+    ):
+        raise ValueError("model must be an exact provider:model")
     return m
-
-
-def _validate_role(role: str) -> str:
-    r = (role or "").strip().lower()
-    if r == "default" or not _VALID_ROLE.fullmatch(r):
-        # the global pin goes through set_default_model, not the per-role path
-        raise ValueError("invalid role")
-    return r
 
 
 @_serialized
@@ -676,24 +454,9 @@ def set_default_model(model: str) -> str:
 
 @_serialized
 def clear_default_model() -> None:
-    """Drop the global default model pin (per-role pins are untouched)."""
+    """Drop the dashboard's global model pin."""
     models = _models_overlay()
     models.pop("default", None)
-    _write_state(denied_tools(), models or None, budget_override())
-
-
-@_serialized
-def set_role_models(updates: dict[str, str | None]) -> None:
-    """Batch set/clear per-role model pins in one write. A falsy value clears
-    that role. Invalid role/model ids raise ValueError before anything writes."""
-    models = _models_overlay()
-    cleaned = {_validate_role(role): (_validate_model(spec) if spec else None)
-               for role, spec in updates.items()}
-    for r, spec in cleaned.items():
-        if spec:
-            models[r] = spec
-        else:
-            models.pop(r, None)
     _write_state(denied_tools(), models or None, budget_override())
 
 
@@ -741,49 +504,6 @@ def clear_style() -> None:
     _write_state(denied_tools(), _models_overlay() or None, budget_override(), style="")
 
 
-def _validate_plugin(name: str) -> str:
-    n = (name or "").strip()
-    if not _VALID_PLUGIN.fullmatch(n):
-        raise ValueError("invalid plugin name")
-    return n
-
-
-def _set_plugins(on: set[str], off: set[str]) -> None:
-    _write_state(denied_tools(), _models_overlay() or None, budget_override(),
-                 (on, off))
-
-
-@_serialized
-def enable_plugin(name: str) -> None:
-    """Force-enable a plugin from the dashboard (adds it to the allowlist)."""
-    n = _validate_plugin(name)
-    on, off = plugin_overlay()
-    on.add(n)
-    off.discard(n)
-    _set_plugins(on, off)
-
-
-@_serialized
-def disable_plugin(name: str) -> None:
-    """Force-disable a plugin from the dashboard (removes it from the allowlist,
-    even when config.toml enables it)."""
-    n = _validate_plugin(name)
-    on, off = plugin_overlay()
-    off.add(n)
-    on.discard(n)
-    _set_plugins(on, off)
-
-
-@_serialized
-def reset_plugin(name: str) -> None:
-    """Clear any dashboard plugin override, reverting to config.toml."""
-    n = _validate_plugin(name)
-    on, off = plugin_overlay()
-    on.discard(n)
-    off.discard(n)
-    _set_plugins(on, off)
-
-
 @_serialized
 def set_allowed_models(specs) -> set[str]:
     """Set the admin model allow-list (an empty list clears it). Validates each
@@ -793,56 +513,17 @@ def set_allowed_models(specs) -> set[str]:
         m = (str(s) or "").strip()
         if not m:
             continue
-        if not _VALID_MODEL.fullmatch(m):
-            raise ValueError("invalid model id")
-        allow.add(m)
+        allow.add(_validate_model(m))
     _write_state(denied_tools(), _models_overlay() or None, budget_override(),
                  allowed=allow)
     return allow
-
-
-@_serialized
-def add_mcp_server(name: str, spec: dict) -> dict:
-    """Add (or replace) a dashboard-managed MCP server. Validates the spec the
-    same way the kernel will at load time (``MCPServerSpec.from_config`` -- the
-    subprocess-injection / url guards), stores the normalised dict, and returns
-    it. Raises ValueError on a bad name or spec; config.toml is never touched."""
-    n = (name or "").strip()
-    if not _VALID_SERVER_NAME.fullmatch(n):
-        raise ValueError("invalid MCP server name")
-    if not isinstance(spec, dict) or ("command" not in spec and "url" not in spec):
-        raise ValueError("MCP server needs a command (stdio) or url (http)")
-    from .mcp_client import MCPServerSpec  # lazy: avoid an import cycle
-    stored = MCPServerSpec.from_config(n, spec).to_dict()
-    servers = mcp_overlay()
-    servers[n] = stored
-    _write_state(denied_tools(), _models_overlay() or None, budget_override(),
-                 mcp=servers)
-    return stored
-
-
-@_serialized
-def remove_mcp_server(name: str) -> bool:
-    """Remove a dashboard-managed MCP server. Returns True if one was removed.
-    Only clears a dashboard-added server; a config.toml server is not touched."""
-    n = (name or "").strip()
-    servers = mcp_overlay()
-    if n not in servers:
-        return False
-    del servers[n]
-    _write_state(denied_tools(), _models_overlay() or None, budget_override(),
-                 mcp=servers)
-    return True
 
 
 __all__ = [
     "RuntimeOverridesSecurityError",
     "denied_tools", "disable_tool", "enable_tool",
     "default_model_override", "set_default_model", "clear_default_model",
-    "role_model_override", "set_role_models",
     "budget_override", "set_budget", "clear_budget",
-    "plugin_overlay", "enable_plugin", "disable_plugin", "reset_plugin",
     "allowed_models", "set_allowed_models",
-    "mcp_overlay", "add_mcp_server", "remove_mcp_server",
     "OVERRIDES_PATH",
 ]

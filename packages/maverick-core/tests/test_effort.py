@@ -9,6 +9,8 @@ OPUS = "claude-opus-4-8"
 SONNET = "claude-sonnet-4-6"
 HAIKU = "claude-haiku-4-5"
 SONNET45 = "claude-sonnet-4-5"
+EXACT_OPUS = f"anthropic:{OPUS}"
+EXACT_SONNET = f"anthropic:{SONNET}"
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +29,28 @@ def test_effort_supported_matrix():
     assert effort_supported(SONNET) is True
     assert effort_supported(HAIKU) is False     # haiku 4.5 rejects effort
     assert effort_supported(SONNET45) is False  # sonnet 4.5 rejects effort
+
+
+def test_exact_anthropic_pin_has_bare_model_effort_parity():
+    assert effort_supported(EXACT_OPUS) == effort_supported(OPUS)
+    assert effort_supported(EXACT_SONNET) == effort_supported(SONNET)
+    for level in ("low", "medium", "high", "xhigh", "max"):
+        assert effort_for_model(level, EXACT_OPUS) == effort_for_model(level, OPUS)
+        assert effort_for_model(level, EXACT_SONNET) == effort_for_model(level, SONNET)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "anthropic:claude-future-9",
+        "openai:claude-opus-4-8",
+        "anthropic:",
+        "anthropic:claude-opus-4-8:extra",
+    ],
+)
+def test_unknown_or_malformed_exact_model_fails_closed(model_id):
+    assert effort_supported(model_id) is False
+    assert effort_for_model("high", model_id) is None
 
 
 def test_off_by_default():
@@ -95,8 +119,8 @@ def test_invalid_level_is_ignored(monkeypatch):
 
 
 def test_preselected_effort_clamps_for_actual_model():
-    # Provider failover can pass a primary model's resolved effort to a fallback;
-    # the fallback model must still get its own model-specific ceiling.
+    # Dispatch must re-clamp a caller-provided effort against the exact run
+    # model's own ceiling.
     assert effort_for_model("xhigh", OPUS) == "xhigh"
     assert effort_for_model("xhigh", SONNET) == "high"
     assert effort_for_model("max", SONNET) == "high"
@@ -117,75 +141,17 @@ def test_effort_lands_in_anthropic_output_config(monkeypatch):
     assert p._build_request("sys", msgs, None, 4096, None, OPUS, None).get("output_config") is None
     # Unsupported model -> effort is dropped defensively (never 400).
     assert p._build_request("sys", msgs, None, 4096, None, HAIKU, "medium").get("output_config") is None
-    # Stale primary-model effort is re-clamped for the actual fallback model.
+    # A preselected effort is clamped for the actual pinned model.
     kw = p._build_request("sys", msgs, None, 4096, None, SONNET, "xhigh")
     assert kw["output_config"]["effort"] == "high"
 
 
-def test_sync_failover_reclamps_effort_for_fallback(monkeypatch):
-    from maverick import provider_failover
-    from maverick.llm import LLM, LLMResponse
-
-    calls = []
-
-    class FakeClient:
-        def complete(self, **kwargs):
-            calls.append({"model": kwargs["model"], "effort": kwargs.get("effort")})
-            if kwargs["model"] == OPUS:
-                raise RuntimeError("primary down")
-            return LLMResponse(text="ok", thinking=None, tool_calls=[], stop_reason="end_turn")
-
-    monkeypatch.setattr(provider_failover, "fallback_models", lambda primary: [SONNET])
-    monkeypatch.setattr(LLM, "_get_client", lambda self, provider: FakeClient())
-
-    resp = LLM(model=OPUS).complete("sys", [{"role": "user", "content": "hi"}], effort="xhigh")
-
-    assert resp.text == "ok"
-    assert calls == [
-        {"model": OPUS, "effort": "xhigh"},
-        {"model": SONNET, "effort": "high"},
-    ]
-
-
-def test_async_failover_reclamps_effort_for_fallback(monkeypatch):
-    from maverick import provider_failover
-    from maverick.llm import LLM, LLMResponse
-
-    calls = []
-
-    class FakeClient:
-        async def complete_async(self, **kwargs):
-            calls.append({"model": kwargs["model"], "effort": kwargs.get("effort")})
-            if kwargs["model"] == OPUS:
-                raise RuntimeError("primary down")
-            return LLMResponse(text="ok", thinking=None, tool_calls=[], stop_reason="end_turn")
-
-    monkeypatch.setattr(provider_failover, "fallback_models", lambda primary: [SONNET])
-    monkeypatch.setattr(LLM, "_get_client", lambda self, provider: FakeClient())
-
-    import asyncio
-
-    async def run_call():
-        return await LLM(model=OPUS).complete_async(
-            "sys", [{"role": "user", "content": "hi"}], effort="xhigh"
-        )
-
-    resp = asyncio.run(run_call())
-
-    assert resp.text == "ok"
-    assert calls == [
-        {"model": OPUS, "effort": "xhigh"},
-        {"model": SONNET, "effort": "high"},
-    ]
-
-
 # --- Pack-authored effort tier (DomainProfile.effort) -----------------------
 
-_M = "claude-opus-4-8"  # an effort-supporting model
+_M = "claude-opus-4-8"
 
 
 def test_pack_effort_ignored_when_feature_off(monkeypatch):
-    # A pack's tier never turns the feature on -- off stays off.
     monkeypatch.setattr(effort, "_config_effort", dict)
     assert effort_for_role("finance_gl_close", _M, pack_default="high") is None
 

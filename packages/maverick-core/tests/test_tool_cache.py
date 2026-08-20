@@ -206,6 +206,21 @@ class TestWarmOnStart:
         monkeypatch.setenv("MAVERICK_TOOL_CACHE_SNAPSHOT", "1")
         monkeypatch.setenv("MAVERICK_TOOL_CACHE_SNAPSHOT_PATH", str(snap))
         tc.reset()
+
+    def test_firm_snapshot_is_sealed_and_wrong_key_is_withheld(
+        self, monkeypatch, tmp_path,
+    ):
+        from maverick.cache import tool as tc
+
+        snap = tmp_path / "firm-snap.jsonl"
+        monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        monkeypatch.setenv("MAVERICK_ENCRYPT_PER_TENANT", "0")
+        monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", "11" * 32)
+        monkeypatch.setenv("MAVERICK_TOOL_CACHE", "1")
+        monkeypatch.setenv("MAVERICK_TOOL_CACHE_SNAPSHOT", "1")
+        monkeypatch.setenv("MAVERICK_TOOL_CACHE_SNAPSHOT_PATH", str(snap))
+        tc.reset()
         tool = self._tool()
         tc.store_cached(tool, {"path": "."}, "the map")
         assert tc.save_snapshot() == 1
@@ -213,6 +228,22 @@ class TestWarmOnStart:
         tc.reset()
         hit, value = tc.get_cached(tool, {"path": "."})
         assert hit and value == "the map"
+        tc.reset()
+        tool = self._tool()
+        tc.store_cached(tool, {"path": "."}, "privileged client result")
+        assert tc.save_snapshot() == 1
+        raw = snap.read_text(encoding="utf-8")
+        assert raw.startswith("MVKAR1:")
+        assert "privileged client result" not in raw
+
+        tc.reset()
+        hit, value = tc.get_cached(tool, {"path": "."})
+        assert hit and value == "privileged client result"
+
+        monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", "22" * 32)
+        tc.reset()
+        assert tc.warm_on_start() == 0
+        assert tc.stats()["size"] == 0
         tc.reset()
 
     def test_snapshot_off_means_no_warm(self, monkeypatch, tmp_path):

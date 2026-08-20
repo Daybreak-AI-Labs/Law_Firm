@@ -1,43 +1,72 @@
 {% extends "base.html" %}
-{% block title %}Projects · Bjerken and Day{% endblock %}
+{% block title %}Matters · Bjerken and Day{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
-  {% call hero('Your AI workforce', 'Projects',
-               subtitle='Workspaces for related goals',
-               lede='Workspaces that group related goals — a close cycle, an
-                     audit, a deal. Open a project to see its goals and
-                     status at a glance.') %}
+  {% call hero('Client work', 'Matters',
+               subtitle='Conflict-cleared client workspaces',
+               lede='Each matter is bound to a client, matter number,
+                     jurisdiction, responsible attorney, and gated legal
+                     workflow before any work begins.') %}
     {{ state('Current state',
-             projects | length ~ ' project' ~ ('' if projects | length == 1 else 's'),
+             projects | length ~ ' matter' ~ ('' if projects | length == 1 else 's'),
              badge=((projects | sum(attribute='goal_count')) ~ ' goals filed') if projects else 'none yet',
              badge_class='ok' if projects else 'idle',
-             copy='Create a project below, then file goals under it from any
-                   goal page — related work stays together.') }}
+             copy='Open a matter only after conflicts clearance. Existing
+                   clients shown here are limited to your active matter access.') }}
   {% endcall %}
 
+  {% if can_intake %}
   <div class="panel">
-    <h2 style="margin-top: 0;">New project</h2>
+    <h2 style="margin-top: 0;">New client matter</h2>
     <form method="post" action="/projects" class="project-form">
-      <label class="project-field"><span class="muted">Name</span>
+      <label class="project-field"><span class="muted">Matter name</span>
         <input type="text" name="name" required maxlength="120"
                placeholder="e.g. Smith v. Smith — custody" class="input"></label>
-      <label class="project-field"><span class="muted">Department (optional)</span>
-        <input type="text" name="domain" placeholder="e.g. legal_litigation_mgmt" class="input"></label>
+      <label class="project-field"><span class="muted">New client name</span>
+        <input type="text" name="client_name" maxlength="200"
+               placeholder="Use this or select an existing client" class="input"></label>
+      <label class="project-field"><span class="muted">Existing accessible client</span>
+        <select name="client_id" class="input">
+          <option value="">Use the new client name above</option>
+          {% for client in clients %}
+          <option value="{{ client.id }}">{{ client.name }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="project-field"><span class="muted">Matter number</span>
+        <input type="text" name="matter_number" required maxlength="120"
+               placeholder="e.g. 2026-001" class="input"></label>
+      <label class="project-field"><span class="muted">Jurisdiction</span>
+        <input type="text" name="jurisdiction" required maxlength="120"
+               placeholder="e.g. Tennessee" class="input"></label>
+      <label class="project-field"><span class="muted">Gated legal workflow</span>
+        <select name="domain" required class="input">
+          <option value="">Choose a legal workflow</option>
+          {% for domain in legal_domains %}
+          <option value="{{ domain }}">{{ domain }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="project-field"><span class="muted">Adverse parties (one per line)</span>
+        <textarea name="adverse_parties" rows="3" class="input"
+                  placeholder="Jones LLC&#10;Alex Jones"></textarea></label>
       <label class="project-field"><span class="muted">Description (optional)</span>
         <textarea name="description" rows="2" class="input"></textarea></label>
-      <button type="submit" class="btn btn--primary">Create project</button>
+      <button type="submit" class="btn btn--primary">Clear conflicts and open matter</button>
     </form>
   </div>
+  {% endif %}
 
   <div class="panel{% if not projects %} empty{% endif %}">
     {% if projects %}
       <table>
-        <thead><tr><th scope="col">project</th><th scope="col">department</th><th scope="col">goals</th><th scope="col">status</th></tr></thead>
+        <thead><tr><th scope="col">matter</th><th scope="col">client</th><th scope="col">number</th><th scope="col">jurisdiction</th><th scope="col">workflow</th><th scope="col">goals</th><th scope="col">status</th></tr></thead>
         <tbody>
         {% for p in projects %}
           <tr>
             <td><a href="/projects/{{ p.id }}">{{ p.name or 'Untitled' }}</a>
               {% if p.description %}<div class="muted" style="font-size: var(--text-xs);">{{ p.description[:100] }}</div>{% endif %}</td>
+            <td>{{ p.client_name or 'Legacy matter' }}</td>
+            <td>{{ p.matter_number or '—' }}</td>
+            <td>{{ p.jurisdiction or '—' }}</td>
             <td class="muted">{{ p.domain or '—' }}</td>
             <td>{{ p.goal_count }}</td>
             <td><span class="badge {{ p.status }}">{{ p.status }}</span></td>
@@ -46,8 +75,8 @@
         </tbody>
       </table>
     {% else %}
-      <div class="mv-empty"><p class="mv-empty__title">No projects yet</p>
-        <p class="mv-empty__body">Create one above to group related goals into a workspace.</p></div>
+      <div class="mv-empty"><p class="mv-empty__title">No matters yet</p>
+        <p class="mv-empty__body">A named attorney can clear conflicts and open the first client matter above.</p></div>
     {% endif %}
   </div>
 

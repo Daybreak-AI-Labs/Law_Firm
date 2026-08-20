@@ -15,11 +15,10 @@ idempotent (no double-applies, no errors).
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 import time
 
-from maverick.file_lock import private_path_is_restricted
+import pytest
 from maverick.world_model import SCHEMA_VERSION, WorldModel
 
 V1_SCHEMA = """
@@ -100,54 +99,66 @@ def _build_legacy_db(path) -> int:
     return goal_id
 
 
-def test_pre_migration_backup_written_for_existing_db(tmp_path):
-    """Upgrading a pre-existing DB writes a recovery snapshot at the old version
-    before the forward-only migrations run."""
+def test_schema_upgrade_writes_no_automatic_plaintext_backup(tmp_path):
+    """Startup upgrades in place without copying client plaintext to a sibling DB."""
     db = tmp_path / "world.db"
     _build_legacy_db(db)  # real data at schema v1
 
-    old_umask = os.umask(0o022)
-    try:
-        wm = WorldModel(path=db)
-    finally:
-        os.umask(old_umask)
+    wm = WorldModel(path=db)
     assert wm.schema_version == SCHEMA_VERSION
-
-    bak = tmp_path / "world.db.pre-migration-v1.bak"
-    assert bak.exists(), "expected a pre-migration backup of the v1 DB"
-    assert private_path_is_restricted(bak, 0o600)
-    # The snapshot captured the PRE-migration state (v1), not the upgraded one.
-    bconn = sqlite3.connect(str(bak))
-    try:
-        ver = bconn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0]
-        # And the legacy data is intact in the snapshot.
-        title = bconn.execute("SELECT title FROM goals LIMIT 1").fetchone()[0]
-    finally:
-        bconn.close()
-    assert ver == 1
-    assert title == "legacy goal"
+    assert not list(tmp_path.glob("world.db.pre-migration-*.bak"))
 
 
-def test_pre_migration_backup_skipped_for_fresh_db(tmp_path):
-    """A brand-new world.db 'migrates' v1->current on first open but has no data
-    to protect, so no backup file is written (no per-install/-tenant litter)."""
+def test_schema_upgrade_fresh_db_writes_no_automatic_backup(tmp_path):
     db = tmp_path / "world.db"
     wm = WorldModel(path=db)
     assert wm.schema_version == SCHEMA_VERSION
     assert not list(tmp_path.glob("world.db.pre-migration-*.bak"))
 
 
-def test_pre_migration_backup_can_be_disabled(tmp_path, monkeypatch):
-    """[world_model] pre_migration_backup = false opts out."""
-    import maverick.config as cfg
+def test_failed_schema_upgrade_rolls_back_without_plaintext_backup(
+    tmp_path, monkeypatch,
+):
+    """A failed ordered migration leaves its version/data transaction untouched."""
+    import maverick.world_model as world_module
+
     db = tmp_path / "world.db"
-    _build_legacy_db(db)
-    monkeypatch.setattr(
-        cfg, "load_config",
-        lambda *a, **k: {"world_model": {"pre_migration_backup": False}},
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schema_version(version INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO schema_version(version) VALUES(39)")
+    conn.execute(
+        "CREATE TABLE artifacts ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id INTEGER NOT NULL, "
+        "kind TEXT NOT NULL DEFAULT 'text', title TEXT, content TEXT, "
+        "version INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)"
     )
-    wm = WorldModel(path=db)
-    assert wm.schema_version == SCHEMA_VERSION
+    conn.execute(
+        "INSERT INTO artifacts(goal_id, title, content, created_at) "
+        "VALUES(1, 'privileged title', 'privileged body', 1.0)"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setitem(
+        world_module.MIGRATIONS,
+        40,
+        [
+            "ALTER TABLE artifacts ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
+            "INSERT INTO deliberately_missing_table(value) VALUES(1)",
+        ],
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="deliberately_missing_table"):
+        WorldModel(path=db)
+
+    check = sqlite3.connect(db)
+    assert check.execute("SELECT version FROM schema_version").fetchone()[0] == 39
+    assert "title_key" not in {
+        row[1] for row in check.execute("PRAGMA table_info(artifacts)").fetchall()
+    }
+    assert check.execute(
+        "SELECT title, content FROM artifacts"
+    ).fetchone() == ("privileged title", "privileged body")
+    check.close()
     assert not list(tmp_path.glob("world.db.pre-migration-*.bak"))
 
 
@@ -196,6 +207,81 @@ def test_migrations_are_idempotent(tmp_path):
     # And it must still be writeable end-to-end.
     gid = wm2.create_goal("new", "post-migration")
     assert wm2.get_goal(gid).title == "new"
+
+
+def test_v39_drops_obsolete_harness_transfer_tried_state(tmp_path):
+    db = tmp_path / "world.db"
+    current = WorldModel(path=db)
+    assert current.conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'harness_transfer_tried'"
+    ).fetchone() is None
+    current.conn.close()
+
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE harness_transfer_tried ("
+        "line_id TEXT PRIMARY KEY, ts REAL NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO harness_transfer_tried(line_id, ts) VALUES(?, ?)",
+        ("obsolete-cross-model-line-digest", 1.0),
+    )
+    conn.execute("UPDATE schema_version SET version = 38")
+    conn.commit()
+    conn.execute("PRAGMA secure_delete = OFF")
+    assert conn.execute("PRAGMA secure_delete").fetchone()[0] == 0
+
+    upgraded = object.__new__(WorldModel)
+    upgraded.conn = conn
+    upgraded.path = db
+    upgraded._db_preexisted = False
+    upgraded._apply_migrations()
+
+    assert upgraded.schema_version == SCHEMA_VERSION
+    assert upgraded.conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'harness_transfer_tried'"
+    ).fetchone() is None
+    assert upgraded.conn.execute("PRAGMA secure_delete").fetchone()[0] == 0
+
+
+def test_v40_adds_artifact_title_key_without_rewriting_legacy_title(tmp_path):
+    db = tmp_path / "world.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schema_version(version INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO schema_version(version) VALUES(39)")
+    conn.execute(
+        "CREATE TABLE artifacts ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id INTEGER NOT NULL, "
+        "kind TEXT NOT NULL DEFAULT 'text', title TEXT, content TEXT, "
+        "version INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO artifacts(goal_id, kind, title, content, version, created_at) "
+        "VALUES(1, 'text', 'Privileged strategy', 'body', 1, 1.0)"
+    )
+    conn.commit()
+
+    upgraded = object.__new__(WorldModel)
+    upgraded.conn = conn
+    upgraded.path = db
+    upgraded._db_preexisted = False
+    upgraded._apply_migrations()
+
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
+    }
+    assert "title_key" in columns
+    assert conn.execute(
+        "SELECT title, title_key FROM artifacts"
+    ).fetchone() == ("Privileged strategy", "")
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' "
+        "AND name='idx_artifacts_goal_title'"
+    ).fetchone() is not None
+    assert upgraded.schema_version == SCHEMA_VERSION
+    conn.close()
 
 
 
